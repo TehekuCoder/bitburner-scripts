@@ -1,7 +1,8 @@
 import { NS, Player, Server } from "@ns";
 import { loadState, BotState } from "./state-manager.js";
+// 1. IMPORTIERE DIE ZENTRALEN ZAHNRÄDER
+import { getAllServers, breakAndInfectNetwork } from "../lib/network.js";
 
-// --- INTERFACES ---
 interface ScriptList {
   worker: string;
   dispatcher: string;
@@ -10,16 +11,14 @@ interface ScriptList {
   xpfarm: string;
   trade: string;
   hacknet: string;
-  earlyHacknet: string; // NEU: Für das Formulas-freie Early Game
+  earlyHacknet: string;
   replicator: string;
-
   hack: string;
   grow: string;
   weaken: string;
 }
 
 export async function main(ns: NS): Promise<void> {
-  // Pfade zeigen jetzt sauber in die neuen Systemordner
   const scripts: ScriptList = {
     worker: "tasks/work.js",
     dispatcher: "core/sys-dispatcher.js",
@@ -38,7 +37,6 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
 
-  // --- 1. DARKNET-SUBSYSTEM START ---
   if (ns.fileExists("DarkscapeNavigator.exe", "home")) {
     if (!ns.isRunning(scripts.replicator, "home")) {
       ns.tprint("🌐 DarkscapeNavigator erkannt. Starte Darknet-Subsystem...");
@@ -47,7 +45,12 @@ export async function main(ns: NS): Promise<void> {
   }
 
   while (true) {
-    // Nutzen jetzt den zentralen State-Manager zum Laden des Systemzustands
+    // 2. NETZWERK ANREICHERN & SCANNEN
+    // Bricht sofort alle neu knackbaren Server auf
+    breakAndInfectNetwork(ns);
+    // Holt die saubere, einheitliche Serverliste
+    const allNodes: string[] = getAllServers(ns);
+
     const loadedState = loadState(ns);
     const state: BotState = {
       strategy: loadedState?.strategy || "MONEY",
@@ -58,13 +61,10 @@ export async function main(ns: NS): Promise<void> {
     };
 
     const player: Player = ns.getPlayer();
-    const allNodes: string[] = scanNetwork(ns);
     const bestTarget: string = findBestTarget(ns, allNodes, player);
 
-    // --- SUBSYSTEME STARTEN & MANAGEN (Inkl. Hacknet Hot-Swap) ---
     manageSuites(ns, scripts, state);
 
-    // System-Dispatcher sicherstellen
     if (
       ns.fileExists(scripts.dispatcher, "home") &&
       !ns.isRunning(scripts.dispatcher, "home")
@@ -81,10 +81,7 @@ export async function main(ns: NS): Promise<void> {
       ns.exec(scripts.infra, "home", 1);
     }
 
-    // --- STRATEGISCHE ENTSCHEIDUNG FÜR DIE FLOTTE ---
     const homeMax = ns.getServerMaxRam("home");
-
-    // Wir holen die aktuellen Werte des besten Ziels für die Zentral-Steuerung
     const maxMoney = ns.getServerMaxMoney(bestTarget);
     const minSecurity = ns.getServerMinSecurityLevel(bestTarget);
     const currentSecurity = ns.getServerBaseSecurityLevel(bestTarget);
@@ -95,16 +92,14 @@ export async function main(ns: NS): Promise<void> {
 
     // --- WORKER DEPLOYMENT ---
     for (const node of allNodes) {
-      if (node !== "home") autoInfect(ns, node);
+      // HINWEIS: autoInfect(ns, node) wurde gelöscht, da breakAndInfectNetwork(ns) oben bereits ALLES erledigt hat!
 
       if (ns.hasRootAccess(node)) {
         if (node === "home" && state.strategy === "REP") continue;
 
-        // UNTER 128GB: Nutze klassisches work.js oder xp-farm.js
         let activeScript =
           state.strategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
 
-        // --- DYNAMISCHES RAM-MANAGEMENT FÜR MICROSERVICES ---
         if (homeMax >= 128 && state.strategy !== "XP_SPRINT") {
           if (currentSecurity > securityThresh) {
             activeScript = scripts.weaken;
@@ -122,7 +117,7 @@ export async function main(ns: NS): Promise<void> {
               state.strategy,
             )
           ) {
-            ramBuffer = 24; // Genug Platz für Dispatcher + Background-Worker
+            ramBuffer = 24;
           } else {
             ramBuffer = 8;
           }
@@ -137,6 +132,7 @@ export async function main(ns: NS): Promise<void> {
     await ns.sleep(2000);
   }
 }
+
 function findBestTarget(ns: NS, nodes: string[], player: Player): string {
   let best = "n00dles";
   let maxWeight = 0;
@@ -211,7 +207,6 @@ function deployWorker(
   }
 }
 
-// --- ERWEITERTES MANAGEMENT DER HACKNET-SUITES ---
 function manageSuites(ns: NS, scripts: ScriptList, state: BotState): void {
   const homeMaxRam = ns.getServerMaxRam("home");
   const playerMoney = ns.getPlayer().money;
@@ -237,66 +232,20 @@ function manageSuites(ns: NS, scripts: ScriptList, state: BotState): void {
       ns.exec(scripts.trade, "home", 1);
   }
 
-  // --- DYNAMISCHE HACKNET-WEICHE (HOT-SWAPPING) ---
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
   const targetHacknet = hasFormulas ? scripts.hacknet : scripts.earlyHacknet;
   const obsoleteHacknet = hasFormulas ? scripts.earlyHacknet : scripts.hacknet;
 
-  // 1. Kill den veralteten Service, falls er läuft (z.B. nach frischem Formulas-Kauf)
   if (ns.isRunning(obsoleteHacknet, "home")) {
     ns.scriptKill(obsoleteHacknet, "home");
     ns.print(`🔄 [KERNEL] Hacknet-Wechsel: ${obsoleteHacknet} beendet.`);
   }
 
-  // 2. Starte den korrekten Service, falls er existiert und ruht
   if (
     ns.fileExists(targetHacknet, "home") &&
     !ns.isRunning(targetHacknet, "home")
   ) {
     ns.exec(targetHacknet, "home", 1);
-  }
-}
-
-function scanNetwork(ns: NS): string[] {
-  const visited = new Set<string>();
-  const stack = ["home"];
-  while (stack.length > 0) {
-    const curr = stack.pop()!;
-    if (!visited.has(curr)) {
-      visited.add(curr);
-      ns.scan(curr).forEach((n) => stack.push(n));
-    }
-  }
-  return Array.from(visited);
-}
-
-function autoInfect(ns: NS, node: string): void {
-  if (ns.hasRootAccess(node)) return;
-
-  let portsOpened = 0;
-  if (ns.fileExists("BruteSSH.exe", "home")) {
-    ns.brutessh(node);
-    portsOpened++;
-  }
-  if (ns.fileExists("FTPCrack.exe", "home")) {
-    ns.ftpcrack(node);
-    portsOpened++;
-  }
-  if (ns.fileExists("relaySMTP.exe", "home")) {
-    ns.relaysmtp(node);
-    portsOpened++;
-  }
-  if (ns.fileExists("HTTPWorm.exe", "home")) {
-    ns.httpworm(node);
-    portsOpened++;
-  }
-  if (ns.fileExists("SQLInject.exe", "home")) {
-    ns.sqlinject(node);
-    portsOpened++;
-  }
-
-  if (portsOpened >= ns.getServerNumPortsRequired(node)) {
-    ns.nuke(node);
   }
 }
 
