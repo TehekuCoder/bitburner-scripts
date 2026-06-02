@@ -90,12 +90,41 @@ export async function main(ns: NS): Promise<void> {
     const moneyThresh = maxMoney * 0.9;
     const securityThresh = minSecurity + 2;
 
+    const hasFormulas = ns.fileExists("Formulas.exe", "home");
+
     // --- WORKER DEPLOYMENT ---
     for (const node of allNodes) {
       // HINWEIS: autoInfect(ns, node) wurde gelöscht, da breakAndInfectNetwork(ns) oben bereits ALLES erledigt hat!
 
       if (ns.hasRootAccess(node)) {
         if (node === "home" && state.strategy === "REP") continue;
+
+        // NEU: Wenn wir im MONEY-Modus sind UND Formulas besitzen,
+        // übernimmt der sys-batcher die volle Kontrolle über den Ram.
+        // Der Kernel zieht seine Standard-Worker ab!
+        if (state.strategy === "MONEY" && hasFormulas) {
+          // Bestehende Standard-Worker töten, um Platz für die präzisen Batches zu machen
+          const procs = ns.ps(node);
+          const standardScripts = [
+            "tasks/work.js",
+            "tasks/xp-farm.js",
+            "tasks/hack.js",
+            "tasks/grow.js",
+            "tasks/weaken.js",
+          ];
+
+          // Aber ACHTUNG: Wir dürfen die vom Batcher gestarteten Skripte NICHT killen.
+          // Der Batcher übergibt eine BatchID als args[2]. Standard-Worker haben das nicht.
+          for (const p of procs) {
+            if (
+              standardScripts.includes(p.filename) &&
+              p.args[2] === undefined
+            ) {
+              ns.kill(p.pid);
+            }
+          }
+          continue;
+        }
 
         let activeScript =
           state.strategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
@@ -136,6 +165,7 @@ export async function main(ns: NS): Promise<void> {
 function findBestTarget(ns: NS, nodes: string[], player: Player): string {
   let best = "n00dles";
   let maxWeight = 0;
+  const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
   for (const node of nodes) {
     if (
@@ -146,21 +176,46 @@ function findBestTarget(ns: NS, nodes: string[], player: Player): string {
       continue;
     if (!ns.hasRootAccess(node)) continue;
 
-    const srv = ns.getServer(node) as Server;
+    const srv = ns.getServer(node);
     if (!srv.moneyMax || srv.moneyMax <= 0) continue;
 
     const reqSkill = srv.requiredHackingSkill || 0;
     if (reqSkill > player.skills.hacking) continue;
 
-    const cycleTime = ns.getWeakenTime(node);
-    if (cycleTime > 5 * 60 * 1000) continue;
+    if (hasFormulas) {
+      // --- HIGH-END FORMULAS CALCULATION ---
+      // Wir simulieren den Server im Idealzustand (Min Security, Max Money)
+      const mockServer = {
+        ...srv,
+        hackDifficulty: srv.minDifficulty,
+        moneyAvailable: srv.moneyMax,
+      };
 
-    const cycleTimeSeconds = cycleTime / 1000;
-    const weight = (srv.moneyMax / cycleTimeSeconds) * (reqSkill / 100);
+      const hackChance = ns.formulas.hacking.hackChance(mockServer, player);
+      const hackPct = ns.formulas.hacking.hackPercent(mockServer, player);
+      const weakenTime = ns.formulas.hacking.weakenTime(mockServer, player);
 
-    if (weight > maxWeight) {
-      maxWeight = weight;
-      best = node;
+      if (weakenTime > 5 * 60 * 1000) continue; // Alles über 5 Min ignorieren
+
+      // Gewichtung = (Maximales Geld * Dieb-Prozent pro Thread * Erfolgschance) / Zeit
+      // Das ergibt den exakten, realen theoretischen Gewinn pro Sekunde und Thread!
+      const weight =
+        (srv.moneyMax * hackPct * hackChance) / (weakenTime / 1000);
+
+      if (weight > maxWeight) {
+        maxWeight = weight;
+        best = node;
+      }
+    } else {
+      // --- LEGACY FALLBACK (Wenn Formulas.exe noch fehlt) ---
+      const cycleTime = ns.getWeakenTime(node);
+      if (cycleTime > 5 * 60 * 1000) continue;
+
+      const weight = (srv.moneyMax / (cycleTime / 1000)) * (reqSkill / 100);
+      if (weight > maxWeight) {
+        maxWeight = weight;
+        best = node;
+      }
     }
   }
   return best;
