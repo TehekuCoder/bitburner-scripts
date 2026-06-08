@@ -36,13 +36,6 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
 
-  if (ns.fileExists("DarkscapeNavigator.exe", "home")) {
-    if (!ns.isRunning(scripts.replicator, "home")) {
-      ns.tprint("🌐 DarkscapeNavigator erkannt. Starte Darknet-Subsystem...");
-      ns.run(scripts.replicator, 1);
-    }
-  }
-
   while (true) {
     // 2. NETZWERK ANREICHERN & SCANNEN
     breakAndInfectNetwork(ns);
@@ -81,7 +74,7 @@ export async function main(ns: NS): Promise<void> {
     const homeMax = ns.getServerMaxRam("home");
     const maxMoney = ns.getServerMaxMoney(bestTarget);
     const minSecurity = ns.getServerMinSecurityLevel(bestTarget);
-    
+
     // BEHOBEN: getServerSecurityLevel statt getServerBaseSecurityLevel nutzen!
     const currentSecurity = ns.getServerSecurityLevel(bestTarget);
     const currentMoney = ns.getServerMoneyAvailable(bestTarget);
@@ -189,9 +182,10 @@ function findBestTarget(ns: NS, nodes: string[], player: Player): string {
       const weakenTime = ns.formulas.hacking.weakenTime(mockServer, player);
 
       // BEHOBEN: Kein Zeitlimit mehr für Formulas! Der Batcher hebelt lange Laufzeiten aus.
-      
+
       // Gewichtung = Realer Gewinn pro Sekunde
-      const weight = (srv.moneyMax * hackPct * hackChance) / (weakenTime / 1000);
+      const weight =
+        (srv.moneyMax * hackPct * hackChance) / (weakenTime / 1000);
 
       if (weight > maxWeight) {
         maxWeight = weight;
@@ -257,6 +251,7 @@ function manageSuites(ns: NS, scripts: ScriptList, state: BotState): void {
   const homeMaxRam = ns.getServerMaxRam("home");
   const playerMoney = ns.getPlayer().money;
 
+  // 1. BACKDOOR-SERVICE
   if (
     ns.fileExists(scripts.backdoor, "home") &&
     !ns.isRunning(scripts.backdoor, "home")
@@ -264,6 +259,7 @@ function manageSuites(ns: NS, scripts: ScriptList, state: BotState): void {
     ns.exec(scripts.backdoor, "home", 1);
   }
 
+  // 2. TRADING-BOT
   if (
     ns.fileExists(scripts.trade, "home") &&
     !ns.isRunning(scripts.trade, "home")
@@ -278,6 +274,7 @@ function manageSuites(ns: NS, scripts: ScriptList, state: BotState): void {
       ns.exec(scripts.trade, "home", 1);
   }
 
+  // 3. HACKNET-LOGIK (Early vs. Late)
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
   const targetHacknet = hasFormulas ? scripts.hacknet : scripts.earlyHacknet;
   const obsoleteHacknet = hasFormulas ? scripts.earlyHacknet : scripts.hacknet;
@@ -293,8 +290,16 @@ function manageSuites(ns: NS, scripts: ScriptList, state: BotState): void {
   ) {
     ns.exec(targetHacknet, "home", 1);
   }
-}
 
+  // 4. DARKNET-REPLICATOR (Jetzt voll-dynamisch!)
+  if (
+    ns.fileExists("DarkscapeNavigator.exe", "home") &&
+    !ns.isRunning(scripts.replicator, "home") // BEHOBEN: "home" als Parameter hinzugefügt
+  ) {
+    ns.tprint("🌐 DarkscapeNavigator erkannt. Starte Darknet-Subsystem...");
+    ns.exec(scripts.replicator, "home", 1); // OPTIMIERT: exec statt run für saubere Architektur
+  }
+}
 function drawSysKernelDashboard(
   ns: NS,
   state: BotState,
