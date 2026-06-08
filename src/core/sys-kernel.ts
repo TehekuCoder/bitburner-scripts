@@ -1,6 +1,5 @@
 import { NS, Player, Server } from "@ns";
 import { loadState, BotState } from "./state-manager.js";
-// 1. IMPORTIERE DIE ZENTRALEN ZAHNRÄDER
 import { getAllServers, breakAndInfectNetwork } from "../lib/network.js";
 
 interface ScriptList {
@@ -46,9 +45,7 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     // 2. NETZWERK ANREICHERN & SCANNEN
-    // Bricht sofort alle neu knackbaren Server auf
     breakAndInfectNetwork(ns);
-    // Holt die saubere, einheitliche Serverliste
     const allNodes: string[] = getAllServers(ns);
 
     const loadedState = loadState(ns);
@@ -84,7 +81,9 @@ export async function main(ns: NS): Promise<void> {
     const homeMax = ns.getServerMaxRam("home");
     const maxMoney = ns.getServerMaxMoney(bestTarget);
     const minSecurity = ns.getServerMinSecurityLevel(bestTarget);
-    const currentSecurity = ns.getServerBaseSecurityLevel(bestTarget);
+    
+    // BEHOBEN: getServerSecurityLevel statt getServerBaseSecurityLevel nutzen!
+    const currentSecurity = ns.getServerSecurityLevel(bestTarget);
     const currentMoney = ns.getServerMoneyAvailable(bestTarget);
 
     const moneyThresh = maxMoney * 0.9;
@@ -94,16 +93,12 @@ export async function main(ns: NS): Promise<void> {
 
     // --- WORKER DEPLOYMENT ---
     for (const node of allNodes) {
-      // HINWEIS: autoInfect(ns, node) wurde gelöscht, da breakAndInfectNetwork(ns) oben bereits ALLES erledigt hat!
-
       if (ns.hasRootAccess(node)) {
         if (node === "home" && state.strategy === "REP") continue;
 
-        // NEU: Wenn wir im MONEY-Modus sind UND Formulas besitzen,
+        // Wenn wir im MONEY-Modus sind UND Formulas besitzen,
         // übernimmt der sys-batcher die volle Kontrolle über den Ram.
-        // Der Kernel zieht seine Standard-Worker ab!
         if (state.strategy === "MONEY" && hasFormulas) {
-          // Bestehende Standard-Worker töten, um Platz für die präzisen Batches zu machen
           const procs = ns.ps(node);
           const standardScripts = [
             "tasks/work.js",
@@ -113,8 +108,7 @@ export async function main(ns: NS): Promise<void> {
             "tasks/weaken.js",
           ];
 
-          // Aber ACHTUNG: Wir dürfen die vom Batcher gestarteten Skripte NICHT killen.
-          // Der Batcher übergibt eine BatchID als args[2]. Standard-Worker haben das nicht.
+          // Wir killen nur Standard-Worker, KEINE Skripte mit BatchID (args[2])
           for (const p of procs) {
             if (
               standardScripts.includes(p.filename) &&
@@ -184,7 +178,6 @@ function findBestTarget(ns: NS, nodes: string[], player: Player): string {
 
     if (hasFormulas) {
       // --- HIGH-END FORMULAS CALCULATION ---
-      // Wir simulieren den Server im Idealzustand (Min Security, Max Money)
       const mockServer = {
         ...srv,
         hackDifficulty: srv.minDifficulty,
@@ -195,21 +188,19 @@ function findBestTarget(ns: NS, nodes: string[], player: Player): string {
       const hackPct = ns.formulas.hacking.hackPercent(mockServer, player);
       const weakenTime = ns.formulas.hacking.weakenTime(mockServer, player);
 
-      if (weakenTime > 5 * 60 * 1000) continue; // Alles über 5 Min ignorieren
-
-      // Gewichtung = (Maximales Geld * Dieb-Prozent pro Thread * Erfolgschance) / Zeit
-      // Das ergibt den exakten, realen theoretischen Gewinn pro Sekunde und Thread!
-      const weight =
-        (srv.moneyMax * hackPct * hackChance) / (weakenTime / 1000);
+      // BEHOBEN: Kein Zeitlimit mehr für Formulas! Der Batcher hebelt lange Laufzeiten aus.
+      
+      // Gewichtung = Realer Gewinn pro Sekunde
+      const weight = (srv.moneyMax * hackPct * hackChance) / (weakenTime / 1000);
 
       if (weight > maxWeight) {
         maxWeight = weight;
         best = node;
       }
     } else {
-      // --- LEGACY FALLBACK (Wenn Formulas.exe noch fehlt) ---
+      // --- LEGACY FALLBACK (Ohne Formulas.exe) ---
       const cycleTime = ns.getWeakenTime(node);
-      if (cycleTime > 5 * 60 * 1000) continue;
+      if (cycleTime > 5 * 60 * 1000) continue; // Altes 5-Min-Limit bleibt nur für Early-Game wichtig
 
       const weight = (srv.moneyMax / (cycleTime / 1000)) * (reqSkill / 100);
       if (weight > maxWeight) {
@@ -325,7 +316,7 @@ function drawSysKernelDashboard(
     ns.print(`FRAKTION:   ${state.targetFaction}`);
   }
   if (state.progressBar) {
-    ns.print(`----------------------------------------`);
+    ns.print("----------------------------------------");
     ns.print(`PROGRESS:   ${state.progressBar}`);
   }
   ns.print(`========================================`);

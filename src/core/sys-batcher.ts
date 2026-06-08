@@ -3,7 +3,7 @@ import { calculateBatch } from "../utils/batch-calculator.js";
 import { getAllServers } from "../lib/network.js";
 
 export async function main(ns: NS): Promise<void> {
-  ns.disableLog("ALL");
+  // ns.disableLog("ALL");
 
   // Dynamische Zielwahl: Sucht sich den lukrativsten Server, den wir hacken können
   const target = findBestBatchTarget(ns);

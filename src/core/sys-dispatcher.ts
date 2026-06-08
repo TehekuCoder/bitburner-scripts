@@ -1,9 +1,7 @@
 import { NS, Player, FactionName, CompanyName } from "@ns";
 import { createProgressBar } from "../lib/ui.js";
 import { saveState, BotState } from "./state-manager.js";
-// 1. IMPORT AUS DEINER NETWORK-LIB:
-// (Hier nehmen wir an, dass deine network.ts eine Funktion hat, die das Netz scannt und nuked)
-import { breakAndInfectNetwork } from "../lib/network.js"; 
+import { breakAndInfectNetwork } from "../lib/network.js";
 
 const COMBAT_STATS: (keyof Player["skills"])[] = [
   "strength",
@@ -75,11 +73,7 @@ export async function main(ns: NS): Promise<void> {
   const sing = ns.singularity;
 
   while (true) {
-    // ----------------------------------------------------------------------
-    // 0. NETZWERK AUFKLÄREN & ERWEITERN (network.ts Einbindung)
-    // ----------------------------------------------------------------------
-    // Holt bei jedem Schleifendurchlauf Admin-Rechte auf neu erreichbaren Servern
-    breakAndInfectNetwork(ns); 
+    breakAndInfectNetwork(ns);
 
     let mode = "MONEY";
     const p = ns.getPlayer();
@@ -101,7 +95,6 @@ export async function main(ns: NS): Promise<void> {
     } else if (homeMaxRam < 32) {
       mode = "MONEY";
     } else {
-      // Prüfen, ob wir Firmen-Ruf für Megacorps grinden müssen
       const missingCorpFaction = HACKING_FACTIONS.find(
         (f) =>
           !p.factions.includes(f.name) &&
@@ -114,23 +107,19 @@ export async function main(ns: NS): Promise<void> {
         mode = "CORP";
         targetCompany = MEGACORPS[missingCorpFaction.name];
       } else {
-        
-        // DYNAMISCHER MINSTAT-CHECK (Deine Idee! Ersetzt das alte MILESTONES-Array)
-        // Wir suchen die allernächste Fraktion im Array, in der wir noch KEIN Mitglied sind,
-        // und die Kampf-Stats (minStat > 0) verlangt.
         const nextLockedCombatFaction = HACKING_FACTIONS.find(
-          (f) => !p.factions.includes(f.name) && f.minStat > 0
+          (f) => !p.factions.includes(f.name) && f.minStat > 0,
         );
 
         if (nextLockedCombatFaction) {
-          // Prüfen, ob unsere Kampfstats schon ausreichen
-          const currentLowestCombatStat = Math.min(...COMBAT_STATS.map((s) => p.skills[s]));
-          
+          const currentLowestCombatStat = Math.min(
+            ...COMBAT_STATS.map((s) => p.skills[s]),
+          );
+
           if (currentLowestCombatStat < nextLockedCombatFaction.minStat) {
-            // Wenn wir das Level für das nächste Syndikat noch nicht haben -> Trainieren!
             mode = "TRAIN";
             targetStat = nextLockedCombatFaction.minStat;
-            targetFaction = nextLockedCombatFaction.name; // Merken für die UI-Anzeige
+            targetFaction = nextLockedCombatFaction.name;
           } else {
             mode = "MONEY";
           }
@@ -153,11 +142,12 @@ export async function main(ns: NS): Promise<void> {
       const targetFactionRep = getHighestRepNeeded(ns, targetFaction);
       generatedBar = `${targetFaction} ${createProgressBar(currentFactionRep, targetFactionRep)}`;
     } else if (mode === "TRAIN") {
-      // UI-OPTIMIERUNG: Zeigt jetzt genau an, für welche Fraktion wir gerade trainieren!
-      const lowestCombatStat = Math.min(...COMBAT_STATS.map((s) => p.skills[s]));
+      const lowestCombatStat = Math.min(
+        ...COMBAT_STATS.map((s) => p.skills[s]),
+      );
       generatedBar = `🏋️ Train für ${targetFaction}: ${lowestCombatStat}/${targetStat} ${createProgressBar(lowestCombatStat, targetStat)}`;
     } else {
-      generatedBar = `💰 Grind Money (Batcher / Crime)`;
+      generatedBar = "💰 Grind Money (Batcher / Crime)";
     }
 
     const state: BotState = {
@@ -170,51 +160,73 @@ export async function main(ns: NS): Promise<void> {
 
     saveState(ns, state);
 
-    // --- 4. MICROSERVICES DELEGIEREN ---
+    // ======================================================================
+    // --- 4. GLOBALER BACKGROUND-BATCHER (Entkoppelt von den Modi) ---
+    // ======================================================================
+
     if (freeRam > 12 && !ns.isRunning("tasks/faction-shopping.js", "home")) {
       ns.run("tasks/faction-shopping.js", 1);
     }
 
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
+    if (hasFormulas) {
+      // Wenn Formulas da ist, MUSS der Batcher immer laufen, egal welcher Modus aktiv ist!
+      if (!ns.isRunning("core/sys-batcher.js", "home") && freeRam > 20) {
+        ns.scriptKill("tasks/crime.js", "home"); // Crime verträgt sich nicht mit Batching
+        ns.print(
+          "🚀 Dispatcher [GLOBAL]: Formulas aktiv! Starte Hintergrund-Batcher...",
+        );
+        ns.run("core/sys-batcher.js", 1);
+      }
+    }
 
-    if (mode === "REP" && !ns.isRunning("tasks/faction-grind.js", "home") && freeRam > 12) {
+    // ======================================================================
+    // --- 5. SINGULARITY MICROSERVICES (Strategie-Ausführung) ---
+    // ======================================================================
+    if (
+      mode === "REP" &&
+      !ns.isRunning("tasks/faction-grind.js", "home") &&
+      freeRam > 12
+    ) {
       ns.scriptKill("tasks/crime.js", "home");
-      ns.scriptKill("core/sys-batcher.js", "home");
       ns.scriptKill("tasks/train.js", "home");
       ns.scriptKill("tasks/corp.js", "home");
+      // HINWEIS: sys-batcher wird NICHT mehr gekillt!
       ns.run("tasks/faction-grind.js", 1);
-    } 
-    else if (mode === "CORP" && !ns.isRunning("tasks/corp.js", "home") && freeRam > 4) {
+    } else if (
+      mode === "CORP" &&
+      !ns.isRunning("tasks/corp.js", "home") &&
+      freeRam > 4
+    ) {
       ns.scriptKill("tasks/faction-grind.js", "home");
       ns.scriptKill("tasks/crime.js", "home");
       ns.scriptKill("tasks/train.js", "home");
+      // HINWEIS: sys-batcher wird NICHT mehr gekillt!
       ns.run("tasks/corp.js", 1);
-    } 
-    else if (mode === "TRAIN" && !ns.isRunning("tasks/train.js", "home") && freeRam > 4) {
+    } else if (
+      mode === "TRAIN" &&
+      !ns.isRunning("tasks/train.js", "home") &&
+      freeRam > 4
+    ) {
       ns.scriptKill("tasks/faction-grind.js", "home");
       ns.scriptKill("tasks/corp.js", "home");
       ns.scriptKill("tasks/crime.js", "home");
+      // HINWEIS: sys-batcher wird NICHT mehr gekillt!
       ns.run("tasks/train.js", 1);
-    } 
-    else if (mode === "MONEY" || mode === "XP_SPRINT") {
-      if (hasFormulas && mode === "MONEY") {
-        if (!ns.isRunning("core/sys-batcher.js", "home") && freeRam > 20) {
-          ns.scriptKill("tasks/crime.js", "home");
-          ns.scriptKill("tasks/faction-grind.js", "home");
-          ns.scriptKill("tasks/train.js", "home");
-          ns.scriptKill("tasks/corp.js", "home");
-          ns.print("🚀 Dispatcher: Formulas aktiv! Starte sys-batcher...");
-          ns.run("core/sys-batcher.js", 1);
-        }
-      } else {
+    } else if (mode === "MONEY" || mode === "XP_SPRINT") {
+      if (!hasFormulas) {
+        // Crime ist nur unser Fallback im absoluten Early-Game ohne Formulas
         if (!ns.isRunning("tasks/crime.js", "home") && freeRam > 5) {
-          ns.scriptKill("core/sys-batcher.js", "home");
           ns.scriptKill("tasks/faction-grind.js", "home");
           ns.scriptKill("tasks/corp.js", "home");
           ns.scriptKill("tasks/train.js", "home");
-          ns.print("💪 Dispatcher: Starte Crime-Grind...");
+          ns.print("💪 Dispatcher: Kein Formulas. Starte Crime-Grind...");
           ns.run("tasks/crime.js", 1);
         }
+      } else {
+        // Wenn wir Formulas haben, läuft der Batcher oben schon.
+        // Wir stellen nur sicher, dass kein altes Crime-Skript RAM klaut.
+        ns.scriptKill("tasks/crime.js", "home");
       }
     }
 
