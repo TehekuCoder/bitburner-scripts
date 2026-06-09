@@ -41,7 +41,9 @@ export async function main(ns: NS): Promise<void> {
     breakAndInfectNetwork(ns);
     const allNodes: string[] = getAllServers(ns);
 
+    const homeMax = ns.getServerMaxRam("home");
     const loadedState = loadState(ns);
+
     const state: BotState = {
       strategy: loadedState?.strategy || "MONEY",
       targetFaction: loadedState?.targetFaction || undefined,
@@ -50,12 +52,22 @@ export async function main(ns: NS): Promise<void> {
       progressBar: loadedState?.progressBar || "",
     };
 
+    // HARDCORE EARLY-GAME SAFEGUARD:
+    // Wenn wir weniger als 64GB RAM haben, ignorieren wir den alten State
+    // und erzwingen den MONEY-Modus, da der Dispatcher eh nicht in den RAM passt.   
+    if (homeMax < 64) {
+      state.strategy = "MONEY";
+      state.progressBar = "💰 Early-Game-Booster (Warte auf 64GB RAM)";
+    }
+
+
     const player: Player = ns.getPlayer();
     const bestTarget: string = findBestTarget(ns, allNodes, player);
 
     manageSuites(ns, scripts, state);
 
     if (
+      homeMax >= 64 &&
       ns.fileExists(scripts.dispatcher, "home") &&
       !ns.isRunning(scripts.dispatcher, "home")
     ) {
@@ -71,7 +83,7 @@ export async function main(ns: NS): Promise<void> {
       ns.exec(scripts.infra, "home", 1);
     }
 
-    const homeMax = ns.getServerMaxRam("home");
+
     const maxMoney = ns.getServerMaxMoney(bestTarget);
     const minSecurity = ns.getServerMinSecurityLevel(bestTarget);
 
@@ -84,14 +96,22 @@ export async function main(ns: NS): Promise<void> {
 
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
+    // ======================================================================
     // --- WORKER DEPLOYMENT ---
+    // ======================================================================
+
     for (const node of allNodes) {
       if (ns.hasRootAccess(node)) {
-        if (node === "home" && state.strategy === "REP") continue;
+        // 1. SINGULARITY-SCHUTZ: Überspringe Home bei JEDER Charakter-Aktivität
+        if (
+          node === "home" &&
+          ["REP", "TRAIN", "CORP", "CRIME"].includes(state.strategy)
+        ) {
+          continue;
+        }
 
-        // Wenn wir im MONEY-Modus sind UND Formulas besitzen,
-        // übernimmt der sys-batcher die volle Kontrolle über den Ram.
-        if (state.strategy === "MONEY" && hasFormulas) {
+        // 2. GLOBALER BATCHER-SCHUTZ: Wenn Formulas da ist, regiert der Batcher das Netz!
+        if (hasFormulas) {
           const procs = ns.ps(node);
           const standardScripts = [
             "tasks/work.js",
@@ -101,18 +121,22 @@ export async function main(ns: NS): Promise<void> {
             "tasks/weaken.js",
           ];
 
-          // Wir killen nur Standard-Worker, KEINE Skripte mit BatchID (args[2])
+          // Wir killen nur alte Kernel-Worker (ohne BatchID in args[2])
           for (const p of procs) {
             if (
               standardScripts.includes(p.filename) &&
-              p.args[2] === undefined
+              p.args[2] === undefined // WICHTIG: Batcher-Skripte leben lassen!
             ) {
               ns.kill(p.pid);
             }
           }
+          // Absolute Immunität: Keine neuen Legacy-Worker spawnen, weiter zum nächsten Server
           continue;
         }
 
+        // ======================================================================
+        // --- LEGACY FALLBACK (Nur aktiv, wenn NOCH KEIN Formulas.exe da ist) ---
+        // ======================================================================
         let activeScript =
           state.strategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
 

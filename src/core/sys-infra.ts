@@ -1,7 +1,7 @@
 import { NS, ProgramName } from "@ns";
 
 export async function main(ns: NS): Promise<void> {
-  ns.disableLog("ALL");
+  // ns.disableLog("ALL");
 
   while (true) {
     // Hält 200k flüssig für Eventualitäten

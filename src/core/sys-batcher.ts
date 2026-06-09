@@ -3,94 +3,66 @@ import { calculateBatch } from "../utils/batch-calculator.js";
 import { getAllServers } from "../lib/network.js";
 
 export async function main(ns: NS): Promise<void> {
-  // ns.disableLog("ALL");
+  ns.disableLog("ALL");
+  ns.ui.openTail();
 
-  // Dynamische Zielwahl: Sucht sich den lukrativsten Server, den wir hacken können
-  const target = findBestBatchTarget(ns);
-  let batchId = 0; // Eindeutige ID, damit Skripte parallel auf demselben Server laufen dürfen
+  let batchId = 0;
 
-  ns.print(`🚀 [Batcher] Initialisiert für High-End-Grind auf: ${target}`);
+  ns.print(`🚀 [Batcher] Initialisiert High-End-Dynamic-Batcher...`);
 
   while (true) {
-    // FIX 1: Greed-Factor festlegen (z.B. 4% des Geldes pro Welle stehlen)
-    const greedFactor = 0.04;
-    const plan = calculateBatch(ns, target, greedFactor);
+    // BEHOBEN: Zielwahl in die Schleife verlegt, damit auf Netzwerkänderungen reagiert wird
+    const totalNetworkCapacity = getNetworkTotalRam(ns);
+    const target = findBestBatchTargetForNetwork(ns, totalNetworkCapacity);
 
-    if (plan === null || !plan) {
-      ns.print(
-        `⚠️ [Batcher] ${target} ist nicht im Idealzustand. Warte auf Vorbereitung...`,
-      );
+    if (!target) {
+      ns.print("⚠️ [Batcher] Kein passendes Ziel für aktuelle RAM-Größe gefunden. Warte...");
       await ns.sleep(5000);
       continue;
     }
 
-    // Prüfen, ob das Netzwerk aktuell genug RAM für diese Welle hat
-    const currentFreeNetworkRam = getNetworkFreeRam(ns);
-    if (currentFreeNetworkRam < plan.totalRam) {
-      ns.print(
-        `⏳ [Batcher] Warteschlange voll. Benötigt: ${ns.format.ram(plan.totalRam)} | Frei: ${ns.format.ram(currentFreeNetworkRam)}`,
-      );
-      await ns.sleep(1000); // Warten, bis alte Batches fertig sind
+    // BEHOBEN: Dynamischer Greed-Factor. Wir starten bei 4%, regeln aber runter, wenn der RAM nicht reicht.
+    let greedFactor = 0.04;
+    let plan = calculateBatch(ns, target, greedFactor);
+
+    // Wenn eine einzige Welle das absolute Maximum des Netzwerks übersteigt, schrumpfen wir den Batch
+    while (plan && plan.totalRam > totalNetworkCapacity && greedFactor > 0.01) {
+      greedFactor -= 0.005;
+      plan = calculateBatch(ns, target, greedFactor);
+    }
+
+    if (plan === null || !plan) {
+      ns.print(`⚠️ [Batcher] ${target} ist nicht im Idealzustand. Warte auf Vorbereitung...`);
+      await ns.sleep(5000);
       continue;
     }
 
+    // Prüfen, ob das Netzwerk AKTUELL genug freien RAM hat
+    const currentFreeNetworkRam = getNetworkFreeRam(ns);
+    if (currentFreeNetworkRam < plan.totalRam) {
+      ns.print(
+        `⏳ [Batcher] Warteschlange voll für ${target}. Benötigt: ${ns.format.ram(plan.totalRam)} | Frei: ${ns.format.ram(currentFreeNetworkRam)} (Greed: ${(greedFactor * 100).toFixed(1)}%)`,
+      );
+      await ns.sleep(1000); // Warten auf das Beenden alter Wellen
+      continue; // Hier ist das continue jetzt korrekt, da der Plan theoretisch passen würde!
+    }
+
     ns.print(
-      `🔥 [Batcher] Sende Batchwelle #${batchId} gegen ${target} (RAM: ${ns.format.ram(plan.totalRam)})`,
+      `🔥 [Batcher] Sende Welle #${batchId} -> ${target} (RAM: ${ns.format.ram(plan.totalRam)} | Greed: ${(greedFactor * 100).toFixed(1)}%)`,
     );
 
-    // FIX 2: Die 4 exakt getimten Wellen-Komponenten im Netzwerk verteilen
-    dispatchBatchScript(
-      ns,
-      "tasks/hack.js",
-      plan.hackThreads,
-      target,
-      plan.hackDelay,
-      batchId,
-    );
-    dispatchBatchScript(
-      ns,
-      "tasks/weaken.js",
-      plan.weaken1Threads,
-      target,
-      plan.weaken1Delay,
-      batchId,
-    );
-    dispatchBatchScript(
-      ns,
-      "tasks/grow.js",
-      plan.growThreads,
-      target,
-      plan.growDelay,
-      batchId,
-    );
-    dispatchBatchScript(
-      ns,
-      "tasks/weaken.js",
-      plan.weaken2Threads,
-      target,
-      plan.weaken2Delay,
-      batchId,
-    ); // Weaken 2 fängt die Grow-Sicherheit ab
+    // Die 4 Komponenten im Netzwerk verteilen
+    dispatchBatchScript(ns, "tasks/hack.js", plan.hackThreads, target, plan.hackDelay, batchId);
+    dispatchBatchScript(ns, "tasks/weaken.js", plan.weaken1Threads, target, plan.weaken1Delay, batchId);
+    dispatchBatchScript(ns, "tasks/grow.js", plan.growThreads, target, plan.growDelay, batchId);
+    dispatchBatchScript(ns, "tasks/weaken.js", plan.weaken2Threads, target, plan.weaken2Delay, batchId);
 
     batchId++;
-
-    // PIPELINING: Ein Spacer von 4 * 20ms = 80ms erlaubt es uns,
-    // hunderte Batches versetzt "in die Luft" zu werfen, bevor der erste überhaupt einschlägt!
-    await ns.sleep(80);
+    await ns.sleep(80); // Pipelining-Spacer
   }
 }
 
-/**
- * Verteilt die Threads eines Skripts dynamisch auf alle verfügbaren Server im Botnetz.
- */
-function dispatchBatchScript(
-  ns: NS,
-  script: string,
-  threads: number,
-  target: string,
-  delay: number,
-  id: number,
-): void {
+function dispatchBatchScript(ns: NS, script: string, threads: number, target: string, delay: number, id: number): void {
   if (threads <= 0) return;
 
   const allServers = getAllServers(ns);
@@ -103,7 +75,6 @@ function dispatchBatchScript(
     let maxRam = ns.getServerMaxRam(server);
     let usedRam = ns.getServerUsedRam(server);
 
-    // Sicherheits-Puffer auf 'home' lassen, damit das OS nicht einfriert
     if (server === "home") maxRam = Math.max(0, maxRam - 32);
 
     const freeRam = maxRam - usedRam;
@@ -116,18 +87,13 @@ function dispatchBatchScript(
         ns.scp(script, server, "home");
       }
 
-      // WICHTIG: args[0]=Target, args[1]=Delay, args[2]=BatchID (macht den Aufruf im OS eindeutig)
       ns.exec(script, server, threadsToRun, target, delay, id);
-
       threadsRemaining -= threadsToRun;
       if (threadsRemaining <= 0) break;
     }
   }
 }
 
-/**
- * Berechnet den gesamten freien RAM des Netzwerks
- */
 function getNetworkFreeRam(ns: NS): number {
   return getAllServers(ns)
     .filter((s) => ns.hasRootAccess(s))
@@ -138,24 +104,34 @@ function getNetworkFreeRam(ns: NS): number {
     }, 0);
 }
 
-/**
- * Sucht das rentabelste Ziel für das Formulas-basierte Batching
- */
-function findBestBatchTarget(ns: NS): string {
+// NEU: Berechnet die absolute Maximalkapazität des Botnetzes
+function getNetworkTotalRam(ns: NS): number {
+  return getAllServers(ns)
+    .filter((s) => ns.hasRootAccess(s))
+    .reduce((total, s) => {
+      let max = ns.getServerMaxRam(s);
+      if (s === "home") max = Math.max(0, max - 32);
+      return total + max;
+    }, 0);
+}
+
+// BEHOBEN: Validiert das Ziel nun gegen die maximale RAM-Kapazität des Netzwerks
+function findBestBatchTargetForNetwork(ns: NS, maxNetworkRam: number): string | null {
   const allServers = getAllServers(ns).filter(
     (s) => ns.hasRootAccess(s) && ns.getServerMaxMoney(s) > 0,
   );
-  let bestTarget = "n00dles";
+  let bestTarget = null;
   let maxMoney = 0;
 
   for (const s of allServers) {
     const money = ns.getServerMaxMoney(s);
-    if (
-      money > maxMoney &&
-      ns.getServerRequiredHackingLevel(s) <= ns.getHackingLevel()
-    ) {
-      maxMoney = money;
-      bestTarget = s;
+    if (money > maxMoney && ns.getServerRequiredHackingLevel(s) <= ns.getHackingLevel()) {
+      // Test-Berechnung mit minimalem Greed-Factor (1%), um zu sehen, ob es überhaupt ins Netz passt
+      const testPlan = calculateBatch(ns, s, 0.01);
+      if (testPlan && testPlan.totalRam <= maxNetworkRam) {
+        maxMoney = money;
+        bestTarget = s;
+      }
     }
   }
   return bestTarget;

@@ -92,38 +92,50 @@ export async function main(ns: NS): Promise<void> {
       targetFaction = factionToWorkFor;
     } else if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
-    } else if (homeMaxRam < 32) {
+    } else if (homeMaxRam < 128) {
       mode = "MONEY";
     } else {
-      const missingCorpFaction = HACKING_FACTIONS.find(
-        (f) =>
-          !p.factions.includes(f.name) &&
-          MEGACORPS[f.name] !== undefined &&
-          sing.getCompanyRep(MEGACORPS[f.name]) < 400_000 &&
-          getHighestRepNeeded(ns, f.name) > 0,
+      // PRIORITÄT 1: KAMPF-TRAINING (Syndikate)
+      // Wir suchen die allernächste Fraktion, in der wir noch kein Mitglied sind und die Stats braucht.
+      const nextLockedCombatFaction = HACKING_FACTIONS.find(
+        (f) => !p.factions.includes(f.name) && f.minStat > 0,
       );
 
-      if (missingCorpFaction) {
-        mode = "CORP";
-        targetCompany = MEGACORPS[missingCorpFaction.name];
-      } else {
-        const nextLockedCombatFaction = HACKING_FACTIONS.find(
-          (f) => !p.factions.includes(f.name) && f.minStat > 0,
+      if (nextLockedCombatFaction) {
+        const currentLowestCombatStat = Math.min(
+          ...COMBAT_STATS.map((s) => p.skills[s]),
         );
 
-        if (nextLockedCombatFaction) {
-          const currentLowestCombatStat = Math.min(
-            ...COMBAT_STATS.map((s) => p.skills[s]),
+        if (currentLowestCombatStat < nextLockedCombatFaction.minStat) {
+          // Wenn unsere Stats für das nächste Syndikat nicht reichen -> Sofort ins Gym!
+          mode = "TRAIN";
+          targetStat = nextLockedCombatFaction.minStat;
+          targetFaction = nextLockedCombatFaction.name;
+        }
+      }
+
+      // PRIORITÄT 2: MEGACORPS
+      if (mode !== "TRAIN") {
+        const canWorkForCorp = p.skills.hacking >= 250;
+
+        if (canWorkForCorp) {
+          const missingCorpFaction = HACKING_FACTIONS.find(
+            (f) =>
+              !p.factions.includes(f.name) &&
+              MEGACORPS[f.name] !== undefined &&
+              sing.getCompanyRep(MEGACORPS[f.name]) < 400_000 &&
+              getHighestRepNeeded(ns, f.name) > 0,
           );
 
-          if (currentLowestCombatStat < nextLockedCombatFaction.minStat) {
-            mode = "TRAIN";
-            targetStat = nextLockedCombatFaction.minStat;
-            targetFaction = nextLockedCombatFaction.name;
+          if (missingCorpFaction) {
+            mode = "CORP";
+            targetCompany = MEGACORPS[missingCorpFaction.name];
           } else {
+            // Fallback, wenn alles andere erledigt ist
             mode = "MONEY";
           }
         } else {
+          // Wenn wir noch zu schwach für Megacorps sind -> Weiter Geld & Hacking-XP scheffeln
           mode = "MONEY";
         }
       }
