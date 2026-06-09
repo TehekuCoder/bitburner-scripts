@@ -1,46 +1,78 @@
 import { NS } from "@ns";
 
-/** * DYNAMIC RESOURCE ALLOCATOR (Mainframe Style)
- * Verwaltet share.js Instanzen basierend auf verfügbarem Workload.
- */
 export async function main(ns: NS): Promise<void> {
   const target = "home";
-  const script = "share.js";
-  
+
   ns.disableLog("ALL");
-  ns.ui.openTail(); // Optional: UI für Ressourcen-Monitor
+  ns.ui.openTail();
 
   while (true) {
+    // 1. DYNAMISCHE SKRIPT-WAHL BASIEREND AUF PLAYER-STATUS
+    const p = ns.getPlayer();
+    let script = "share.js";
+
+    if (p.skills.hacking < 250) {
+      script = "tasks/weaken-xp.js"; // Separates, schnelles XP-Skript für JoesGuns
+    }
+
     const maxRam = ns.getServerMaxRam(target);
     const usedRam = ns.getServerUsedRam(target);
     const scriptRam = ns.getScriptRam(script);
 
-    // Dynamischer Puffer: 5% des Gesamtspeichers oder mindestens 8GB
-    // Das verhindert, dass das System bei kleinen RAM-Upgrades "erstickt"
-    const reserve = Math.max(maxRam * 0.05, 8);
+    // 2. DYNAMISCHE PRIORITÄTS-RESERVE
+    // Wenn der High-End Batcher läuft, MUSS home eine riesige Reserve behalten.
+    // Läuft er nicht, reichen die standardmäßigen 32GB für den Kernel/Dispatcher.
+    let reserve = 32;
+    if (ns.isRunning("core/sys-batcher.js", "home")) {
+      // Wenn der Batcher aktiv ist, lassen wir ihm absichtlich 50% des Home-RAMs
+      // oder mindestens 128GB frei, damit er seine Wellen ungehindert planen kann!
+      reserve = Math.max(maxRam * 0.5, 128);
+    }
 
-    // Aktuelle Threads ermitteln
-    const shareProc = ns.ps(target).find(p => p.filename === script);
-    const currentThreads = shareProc ? shareProc.threads : 0;
+    // Aktuelle Threads dieses spezifischen Filler-Skripts ermitteln
+    const fillerProc = ns.ps(target).find((p) => p.filename === script);
+    const currentThreads = fillerProc ? fillerProc.threads : 0;
 
-    // Verfügbarer RAM für Share (unter Berücksichtigung der laufenden Share-Threads)
-    const availableRam = maxRam - (usedRam - (currentThreads * scriptRam)) - reserve;
-    const targetThreads = Math.floor(availableRam / scriptRam);
+    // Verfügbaren RAM berechnen
+    const availableRam =
+      maxRam - (usedRam - currentThreads * scriptRam) - reserve;
+    let targetThreads = Math.floor(availableRam / scriptRam);
+    if (targetThreads < 0) targetThreads = 0;
 
-    // Nur handeln, wenn die Abweichung signifikant ist (> 5% oder 0)
-    // Das verhindert ständiges Kill/Restart bei minimalen Schwankungen
+    // 3. ANPASSUNGS-LOGIK (Nur bei signifikanter Änderung)
     const threadDiff = Math.abs(targetThreads - currentThreads);
-    
-    if (targetThreads !== currentThreads && (threadDiff > currentThreads * 0.05 || targetThreads === 0)) {
-      if (currentThreads > 0) ns.scriptKill(script, target);
-      
+
+    // Wenn wir runterskalieren müssen, tun wir das SOFORT (wichtig für den Batcher!)
+    // Wenn wir hochskalieren, warten wir auf eine Änderung von mindestens 10%
+    const shouldScaleDown = targetThreads < currentThreads;
+    const shouldScaleUp =
+      targetThreads > currentThreads && threadDiff > currentThreads * 0.1;
+
+    if (
+      targetThreads !== currentThreads &&
+      (shouldScaleDown || shouldScaleUp || currentThreads === 0)
+    ) {
+      // Erst alle alten Instanzen dieses Filler-Skripts killen
+      if (currentThreads > 0) {
+        ns.scriptKill(script, target);
+      }
+
+      // Neu allozieren
       if (targetThreads > 0) {
-        ns.print(`[RESOURCE] Re-Allocating: ${targetThreads} Threads`);
-        ns.exec(script, target, targetThreads);
+        ns.print(
+          `[RESOURCE] Allocate lowest priority: ${targetThreads} Threads of ${script} (Reserve: ${reserve}GB)`,
+        );
+
+        // Hinweis: Für ein reines XP-Weaken müsste hier das Dummy-Target (z.B. "joesguns") übergeben werden
+        if (script.includes("weaken")) {
+          ns.exec(script, target, targetThreads, "joesguns", 0, Math.random());
+        } else {
+          ns.exec(script, target, targetThreads);
+        }
       }
     }
 
-    // Ein Intervall von 5s ist ein guter Kompromiss zwischen Last und Präzision
-    await ns.sleep(5000);
+    // Da Filler die niedrigste Prio haben, reicht ein entspannter 10-Sekunden-Takt
+    await ns.sleep(10000);
   }
 }
