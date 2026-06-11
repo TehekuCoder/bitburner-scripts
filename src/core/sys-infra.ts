@@ -4,12 +4,11 @@ export async function main(ns: NS): Promise<void> {
   // ns.disableLog("ALL");
 
   while (true) {
-    // Hält 200k flüssig für Eventualitäten
-    handleHomeServerPurchases(ns, 200_000);
+    // Erhöhte Reserve auf 500k nach einem Reset, damit TOR und BruteSSH sofort gekauft werden können
+    handleHomeServerPurchases(ns, 500_000);
     handleProgramPurchases(ns);
     handleServerPurchases(ns);
 
-    // Reicht völlig aus, alle 10 Sekunden nach Upgrades zu schauen
     await ns.sleep(10000);
   }
 }
@@ -69,17 +68,39 @@ function handleServerPurchases(ns: NS): void {
 
   if (money < 50_000) return;
 
+  // --- NEU: POSITIVES STUFENMODELL (State Machine) ---
+  const hasHTTPWorm = ns.fileExists("HTTPWorm.exe", "home");
+  const hasSQLInject = ns.fileExists("SQLInject.exe", "home");
+  const hasFormulas = ns.fileExists("Formulas.exe", "home");
+
+  let allowedMaxRam = 64; // Standard-Basis-Cap für das Early Game
+
+  if (hasHTTPWorm && hasSQLInject && hasFormulas) {
+    // STUFE 4: Absolutes Late-Game. Alle drei Programme sind da -> Unbegrenzter Ausbau
+    allowedMaxRam = maxRam;
+  } else if (hasHTTPWorm && hasSQLInject) {
+    // STUFE 3 (Normaler BitNode): 5 Ports offen, wir sparen die 5 Milliarden für Formulas.exe
+    allowedMaxRam = 64;
+  } else if (hasHTTPWorm) {
+    // STUFE 2: 4 Ports offen (HTTPWorm da, aber SQLInject fehlt noch)
+    allowedMaxRam = 32;
+  } else {
+    // STUFE 1: Early Game (Kein HTTPWorm vorhanden)
+    allowedMaxRam = 16;
+  }
+
+  // 1. KAUF NEUER SERVER
   if (currentServers.length < maxServers) {
     let targetRam = 8;
     while (
-      targetRam * 2 <= maxRam &&
+      targetRam * 2 <= allowedMaxRam &&
       ns.cloud.getServerCost(targetRam * 2) <= money
     ) {
       targetRam *= 2;
     }
+    
     const cost = ns.cloud.getServerCost(targetRam);
-    if (money >= cost) {
-      // Findet die erste freie Nummer zwischen 01 und maxServers
+    if (money >= cost && targetRam >= 8) {
       let nextFreeNumber = 1;
       let name = "";
 
@@ -87,7 +108,6 @@ function handleServerPurchases(ns: NS): void {
         const suffix = String(nextFreeNumber).padStart(2, "0");
         const potentialName = `p-serv-${suffix}`;
 
-        // Wenn der Name noch nicht existiert, haben wir unsere Nummer
         if (!currentServers.includes(potentialName)) {
           name = potentialName;
           break;
@@ -95,14 +115,15 @@ function handleServerPurchases(ns: NS): void {
         nextFreeNumber++;
       }
 
-      // Sicherheits-Fallback, falls unerwartet kein Name generiert werden konnte
       if (name === "") {
         name = `p-serv-${Date.now()}`;
       }
 
       ns.cloud.purchaseServer(name, targetRam);
     }
-  } else {
+  } 
+  // 2. UPGRADE EXISTIERENDER SERVER
+  else {
     let minRam = maxRam;
     let worstServer = "";
 
@@ -116,6 +137,12 @@ function handleServerPurchases(ns: NS): void {
 
     if (worstServer !== "") {
       const nextRam = minRam * 2;
+      
+      // Wenn das nächste Upgrade das erlaubte Stufen-Limit überschreitet, blockieren
+      if (nextRam > allowedMaxRam) {
+        return; 
+      }
+
       const upgradeCost =
         ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
 
