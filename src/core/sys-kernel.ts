@@ -9,8 +9,7 @@ interface ScriptList {
   backdoor: string;
   xpfarm: string;
   trade: string;
-  hacknet: string;
-  earlyHacknet: string;
+  hacknet: string; // Nur noch ein einziges, universelles Hacknet-Skript
   replicator: string;
   hack: string;
   grow: string;
@@ -25,8 +24,7 @@ export async function main(ns: NS): Promise<void> {
     backdoor: "tasks/backdoor.js",
     xpfarm: "tasks/xp-farm.js",
     trade: "modules/trading-bot.js",
-    hacknet: "tasks/hacknet.js",
-    earlyHacknet: "tasks/early-hacknet.js",
+    hacknet: "tasks/hacknet.js", // Verweist auf dein neues, adaptives Skript
     replicator: "modules/darknet-replicator.js",
     hack: "tasks/hack.js",
     grow: "tasks/grow.js",
@@ -53,13 +51,10 @@ export async function main(ns: NS): Promise<void> {
     };
 
     // HARDCORE EARLY-GAME SAFEGUARD:
-    // Wenn wir weniger als 64GB RAM haben, ignorieren wir den alten State
-    // und erzwingen den MONEY-Modus, da der Dispatcher eh nicht in den RAM passt.   
     if (homeMax < 64) {
       state.strategy = "MONEY";
       state.progressBar = "💰 Early-Game-Booster (Warte auf 64GB RAM)";
     }
-
 
     const player: Player = ns.getPlayer();
     const bestTarget: string = findBestTarget(ns, allNodes, player);
@@ -83,11 +78,8 @@ export async function main(ns: NS): Promise<void> {
       ns.exec(scripts.infra, "home", 1);
     }
 
-
     const maxMoney = ns.getServerMaxMoney(bestTarget);
     const minSecurity = ns.getServerMinSecurityLevel(bestTarget);
-
-    // BEHOBEN: getServerSecurityLevel statt getServerBaseSecurityLevel nutzen!
     const currentSecurity = ns.getServerSecurityLevel(bestTarget);
     const currentMoney = ns.getServerMoneyAvailable(bestTarget);
 
@@ -99,10 +91,8 @@ export async function main(ns: NS): Promise<void> {
     // ======================================================================
     // --- WORKER DEPLOYMENT ---
     // ======================================================================
-
     for (const node of allNodes) {
       if (ns.hasRootAccess(node)) {
-        // 1. SINGULARITY-SCHUTZ: Überspringe Home bei JEDER Charakter-Aktivität
         if (
           node === "home" &&
           ["REP", "TRAIN", "CORP", "CRIME"].includes(state.strategy)
@@ -110,7 +100,6 @@ export async function main(ns: NS): Promise<void> {
           continue;
         }
 
-        // 2. GLOBALER BATCHER-SCHUTZ: Wenn Formulas da ist, regiert der Batcher das Netz!
         if (hasFormulas) {
           const procs = ns.ps(node);
           const standardScripts = [
@@ -121,22 +110,18 @@ export async function main(ns: NS): Promise<void> {
             "tasks/weaken.js",
           ];
 
-          // Wir killen nur alte Kernel-Worker (ohne BatchID in args[2])
           for (const p of procs) {
             if (
               standardScripts.includes(p.filename) &&
-              p.args[2] === undefined // WICHTIG: Batcher-Skripte leben lassen!
+              p.args[2] === undefined
             ) {
               ns.kill(p.pid);
             }
           }
-          // Absolute Immunität: Keine neuen Legacy-Worker spawnen, weiter zum nächsten Server
           continue;
         }
 
-        // ======================================================================
-        // --- LEGACY FALLBACK (Nur aktiv, wenn NOCH KEIN Formulas.exe da ist) ---
-        // ======================================================================
+        // --- LEGACY FALLBACK ---
         let activeScript =
           state.strategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
 
@@ -194,7 +179,6 @@ function findBestTarget(ns: NS, nodes: string[], player: Player): string {
     if (reqSkill > player.skills.hacking) continue;
 
     if (hasFormulas) {
-      // --- HIGH-END FORMULAS CALCULATION ---
       const mockServer = {
         ...srv,
         hackDifficulty: srv.minDifficulty,
@@ -205,9 +189,6 @@ function findBestTarget(ns: NS, nodes: string[], player: Player): string {
       const hackPct = ns.formulas.hacking.hackPercent(mockServer, player);
       const weakenTime = ns.formulas.hacking.weakenTime(mockServer, player);
 
-      // BEHOBEN: Kein Zeitlimit mehr für Formulas! Der Batcher hebelt lange Laufzeiten aus.
-
-      // Gewichtung = Realer Gewinn pro Sekunde
       const weight =
         (srv.moneyMax * hackPct * hackChance) / (weakenTime / 1000);
 
@@ -216,9 +197,8 @@ function findBestTarget(ns: NS, nodes: string[], player: Player): string {
         best = node;
       }
     } else {
-      // --- LEGACY FALLBACK (Ohne Formulas.exe) ---
       const cycleTime = ns.getWeakenTime(node);
-      if (cycleTime > 5 * 60 * 1000) continue; // Altes 5-Min-Limit bleibt nur für Early-Game wichtig
+      if (cycleTime > 5 * 60 * 1000) continue;
 
       const weight = (srv.moneyMax / (cycleTime / 1000)) * (reqSkill / 100);
       if (weight > maxWeight) {
@@ -298,32 +278,26 @@ function manageSuites(ns: NS, scripts: ScriptList, state: BotState): void {
       ns.exec(scripts.trade, "home", 1);
   }
 
-  // 3. HACKNET-LOGIK (Early vs. Late)
-  const hasFormulas = ns.fileExists("Formulas.exe", "home");
-  const targetHacknet = hasFormulas ? scripts.hacknet : scripts.earlyHacknet;
-  const obsoleteHacknet = hasFormulas ? scripts.earlyHacknet : scripts.hacknet;
-
-  if (ns.isRunning(obsoleteHacknet, "home")) {
-    ns.scriptKill(obsoleteHacknet, "home");
-    ns.print(`🔄 [KERNEL] Hacknet-Wechsel: ${obsoleteHacknet} beendet.`);
-  }
-
+  // 3. CLEAN UNIFIED HACKNET-LOGIK
+  // Keine Abfrage mehr von Formulas im Kernel! Das Skript wird einfach gestartet, wenn es existiert und nicht läuft.
   if (
-    ns.fileExists(targetHacknet, "home") &&
-    !ns.isRunning(targetHacknet, "home")
+    ns.fileExists(scripts.hacknet, "home") &&
+    !ns.isRunning(scripts.hacknet, "home")
   ) {
-    ns.exec(targetHacknet, "home", 1);
+    ns.print("⚡ [KERNEL] Starte adaptives Hacknet-Subsystem...");
+    ns.exec(scripts.hacknet, "home", 1);
   }
 
-  // 4. DARKNET-REPLICATOR (Jetzt voll-dynamisch!)
+  // 4. DARKNET-REPLICATOR
   if (
     ns.fileExists("DarkscapeNavigator.exe", "home") &&
-    !ns.isRunning(scripts.replicator, "home") // BEHOBEN: "home" als Parameter hinzugefügt
+    !ns.isRunning(scripts.replicator, "home")
   ) {
     ns.tprint("🌐 DarkscapeNavigator erkannt. Starte Darknet-Subsystem...");
-    ns.exec(scripts.replicator, "home", 1); // OPTIMIERT: exec statt run für saubere Architektur
+    ns.exec(scripts.replicator, "home", 1);
   }
 }
+
 function drawSysKernelDashboard(
   ns: NS,
   state: BotState,
