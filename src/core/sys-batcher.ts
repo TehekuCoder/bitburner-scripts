@@ -4,7 +4,7 @@ import { getAllServers } from "../lib/network.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  ns.ui.openTail();
+  // ns.ui.openTail();
 
   let batchId = 0;
   const SPACER = 80; // Taktfrequenz der Pipeline in ms

@@ -1,6 +1,6 @@
 import { NS, Player, FactionName, CompanyName } from "@ns";
 import { createProgressBar } from "../lib/ui.js";
-import { saveState, BotState } from "./state-manager.js";
+import { loadState, saveState, BotState } from "./state-manager.js";
 import { breakAndInfectNetwork } from "../lib/network.js";
 
 const COMBAT_STATS: (keyof Player["skills"])[] = ["strength", "defense", "dexterity", "agility"];
@@ -13,25 +13,20 @@ const MEGACORPS: Record<string, CompanyName> = {
 };
 
 const HACKING_FACTIONS = [
-  // === PHASE 1: EARLY UTILITY ===
   { name: "CyberSec" as FactionName, minStat: 0 },
   { name: "Tian Di Hui" as FactionName, minStat: 0 },
   { name: "Netburners" as FactionName, minStat: 0 },
-  // === PHASE 2: HACKING-HAUPTSTRASSE ===
   { name: "NiteSec" as FactionName, minStat: 0 },
   { name: "The Black Hand" as FactionName, minStat: 0 },
   { name: "BitRunners" as FactionName, minStat: 0 },
-  // === PHASE 3: STÄDTE ===
   { name: "Sector-12" as FactionName, minStat: 0 },
   { name: "Aevum" as FactionName, minStat: 0 },
   { name: "Volhaven" as FactionName, minStat: 0 },
-  // === PHASE 4: SYNDIKATE ===
   { name: "Slum Snakes" as FactionName, minStat: 30 },
   { name: "Tetrads" as FactionName, minStat: 75 },
   { name: "The Syndicate" as FactionName, minStat: 200 },
   { name: "The Dark Army" as FactionName, minStat: 300 },
   { name: "Speakers for the Dead" as FactionName, minStat: 300 },
-  // === PHASE 5: ENDGAME ===
   { name: "The Covenant" as FactionName, minStat: 850 },
   { name: "Illuminati" as FactionName, minStat: 1200 },
   { name: "Daedalus" as FactionName, minStat: 1500 },
@@ -40,12 +35,16 @@ const HACKING_FACTIONS = [
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   
-  // Helfer für dynamische RAM-Abfrage zur Vermeidung von Race Conditions
   const getFreeRam = () => ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
   const hasSingularity = ns.singularity !== undefined;
 
+  // --- TELEMETRIE-VARIABLEN FÜR DIE ETA-BERECHNUNG ---
+  let lastValue = 0;
+  let lastTime = Date.now();
+  let emaRate = 0; // Exponential Moving Average für stabile Zeitschätzungen
+  let lastMode = "";
+
   while (true) {
-    // Netzwerk-Infektion läuft IMMER, komplett unabhängig von APIs oder RAM
     breakAndInfectNetwork(ns);
 
     let mode = "MONEY";
@@ -56,10 +55,8 @@ export async function main(ns: NS): Promise<void> {
     let targetCompany: CompanyName | undefined = undefined;
     let targetStat = 0;
 
-    // --- 1. ENTSCHEIDUNGS-MATRIX (Mit SF4-Schutz) ---
+    // --- 1. ENTSCHEIDUNGS-MATRIX ---
     if (!hasSingularity) {
-      // OHNE Singularity (SF4 fehlt) kann der Dispatcher keine Microservices steuern.
-      // Er schaltet permanent auf "PURE_HACK" und überlässt dem Batcher/Skripten das Feld.
       mode = "PURE_HACK";
     } else {
       const factionToWorkFor = findNextFaction(ns, p);
@@ -72,7 +69,6 @@ export async function main(ns: NS): Promise<void> {
       } else if (homeMaxRam < 128) {
         mode = "MONEY";
       } else {
-        // PRIORITÄT 1: KAMPF-TRAINING (Syndikate)
         const nextLockedCombatFaction = HACKING_FACTIONS.find(
           (f) => !p.factions.includes(f.name) && f.minStat > 0
         );
@@ -86,7 +82,6 @@ export async function main(ns: NS): Promise<void> {
           }
         }
 
-        // PRIORITÄT 2: MEGACORPS
         if (mode !== "TRAIN" && p.skills.hacking >= 250) {
           const missingCorpFaction = HACKING_FACTIONS.find(
             (f) =>
@@ -104,49 +99,115 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // --- 2. UI & STATE GENERIERUNG ---
+    // --- 2. DYNAMISCHE METRIK-ERFASSUNG & ETA ENGINE ---
+    let currentVal = 0;
+    let targetVal = 0;
+    let label = "";
+
+    if (mode === "REP" && targetFaction) {
+      currentVal = ns.singularity.getFactionRep(targetFaction);
+      targetVal = getHighestRepNeeded(ns, targetFaction);
+      label = `Fraktion: ${targetFaction}`;
+    } else if (mode === "CORP" && targetCompany) {
+      currentVal = ns.singularity.getCompanyRep(targetCompany);
+      targetVal = 400_000;
+      label = `Corp: ${targetCompany}`;
+    } else if (mode === "TRAIN") {
+      currentVal = Math.min(...COMBAT_STATS.map((s) => p.skills[s]));
+      targetVal = targetStat;
+      label = `🏋️ Training (Combat-Stats)`;
+    }
+
+    // Echtzeit-Berechnung des Zuwachses pro Sekunde
+    const now = Date.now();
+    if (mode !== lastMode) {
+      lastValue = currentVal;
+      lastTime = now;
+      emaRate = 0;
+      lastMode = mode;
+    } else if (targetVal > 0) {
+      const timeDiff = now - lastTime;
+      if (timeDiff >= 4000) { // Berechnung alle ~5 Sekunden
+        const valDiff = currentVal - lastValue;
+        if (valDiff > 0) {
+          const instantRate = valDiff / (timeDiff / 1000);
+          emaRate = emaRate === 0 ? instantRate : emaRate * 0.7 + instantRate * 0.3;
+        }
+        lastValue = currentVal;
+        lastTime = now;
+      }
+    }
+
+    // ETA-String Formatierung
+    let etaStr = "Warte auf Daten...";
+    if (targetVal === 0 && (mode === "REP" || mode === "CORP" || mode === "TRAIN")) {
+      etaStr = "Fertig (Max)";
+    } else if (emaRate > 0) {
+      const remaining = targetVal - currentVal;
+      if (remaining <= 0) {
+        etaStr = "Fertig";
+      } else {
+        const secondsLeft = remaining / emaRate;
+        if (secondsLeft > 3600) {
+          etaStr = `${Math.floor(secondsLeft / 3600)}h ${Math.floor((secondsLeft % 3600) / 60)}m`;
+        } else if (secondsLeft > 60) {
+          etaStr = `${Math.floor(secondsLeft / 60)}m ${Math.floor(secondsLeft % 60)}s`;
+        } else {
+          etaStr = `${Math.ceil(secondsLeft)}s`;
+        }
+      }
+    }
+
+    // --- 3. UI STRING ASSEMBLE ---
     let generatedBar = "";
-    if (mode === "PURE_HACK") {
+    if (["REP", "CORP", "TRAIN"].includes(mode) && targetVal > 0) {
+      const pct = ((currentVal / targetVal) * 100).toFixed(1);
+      const curFormatted = ns.format.number(currentVal, 1);
+      const tarFormatted = ns.format.number(targetVal, 1);
+      generatedBar = `${label} | ${curFormatted}/${tarFormatted} (${pct}%) | ETA: ${etaStr}`;
+    } else if (targetVal === 0 && mode === "REP" && targetFaction) {
+      // BEHOBEN: Sonderfall für Tetrads Gang-Grind ohne offene Augmentationen
+      generatedBar = `🥷 ${targetFaction} | Ruf: ${ns.format.number(ns.singularity.getFactionRep(targetFaction), 1)} | Karma-Farming`;
+    } else if (mode === "PURE_HACK") {
       generatedBar = "🌐 Automatisiertes Hacking-Netzwerk aktiv (Kein SF4)";
     } else if (mode === "XP_SPRINT") {
       generatedBar = "👶 Early Game: XP SPRINT";
-    } else if (mode === "CORP" && targetCompany) {
-      const currentCompanyRep = ns.singularity.getCompanyRep(targetCompany);
-      generatedBar = `Corp: ${targetCompany} ${createProgressBar(currentCompanyRep, 400_000)}`;
-    } else if (mode === "REP" && targetFaction) {
-      const currentFactionRep = ns.singularity.getFactionRep(targetFaction);
-      const targetFactionRep = getHighestRepNeeded(ns, targetFaction);
-      generatedBar = `${targetFaction} ${createProgressBar(currentFactionRep, targetFactionRep)}`;
-    } else if (mode === "TRAIN") {
-      const lowestCombatStat = Math.min(...COMBAT_STATS.map((s) => p.skills[s]));
-      generatedBar = `🏋️ ${lowestCombatStat}/${targetStat} ${createProgressBar(lowestCombatStat, targetStat)}`;
     } else {
       generatedBar = "💰 Grind Money (Batcher / Crime)";
     }
 
+    const currentState = loadState(ns);
+    
+    // Weiche für Crime-Worker
+    let finalBar = generatedBar;
+    if ((mode === "MONEY" || mode === "XP_SPRINT") && ns.isRunning("tasks/crime.js", "home")) {
+      if (currentState && currentState.progressBar && currentState.progressBar.startsWith("🥷")) {
+        finalBar = currentState.progressBar;
+      }
+    }
+
     saveState(ns, {
+      ...currentState,
       strategy: mode,
       targetFaction: targetFaction || undefined,
       targetCompany: targetCompany,
       targetStat: mode === "TRAIN" ? targetStat : undefined,
-      progressBar: generatedBar,
+      progressBar: finalBar,
     });
 
-    // --- 3. GLOBAL BACKGROUND SERVICES (Mit Live-RAM Check) ---
+    // --- 4. GLOBAL BACKGROUND SERVICES ---
     if (hasSingularity && getFreeRam() > 12 && !ns.isRunning("tasks/faction-shopping.js", "home")) {
       ns.run("tasks/faction-shopping.js", 1);
     }
 
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
     if (hasFormulas && !ns.isRunning("core/sys-batcher.js", "home") && getFreeRam() > 20) {
-      ns.scriptKill("tasks/crime.js", "home"); 
       ns.print("🚀 Dispatcher: Formulas aktiv! Starte Hintergrund-Batcher...");
       ns.run("core/sys-batcher.js", 1);
     }
 
-    // --- 4. MICROSERVICES EXECUTION LAYER ---
+    // --- 5. MICROSERVICES EXECUTION LAYER ---
     if (!hasSingularity) {
-      // Wenn wir kein SF4 haben, lassen wir einfach den Batcher laufen (oben getriggert)
       await ns.sleep(5000);
       continue;
     }
@@ -167,15 +228,15 @@ export async function main(ns: NS): Promise<void> {
       ns.scriptKill("tasks/crime.js", "home");
       ns.run("tasks/train.js", 1);
     } else if (mode === "MONEY" || mode === "XP_SPRINT") {
-      if (!hasFormulas) {
-        if (!ns.isRunning("tasks/crime.js", "home") && getFreeRam() > 5) {
+      const crimeScript = "tasks/crime.js";
+      if (ns.fileExists(crimeScript, "home")) {
+        const requiredRam = ns.getScriptRam(crimeScript, "home");
+        if (!ns.isRunning(crimeScript, "home") && getFreeRam() > requiredRam) {
           ns.scriptKill("tasks/faction-grind.js", "home");
           ns.scriptKill("tasks/corp.js", "home");
           ns.scriptKill("tasks/train.js", "home");
-          ns.run("tasks/crime.js", 1);
+          ns.run(crimeScript, 1);
         }
-      } else {
-        ns.scriptKill("tasks/crime.js", "home");
       }
     }
 
@@ -184,8 +245,6 @@ export async function main(ns: NS): Promise<void> {
 }
 
 function findNextFaction(ns: NS, p: Player): FactionName | null {
-  // OPTIMIERT: Sucht zuerst nach Fraktionen, bei denen wir SCHON Mitglied sind
-  // UND wo wir die Rufanforderungen am schnellsten abschließen können (kleinster verbleibender Ruf)
   const activeFactionJobs = HACKING_FACTIONS
     .filter((f) => p.factions.includes(f.name))
     .map((f) => {
@@ -194,7 +253,6 @@ function findNextFaction(ns: NS, p: Player): FactionName | null {
       return { name: f.name, missingRep: repNeeded - currentRep };
     })
     .filter((f) => f.missingRep > 0)
-    // Sortiere nach dem am schnellsten erreichbaren Ziel (die mit dem wenigsten fehlenden Ruf zuerst)
     .sort((a, b) => a.missingRep - b.missingRep);
 
   return activeFactionJobs.length > 0 ? activeFactionJobs[0].name : null;
