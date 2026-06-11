@@ -1,21 +1,21 @@
 import { NS } from "@ns";
 
 /**
- * Durchsucht das gesamte Bitburner-Netzwerk via Breitensuche (BFS).
- * Gibt ein Array mit ALLEN Servernamen im Spiel zurück.
+ * Durchsucht das gesamte Bitburner-Netzwerk via hochperformantem Stack (DFS).
+ * Gibt ein Array mit ALLEN Servernamen im Spiel zurück. Performance: O(1) beim Pop.
  */
 export function getAllServers(ns: NS): string[] {
   const visited = new Set<string>(["home"]);
-  const queue = ["home"];
+  const stack = ["home"]; // Stack statt Queue spart das teure .shift()
 
-  while (queue.length > 0) {
-    const current = queue.shift()!;
+  while (stack.length > 0) {
+    const current = stack.pop()!; // O(1) Operation
     const connections = ns.scan(current);
 
     for (const nextServer of connections) {
       if (!visited.has(nextServer)) {
         visited.add(nextServer);
-        queue.push(nextServer);
+        stack.push(nextServer);
       }
     }
   }
@@ -25,65 +25,81 @@ export function getAllServers(ns: NS): string[] {
 /**
  * Findet den exakten Verbindungspfad von 'home' zu einem Zielserver.
  */
-export function findPathTo(ns: NS, target: string, current = "home", visited = new Set<string>()): string[] | null {
+export function findPathTo(
+  ns: NS,
+  target: string,
+  current = "home",
+  visited = new Set<string>(),
+): string[] | null {
   visited.add(current);
-  
+
   if (current === target) return [current];
-  
+
   const connections = ns.scan(current);
   for (const next of connections) {
     if (visited.has(next)) continue;
     const path = findPathTo(ns, target, next, visited);
     if (path) return [current, ...path];
   }
-  
+
   return null;
 }
 
 /**
- * Scannt das gesamte Netzwerk und bricht vollautomatisch alle Server auf,
- * für die die nötigen Programme und Hacking-Level vorhanden sind.
+ * Scannt das gesamte Netzwerk und bricht vollautomatisch alle Server auf.
+ * Optimiert: Stoppt das Ausführen von Cracks, sobald die nötige Port-Anzahl erreicht ist.
  */
 export function breakAndInfectNetwork(ns: NS): void {
   const allServers = getAllServers(ns);
 
-  // 1. Prüfen, welche Cracks wir aktuell besitzen
-  const hasBrute = ns.fileExists("BruteSSH.exe", "home");
-  const hasFTP = ns.fileExists("FTPCrack.exe", "home");
-  const hasSMTP = ns.fileExists("relaySMTP.exe", "home");
-  const hasWorm = ns.fileExists("HTTPWorm.exe", "home");
-  const hasSQL = ns.fileExists("SQLInject.exe", "home");
+  const cricks = {
+    ssh: { has: ns.fileExists("BruteSSH.exe", "home"), run: ns.brutessh },
+    ftp: { has: ns.fileExists("FTPCrack.exe", "home"), run: ns.ftpcrack },
+    smtp: { has: ns.fileExists("relaySMTP.exe", "home"), run: ns.relaysmtp },
+    http: { has: ns.fileExists("HTTPWorm.exe", "home"), run: ns.httpworm },
+    sql: { has: ns.fileExists("SQLInject.exe", "home"), run: ns.sqlinject },
+  };
 
-  // Zählen, wie viele Ports wir maximal öffnen können
-  let maxPossiblePorts = 0;
-  if (hasBrute) maxPossiblePorts++;
-  if (hasFTP) maxPossiblePorts++;
-  if (hasSMTP) maxPossiblePorts++;
-  if (hasWorm) maxPossiblePorts++;
-  if (hasSQL) maxPossiblePorts++;
-
+  // Zählen, wie viele Ports wir INSGESAMT öffnen können
+  const maxPossiblePorts = Object.values(cricks).filter((c) => c.has).length;
   const playerHackingLevel = ns.getPlayer().skills.hacking;
 
   for (const server of allServers) {
-    // 'home' und bereits gerootete Server überspringen
-    if (server === "home" || ns.hasRootAccess(server)) {
-      continue;
-    }
+    if (server === "home" || ns.hasRootAccess(server)) continue;
 
     const portsRequired = ns.getServerNumPortsRequired(server);
     const hackingLevelRequired = ns.getServerRequiredHackingLevel(server);
 
-    // Prüfen, ob wir den Server theoretisch überhaupt schon knacken KÖNNEN
-    if (playerHackingLevel >= hackingLevelRequired && maxPossiblePorts >= portsRequired) {
-      
-      // Ports Stück für Stück öffnen, sofern Programm vorhanden
-      if (hasBrute) ns.brutessh(server);
-      if (hasFTP) ns.ftpcrack(server);
-      if (hasSMTP) ns.relaysmtp(server);
-      if (hasWorm) ns.httpworm(server);
-      if (hasSQL) ns.sqlinject(server);
+    // Prüfen, ob der Server aktuell überhaupt knackbar ist
+    if (
+      playerHackingLevel >= hackingLevelRequired &&
+      maxPossiblePorts >= portsRequired
+    ) {
+      let portsOpened = 0;
 
-      // Der finale Schlag: Admin-Rechte holen!
+      // Gezieltes Cracken: Nur so viele Ports öffnen, wie wirklich benötigt werden!
+      if (portsOpened < portsRequired && cricks.ssh.has) {
+        cricks.ssh.run(server);
+        portsOpened++;
+      }
+      if (portsOpened < portsRequired && cricks.ftp.has) {
+        cricks.ftp.run(server);
+        portsOpened++;
+      }
+      if (portsOpened < portsRequired && cricks.smtp.has) {
+        cricks.smtp.run(server);
+        portsOpened++;
+      }
+      if (portsOpened < portsRequired && cricks.http.has) {
+        cricks.http.run(server);
+        portsOpened++;
+      }
+      if (portsOpened < portsRequired && cricks.sql.has) {
+        cricks.sql.run(server);
+        portsOpened++;
+      }
+
+      // Admin-Rechte zünden
       ns.nuke(server);
       ns.print(`🔓 Server erfolgreich gehackt: ${server}`);
     }

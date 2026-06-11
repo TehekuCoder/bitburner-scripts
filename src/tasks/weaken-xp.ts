@@ -1,7 +1,6 @@
 import { NS } from "@ns";
 
 export async function main(ns: NS): Promise<void> {
-  // Das Ziel wird als String aus den Argumenten gezogen
   const target = ns.args[0] as string;
 
   if (!target) {
@@ -9,9 +8,10 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
+  ns.disableLog("ALL"); // Schont die CPU bei massiver Thread-Flutung
+
   while (true) {
-    // Wir ignorieren Geld und Sicherheit komplett. 
-    // Wir wollen nur die XP vom Weaken-Befehl.
+    // Reines XP-Grinding: Ignoriert Geld/Security für maximale Hacking-EXP pro Sekunde
     await ns.weaken(target);
   }
 }

@@ -10,6 +10,26 @@ export async function main(ns: NS): Promise<void> {
   ns.print("====================================");
   await ns.sleep(250);
 
+  // --- 0. ENVIRONMENT LAYER (BitNode Feature Detection) ---
+  ns.print("[...] Initializing Environment Layer (4GB Task)...");
+  
+  if (ns.fileExists("core/sys-initializer.js", "home")) {
+    const initPid = ns.run("core/sys-initializer.js", 1);
+    
+    if (initPid > 0) {
+      // Synchrones Warten: Blockiert den Bootvorgang, bis die Datei existiert
+      while (ns.isRunning(initPid)) {
+        await ns.sleep(50);
+      }
+      ns.print("[ OK ] BitNode environment successfully indexed.");
+    } else {
+      ns.print("[WARN] Initializer failed to launch. RAM shortage?");
+    }
+  } else {
+    ns.print("[WARN] core/sys-initializer.js missing! Skipping Environment Index.");
+  }
+  await ns.sleep(250);
+
   // --- 1. HARDWARE-EBENE INITIALISIEREN (sys-kernel) ---
   ns.print("[...] Initializing Hardware Layer...");
   await ns.sleep(100);

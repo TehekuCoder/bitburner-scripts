@@ -10,6 +10,28 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const h = ns.hacknet;
 
+  // --- SAFE ENVIRONMENT LAYER (FAILSAFE-FALLBACK) ---
+  let bnMults = {
+    HacknetProduction: 1.0,
+  };
+
+  if (ns.fileExists("bn-multipliers.txt", "home")) {
+    try {
+      const fileContent = ns.read("bn-multipliers.txt");
+      if (fileContent) {
+        bnMults = { ...bnMults, ...JSON.parse(fileContent) };
+      }
+    } catch {
+      ns.print("⚠️ [HACKNET] Fehler beim Parsen der bn-multipliers.txt. Nutze Failsafe-Modus.");
+    }
+  }
+
+  // HARD KILL-SWITCH: Falls Hacknet im aktuellen BitNode absolut 0$ generiert
+  if (bnMults.HacknetProduction === 0) {
+    ns.print("🛑 [HACKNET] Hacknet-Produktion ist in diesem BitNode deaktiviert (0%). System gestoppt.");
+    return;
+  }
+
   while (true) {
     // Dynamischer Formulas-Check bei JEDEM Durchlauf (erlaubt nahtlosen Wechsel)
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
@@ -17,8 +39,9 @@ export async function main(ns: NS): Promise<void> {
     const mults = ns.getHacknetMultipliers().production;
     const currentMoney = ns.getServerMoneyAvailable("home");
     
-    // Budget-Zuweisung: 10% des Barbestands
-    const budget = currentMoney * 0.1; 
+    // DYNAMISCHES BUDGET: Basis (10%) skaliert mit der BitNode-Effizienz.
+    // BN mit 100% Hacknet: 10% Budget | BN mit 10% Hacknet: 1% Budget
+    const budget = currentMoney * 0.1 * bnMults.HacknetProduction; 
 
     let bestUpgrade: HacknetUpgrade | null = null;
     let highestROI = -1; // Startet bei -1, damit auch minimale ROIs zählen
@@ -98,9 +121,15 @@ export async function main(ns: NS): Promise<void> {
       await ns.sleep(50); 
     } else {
       // Wenn wir uns absolut gar nichts leisten können (oder Limit erreicht)
-      // Im Early-Game schlafen wir kürzer (10s), um schnell auf Geldzuwachs zu reagieren
       const sleepTime = hasFormulas ? 20000 : 10000;
-      ns.print(`[HACKNET] Keine effizienten Upgrades im Budget ($${ns.format.number(budget)}). Standby...`);
+      
+      // Dashboard-Output zur Statusüberwachung
+      let statusMsg = `[HACKNET] Standby. Budget: $${ns.format.number(budget)}`;
+      if (bnMults.HacknetProduction !== 1.0) {
+        statusMsg += ` (BN-Dämpfer: ${(bnMults.HacknetProduction * 100).toFixed(0)}%)`;
+      }
+      ns.print(statusMsg);
+      
       await ns.sleep(sleepTime);
     }
   }

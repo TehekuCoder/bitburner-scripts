@@ -6,34 +6,45 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
 
+  // Alle potenziellen Filler-Skripte für die Aufräum-Logik definieren
+  const fillerScripts = ["share.js", "tasks/weaken-xp.js"];
+
   while (true) {
     // 1. DYNAMISCHE SKRIPT-WAHL BASIEREND AUF PLAYER-STATUS
     const p = ns.getPlayer();
-    let script = "share.js";
+    let activeScript = "share.js";
 
     if (p.skills.hacking < 250) {
-      script = "tasks/weaken-xp.js"; // Separates, schnelles XP-Skript für JoesGuns
+      activeScript = "tasks/weaken-xp.js"; // Schnelles XP-Skript für JoesGuns
+    }
+
+    // --- ANTI-LEAK-CLEANUP ---
+    // Falls das jeweils ANDERE Skript noch läuft (z.B. gerade Level 250 erreicht), killen wir es sofort!
+    for (const fScript of fillerScripts) {
+      if (fScript !== activeScript && ns.isRunning(fScript, target)) {
+        ns.print(
+          `[CLEANUP] Strategiewechsel erkannt! Beende altes Filler-Skript: ${fScript}`,
+        );
+        ns.kill(fScript, target);
+      }
     }
 
     const maxRam = ns.getServerMaxRam(target);
     const usedRam = ns.getServerUsedRam(target);
-    const scriptRam = ns.getScriptRam(script);
+    const scriptRam = ns.getScriptRam(activeScript);
 
     // 2. DYNAMISCHE PRIORITÄTS-RESERVE
-    // Wenn der High-End Batcher läuft, MUSS home eine riesige Reserve behalten.
-    // Läuft er nicht, reichen die standardmäßigen 32GB für den Kernel/Dispatcher.
     let reserve = 32;
     if (ns.isRunning("core/sys-batcher.js", "home")) {
-      // Wenn der Batcher aktiv ist, lassen wir ihm absichtlich 50% des Home-RAMs
-      // oder mindestens 128GB frei, damit er seine Wellen ungehindert planen kann!
+      // Dem Batcher 50% oder mindestens 128GB freihalten
       reserve = Math.max(maxRam * 0.5, 128);
     }
 
-    // Aktuelle Threads dieses spezifischen Filler-Skripts ermitteln
-    const fillerProc = ns.ps(target).find((p) => p.filename === script);
+    // Aktuelle Threads des AKTIVEN Filler-Skripts ermitteln
+    const fillerProc = ns.ps(target).find((p) => p.filename === activeScript);
     const currentThreads = fillerProc ? fillerProc.threads : 0;
 
-    // Verfügbaren RAM berechnen
+    // Verfügbaren RAM präzise berechnen
     const availableRam =
       maxRam - (usedRam - currentThreads * scriptRam) - reserve;
     let targetThreads = Math.floor(availableRam / scriptRam);
@@ -42,8 +53,7 @@ export async function main(ns: NS): Promise<void> {
     // 3. ANPASSUNGS-LOGIK (Nur bei signifikanter Änderung)
     const threadDiff = Math.abs(targetThreads - currentThreads);
 
-    // Wenn wir runterskalieren müssen, tun wir das SOFORT (wichtig für den Batcher!)
-    // Wenn wir hochskalieren, warten wir auf eine Änderung von mindestens 10%
+    // Skalierungsschwellen
     const shouldScaleDown = targetThreads < currentThreads;
     const shouldScaleUp =
       targetThreads > currentThreads && threadDiff > currentThreads * 0.1;
@@ -52,22 +62,30 @@ export async function main(ns: NS): Promise<void> {
       targetThreads !== currentThreads &&
       (shouldScaleDown || shouldScaleUp || currentThreads === 0)
     ) {
-      // Erst alle alten Instanzen dieses Filler-Skripts killen
+      // Erst die alte Instanz des aktiven Skripts killen
       if (currentThreads > 0) {
-        ns.scriptKill(script, target);
+        ns.kill(activeScript, target); // BEHOBEN: Modernes ns.kill verwendet
       }
 
-      // Neu allozieren
+      // Neu allozieren mit angepasster Stärke
       if (targetThreads > 0) {
         ns.print(
-          `[RESOURCE] Allocate lowest priority: ${targetThreads} Threads of ${script} (Reserve: ${reserve}GB)`,
+          `[RESOURCE] Allocate lowest priority: ${targetThreads} Threads of ${activeScript} (Reserve: ${reserve}GB)`,
         );
 
-        // Hinweis: Für ein reines XP-Weaken müsste hier das Dummy-Target (z.B. "joesguns") übergeben werden
-        if (script.includes("weaken")) {
-          ns.exec(script, target, targetThreads, "joesguns", 0, Math.random());
+        if (activeScript.includes("weaken")) {
+          // WICHTIG: 0 und Math.random() als zusätzliche Argumente verhindern,
+          // dass Netscript denkt, es sei exakt dasselbe Skript wie ein regulärer Worker.
+          ns.exec(
+            activeScript,
+            target,
+            targetThreads,
+            "joesguns",
+            0,
+            Math.random(),
+          );
         } else {
-          ns.exec(script, target, targetThreads);
+          ns.exec(activeScript, target, targetThreads);
         }
       }
     }

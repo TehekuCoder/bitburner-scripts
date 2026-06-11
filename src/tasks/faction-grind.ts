@@ -1,10 +1,5 @@
 import { NS, FactionWorkType, FactionName } from "@ns";
-
-interface BotState {
-  strategy: string;
-  targetFaction?: FactionName;
-  factionWorkType?: string;
-}
+import { loadState, saveState } from "core/state-manager.js"; // Konsistenten State-Manager nutzen
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -19,29 +14,16 @@ export async function main(ns: NS): Promise<void> {
   ];
 
   while (true) {
-    // --- 1. STATE & TERMINATION PRÜFEN ---
-    let mode = "REP";
-    let targetFaction: FactionName | null = null;
+    // --- 1. STATE & STRATEGIE VIA MANAGER LADEN ---
+    const state = loadState(ns);
+    const mode = state?.strategy || "IDLE";
+    let targetFaction = state?.targetFaction as FactionName || undefined;
 
-    if (ns.fileExists("bitos_state.txt", "home")) {
-      try {
-        const content = ns.read("bitos_state.txt");
-        if (content) {
-          const state = JSON.parse(content) as BotState;
-          mode = state.strategy;
-          if (state.targetFaction) targetFaction = state.targetFaction;
-        }
-      } catch {
-        /* Schutz vor File-Kollisionen */
-      }
-    }
-
+    // Wenn die Strategie nicht mehr auf REP steht, beenden wir uns sauber
     if (mode !== "REP") {
-      ns.print(
-        `[EXIT] Modus ist nun ${mode}. Beende Grind-Worker und räume RAM auf.`,
-      );
-      if (ns.scriptRunning("fill-ram.js", "home")) {
-        ns.scriptKill("fill-ram.js", "home");
+      ns.print(`[EXIT] Modus ist nun ${mode}. Beende Grind-Worker und räume RAM auf.`);
+      if (ns.isRunning("fill-ram.js", "home")) {
+        ns.kill("fill-ram.js", "home"); // BEHOBEN: ns.kill statt ns.scriptKill
         ns.print("[CLEANUP] fill-ram.js erfolgreich beendet.");
       }
       return;
@@ -55,29 +37,23 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // --- 3. FÜR FRAKTION ARBEITEN (DYNAMISCH) ---
-    if (mode === "REP" && targetFaction) {
+    if (targetFaction) {
       const currentWork = sing.getCurrentWork();
-      const isAlreadyWorking =
-        currentWork?.type === "FACTION" &&
-        currentWork.factionName === targetFaction;
+      const isAlreadyWorking = currentWork?.type === "FACTION" && currentWork.factionName === targetFaction;
 
       if (!isAlreadyWorking) {
         let success = false;
 
         for (const workType of preferredWorkTypes) {
-          success = sing.workForFaction(targetFaction, workType, false);
+          success = sing.workForFaction(targetFaction, workType, false); // false = kein Fokus-Zwang
           if (success) {
-            ns.print(
-              `[FACTION] Erreicht! Starte Arbeit für ${targetFaction} mit Typ: ${workType}`,
-            );
+            ns.print(`[FACTION] Erreicht! Starte Arbeit für ${targetFaction} mit Typ: ${workType}`);
             break;
           }
         }
 
         if (!success) {
-          ns.print(
-            `[WARN] Konnte keine Arbeit für ${targetFaction} starten. Fehlende Stats?`,
-          );
+          ns.print(`[WARN] Konnte keine Arbeit für ${targetFaction} starten. Fehlende Stats?`);
         }
       }
     }
@@ -85,48 +61,45 @@ export async function main(ns: NS): Promise<void> {
     // --- 4. SONDERREGELUNG: RAM-FLUTUNG & PRIORISIERUNG (Workload Manager) ---
     const homeMaxRam = ns.getServerMaxRam("home");
 
-    // Prüfen, ob der Batcher (unter verschiedenen möglichen Pfaden/Endungen) läuft
+    // BEHOBEN: Einheitliche Nutzung von ns.isRunning
     const isBatcherRunning =
       ns.isRunning("sys-batcher.ts", "home") ||
       ns.isRunning("sys-batcher.js", "home") ||
       ns.isRunning("core/sys-batcher.js", "home");
 
-    // SONDERREGELUNG: Dynamische RAM-Hürde festlegen
-    // Wenn der Batcher läuft, erhöhen wir das Limit massiv auf 256GB.
     const ramThreshold = isBatcherRunning ? 256 : 64;
 
     if (homeMaxRam >= ramThreshold) {
-      // Altes Basis-Arbeitsskript beenden, falls vorhanden
-      if (ns.scriptRunning("work.ts", "home")) {
-        ns.print(
-          "[TRAFFIC CONTROL] Beende work.ts auf 'home', um Platz für Reputations-Boost zu machen.",
-        );
-        ns.scriptKill("work.ts", "home");
+      // BEHOBEN: ns.isRunning und ns.kill für work.ts
+      if (ns.isRunning("work.ts", "home")) {
+        ns.print("[TRAFFIC CONTROL] Beende work.ts auf 'home', um Platz für Reputations-Boost zu machen.");
+        ns.kill("work.ts", "home");
       }
 
       // fill-ram starten, wenn es noch nicht läuft
-      if (
-        ns.fileExists("fill-ram.js", "home") &&
-        !ns.isRunning("fill-ram.js", "home")
-      ) {
-        ns.print(
-          `[INFRA] Genug RAM vorhanden (${ns.format.ram(homeMaxRam)}). Aktiviere fill-ram (Batcher aktiv: ${isBatcherRunning}).`,
-        );
-        ns.exec("fill-ram.js", "home");
+      if (ns.fileExists("fill-ram.js", "home") && !ns.isRunning("fill-ram.js", "home")) {
+        // OPTIMIERT: Wir berechnen die exakt maximal verfügbaren Threads für die Flutung!
+        const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+        const scriptRam = ns.getScriptRam("fill-ram.js", "home");
+        const maxThreads = Math.floor(freeRam / scriptRam);
+
+        if (maxThreads > 0) {
+          ns.print(`[INFRA] Genug RAM vorhanden (${ns.format.ram(homeMaxRam)}). Aktiviere fill-ram mit ${maxThreads} Threads.`);
+          ns.exec("fill-ram.js", "home", maxThreads); // BEHOBEN: Thread-Anzahl übergeben!
+        }
       }
     } else {
-      // AKTIVE INTERVENTION: Wenn fill-ram läuft, der RAM aber unter der benötigten Hürde liegt
-      // (z.B. weil der Batcher gestartet wurde, wir aber nur 128GB RAM haben), wird es gekillt!
       if (ns.isRunning("fill-ram.js", "home")) {
-        ns.print(
-          `[TRAFFIC CONTROL] Konflikt erkannt! Batcher benötigt RAM. Beende fill-ram.js vorübergehend.`,
-        );
-        ns.scriptKill("fill-ram.js", "home");
-      } else {
-        ns.print(
-          `[INFO] fill-ram bleibt inaktiv. RAM (${ns.format.ram(homeMaxRam)}) unter Hürde (${ns.format.ram(ramThreshold)}).`,
-        );
+        ns.print(`[TRAFFIC CONTROL] Konflikt erkannt! Batcher benötigt RAM. Beende fill-ram.js.`);
+        ns.kill("fill-ram.js", "home");
       }
+    }
+
+    // --- 5. HUD INTEGRATION (REPUTATION FEEDBACK) ---
+    if (state && targetFaction) {
+      const currentRep = sing.getFactionRep(targetFaction);
+      state.progressBar = `🧬 ${targetFaction}: ${ns.format.number(currentRep, 1)} Rep`;
+      saveState(ns, state);
     }
 
     await ns.sleep(5000);

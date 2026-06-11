@@ -7,26 +7,44 @@ export async function main(ns: NS): Promise<void> {
   ns.ui.openTail();
 
   let batchId = 0;
+  const SPACER = 80; // Taktfrequenz der Pipeline in ms
 
   ns.print(`🚀 [Batcher] Initialisiert High-End-Dynamic-Batcher...`);
 
   while (true) {
-    // 1. Aktuell freien RAM ermitteln
     const currentFreeNetworkRam = getNetworkFreeRam(ns);
     const totalNetworkCapacity = getNetworkTotalRam(ns);
+
+    // 1. ZIELWAHL NACH EFFIZIENZ (Geld pro Sekunde)
     const target = findBestBatchTargetForNetwork(ns, totalNetworkCapacity);
 
     if (!target) {
-      ns.print("⚠️ [Batcher] Kein passendes Ziel gefunden. Warte...");
+      ns.print(
+        "⚠️ [Batcher] Kein passendes oder hackbares Ziel im Netzwerk gefunden. Warte...",
+      );
       await ns.sleep(5000);
       continue;
     }
 
-    let greedFactor = 0.04;
+    // 2. AUTOMATISCHE PREP-PHASE (Falls nicht im Idealzustand)
+    const minSec = ns.getServerMinSecurityLevel(target);
+    const curSec = ns.getServerSecurityLevel(target);
+    const maxMoney = ns.getServerMaxMoney(target);
+    const curMoney = ns.getServerMoneyAvailable(target);
+
+    if (curSec > minSec || curMoney < maxMoney) {
+      ns.print(
+        `🔧 [Batcher] ${target} benötigt Vorbereitung. Starte Prep-Welle...`,
+      );
+      executePrepPhase(ns, target);
+      await ns.sleep(SPACER * 10); // Kurze Pause, um die Server nicht zu fluten
+      continue;
+    }
+
+    // 3. DYNAMISCHE GREED-ANPASSUNG
+    let greedFactor = 0.04; // Start bei 4% Diebstahl pro Welle
     let plan = calculateBatch(ns, target, greedFactor);
 
-    // BEHOBEN: Wir prüfen hier gegen 'currentFreeNetworkRam' statt 'totalNetworkCapacity'
-    // Und wir erlauben dem Greed-Factor, bis auf 0.5% (0.005) zu sinken
     while (
       plan &&
       plan.totalRam > currentFreeNetworkRam &&
@@ -36,28 +54,19 @@ export async function main(ns: NS): Promise<void> {
       plan = calculateBatch(ns, target, greedFactor);
     }
 
-    if (plan === null || !plan) {
-      ns.print(
-        `⚠️ [Batcher] ${target} ist nicht im Idealzustand. Warte auf Vorbereitung...`,
-      );
-      await ns.sleep(5000);
+    // 4. PIPELINE-PUFFER-CHECK (Taktsynchron halten!)
+    if (!plan || currentFreeNetworkRam < plan.totalRam) {
+      // WICHTIG: Niemals 1000ms schlafen! Wir schlafen exakt einen Takt (SPACER).
+      // Dadurch bleibt die Pipeline im Rhythmus und greift sofort zu, sobald RAM frei wird.
+      await ns.sleep(SPACER);
       continue;
     }
 
-    // Wenn selbst bei minimalem Greed der freie RAM nicht reicht, müssen wir echt warten
-    if (currentFreeNetworkRam < plan.totalRam) {
-      ns.print(
-        `⏳ [Batcher] Warteschlange komplett voll für ${target}. Benötigt: ${ns.format.ram(plan.totalRam)} | Frei: ${ns.format.ram(currentFreeNetworkRam)}`,
-      );
-      await ns.sleep(1000);
-      continue;
-    }
-
+    // 5. DISPATCH DER WELLEN-KOMPONENTEN
     ns.print(
-      `🔥 [Batcher] Sende Welle #${batchId} -> ${target} (RAM: ${ns.format.ram(plan.totalRam)} | Greed: ${(greedFactor * 100).toFixed(1)}%)`,
+      `🔥 [Batcher] Welle #${batchId} -> ${target} [Greed: ${(greedFactor * 100).toFixed(1)}% | RAM: ${ns.format.ram(plan.totalRam)}]`,
     );
 
-    // Die 4 Komponenten im Netzwerk verteilen
     dispatchBatchScript(
       ns,
       "tasks/hack.js",
@@ -92,7 +101,7 @@ export async function main(ns: NS): Promise<void> {
     );
 
     batchId++;
-    await ns.sleep(80); // Pipelining-Spacer
+    await ns.sleep(SPACER);
   }
 }
 
@@ -115,8 +124,7 @@ function dispatchBatchScript(
 
     let maxRam = ns.getServerMaxRam(server);
     let usedRam = ns.getServerUsedRam(server);
-
-    if (server === "home") maxRam = Math.max(0, maxRam - 32);
+    if (server === "home") maxRam = Math.max(0, maxRam - 64); // Erhöhter Schutz für OS/Dispatcher
 
     const freeRam = maxRam - usedRam;
     const possibleThreads = Math.floor(freeRam / scriptRam);
@@ -135,28 +143,51 @@ function dispatchBatchScript(
   }
 }
 
-function getNetworkFreeRam(ns: NS): number {
-  return getAllServers(ns)
-    .filter((s) => ns.hasRootAccess(s))
-    .reduce((total, s) => {
-      let max = ns.getServerMaxRam(s);
-      if (s === "home") max = Math.max(0, max - 32);
-      return total + (max - ns.getServerUsedRam(s));
-    }, 0);
+function executePrepPhase(ns: NS, target: string): void {
+  // Simpler, aber robuster Prep-Algorithmus: Weaken bricht Security, Grow zieht Geld nach
+  const minSec = ns.getServerMinSecurityLevel(target);
+  const curSec = ns.getServerSecurityLevel(target);
+  const maxMoney = ns.getServerMaxMoney(target);
+  const curMoney = ns.getServerMoneyAvailable(target);
+
+  if (curSec > minSec) {
+    // Wenn Security zu hoch ist: Pures Weaken!
+    const secDeficit = curSec - minSec;
+    const weakenThreads = Math.ceil(secDeficit / 0.05); // Ein Weaken-Thread senkt Sec um 0.05
+    dispatchBatchScript(
+      ns,
+      "tasks/weaken.js",
+      weakenThreads,
+      target,
+      0,
+      Date.now(),
+    );
+  } else if (curMoney < maxMoney) {
+    // Wenn Security perfekt, aber Geld fehlt: Grow & passendes Weaken triggern
+    const growThreads = Math.ceil(
+      ns.growthAnalyze(target, maxMoney / Math.max(1, curMoney)),
+    );
+    const weakenThreadsNeeded = Math.ceil((growThreads * 0.004) / 0.05); // Grow erhöht Sec um 0.004
+
+    dispatchBatchScript(
+      ns,
+      "tasks/grow.js",
+      growThreads,
+      target,
+      0,
+      Date.now(),
+    );
+    dispatchBatchScript(
+      ns,
+      "tasks/weaken.js",
+      weakenThreadsNeeded,
+      target,
+      50,
+      Date.now(),
+    ); // Leicht verzögert dahinter
+  }
 }
 
-// NEU: Berechnet die absolute Maximalkapazität des Botnetzes
-function getNetworkTotalRam(ns: NS): number {
-  return getAllServers(ns)
-    .filter((s) => ns.hasRootAccess(s))
-    .reduce((total, s) => {
-      let max = ns.getServerMaxRam(s);
-      if (s === "home") max = Math.max(0, max - 32);
-      return total + max;
-    }, 0);
-}
-
-// BEHOBEN: Validiert das Ziel nun gegen die maximale RAM-Kapazität des Netzwerks
 function findBestBatchTargetForNetwork(
   ns: NS,
   maxNetworkRam: number,
@@ -164,22 +195,46 @@ function findBestBatchTargetForNetwork(
   const allServers = getAllServers(ns).filter(
     (s) => ns.hasRootAccess(s) && ns.getServerMaxMoney(s) > 0,
   );
+
   let bestTarget = null;
-  let maxMoney = 0;
+  let highestScore = 0;
 
   for (const s of allServers) {
+    if (ns.getServerRequiredHackingLevel(s) > ns.getHackingLevel()) continue;
+
+    // EFFIZIENZ-SCORE: Geld dividiert durch die Zeit, die ein Weaken benötigt
     const money = ns.getServerMaxMoney(s);
-    if (
-      money > maxMoney &&
-      ns.getServerRequiredHackingLevel(s) <= ns.getHackingLevel()
-    ) {
-      // Test-Berechnung mit minimalem Greed-Factor (1%), um zu sehen, ob es überhaupt ins Netz passt
+    const weakenTime = ns.getWeakenTime(s);
+    const score = money / weakenTime;
+
+    if (score > highestScore) {
+      // Gegenprüfen, ob die Kiste überhaupt mit Minimal-Greed ins Netz passt
       const testPlan = calculateBatch(ns, s, 0.01);
       if (testPlan && testPlan.totalRam <= maxNetworkRam) {
-        maxMoney = money;
+        highestScore = score;
         bestTarget = s;
       }
     }
   }
   return bestTarget;
+}
+
+function getNetworkFreeRam(ns: NS): number {
+  return getAllServers(ns)
+    .filter((s) => ns.hasRootAccess(s))
+    .reduce((total, s) => {
+      let max = ns.getServerMaxRam(s);
+      if (s === "home") max = Math.max(0, max - 64);
+      return total + (max - ns.getServerUsedRam(s));
+    }, 0);
+}
+
+function getNetworkTotalRam(ns: NS): number {
+  return getAllServers(ns)
+    .filter((s) => ns.hasRootAccess(s))
+    .reduce((total, s) => {
+      let max = ns.getServerMaxRam(s);
+      if (s === "home") max = Math.max(0, max - 64);
+      return total + max;
+    }, 0);
 }
