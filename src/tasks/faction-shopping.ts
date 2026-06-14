@@ -9,11 +9,9 @@ interface AugShoppingItem {
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  ns.print("🛍️ Faction-Shopping-Worker gestartert...");
 
-  // --- SAFE ENVIRONMENT LAYER ---
   if (ns.singularity === undefined) {
-    ns.print("🛑 [SHOP] Singularity API nicht verfügbar (SF4 fehlt).");
+    ns.print("🛑 [SHOP] Singularity API nicht verfügbar.");
     return;
   }
 
@@ -22,23 +20,32 @@ export async function main(ns: NS): Promise<void> {
   const myFactions = player.factions;
   const NFG_NAME = "NeuroFlux Governor";
 
+  // --- REPORT LOGGER SETUP ---
+  let report: string[] = [];
+  const logReport = (msg: string) => {
+    ns.print(msg); // Für das normale Log
+    report.push(msg); // Für die Textdatei
+  };
+
+  logReport(`==================================================`);
+  logReport(`🛍️ SHOPPING REPORT - ${new Date().toLocaleTimeString()}`);
+  logReport(`==================================================\n`);
+
   // 1. ALLE EINZIGARTIGEN AUGMENTATIONS SCANNEN
   let shoppingList: AugShoppingItem[] = [];
-  const ownedAugs = sing.getOwnedAugmentations(true); // Inklusive Warteschlange
+  const ownedAugs = sing.getOwnedAugmentations(true);
 
   for (const faction of myFactions) {
     const factionRep = sing.getFactionRep(faction);
     const factionAugs = sing.getAugmentationsFromFaction(faction);
 
     for (const aug of factionAugs) {
-      // NeuroFlux Governor wird komplett separat am Ende abgehandelt!
       if (aug === NFG_NAME) continue;
       if (ownedAugs.includes(aug)) continue;
       if (shoppingList.some((item) => item.name === aug)) continue;
 
       const repReq = sing.getAugmentationRepReq(aug);
 
-      // Nur aufnehmen, wenn der Ruf ausreicht
       if (factionRep >= repReq) {
         const price = sing.getAugmentationPrice(aug);
         shoppingList.push({ faction, name: aug, price, repReq });
@@ -46,56 +53,86 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
-  // 2. MATHEMATISCHE OPTIMIERUNG (Teuer -> Billig)
+  logReport(
+    `📋 Scanner-Ergebnis: ${shoppingList.length} einzigartige Augmentations qualifiziert.`,
+  );
+  for (const item of shoppingList) {
+    logReport(
+      `  -> ${item.name} (${item.faction}) - $${ns.format.number(item.price)}`,
+    );
+  }
+  logReport("");
+
+  // 2. MATHEMATISCHE OPTIMIERUNG
   shoppingList.sort((a, b) => b.price - a.price);
 
-  // 3. EINKAUFSSCHLEIFE FÜR EINZIGARTIGE AUGMENTATIONS
+  // 3. EINKAUFSSCHLEIFE
   let boughtAnything = true;
   while (boughtAnything) {
     boughtAnything = false;
+    const currentOwnedAndQueued = sing.getOwnedAugmentations(true);
 
     for (let i = 0; i < shoppingList.length; i++) {
       const item = shoppingList[i];
       const currentPrice = sing.getAugmentationPrice(item.name);
       const currentMoney = ns.getPlayer().money;
 
-      if (currentMoney >= currentPrice) {
-        ns.print(`[SHOP] Versuche Kauf: ${item.name} von ${item.faction}`);
-        const success = sing.purchaseAugmentation(item.faction, item.name);
+      // Abhängigkeiten prüfen
+      const prereqs = sing.getAugmentationPrereq(item.name);
+      const missingPrereqs = prereqs.filter(
+        (p) => !currentOwnedAndQueued.includes(p),
+      );
 
-        if (success) {
-          ns.tprint(
-            `✅ GEKAUFT: ${item.name} (${item.faction}) für $${ns.format.number(currentPrice)}`,
+      if (missingPrereqs.length > 0) {
+        const prereqOnList = missingPrereqs.every((p) =>
+          shoppingList.some((s) => s.name === p),
+        );
+        if (!prereqOnList) {
+          logReport(
+            `⚠️ Skip ${item.name}: Voraussetzung fehlt komplett im Besitz (${missingPrereqs.join(", ")})`,
           );
-          shoppingList.splice(i, 1);
-          i--; // Index-Korrektur
-          boughtAnything = true;
         }
+        continue;
+      }
+
+      // Finanz-Check
+      if (currentMoney < currentPrice) {
+        logReport(
+          `💸 Zu wenig Geld für ${item.name}: Benötigt $${ns.format.number(currentPrice)}, hast $${ns.format.number(currentMoney)}`,
+        );
+        continue;
+      }
+
+      logReport(`[SHOP] Versuche Kauf: ${item.name} von ${item.faction}`);
+      const success = sing.purchaseAugmentation(item.faction, item.name);
+
+      if (success) {
+        logReport(`✅ ERFOLGREICH GEKAUFT: ${item.name} (${item.faction})`);
+        shoppingList.splice(i, 1);
+        i--;
+        boughtAnything = true;
+      } else {
+        logReport(`❌ Interner API-Fehler beim Kauf von ${item.name}.`);
       }
     }
   }
 
-  // 4. LATE-GAME EXTRA-PHASE: NEUROFLUX GOVERNOR INFINITE DUMP
-  ns.print("🔄 Phase 2: Optimiere verbleibendes Budget mit NeuroFlux Governor...");
-  
+  // 4. LATE-GAME EXTRA-PHASE: NEUROFLUX GOVERNOR
+  logReport("\n🔄 Phase 2: NeuroFlux Governor Dump...");
   let boughtNFG = true;
+  let nfgCount = 0;
+
   while (boughtNFG) {
     boughtNFG = false;
-    
-    // Finde in jedem Durchlauf die Fraktion, bei der wir aktuell NFG kaufen KÖNNTEN
-    // (wichtig, da die Rep-Anforderung von NFG nach jedem Kauf steigt!)
     let bestNFGFaction: FactionName | null = null;
-    let lowestRepReq = Infinity;
 
     for (const faction of myFactions) {
       const factionRep = sing.getFactionRep(faction);
       const repReq = sing.getAugmentationRepReq(NFG_NAME);
-      
-      // Haben wir genug Ruf bei dieser Fraktion für die NÄCHSTE Stufe?
+
       if (factionRep >= repReq) {
-        // Wir nehmen die Fraktion, um sicherzustellen, dass die API greift
         bestNFGFaction = faction;
-        break; 
+        break;
       }
     }
 
@@ -106,12 +143,26 @@ export async function main(ns: NS): Promise<void> {
       if (currentMoney >= nfgPrice) {
         const success = sing.purchaseAugmentation(bestNFGFaction, NFG_NAME);
         if (success) {
-          ns.tprint(`📈 NEUROFLUX UPGRADE: Stufe gekauft von ${bestNFGFaction} für $${ns.format.number(nfgPrice)}`);
-          boughtNFG = true; // Weiter machen, solange Geld & Rep reichen
+          nfgCount++;
+          boughtNFG = true;
         }
       }
     }
   }
 
-  ns.print("🏁 [SHOP] Shopping-Tour komplett abgeschlossen. Bereit für die Installation (Install Augmentations)!");
+  if (nfgCount > 0) {
+    logReport(
+      `📈 NEUROFLUX UPGRADES: Insgesamt ${nfgCount} Stufen investiert.`,
+    );
+  } else {
+    logReport(
+      `ℹ️ Kein NeuroFlux Governor gekauft (Geld oder Ruf reichte nicht für die nächste Stufe).`,
+    );
+  }
+
+  logReport(`\n🏁 Report Ende. Bereit für die Installation.`);
+
+  // --- REPORT SPEICHERN ---
+  // ns.write kostet 0 GB RAM und überschreibt ("w") die Datei jedes Mal neu
+  await ns.write("/temp/shop-report.txt", report.join("\n"), "w");
 }
