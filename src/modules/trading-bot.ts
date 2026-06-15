@@ -3,15 +3,19 @@ import { NS } from "@ns";
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
-  ns.print("⚡ Finanz-Subsystem v3.2 [PROFIT-MAX] initialisiert.");
+  ns.print("⚡ Finanz-Subsystem v3.3 [DYNAMIC-FLEX] initialisiert.");
 
   let fullyUnlocked = false;
+  let canShort = false; // Wird dynamisch ermittelt
+
   const TRANSACTION_FEE = 100_000;
-  const MIN_INVESTMENT = 5_000_000; // Lohnt sich erst richtig ab 5M wegen der 100k Gebühr
-  const CASH_BUFFER = 2_000_000; // Absoluter Notgroschen für Scripte/Ram
+  const MIN_INVESTMENT = 5_000_000;
+  const CASH_BUFFER = 2_000_000;
 
   while (true) {
-    // --- 1. LIZENZ-VERWALTUNG ---
+    const symbols = ns.stock.getSymbols();
+
+    // --- 1. LIZENZ-VERWALTUNG & CAPABILITY-PROBE ---
     if (!fullyUnlocked) {
       let unlocked = true;
       if (!ns.stock.hasWseAccount())
@@ -28,22 +32,36 @@ export async function main(ns: NS): Promise<void> {
           : (unlocked = false);
 
       fullyUnlocked = unlocked;
+
       if (!fullyUnlocked) {
         await ns.sleep(60000);
         continue;
       }
-      ns.print("🚀 Alle APIs aktiv. Portfolio-Manager gestartet.");
+
+      // 🧠 LAUFZEIT-PROBE: Können wir shorten?
+      try {
+        // Wir versuchen einen Dummy-Short-Kauf von 0 Aktien.
+        // Wenn die API gesperrt ist, wirft Bitburner hier sofort einen Laufzeitfehler.
+        ns.stock.buyShort(symbols[0], 0);
+        canShort = true;
+        ns.print("📉 Short-Selling-Lizenz verifiziert [FULL MODE].");
+      } catch {
+        canShort = false;
+        ns.print(
+          "ℹ️ Short-Selling blockiert (kein SF8). Schalte um auf [LONG-ONLY MODE].",
+        );
+      }
+
+      ns.print("🚀 Portfolio-Manager einsatzbereit.");
     }
 
-    const symbols = ns.stock.getSymbols();
-
-    // --- 2. PHASE 1: EXISTIERENDE POSITIONEN PRÜFEN & LIQUIDIEREN (CASH GENERIEREN) ---
+    // --- 2. PHASE 1: EXISTIERENDE POSITIONEN LIQUIDIEREN ---
     for (const sym of symbols) {
       const forecast = ns.stock.getForecast(sym);
       const [shares, avgPrice, sharesShort, avgPriceShort] =
         ns.stock.getPosition(sym);
 
-      // LONG-Exit: Trend vorbei oder kippt
+      // LONG-Exit
       if (shares > 0 && forecast < 0.5) {
         const priceSold = ns.stock.sellStock(sym, shares);
         if (priceSold > 0) {
@@ -54,14 +72,14 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-      // SHORT-Exit: Aktie fängt sich wieder, fällt nicht mehr stark genug
-      if (sharesShort > 0 && forecast > 0.5) {
+      // SHORT-Exit (Wird nur ausgeführt, wenn Shorting aktiv ist und wir Positionen halten)
+      if (canShort && sharesShort > 0 && forecast > 0.5) {
         const priceSoldShort = ns.stock.sellShort(sym, sharesShort);
         if (priceSoldShort > 0) {
           const profit =
             (avgPriceShort - priceSoldShort) * sharesShort - TRANSACTION_FEE;
           ns.print(
-            `📉 [EXIT SHORT] ${sym} | Profit: $${ns.format.number(profit, 2)}`,
+            ` outdoor_grill [EXIT SHORT] ${sym} | Profit: $${ns.format.number(profit, 2)}`,
           );
         }
       }
@@ -79,7 +97,7 @@ export async function main(ns: NS): Promise<void> {
       const forecast = ns.stock.getForecast(sym);
       const [shares, , sharesShort] = ns.stock.getPosition(sym);
 
-      // Nur analysieren, wenn wir nicht schon in die Gegenrichtung investiert sind
+      // LONG-Kandidat (Immer aktiv)
       if (forecast > 0.6 && shares === 0 && sharesShort === 0) {
         buyCandidates.push({
           sym,
@@ -87,7 +105,14 @@ export async function main(ns: NS): Promise<void> {
           type: "LONG",
           strength: forecast - 0.5,
         });
-      } else if (forecast < 0.4 && shares === 0 && sharesShort === 0) {
+      }
+      // SHORT-Kandidat (Nur hinzufügen, wenn die API-Probe erfolgreich war!)
+      else if (
+        canShort &&
+        forecast < 0.4 &&
+        shares === 0 &&
+        sharesShort === 0
+      ) {
         buyCandidates.push({
           sym,
           forecast,
@@ -97,7 +122,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // Sortiere Kandidaten nach der absoluten Stärke des Trends (stärkste zuerst!)
+    // Sortierung nach der Heftigkeit des Trends
     buyCandidates.sort((a, b) => b.strength - a.strength);
 
     // --- 4. PHASE 3: GEZIELTES KAPITAL-INVESTMENT ---
@@ -105,7 +130,6 @@ export async function main(ns: NS): Promise<void> {
       const currentMoney = ns.getPlayer().money;
       const availableBudget = currentMoney - CASH_BUFFER;
 
-      // Macht der Kauf wirtschaftlich Sinn?
       if (availableBudget < MIN_INVESTMENT) break;
 
       const sym = candidate.sym;
@@ -125,14 +149,15 @@ export async function main(ns: NS): Promise<void> {
           const pricePaid = ns.stock.buyStock(sym, sharesToBuy);
           if (pricePaid > 0) {
             ns.print(
-              `📈 [ENTER LONG] ${sym} (Forecast: ${(candidate.forecast * 100).toFixed(0)}%) mit ${ns.format.number(sharesToBuy)} Units`,
+              `📈 [ENTER LONG] ${sym} (${(candidate.forecast * 100).toFixed(0)}%) | ${ns.format.number(sharesToBuy)} Units`,
             );
           }
-        } else {
+        } else if (candidate.type === "SHORT" && canShort) {
+          // Zusätzliche Absicherung, obwohl durch Phase 2 gefiltert
           const pricePaidShort = ns.stock.buyShort(sym, sharesToBuy);
           if (pricePaidShort > 0) {
             ns.print(
-              `📉 [ENTER SHORT] ${sym} (Forecast: ${(candidate.forecast * 100).toFixed(0)}%) mit ${ns.format.number(sharesToBuy)} Units`,
+              `📉 [ENTER SHORT] ${sym} (${(candidate.forecast * 100).toFixed(0)}%) | ${ns.format.number(sharesToBuy)} Units`,
             );
           }
         }
