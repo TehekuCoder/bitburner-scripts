@@ -1,5 +1,5 @@
 import { NS, Player, Server } from "@ns";
-import { loadState, saveState, BotState } from "./state-manager.js"; // REPARIERT: saveState importiert
+import { loadState, saveState, BotState } from "./state-manager.js";
 import { getAllServers, breakAndInfectNetwork } from "../lib/network.js";
 
 interface ScriptList {
@@ -24,7 +24,7 @@ export async function main(ns: NS): Promise<void> {
     backdoor: "tasks/backdoor.js",
     xpfarm: "tasks/weaken-xp.js",
     trade: "modules/trading-bot.js",
-    hacknet: "tasks/hacknet.js",
+    hacknet: "tasks/hacknet-early.js", // ANGEPASST: Nutzt jetzt den schlanken Early-Game-Bot
     replicator: "modules/darknet-replicator.js",
     hack: "tasks/hack.js",
     grow: "tasks/grow.js",
@@ -40,7 +40,6 @@ export async function main(ns: NS): Promise<void> {
     ns.exec("sys-hud.ts", "home", 1);
   }
 
-  // --- SAFE ENVIRONMENT LAYER (FAILSAFE-FALLBACK) ---
   let bnMults = {
     ServerMaxMoney: 1.0,
     HacknetProduction: 1.0,
@@ -56,20 +55,27 @@ export async function main(ns: NS): Promise<void> {
       }
     } catch {
       ns.print(
-        "⚠️ [KERNEL] Fehler beim Parsen der bn-multipliers.txt. Nutze Failsafe-Modus.",
+        "⚠️ [KERNEL] Fehler beim Parsen der bn-multipliers.txt. Failsafe aktiv.",
       );
     }
   }
 
+  // Für den intelligenten Backdoor-Trigger
+  let lastRootCount = -1;
+
   while (true) {
-    // 2. NETZWERK ANREICHERN & SCANNEN
+    // 1. NETZWERK ANREICHERN & SCANNEN
     breakAndInfectNetwork(ns);
     const allNodes: string[] = getAllServers(ns);
+
+    // Prüfen, ob neue Server gerootet wurden, um Backdoor-Skript effizient anzustoßen
+    const currentRootCount = allNodes.filter((n) => ns.hasRootAccess(n)).length;
+    const triggerBackdoor = currentRootCount > lastRootCount;
+    lastRootCount = currentRootCount;
 
     const homeMax = ns.getServerMaxRam("home");
     const loadedState = loadState(ns);
 
-    // REPARIERT: lastUpdate nutzt JETZT immer die Echtzeit, damit das HUD den Kernel-Puls spürt
     const state: BotState = {
       strategy: loadedState?.strategy || "MONEY",
       targetFaction: loadedState?.targetFaction || undefined,
@@ -86,7 +92,6 @@ export async function main(ns: NS): Promise<void> {
       state.progressBar = "💰 Early-Game-Booster (Warte auf 64GB RAM)";
     }
 
-    // HIGH-END STRATEGIE-ANPASSUNG
     if (bnMults.ServerMaxMoney === 0 && state.strategy === "MONEY") {
       state.strategy = "XP_SPRINT";
       state.progressBar =
@@ -101,10 +106,10 @@ export async function main(ns: NS): Promise<void> {
       bnMults.ServerMaxMoney,
     );
 
-    // REPARIERT: Zustand auf Platte sichern, damit HUD und Subskripte die Kernel-Entscheidungen sehen!
     saveState(ns, state);
 
-    manageSuites(ns, scripts, state);
+    // REPARIERT: Übergibt den triggerBackdoor-Flag an den Suite-Manager
+    manageSuites(ns, scripts, state, triggerBackdoor);
 
     if (
       homeMax >= 64 &&
@@ -145,7 +150,7 @@ export async function main(ns: NS): Promise<void> {
           continue;
         }
 
-        // OPTIMIERT: Der Kernel tritt nur zurück, wenn Formulas UND genug RAM für den Dispatcher da sind!
+        // Kernel tritt zurück, wenn der Dispatcher übernehmen kann
         if (hasFormulas && homeMax >= 64) {
           const procs = ns.ps(node);
           const standardScripts = [
@@ -167,7 +172,7 @@ export async function main(ns: NS): Promise<void> {
           continue;
         }
 
-        // --- LEGACY FALLBACK ---
+        // --- LEGACY FALLBACK (Early Game Hacking) ---
         let activeScript =
           state.strategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
 
@@ -219,7 +224,6 @@ function findBestTarget(
 ): string {
   let best = "n00dles";
   let maxWeight = 0;
-  const hasFormulas = ns.fileExists("Formulas.exe", "home");
   const isNoMoneyNode = serverMaxMoneyMult === 0;
 
   for (const node of nodes) {
@@ -232,18 +236,14 @@ function findBestTarget(
     if (!ns.hasRootAccess(node)) continue;
 
     const srv = ns.getServer(node);
-
-    // TYPENSICHERHEIT: Fallback auf 0, falls moneyMax 'undefined' ist.
-    // Damit weiß TypeScript ab hier, dass 'maxMoney' definitiv vom Typ 'number' ist.
     const maxMoney = srv.moneyMax ?? 0;
 
-    // Wenn wir im normalen Geld-Modus sind, ignorieren wir Server ohne Geld
     if (!isNoMoneyNode && maxMoney <= 0) continue;
 
     const reqSkill = srv.requiredHackingSkill || 0;
     if (reqSkill > player.skills.hacking) continue;
 
-    // SPEZIALMODUS: Reine Hacking-XP Optimierung bei $0-Servern (z.B. BitNode 8)
+    // SPEZIALMODUS: Reine Hacking-XP Optimierung ($0-Server)
     if (isNoMoneyNode) {
       const cycleTime = ns.getWeakenTime(node);
       const weight = reqSkill / (Math.max(1, cycleTime) / 1000);
@@ -254,37 +254,20 @@ function findBestTarget(
       continue;
     }
 
-    if (hasFormulas) {
-      const mockServer = {
-        ...srv,
-        hackDifficulty: srv.minDifficulty ?? 100, // Failsafe für Compiler
-        moneyAvailable: maxMoney, // Jetzt garantiert eine Number
-      };
+    // REPARIERT: Formulas-Zweig komplett entfernt, um 5GB RAM im Kernel einzusparen.
+    // Early-Game-Gewichtung basiert rein auf Geld im Verhältnis zur Laufzeit.
+    const cycleTime = ns.getWeakenTime(node);
+    if (cycleTime > 5 * 60 * 1000) continue; // Ignoriere Server, die länger als 5 Min brauchen
 
-      const hackChance = ns.formulas.hacking.hackChance(mockServer, player);
-      const hackPct = ns.formulas.hacking.hackPercent(mockServer, player);
-      const weakenTime = ns.formulas.hacking.weakenTime(mockServer, player);
-
-      const weight = (maxMoney * hackPct * hackChance) / (weakenTime / 1000);
-
-      if (weight > maxWeight) {
-        maxWeight = weight;
-        best = node;
-      }
-    } else {
-      const cycleTime = ns.getWeakenTime(node);
-      if (cycleTime > 5 * 60 * 1000) continue;
-
-      // Mathematische Operationen sind jetzt sicher vor 'undefined'-Fehlern
-      const weight = (maxMoney / (cycleTime / 1000)) * (reqSkill / 100);
-      if (weight > maxWeight) {
-        maxWeight = weight;
-        best = node;
-      }
+    const weight = (maxMoney / (cycleTime / 1000)) * (reqSkill / 100);
+    if (weight > maxWeight) {
+      maxWeight = weight;
+      best = node;
     }
   }
   return best;
 }
+
 function deployWorker(
   ns: NS,
   targetNode: string,
@@ -326,11 +309,42 @@ function deployWorker(
   }
 }
 
-function manageSuites(ns: NS, scripts: ScriptList, state: BotState): void {
+function manageSuites(
+  ns: NS,
+  scripts: ScriptList,
+  state: BotState,
+  triggerBackdoor: boolean,
+): void {
   const homeMaxRam = ns.getServerMaxRam("home");
   const playerMoney = ns.getPlayer().money;
+  const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
+  // ======================================================================
+  // --- HACKNET HOT-SWAP MANAGER ---
+  // ======================================================================
+  // Bestimme den Soll-Zustand basierend auf Formulas-Besitz
+  const targetHacknetScript = hasFormulas ? "tasks/hacknet.js" : "tasks/hacknet-early.js";
+  const obsoleteHacknetScript = hasFormulas ? "tasks/hacknet-early.js" : "tasks/hacknet.js";
+
+  // Falls der falsche Bot läuft: Killen!
+  if (ns.isRunning(obsoleteHacknetScript, "home")) {
+    ns.print(`🔄 [KERNEL] Formulas-Status geändert. Beende ${obsoleteHacknetScript}...`);
+    ns.scriptKill(obsoleteHacknetScript, "home");
+  }
+
+  // Richtigen Bot starten, falls er noch nicht läuft
   if (
+    ns.fileExists(targetHacknetScript, "home") &&
+    !ns.isRunning(targetHacknetScript, "home")
+  ) {
+    ns.print(`⚡ [KERNEL] Starte adaptives Hacknet-Subsystem (${hasFormulas ? "Advanced ROI" : "Early-Heuristic"})...`);
+    ns.exec(targetHacknetScript, "home", 1);
+  }
+  // ======================================================================
+
+  // --- RESTLICHE SUITEN ---
+  if (
+    triggerBackdoor &&
     ns.fileExists(scripts.backdoor, "home") &&
     !ns.isRunning(scripts.backdoor, "home")
   ) {
@@ -352,14 +366,6 @@ function manageSuites(ns: NS, scripts: ScriptList, state: BotState): void {
   }
 
   if (
-    ns.fileExists(scripts.hacknet, "home") &&
-    !ns.isRunning(scripts.hacknet, "home")
-  ) {
-    ns.print("⚡ [KERNEL] Starte adaptives Hacknet-Subsystem...");
-    ns.exec(scripts.hacknet, "home", 1);
-  }
-
-  if (
     ns.fileExists("DarkscapeNavigator.exe", "home") &&
     !ns.isRunning(scripts.replicator, "home")
   ) {
@@ -367,7 +373,6 @@ function manageSuites(ns: NS, scripts: ScriptList, state: BotState): void {
     ns.exec(scripts.replicator, "home", 1);
   }
 }
-
 function drawSysKernelDashboard(
   ns: NS,
   state: BotState,

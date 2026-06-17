@@ -1,10 +1,11 @@
-import { NS, Server } from "@ns";
+import { NS } from "@ns";
 import { calculateBatch } from "../utils/batch-calculator.js";
 import { getAllServers } from "../lib/network.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  // ns.ui.openTail();
+  ns.disableLog("getServerSecurityLevel");
+  ns.disableLog("getServerMoneyAvailable");
 
   let batchId = 0;
   const SPACER = 80; // Taktfrequenz der Pipeline in ms
@@ -33,11 +34,19 @@ export async function main(ns: NS): Promise<void> {
     const curMoney = ns.getServerMoneyAvailable(target);
 
     if (curSec > minSec || curMoney < maxMoney) {
+      const prepTime = ns.getWeakenTime(target);
       ns.print(
         `🔧 [Batcher] ${target} benötigt Vorbereitung. Starte Prep-Welle...`,
       );
+
       executePrepPhase(ns, target);
-      await ns.sleep(SPACER * 10); // Kurze Pause, um die Server nicht zu fluten
+
+      // FIX: Wir schlafen exakt so lange, wie die Prep-Welle läuft (+ Puffer),
+      // um eine Überflutung des Netzwerks mit Prep-Skripten zu verhindern!
+      ns.print(
+        `⏳ [Batcher] Prep aktiv. Pausiere Batcher für ${ns.format.number(prepTime / 1000, 1)}s`,
+      );
+      await ns.sleep(prepTime + SPACER * 2);
       continue;
     }
 
@@ -56,8 +65,7 @@ export async function main(ns: NS): Promise<void> {
 
     // 4. PIPELINE-PUFFER-CHECK (Taktsynchron halten!)
     if (!plan || currentFreeNetworkRam < plan.totalRam) {
-      // WICHTIG: Niemals 1000ms schlafen! Wir schlafen exakt einen Takt (SPACER).
-      // Dadurch bleibt die Pipeline im Rhythmus und greift sofort zu, sobald RAM frei wird.
+      // Exakt einen Takt warten, um die Pipeline im Rhythmus zu halten
       await ns.sleep(SPACER);
       continue;
     }
@@ -124,7 +132,7 @@ function dispatchBatchScript(
 
     let maxRam = ns.getServerMaxRam(server);
     let usedRam = ns.getServerUsedRam(server);
-    if (server === "home") maxRam = Math.max(0, maxRam - 64); // Erhöhter Schutz für OS/Dispatcher
+    if (server === "home") maxRam = Math.max(0, maxRam - 64); // OS-Schutz
 
     const freeRam = maxRam - usedRam;
     const possibleThreads = Math.floor(freeRam / scriptRam);
@@ -132,7 +140,8 @@ function dispatchBatchScript(
     if (possibleThreads > 0) {
       const threadsToRun = Math.min(possibleThreads, threadsRemaining);
 
-      if (server !== "home") {
+      // FIX: Datei-I/O minimieren. Nur kopieren, wenn das Skript wirklich FEHLT!
+      if (server !== "home" && !ns.fileExists(script, server)) {
         ns.scp(script, server, "home");
       }
 
@@ -144,16 +153,14 @@ function dispatchBatchScript(
 }
 
 function executePrepPhase(ns: NS, target: string): void {
-  // Simpler, aber robuster Prep-Algorithmus: Weaken bricht Security, Grow zieht Geld nach
   const minSec = ns.getServerMinSecurityLevel(target);
   const curSec = ns.getServerSecurityLevel(target);
   const maxMoney = ns.getServerMaxMoney(target);
   const curMoney = ns.getServerMoneyAvailable(target);
 
   if (curSec > minSec) {
-    // Wenn Security zu hoch ist: Pures Weaken!
     const secDeficit = curSec - minSec;
-    const weakenThreads = Math.ceil(secDeficit / 0.05); // Ein Weaken-Thread senkt Sec um 0.05
+    const weakenThreads = Math.ceil(secDeficit / 0.05);
     dispatchBatchScript(
       ns,
       "tasks/weaken.js",
@@ -163,11 +170,10 @@ function executePrepPhase(ns: NS, target: string): void {
       Date.now(),
     );
   } else if (curMoney < maxMoney) {
-    // Wenn Security perfekt, aber Geld fehlt: Grow & passendes Weaken triggern
     const growThreads = Math.ceil(
       ns.growthAnalyze(target, maxMoney / Math.max(1, curMoney)),
     );
-    const weakenThreadsNeeded = Math.ceil((growThreads * 0.004) / 0.05); // Grow erhöht Sec um 0.004
+    const weakenThreadsNeeded = Math.ceil((growThreads * 0.004) / 0.05);
 
     dispatchBatchScript(
       ns,
@@ -184,7 +190,7 @@ function executePrepPhase(ns: NS, target: string): void {
       target,
       50,
       Date.now(),
-    ); // Leicht verzögert dahinter
+    );
   }
 }
 
@@ -202,13 +208,11 @@ function findBestBatchTargetForNetwork(
   for (const s of allServers) {
     if (ns.getServerRequiredHackingLevel(s) > ns.getHackingLevel()) continue;
 
-    // EFFIZIENZ-SCORE: Geld dividiert durch die Zeit, die ein Weaken benötigt
     const money = ns.getServerMaxMoney(s);
     const weakenTime = ns.getWeakenTime(s);
     const score = money / weakenTime;
 
     if (score > highestScore) {
-      // Gegenprüfen, ob die Kiste überhaupt mit Minimal-Greed ins Netz passt
       const testPlan = calculateBatch(ns, s, 0.01);
       if (testPlan && testPlan.totalRam <= maxNetworkRam) {
         highestScore = score;

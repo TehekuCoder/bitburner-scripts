@@ -20,22 +20,35 @@ export async function main(ns: NS): Promise<void> {
   const myFactions = player.factions;
   const NFG_NAME = "NeuroFlux Governor";
 
-  // --- REPORT LOGGER SETUP ---
+  // --- GANG-DETEKTION ---
+  // Wir ermitteln, ob wir eine Gang haben, um diese Fraktion vom Singularity-Kauf auszuschließen
+  let gangFaction = "";
+  try {
+    if (ns.gang && ns.gang.inGang()) {
+      gangFaction = ns.gang.getGangInformation().faction;
+    }
+  } catch {
+    // Falls das Quellfile/API-Recht für Gangs im aktuellen Node noch fehlt
+  }
+
   let report: string[] = [];
   const logReport = (msg: string) => {
-    ns.print(msg); // Für das normale Log
-    report.push(msg); // Für die Textdatei
+    ns.print(msg);
+    report.push(msg);
   };
 
-  logReport(`==================================================`);
-  logReport(`🛍️ SHOPPING REPORT - ${new Date().toLocaleTimeString()}`);
-  logReport(`==================================================\n`);
+  logReport("==================================================");
+  logReport("🛍️ SHOPPING REPORT - " + new Date().toLocaleTimeString());
+  logReport("==================================================\n");
 
   // 1. ALLE EINZIGARTIGEN AUGMENTATIONS SCANNEN
   let shoppingList: AugShoppingItem[] = [];
   const ownedAugs = sing.getOwnedAugmentations(true);
 
   for (const faction of myFactions) {
+    // FIX: Überspringe die eigene Gang, da deren Upgrades über ns.gang gekauft werden müssen
+    if (faction === gangFaction) continue;
+
     const factionRep = sing.getFactionRep(faction);
     const factionAugs = sing.getAugmentationsFromFaction(faction);
 
@@ -54,16 +67,23 @@ export async function main(ns: NS): Promise<void> {
   }
 
   logReport(
-    `📋 Scanner-Ergebnis: ${shoppingList.length} einzigartige Augmentations qualifiziert.`,
+    "📋 Scanner-Ergebnis: " +
+      shoppingList.length +
+      " einzigartige Augmentations qualifiziert.",
   );
   for (const item of shoppingList) {
     logReport(
-      `  -> ${item.name} (${item.faction}) - $${ns.format.number(item.price)}`,
+      "  -> " +
+        item.name +
+        " (" +
+        item.faction +
+        ") - $" +
+        ns.format.number(item.price),
     );
   }
   logReport("");
 
-  // 2. MATHEMATISCHE OPTIMIERUNG
+  // 2. MATHEMATISCHE OPTIMIERUNG (Teuerste zuerst wegen des 1.9x Multiplikators)
   shoppingList.sort((a, b) => b.price - a.price);
 
   // 3. EINKAUFSSCHLEIFE
@@ -72,12 +92,12 @@ export async function main(ns: NS): Promise<void> {
     boughtAnything = false;
     const currentOwnedAndQueued = sing.getOwnedAugmentations(true);
 
-    for (let i = 0; i < shoppingList.length; i++) {
+    // Nutzen einer klassischen Rückwärtsschleife für stabileres In-Place Splicing
+    for (let i = shoppingList.length - 1; i >= 0; i--) {
       const item = shoppingList[i];
       const currentPrice = sing.getAugmentationPrice(item.name);
       const currentMoney = ns.getPlayer().money;
 
-      // Abhängigkeiten prüfen
       const prereqs = sing.getAugmentationPrereq(item.name);
       const missingPrereqs = prereqs.filter(
         (p) => !currentOwnedAndQueued.includes(p),
@@ -89,35 +109,36 @@ export async function main(ns: NS): Promise<void> {
         );
         if (!prereqOnList) {
           logReport(
-            `⚠️ Skip ${item.name}: Voraussetzung fehlt komplett im Besitz (${missingPrereqs.join(", ")})`,
+            "⚠️ Skip " +
+              item.name +
+              ": Voraussetzung fehlt komplett im Besitz (" +
+              missingPrereqs.join(", ") +
+              ")",
           );
         }
         continue;
       }
 
-      // Finanz-Check
       if (currentMoney < currentPrice) {
-        logReport(
-          `💸 Zu wenig Geld für ${item.name}: Benötigt $${ns.format.number(currentPrice)}, hast $${ns.format.number(currentMoney)}`,
-        );
-        continue;
+        continue; // Geld reicht (noch) nicht, eventuell nach dem nächsten Zyklus
       }
 
-      logReport(`[SHOP] Versuche Kauf: ${item.name} von ${item.faction}`);
+      logReport("[SHOP] Versuche Kauf: " + item.name + " von " + item.faction);
       const success = sing.purchaseAugmentation(item.faction, item.name);
 
       if (success) {
-        logReport(`✅ ERFOLGREICH GEKAUFT: ${item.name} (${item.faction})`);
+        logReport(
+          "✅ ERFOLGREICH GEKAUFT: " + item.name + " (" + item.faction + ")",
+        );
         shoppingList.splice(i, 1);
-        i--;
         boughtAnything = true;
       } else {
-        logReport(`❌ Interner API-Fehler beim Kauf von ${item.name}.`);
+        logReport("❌ Interner API-Fehler beim Kauf von " + item.name);
       }
     }
   }
 
-  // 4. LATE-GAME EXTRA-PHASE: NEUROFLUX GOVERNOR
+  // 4. LATE-GAME EXTRA-PHASE: NEUROFLUX GOVERNOR DUMP
   logReport("\n🔄 Phase 2: NeuroFlux Governor Dump...");
   let boughtNFG = true;
   let nfgCount = 0;
@@ -127,6 +148,8 @@ export async function main(ns: NS): Promise<void> {
     let bestNFGFaction: FactionName | null = null;
 
     for (const faction of myFactions) {
+      if (faction === gangFaction) continue; // Auch hier die Gang ausschließen
+
       const factionRep = sing.getFactionRep(faction);
       const repReq = sing.getAugmentationRepReq(NFG_NAME);
 
@@ -152,17 +175,12 @@ export async function main(ns: NS): Promise<void> {
 
   if (nfgCount > 0) {
     logReport(
-      `📈 NEUROFLUX UPGRADES: Insgesamt ${nfgCount} Stufen investiert.`,
+      "📈 NEUROFLUX UPGRADES: Insgesamt " + nfgCount + " Stufen investiert.",
     );
   } else {
-    logReport(
-      `ℹ️ Kein NeuroFlux Governor gekauft (Geld oder Ruf reichte nicht für die nächste Stufe).`,
-    );
+    logReport("ℹ️ Kein NeuroFlux Governor gekauft.");
   }
 
-  logReport(`\n🏁 Report Ende. Bereit für die Installation.`);
-
-  // --- REPORT SPEICHERN ---
-  // ns.write kostet 0 GB RAM und überschreibt ("w") die Datei jedes Mal neu
+  logReport("\n🏁 Report Ende. Bereit für die Installation.");
   await ns.write("/temp/shop-report.txt", report.join("\n"), "w");
 }

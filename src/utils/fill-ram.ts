@@ -5,29 +5,28 @@ export async function main(ns: NS): Promise<void> {
   const target = "home";
   ns.disableLog("ALL");
 
-  const fillerScripts = ["../tasks/share.js", "../tasks/weaken-xp.js"];
+  // FIX: Absolute Pfade nutzen, da ns.ps() relative Pfadangaben wie "../" verwirft!
+  const fillerScripts = ["tasks/share.js", "tasks/weaken-xp.js"];
 
   while (true) {
     // 1. SYSTEM-STATE ÜBERPRÜFEN
     const state = loadState(ns);
     const p = ns.getPlayer();
 
-    let activeScript = "../tasks/share.js";
+    let activeScript = "tasks/share.js";
 
-    // INTELLIGENTE WEICHE:
-    // Wir nutzen share.js NUR, wenn das Hacking-Level reicht UND der Dispatcher aktiv Ruf farmt!
+    // INTELLIGENTE WEICHE
     if (p.skills.hacking < 250) {
-      activeScript = "../tasks/weaken-xp.js";
+      activeScript = "tasks/weaken-xp.js";
     } else if (!state || state.strategy !== "REP") {
-      // Wenn wir >= 250 sind, aber der Dispatcher Geld farmt oder trainiert: XP-Grind aktivieren!
-      activeScript = "../tasks/weaken-xp.js";
+      activeScript = "tasks/weaken-xp.js";
     }
 
     // --- ANTI-LEAK-CLEANUP ---
     for (const fScript of fillerScripts) {
       if (fScript !== activeScript && ns.isRunning(fScript, target)) {
         ns.print(`[CLEANUP] Umstellung auf Effizienzmodus! Beende: ${fScript}`);
-        ns.kill(fScript, target);
+        ns.scriptKill(fScript, target);
       }
     }
 
@@ -38,9 +37,12 @@ export async function main(ns: NS): Promise<void> {
     // 2. DYNAMISCHE PRIORITÄTS-RESERVE
     let reserve = 32;
     if (ns.isRunning("core/sys-batcher.js", "home")) {
-      reserve = Math.max(maxRam * 0.5, 128);
+      // 30% statt 50% Reserve reichen völlig, um dem Batcher Luft zum Atmen zu geben,
+      // ohne wertvolle Rechenleistung komplett brachliegen zu lassen.
+      reserve = Math.max(maxRam * 0.3, 128);
     }
 
+    // FIX: Findet den Prozess jetzt fehlerfrei, da die Pfadformate übereinstimmen
     const fillerProc = ns.ps(target).find((p) => p.filename === activeScript);
     const currentThreads = fillerProc ? fillerProc.threads : 0;
 
@@ -60,7 +62,7 @@ export async function main(ns: NS): Promise<void> {
       (shouldScaleDown || shouldScaleUp || currentThreads === 0)
     ) {
       if (currentThreads > 0) {
-        ns.kill(activeScript, target);
+        ns.scriptKill(activeScript, target);
       }
 
       if (targetThreads > 0) {
@@ -69,7 +71,6 @@ export async function main(ns: NS): Promise<void> {
         );
 
         if (activeScript.includes("weaken")) {
-          // DYNAMISCHE ZIELWAHL: Falls joesguns noch nicht existiert oder kein Root-Zugriff besteht, weichen wir auf foodnstuff aus
           const weakenTarget =
             ns.serverExists("joesguns") && ns.hasRootAccess("joesguns")
               ? "joesguns"
@@ -89,6 +90,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    // 10 Sekunden reichen völlig aus, um das System nicht mit Abfragen zu fluten
     await ns.sleep(10000);
   }
 }

@@ -1,15 +1,24 @@
 import { NS, FactionName, CompanyName, JobField } from "@ns";
 
-// Zentrale Schnittstelle für den Systemstatus
+// Strikte Definition aller erlaubten System-Strategien zur Vermeidung von Tippfehlern
+export type BotStrategy =
+  | "MONEY"
+  | "XP_SPRINT"
+  | "REP"
+  | "CORP"
+  | "TRAIN"
+  | "PURE_HACK";
+
 export interface BotState {
-  strategy: string;
+  strategy: BotStrategy;
   targetFaction?: FactionName;
   targetCompany?: CompanyName;
   targetStat?: number;
   progressBar: string;
-  lastUpdate: number; // NEU: Zeitstempel zur Desync-Erkennung
-  playerHacking: number; // NEU: Verhindert das Laden von Endgame-States nach einem Augmentation-Reset
+  lastUpdate: number; // Zeitstempel zur Desync-Erkennung
+  playerHacking: number; // Verhindert das Laden von Endgame-States nach einem Reset
   jobField?: JobField;
+  targetKills?: number;
 }
 
 const STATE_FILE = "bitos_state.txt";
@@ -25,7 +34,7 @@ export function saveState(
     const fullState: BotState = {
       ...state,
       lastUpdate: Date.now(),
-      playerHacking: ns.getHackingLevel(), // Aktuelles Level mitspeichern
+      playerHacking: ns.getHackingLevel(),
     };
     ns.write(STATE_FILE, JSON.stringify(fullState, null, 2), "w");
   } catch (error) {
@@ -34,8 +43,7 @@ export function saveState(
 }
 
 /**
- * Erlaubt es, nur einzelne Felder des Zustands zu aktualisieren,
- * ohne den gesamten Zustand außerhalb des Managers verwalten zu müssen.
+ * Erlaubt es, nur einzelne Felder des Zustands zu aktualisieren.
  */
 export function patchState(
   ns: NS,
@@ -43,11 +51,12 @@ export function patchState(
 ): void {
   const currentState = loadState(ns);
 
-  // Wenn kein Zustand existiert, erstellen wir einen Standard-Fallback
-  const baseState = currentState || {
-    strategy: "MONEY",
-    progressBar: "Prüfe System...",
-  };
+  // Standard-Fallback, falls kein State existiert oder gelöscht wurde
+  const baseState: Omit<BotState, "lastUpdate" | "playerHacking"> =
+    currentState || {
+      strategy: "MONEY",
+      progressBar: "Prüfe System...",
+    };
 
   saveState(ns, {
     ...baseState,
@@ -72,17 +81,16 @@ export function loadState(ns: NS): BotState | null {
 
     // --- CONTEXT ACCURACY CHECK ---
     // Wenn das gespeicherte Hacking-Level HÖHER ist als unser aktuelles Level,
-    // hat in der Zwischenzeit ein Augmentation-Reset stattgefunden!
-    // Der alte Zustand ist korrupt und ungültig.
+    // hat ein Augmentation-Reset stattgefunden.
     if (state.playerHacking > ns.getHackingLevel()) {
       ns.print(
-        "⚠️ [State-Manager] Entdeckte veralteten Zustand (Augmentation Reset!). Lösche Datei...",
+        "⚠️ [State-Manager] Veralteten Zustand nach Augmentation Reset erkannt. Bereinige...",
       );
       clearState(ns);
       return null;
     }
 
-    // Wenn der Zustand älter als 60 Sekunden ist, arbeitet der Dispatcher wohl gerade nicht
+    // Warnung im Log, falls der Dispatcher abgestürzt ist oder blockiert
     if (Date.now() - state.lastUpdate > 60_000) {
       ns.print("ℹ️ [State-Manager] Zustand ist älter als 60s (inkonsistent).");
     }
