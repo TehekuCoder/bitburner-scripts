@@ -1,12 +1,13 @@
 import { NS } from "@ns";
+import { loadState, saveState } from "../core/state-manager.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
-  ns.print("⚡ Finanz-Subsystem v3.3 [DYNAMIC-FLEX] initialisiert.");
+  ns.print("⚡ Finanz-Subsystem v3.4 [DYNAMIC-FLEX] initialisiert.");
 
   let fullyUnlocked = false;
-  let canShort = false; // Wird dynamisch ermittelt
+  let canShort = true; // Startet optimistisch, schaltet bei Restriktion dynamisch ab
 
   const TRANSACTION_FEE = 100_000;
   const MIN_INVESTMENT = 5_000_000;
@@ -19,40 +20,42 @@ export async function main(ns: NS): Promise<void> {
     if (!fullyUnlocked) {
       let unlocked = true;
       if (!ns.stock.hasWseAccount())
-        ns.stock.purchaseWseAccount() ? ns.print("✅ WSE") : (unlocked = false);
+        ns.stock.purchaseWseAccount()
+          ? ns.print("✅ WSE Konto erworben.")
+          : (unlocked = false);
       if (unlocked && !ns.stock.hasTixApiAccess())
-        ns.stock.purchaseTixApi() ? ns.print("✅ TIX") : (unlocked = false);
+        ns.stock.purchaseTixApi()
+          ? ns.print("✅ TIX API freigeschaltet.")
+          : (unlocked = false);
       if (unlocked && !ns.stock.has4SData())
         ns.stock.purchase4SMarketData()
-          ? ns.print("✅ 4S Data")
+          ? ns.print("✅ 4S Marktdaten aktiv.")
           : (unlocked = false);
       if (unlocked && !ns.stock.has4SDataTixApi())
         ns.stock.purchase4SMarketDataTixApi()
-          ? ns.print("✅ 4S TIX API")
+          ? ns.print("✅ 4S TIX API voll lizenziert.")
           : (unlocked = false);
 
       fullyUnlocked = unlocked;
 
       if (!fullyUnlocked) {
+        ns.print(
+          "⏳ Warte auf ausreichend Kapital für vollständige API-Lizenzen (60s Sleep)...",
+        );
         await ns.sleep(60000);
         continue;
       }
 
-      // 🧠 LAUFZEIT-PROBE: Können wir shorten?
-      try {
-        // Wir versuchen einen Dummy-Short-Kauf von 0 Aktien.
-        // Wenn die API gesperrt ist, wirft Bitburner hier sofort einen Laufzeitfehler.
-        ns.stock.buyShort(symbols[0], 0);
-        canShort = true;
-        ns.print("📉 Short-Selling-Lizenz verifiziert [FULL MODE].");
-      } catch {
-        canShort = false;
-        ns.print(
-          "ℹ️ Short-Selling blockiert (kein SF8). Schalte um auf [LONG-ONLY MODE].",
-        );
-      }
+      ns.print(
+        "🚀 Portfolio-Manager voll einsatzbereit. Starte Marktüberwachung.",
+      );
+    }
 
-      ns.print("🚀 Portfolio-Manager einsatzbereit.");
+    // --- LOKALEN STATE AKTUALISIEREN (Optional für Dispatcher-Einsicht) ---
+    const state = loadState(ns);
+    if (state && (state as any).tradingActive !== true) {
+      (state as any).tradingActive = true;
+      saveState(ns, state);
     }
 
     // --- 2. PHASE 1: EXISTIERENDE POSITIONEN LIQUIDIEREN ---
@@ -61,7 +64,7 @@ export async function main(ns: NS): Promise<void> {
       const [shares, avgPrice, sharesShort, avgPriceShort] =
         ns.stock.getPosition(sym);
 
-      // LONG-Exit
+      // LONG-Exit: Trend kippt unter die 50%-Marke
       if (shares > 0 && forecast < 0.5) {
         const priceSold = ns.stock.sellStock(sym, shares);
         if (priceSold > 0) {
@@ -72,14 +75,14 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-      // SHORT-Exit (Wird nur ausgeführt, wenn Shorting aktiv ist und wir Positionen halten)
+      // SHORT-Exit: Trend steigt über die 50%-Marke (Nur wenn Shorting erlaubt ist)
       if (canShort && sharesShort > 0 && forecast > 0.5) {
         const priceSoldShort = ns.stock.sellShort(sym, sharesShort);
         if (priceSoldShort > 0) {
           const profit =
             (avgPriceShort - priceSoldShort) * sharesShort - TRANSACTION_FEE;
           ns.print(
-            ` outdoor_grill [EXIT SHORT] ${sym} | Profit: $${ns.format.number(profit, 2)}`,
+            `📉 [EXIT SHORT] ${sym} | Profit: $${ns.format.number(profit, 2)}`,
           );
         }
       }
@@ -97,32 +100,30 @@ export async function main(ns: NS): Promise<void> {
       const forecast = ns.stock.getForecast(sym);
       const [shares, , sharesShort] = ns.stock.getPosition(sym);
 
-      // LONG-Kandidat (Immer aktiv)
-      if (forecast > 0.6 && shares === 0 && sharesShort === 0) {
-        buyCandidates.push({
-          sym,
-          forecast,
-          type: "LONG",
-          strength: forecast - 0.5,
-        });
-      }
-      // SHORT-Kandidat (Nur hinzufügen, wenn die API-Probe erfolgreich war!)
-      else if (
-        canShort &&
-        forecast < 0.4 &&
-        shares === 0 &&
-        sharesShort === 0
-      ) {
-        buyCandidates.push({
-          sym,
-          forecast,
-          type: "SHORT",
-          strength: 0.5 - forecast,
-        });
+      // Nur analysieren, wenn wir aktuell keine Position halten
+      if (shares === 0 && sharesShort === 0) {
+        // Starker Aufwärtstrend -> LONG
+        if (forecast > 0.6) {
+          buyCandidates.push({
+            sym,
+            forecast,
+            type: "LONG",
+            strength: forecast - 0.5,
+          });
+        }
+        // Starker Abwärtstrend -> SHORT (nur wenn erlaubt)
+        else if (canShort && forecast < 0.4) {
+          buyCandidates.push({
+            sym,
+            forecast,
+            type: "SHORT",
+            strength: 0.5 - forecast,
+          });
+        }
       }
     }
 
-    // Sortierung nach der Heftigkeit des Trends
+    // Sortierung nach der Heftigkeit des Trends (Beste Chancen zuerst)
     buyCandidates.sort((a, b) => b.strength - a.strength);
 
     // --- 4. PHASE 3: GEZIELTES KAPITAL-INVESTMENT ---
@@ -153,17 +154,25 @@ export async function main(ns: NS): Promise<void> {
             );
           }
         } else if (candidate.type === "SHORT" && canShort) {
-          // Zusätzliche Absicherung, obwohl durch Phase 2 gefiltert
-          const pricePaidShort = ns.stock.buyShort(sym, sharesToBuy);
-          if (pricePaidShort > 0) {
+          try {
+            const pricePaidShort = ns.stock.buyShort(sym, sharesToBuy);
+            if (pricePaidShort > 0) {
+              ns.print(
+                `📉 [ENTER SHORT] ${sym} (${(candidate.forecast * 100).toFixed(0)}%) | ${ns.format.number(sharesToBuy)} Units`,
+              );
+            }
+          } catch (error) {
+            // Falls das Spiel den Aufruf blockiert, weil SF8/BN8 fehlt:
+            canShort = false;
             ns.print(
-              `📉 [ENTER SHORT] ${sym} (${(candidate.forecast * 100).toFixed(0)}%) | ${ns.format.number(sharesToBuy)} Units`,
+              "ℹ️ Short-Selling Laufzeit-Fehler detektiert. Schalte permanent auf [LONG-ONLY MODE].",
             );
           }
         }
       }
     }
 
+    // Markt tickt standardmäßig alle 6 Sekunden
     await ns.sleep(6000);
   }
 }

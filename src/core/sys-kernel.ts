@@ -25,7 +25,7 @@ export async function main(ns: NS): Promise<void> {
     xpfarm: "tasks/weaken-xp.js",
     trade: "modules/trading-bot.js",
     hacknet: "tasks/hacknet-early.js", // ANGEPASST: Nutzt jetzt den schlanken Early-Game-Bot
-    replicator: "modules/darknet-replicator.js",
+    replicator: "tasks/dnet/dnet-crawler.js",
     hack: "tasks/hack.js",
     grow: "tasks/grow.js",
     weaken: "tasks/weaken.js",

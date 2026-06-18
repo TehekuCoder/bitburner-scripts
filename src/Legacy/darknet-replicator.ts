@@ -161,9 +161,6 @@ async function serverSolver(
       return false;
   }
 }
-
-// --- OPTIMIERTE SOLVER MIT SCHÖNER PROGRESS BAR ---
-
 async function solveNumericBruteForce(ns: NS, host: string, len: number) {
   if (!len || len <= 0) return false;
   const max = Math.pow(10, len);
@@ -180,7 +177,6 @@ async function solveNumericBruteForce(ns: NS, host: string, len: number) {
   }
   return false;
 }
-
 async function solveNIL(
   ns: NS,
   host: string,
@@ -309,9 +305,6 @@ async function solveDeepGreen(
   }
   return (await ns.dnet.authenticate(host, currentGuess.join(""))).success;
 }
-
-// --- RESTLICHE BACKEND-FUNKTIONEN (unverändert, stabil) ---
-
 async function solveBinarySearch(
   ns: NS,
   host: string,
@@ -348,7 +341,6 @@ async function solveBinarySearch(
   }
   return false;
 }
-
 function updatePasswordFile(ns: NS, newPw: string): void {
   const file = "passwords.txt";
   const pws = new Set<string>();
@@ -359,7 +351,6 @@ function updatePasswordFile(ns: NS, newPw: string): void {
   }
   if (!pws.has(newPw)) ns.write(file, `\n${newPw}`, "a");
 }
-
 async function lootServer(ns: NS): Promise<void> {
   const host = ns.getHostname();
   if (host === "home") return;
@@ -386,7 +377,6 @@ async function lootServer(ns: NS): Promise<void> {
     } catch (e) {}
   }
 }
-
 async function solveRoman(ns: NS, host: string, details: ServerAuthDetails) {
   const vals: Record<string, number> = {
     I: 1,
@@ -409,7 +399,6 @@ async function solveRoman(ns: NS, host: string, details: ServerAuthDetails) {
   }
   return (await ns.dnet.authenticate(host, total.toString())).success;
 }
-
 async function solveBaseConversion(
   ns: NS,
   host: string,
@@ -420,7 +409,6 @@ async function solveBaseConversion(
   const result = parseInt(parts[1], parseInt(parts[0])).toString();
   return (await ns.dnet.authenticate(host, result)).success;
 }
-
 async function solveSniffing(ns: NS, host: string, details: ServerAuthDetails) {
   for (let i = 0; i < 5; i++) {
     const bleed = await ns.dnet.heartbleed(host);
@@ -439,7 +427,6 @@ async function solveSniffing(ns: NS, host: string, details: ServerAuthDetails) {
   }
   return false;
 }
-
 async function solveDeskMemo(ns: NS, host: string, details: ServerAuthDetails) {
   const hint = details.passwordHint || "";
   const combined = hint.replace(/\D/g, "");
@@ -450,7 +437,6 @@ async function solveDeskMemo(ns: NS, host: string, details: ServerAuthDetails) {
   }
   return false;
 }
-
 async function dictionaryAttack(
   ns: NS,
   host: string,
@@ -468,7 +454,6 @@ async function dictionaryAttack(
   }
   return false;
 }
-
 async function solveDefaults(ns: NS, host: string, details: ServerAuthDetails) {
   for (const pw of [
     "admin",
@@ -484,7 +469,6 @@ async function solveDefaults(ns: NS, host: string, details: ServerAuthDetails) {
   }
   return await dictionaryAttack(ns, host, details);
 }
-
 async function solvePr0verFl0(
   ns: NS,
   host: string,
@@ -494,7 +478,6 @@ async function solvePr0verFl0(
   if (!len) return false;
   return (await ns.dnet.authenticate(host, "A".repeat(len * 2))).success;
 }
-
 async function solveSmartNumeric(ns: NS, host: string, len: number) {
   if (!len || len <= 0) return false;
   if (len === 1) return await solveNumericBruteForce(ns, host, len);
@@ -520,7 +503,6 @@ async function solveSmartNumeric(ns: NS, host: string, len: number) {
     return await solveBinarySearch(ns, host, len, min, max, hint, guess);
   return await solveNumericBruteForce(ns, host, len);
 }
-
 function getPermutations(str: string): string[] {
   if (str.length <= 1) return [str];
   const perms = new Set<string>();
@@ -531,7 +513,6 @@ function getPermutations(str: string): string[] {
   }
   return Array.from(perms);
 }
-
 async function solveAnagram(ns: NS, host: string, details: ServerAuthDetails) {
   if (!details.data) return false;
   for (const guess of getPermutations(details.data)) {
