@@ -7,12 +7,10 @@ import { solvePr0verFl0 } from "/modules/solvers/solvePr0verFl0";
 import { solveOpenWebAccessPoint } from "/modules/solvers/solveOpenWebAccessPoint";
 import { solveDeskMemo } from "/modules/solvers/solveDeskMemo";
 import { solveCloudBlare } from "/modules/solvers/solveCloudBlare";
-// import { solveDefaults } from "/modules/solvers/solveDefaults";
 import { solveAnagram } from "/modules/solvers/solveAnagram";
 import { solveNIL } from "/modules/solvers/solveNIL";
 import { solveDeepGreen } from "/modules/solvers/solveDeepGreen";
 import { solveAccountsManager } from "/modules/solvers/solveAccountsManager";
-import { solveFreshInstall } from "/modules/solvers/solveFreshInstall";
 import { solveFactoriOs } from "/modules/solvers/solveFactoriOs";
 
 export interface ServerAuthDetails {
@@ -31,6 +29,9 @@ export interface ServerAuthDetails {
     | "unicode";
 }
 
+const COOLDOWN_FILE = "/dnet-cooldowns.txt";
+const COOLDOWN_MS = 5 * 60 * 1000; // 5 Minuten Pause für blockierte Server
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
@@ -39,14 +40,19 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  // 1. Parameter aus ns.args extrahieren
+  // 1. Parameter vom Crawler einlesen
   const host = String(ns.args[0]);
   const modelId = String(ns.args[1]);
   const pwLen = Number(ns.args[2]);
   const pwHint = String(ns.args[3]);
   const data = String(ns.args[4]);
 
-  // 2. ServerAuthDetails-Objekt für die Framework-Kompatibilität rekonstruieren
+  // 2. Persistenten Cooldown-Check durchführen (Datei-basiert)
+  if (isServerInCooldown(ns, host)) {
+    ns.print(`⏳ ${host} ist noch im Cooldown. Breche ab.`);
+    return;
+  }
+
   const details: ServerAuthDetails = {
     isConnectedToCurrentServer: true,
     hasSession: false,
@@ -55,149 +61,185 @@ export async function main(ns: NS): Promise<void> {
     passwordHint: pwHint,
     data: data,
     logTrafficInterval: 60,
-    passwordFormat: "numeric", // Standard-Fallback
+    passwordFormat: "numeric", // Hinweis: Falls der Crawler das Format kennt, hier dynamisch mappen!
   };
 
-  ns.print(`🔨 Krypto-Angriff auf ${host} [${modelId}] gestartet...`);
+  // --- PHASE 1: HEURISTISCHE SCHNELLSCHÜSSE ---
+  const smartGuesses = getHeuristicCandidates(details);
+  ns.print(`🎯 Generierte ${smartGuesses.length} Heuristik-Kandidaten...`);
 
-  // --- SPRINT 1: SCHNELLE VORAB-ANGRIFFE ---
-  // Wenn ein schneller Angriff fruchtet, sparen wir uns die schweren Algorithmen
+  for (const guess of smartGuesses) {
+    const res = await ns.dnet.authenticate(host, guess);
+    if (res.success) {
+      ns.tprint(
+        `🚀 [SOLVER] Blitz-Erfolg bei ${host} via Heuristik: "${guess}"`,
+      );
+      ns.writePort(5, `${host}:${guess}`);
+      return;
+    }
+  }
+
+  // --- PHASE 2: SCHNELLE DICTIONARY- & LOOT-ANGRIFFE ---
+  ns.print(
+    "⚠️ Heuristik fehlgeschlagen. Starte Standard-Wörterbuch-Attacke...",
+  );
+
   if (await dictionaryAttack(ns, host, details)) {
-    await handleSuccess(ns, host);
+    ns.print(`🎉 [OK] Dictionary Attack erfolgreich auf ${host}.`);
     return;
   }
   if (await fileLootAttack(ns, host, details)) {
-    await handleSuccess(ns, host);
+    ns.print(`🎉 [OK] File Loot Attack erfolgreich auf ${host}.`);
     return;
   }
 
-  // --- SPRINT 2: MODULARE MODELL-WEICHE ---
+  // --- PHASE 3: MODULARE MODELL-WEICHE (KRYPTO) ---
+  ns.print(`🔨 Krypto-Angriff auf ${host} [${modelId}] gestartet...`);
   let correctPassword: string | null = null;
 
   switch (details.modelId) {
     case "BellaCuore":
       correctPassword = await solveRoman(ns, host, details);
       break;
-
     case "OctantVoxel":
       correctPassword = await solveBaseConversion(ns, host, details);
       break;
-
     case "Pr0verFl0":
       correctPassword = await solvePr0verFl0(ns, host, details);
       break;
-
     case "OpenWebAccessPoint":
       correctPassword = await solveOpenWebAccessPoint(ns, host, details);
       break;
-
     case "DeskMemo_3.1":
       correctPassword = await solveDeskMemo(ns, host, details);
       break;
-
     case "CloudBlare(tm)":
-      const passCloud = await solveCloudBlare(ns, details);
+      const passCloud = await solveCloudBlare(ns, host, details);
       if (passCloud) {
         const resCloud = await ns.dnet.authenticate(host, passCloud);
         if (resCloud.success) correctPassword = passCloud;
       }
       break;
-
     case "ZeroLogon":
-      // ZeroLogon benötigt keinen komplexen Solver, da das Passwort immer leer ist
       const resZero = await ns.dnet.authenticate(host, "");
       if (resZero.success) correctPassword = "";
       break;
-
-    case "FreshInstall_1.0":
-      correctPassword = await solveFreshInstall(ns, host, details);
-      break;
-
     case "PHP 5.4":
       correctPassword = await solveAnagram(ns, host, details);
       break;
-
     case "NIL":
       correctPassword = await solveNIL(ns, host, details);
       break;
-
     case "DeepGreen":
       correctPassword = await solveDeepGreen(ns, host, details);
       break;
-
     case "AccountsManager_4.2":
       correctPassword = await solveAccountsManager(ns, host, details);
       break;
-
     case "Factori-Os":
-      // Delegiere die schwere Arbeit an das spezialisierte Sub-Modul
       correctPassword = await solveFactoriOs(ns, host, details);
       break;
-
     default:
-      ns.tprint(
-        `⚠️ Unbekanntes Server-Modell: ${details.modelId}. Versuche generischen Notfall-Knick...`,
+      ns.print(
+        `⚠️ Unbekanntes Modell: ${details.modelId}. Versuche AccountsManager-Fallback...`,
       );
-      // Generischer Fallback für unidentifizierte numerische Server
       correctPassword = await solveAccountsManager(ns, host, details);
       break;
   }
 
-  // --- SPRINT 3: AUSWERTUNG & LOOT ---
+  // --- PHASE 4: FINALE AUSWERTUNG & NETZWERK-AUTH ---
   if (correctPassword !== null) {
-    // 🔥 FIX: Das gefundene Passwort MUSS in die passwords.txt geschrieben werden!
-    updatePasswordFile(ns, correctPassword);
-    await handleSuccess(ns, host);
-  } else {
-    ns.print(
-      `❌ [FAILED] Konnte Verschlüsselung von ${host} mit keinem Sub-Modul brechen.`,
-    );
+    const authResult = await ns.dnet.authenticate(host, correctPassword);
+    if (authResult.success) {
+      ns.writePort(5, `${host}:${correctPassword}`);
+      updatePasswordFile(ns, correctPassword);
+      ns.tprint(
+        `🎉 [SUCCESS] ${host} erfolgreich gehackt! PW: "${correctPassword}"`,
+      );
+      return;
+    }
   }
+
+  // Wenn ALLE Stricke gerissen sind (Heuristik, Dictionary, Krypto fehlgeschlagen):
+  ns.tprint(`❌ [FAILED] Konnte ${host} nicht brechen. Setze Cooldown.`);
+  setServerCooldown(ns, host);
 }
 
 // ============================================================================
-// HILFSFUNKTIONEN FÜR DIE VORAB-ANGRIFFE & POST-LOOT-AUTOMATION
+// HILFSFUNKTIONEN FÜR PERSISTENTEN COOLDOWN
 // ============================================================================
 
-/**
- * Führt nach einem erfolgreichen Hack die Post-Exploitation-Loot-Routine aus.
- */
-async function handleSuccess(ns: NS, host: string): Promise<void> {
-  ns.print(`🎉 [OK] Session für ${host} erfolgreich etabliert.`);
-  // Startet deine vollautomatische Daten- und Passwort-Absaugung auf dem Zielserver
-  await lootServer(ns, host);
+function isServerInCooldown(ns: NS, host: string): boolean {
+  if (!ns.fileExists(COOLDOWN_FILE, "home")) return false;
+  const lines = ns.read(COOLDOWN_FILE).split("\n");
+  const now = Date.now();
+
+  for (const line of lines) {
+    const [cHost, cTime] = line.split(",");
+    if (cHost === host) {
+      if (now - Number(cTime) < COOLDOWN_MS) {
+        return true; // Noch gesperrt
+      }
+    }
+  }
+  return false;
 }
 
-/**
- * Standard Dictionary Attack gegen bekannte Passwörter.
- */
+function setServerCooldown(ns: NS, host: string): void {
+  let content = "";
+  const now = Date.now();
+
+  if (ns.fileExists(COOLDOWN_FILE, "home")) {
+    // Altes Zeug filtern, um die Datei sauber zu halten
+    const lines = ns.read(COOLDOWN_FILE).split("\n");
+    content = lines
+      .filter((line) => {
+        const [_, cTime] = line.split(",");
+        return now - Number(cTime) < COOLDOWN_MS;
+      })
+      .join("\n");
+  }
+
+  content += (content ? "\n" : "") + `${host},${now}`;
+  ns.write(COOLDOWN_FILE, content, "w");
+}
+
+// ============================================================================
+// RESTLICHE HILFSFUNKTIONEN (Dictionary, Loot, Heuristik)
+// ============================================================================
+
 async function dictionaryAttack(
   ns: NS,
   host: string,
   details: ServerAuthDetails,
 ): Promise<boolean> {
-  if (!ns.fileExists("passwords.txt", "home")) return false;
+  if (!ns.fileExists("/passwords.txt", "home")) return false;
 
-  // Nutzt ein Set, um Duplikate zu entfernen, erlaubt aber den leeren String ""
   const list = [
     ...new Set(
       ns
-        .read("passwords.txt")
+        .read("/passwords.txt")
         .split(/[\r\n,]+/)
-        .map((p) => p.trim()),
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0),
     ),
   ];
 
   for (const pw of list) {
-    if (details.passwordLength && pw.length > details.passwordLength) continue;
-    if ((await ns.dnet.authenticate(host, pw)).success) return true;
+    if (details.passwordLength && pw.length !== details.passwordLength)
+      continue;
+    if (details.passwordFormat === "numeric" && !/^\d+$/.test(pw)) continue;
+    if (details.passwordFormat === "alphabetic" && !/^[a-zA-Z]+$/.test(pw))
+      continue;
+
+    if ((await ns.dnet.authenticate(host, pw)).success) {
+      ns.writePort(5, `${host}:${pw}`);
+      return true;
+    }
   }
   return false;
 }
 
-/**
- * Durchsucht lokale Textdateien des Zielsystems nach unverschlüsselten Passwörtern.
- */
 async function fileLootAttack(
   ns: NS,
   host: string,
@@ -208,21 +250,27 @@ async function fileLootAttack(
     for (const file of files) {
       const content = ns.read(file).trim();
       if (content.length <= (details.passwordLength || 20)) {
-        if ((await ns.dnet.authenticate(host, content)).success) return true;
+        if ((await ns.dnet.authenticate(host, content)).success) {
+          ns.writePort(5, `${host}:${content}`);
+          return true;
+        }
       }
     }
   } catch {}
   return false;
 }
 
-/**
- * Aktualisiert deine zentrale Passwort-Datenbank auf dem Home-Server.
- */
 function updatePasswordFile(ns: NS, newPw: string): void {
-  const file = "passwords.txt";
-  const pws = new Set<string>();
+  const file = "/passwords.txt";
+  if (
+    !newPw ||
+    newPw.includes("You have discovered") ||
+    newPw.includes(" shares of")
+  )
+    return;
 
-  if (ns.fileExists(file, "home")) {
+  const pws = new Set<string>();
+  if (ns.fileExists(file)) {
     ns.read(file)
       .split(/[\n,]+/)
       .forEach((p) => p.trim() && pws.add(p.trim()));
@@ -233,34 +281,29 @@ function updatePasswordFile(ns: NS, newPw: string): void {
   }
 }
 
-/**
- * Plündert verschlüsselte Cache-Dateien des infizierten Systems via Phishing.
- */
-async function lootServer(ns: NS, targetHost: string): Promise<void> {
-  if (targetHost === "home") return;
+function getHeuristicCandidates(details: ServerAuthDetails): string[] {
+  const candidates: string[] = [];
+  const len = details.passwordLength;
+  const model = details.modelId?.toLowerCase() || "";
 
-  // Wartet, bis die Social-Engineering-Kampagne durchgelaufen ist
-  await ns.dnet.phishingAttack();
-
-  // Alle gecachten Credentials einsammeln
-  const files = ns.ls(targetHost, ".cache");
-
-  for (const file of files) {
-    try {
-      const result = ns.dnet.openCache(file) as any;
-      if (result && result.success) {
-        const potentialPw = result.data || result.message;
-        if (typeof potentialPw === "string") {
-          const cleanPw = potentialPw.includes(":")
-            ? potentialPw.split(":").pop()?.trim()
-            : potentialPw.trim();
-
-          if (cleanPw) {
-            updatePasswordFile(ns, cleanPw);
-          }
-        }
-        ns.rm(file, targetHost);
-      }
-    } catch (e) {}
+  if (model.includes("laika")) {
+    if (len === 3) candidates.push("max");
+    if (len === 4) candidates.push("fido", "spot");
+    if (len === 5) candidates.push("rover");
   }
+
+  if (model.includes("fresh") || model.includes("install")) {
+    if (len === 4) candidates.push("0000");
+    if (len === 5) candidates.push("12345", "admin");
+    if (len === 8) candidates.push("password");
+  }
+
+  if (candidates.length === 0) {
+    if (len === 3) candidates.push("max");
+    if (len === 4) candidates.push("fido", "spot", "0000");
+    if (len === 5) candidates.push("rover", "12345", "admin");
+    if (len === 8) candidates.push("password");
+  }
+
+  return [...new Set(candidates)].filter((pw) => pw.length === len);
 }

@@ -1,6 +1,6 @@
 import { NS } from "@ns";
 
-export async function solveLaika4(ns: NS, details: any): Promise<string[]> {
+export async function solveLaika4(ns: NS, host: string, details: any): Promise<string[]> {
   const len = details.passwordLength;
 
   if (len === 3) return ["max"];

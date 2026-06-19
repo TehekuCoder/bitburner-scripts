@@ -1,48 +1,74 @@
 import { NS } from "@ns";
 
 /**
- * Solver für OpenWebAccessPoint - Liest via Heartbleed den Speicher aus und analysiert ihn.
+ * Dynamischer Solver für OpenWebAccessPoint.
+ * Nutzt die server-spezifische Datenlecksicherheitslücke [hostname]:[password].
  */
 export async function solveOpenWebAccessPoint(ns: NS, hostname: string, details: any): Promise<string | null> {
-  // Das Original versucht es bis zu 5 Mal, da Heartbleed jedes Mal andere Speicherbereiche liefern kann
+  
+  // Da Hostnames Sonderzeichen wie % oder @ enthalten können (siehe dark%matrix),
+  // müssen wir sie für die RegEx-Engine sicherheitshalber eskapieren.
+  const escapedHost = hostname.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+  
+  // 🔥 STRATEGIE 0: Der dynamische Detektor
+  // Erstellt live eine Suchmaske für "hostname:PASSWORT"
+  const leakRegex = new RegExp(`${escapedHost}:(\\w+)`);
+
   for (let i = 0; i < 5; i++) {
     const bleed = await ns.dnet.heartbleed(hostname);
-    // Falls dnet.heartbleed ein Objekt statt eines Strings liefert, wandeln wir es in Text um
     const bleedStr = typeof bleed === "string" ? bleed : JSON.stringify(bleed);
 
-    // 1. Strategie: Nach einer expliziten Passwort-Zuweisung suchen (z.B. "password is: abc" oder "password=abc")
+    // Versuche das dynamische Passwort-Muster aus dem Speicher-Dump zu fischen
+    const leakMatch = bleedStr.match(leakRegex);
+    
+    if (leakMatch && leakMatch[1]) {
+      const candidate = leakMatch[1];
+      ns.print(`[OpenWebAccessPoint] Leak erkannt! Gefundener Key: ${candidate}`);
+      
+      const resLeak = await ns.dnet.authenticate(hostname, candidate);
+      if (resLeak.success) {
+        ns.tprint(`🎯 [OpenWebAccessPoint] OWAP-Exploit erfolgreich bei ${hostname} (Versuch ${i + 1})! Passwort: ${candidate}`);
+        return candidate; 
+      }
+    }
+
+    // ======================================================================
+    // 🛡️ FALLBACK-ZONE: Falls das spezifische Muster im Dump mal verschoben ist
+    // ======================================================================
+    
+    // 1. Alternativ-Muster: Explizite Zuweisungen (z.B. password is: XYZ)
     const exactMatch = bleedStr.match(/password\s*is\s*[:=]\s*(\w+)/i);
     if (exactMatch) {
       const candidate = exactMatch[1];
       const resExact = await ns.dnet.authenticate(hostname, candidate);
       if (resExact.success) {
         ns.tprint(`[OpenWebAccessPoint] Volltreffer via Freitext-Analyse bei Versuch ${i + 1}: ${candidate}`);
-        return candidate; // Passwort für Hauptskript/Loot zurückgeben
+        return candidate;
       }
     }
 
-    // 2. Strategie: Alle isolierten Wörter extrahieren und systematisch durchtesten
+    // 2. Letzter Ausweg: Kompletter Speicher-Crawl
     const allCandidates = bleedStr.match(/\b\w+\b/g) || [];
-    // Duplikate entfernen, um unnötige Netzwerk-Anfragen zu sparen
     const uniqueCandidates = [...new Set(allCandidates)];
 
     for (const candidate of uniqueCandidates) {
-      // Optimierung: Wenn wir die erwartete Länge kennen, überspringen wir falsche Wortlängen
       if (details.passwordLength && candidate.length !== details.passwordLength) {
+        continue;
+      }
+      if (leakMatch && candidate === leakMatch[1]) {
         continue;
       }
 
       const resCand = await ns.dnet.authenticate(hostname, candidate);
       if (resCand.success) {
-        ns.tprint(`[OpenWebAccessPoint] Erfolg via Speicher-Crawl bei Versuch ${i + 1}: ${candidate}`);
+        ns.tprint(`[OpenWebAccessPoint] Failsafe-Erfolg via Speicher-Crawl bei Versuch ${i + 1}: ${candidate}`);
         return candidate;
       }
     }
 
-    // Falls dieser Durchlauf nichts brachte, warten wir 200ms, bevor der nächste Speicherbereich gelesen wird
     await ns.sleep(200);
   }
 
-  ns.tprint(`🔴 [OpenWebAccessPoint] Fehlgeschlagen. Auch nach 5 Heartbleed-Dumps wurde kein Passwort gefunden.`);
+  ns.tprint(`🔴 [OpenWebAccessPoint] Fehlgeschlagen. Kein Passwort auf ${hostname} isoliert.`);
   return null;
 }
