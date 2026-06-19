@@ -3,8 +3,8 @@ import { NS } from "@ns";
 const processedServers = new Set<string>();
 
 export async function main(ns: NS): Promise<void> {
-  // ns.disableLog("ALL");
-  const scriptName = ns.getScriptName(); // Wird automatisch zu "/tasks/dnet/dnet-crawler.js"
+  ns.disableLog("ALL");
+  const scriptName = ns.getScriptName();
   const currentHost = ns.getHostname();
 
   if (currentHost !== "home") {
@@ -12,12 +12,23 @@ export async function main(ns: NS): Promise<void> {
   }
 
   while (true) {
-    // 1. Loot-Prozess asynchron auslagern (Pfad angepasst an /tasks/dnet/)
+    // 1. SMART LOOT CHECK
+    const cacheFiles = ns.ls(currentHost, ".cache");
+    const hasLoot = cacheFiles.length > 0;
+
     if (
       currentHost !== "home" &&
+      hasLoot &&
       !ns.scriptRunning("/tasks/dnet/dnet-loot.js", currentHost)
     ) {
-      ns.exec("/tasks/dnet/dnet-loot.js", currentHost, 1);
+      const freeRam =
+        ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
+      if (freeRam >= 6.5) {
+        ns.print(
+          `💰 Loot gefunden (${cacheFiles.length} Dateien). Starte dnet-loot.js...`,
+        );
+        ns.exec("/tasks/dnet/dnet-loot.js", currentHost, 1);
+      }
     }
 
     const nearbyServers = ns.dnet.probe();
@@ -26,15 +37,55 @@ export async function main(ns: NS): Promise<void> {
       if (hostname === "home" || processedServers.has(hostname)) continue;
 
       const details = ns.dnet.getServerDetails(hostname) as any;
-      if (!details.isConnectedToCurrentServer) continue;
+
+      if (!details.isConnectedToCurrentServer || !details.isOnline) continue;
 
       let success = details.hasSession;
 
-      // Falls noch KEIN Zugriff besteht -> Solver starten
-      if (!success) {
-        ns.print(`📡 Target gesichtet: ${hostname}. Starte Solver...`);
+      // --- 🔥 FIX: DICTIONARY-ATTACK ERLAUBT NUN LEERE STRINGS & NUTZT SET ---
+      if (!success && ns.fileExists("/passwords.txt", currentHost)) {
+        const cachedPasswords = [
+          ...new Set(
+            ns
+              .read("/passwords.txt")
+              .split(/[\r\n,]+/)
+              .map((p) => p.trim()),
+          ),
+        ];
 
-        // Pfad angepasst an /tasks/dnet/
+        for (const pw of cachedPasswords) {
+          if (details.passwordLength && pw.length > details.passwordLength)
+            continue;
+
+          const authResult = await ns.dnet.authenticate(hostname, pw);
+          if (authResult && authResult.success) {
+            ns.print(
+              `🔑 [DICTIONARY-SUCCESS] Bekanntes Passwort funktioniert bei ${hostname}!`,
+            );
+            success = true;
+            break;
+          }
+        }
+      }
+
+      // Falls kein bekanntes Passwort griff -> Solver starten
+      if (!success) {
+        if (ns.getServerMaxRam(currentHost) < 14) {
+          ns.print(
+            `⚠️ ${currentHost} hat zu wenig RAM für den Solver. Warte auf Passwort-Sync.`,
+          );
+          continue;
+        }
+
+        if (ns.scriptRunning("/tasks/dnet/dnet-loot.js", currentHost)) {
+          ns.print(
+            `🛑 Schließe dnet-loot.js, um RAM für den Solver freizugeben...`,
+          );
+          ns.scriptKill("/tasks/dnet/dnet-loot.js", currentHost);
+          await ns.sleep(200);
+        }
+
+        ns.print(`📡 Target gesichtet: ${hostname}. Starte Solver...`);
         const solverPid = ns.exec(
           "/tasks/dnet/dnet-solver.js",
           currentHost,
@@ -47,13 +98,10 @@ export async function main(ns: NS): Promise<void> {
         );
 
         if (solverPid === 0) {
-          ns.print(
-            `[WARN] Nicht genug RAM auf ${currentHost}, um Solver zu starten!`,
-          );
+          ns.print(`[WARN] RAM-Squeeze fehlgeschlagen auf ${currentHost}.`);
           continue;
         }
 
-        // Warten bis der Solver fertig ist
         while (ns.isRunning(solverPid)) {
           await ns.sleep(200);
         }
@@ -62,34 +110,33 @@ export async function main(ns: NS): Promise<void> {
         success = postCheck && postCheck.hasSession;
       }
 
-      // Wenn wir Zugriff haben -> Auf den nächsten Server replizieren!
+      // ECHTE REPLIKATION
       if (success) {
         processedServers.add(hostname);
 
         if (!ns.scriptRunning(scriptName, hostname)) {
-          ns.print(
-            `🎉 [SUCCESS] Zugriff auf ${hostname} steht. Repliziere Infrastruktur...`,
-          );
+          const targetMaxRam = ns.getServerMaxRam(hostname);
 
-          if (ns.getServerMaxRam(hostname) >= 16) {
-            // --- DYNAMISCHE DEPENDENCY-RESOLVER-LOGIK ---
-            // Wir sammeln die Kernskripte...
+          if (targetMaxRam >= 8) {
+            ns.print(
+              `🎉 [SUCCESS] Session aktiv. Kopiere Infrastruktur auf ${hostname}...`,
+            );
+
             const filesToCopy = [
               scriptName,
               "/tasks/dnet/dnet-solver.js",
               "/tasks/dnet/dnet-loot.js",
               "/passwords.txt",
-              "/utils/progress.js", // UI-Hilfsfunktion muss mit!
+              "/utils/progress.js",
             ];
 
-            // ...und packen automatisch ALLE modularen Sub-Solver aus /modules/solvers/ ein!
             const modularSolvers = ns.ls(currentHost, "/modules/solvers/");
-            filesToCopy.push(...modularSolvers);
+            if (modularSolvers.length > 0) {
+              filesToCopy.push(...modularSolvers);
+            }
 
-            // Datenübertragung zum Ziel-Server
             ns.scp(filesToCopy, hostname, currentHost);
 
-            // Stasis-Hilfe ausführen, falls vorhanden
             if (ns.fileExists("/tasks/dnet/dnet-stasis.js", hostname)) {
               ns.exec("/tasks/dnet/dnet-stasis.js", hostname, 1);
               while (ns.scriptRunning("/tasks/dnet/dnet-stasis.js", hostname)) {
@@ -97,16 +144,16 @@ export async function main(ns: NS): Promise<void> {
               }
             }
 
-            // Crawler auf dem Remote-Server zünden
             ns.exec(scriptName, hostname, 1);
           } else {
             ns.print(
-              `ℹ️ ${hostname} hat zu wenig RAM (${ns.getServerMaxRam(hostname)}GB) für eigenen Crawler.`,
+              `ℹ️ ${hostname} hat zu wenig RAM (${targetMaxRam}GB) für Botnet-Knoten.`,
             );
           }
         }
       }
     }
+
     await ns.sleep(5000);
   }
 }

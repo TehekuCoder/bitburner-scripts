@@ -1,6 +1,6 @@
 import { NS } from "@ns";
 
-export async function solveRoman(ns: NS, details: any): Promise<string> {
+export async function solveRoman(ns: NS, host: string, details: any): Promise<string> {
   const vals: Record<string, number> = {
     I: 1,
     V: 5,

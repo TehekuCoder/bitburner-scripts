@@ -12,7 +12,8 @@ import { solveAnagram } from "/modules/solvers/solveAnagram";
 import { solveNIL } from "/modules/solvers/solveNIL";
 import { solveDeepGreen } from "/modules/solvers/solveDeepGreen";
 import { solveAccountsManager } from "/modules/solvers/solveAccountsManager";
-import { solveFreshInstall } from "../../modules/solvers/solveFreshInstall";
+import { solveFreshInstall } from "/modules/solvers/solveFreshInstall";
+import { solveFactoriOs } from "/modules/solvers/solveFactoriOs";
 
 export interface ServerAuthDetails {
   isConnectedToCurrentServer: boolean;
@@ -75,16 +76,15 @@ export async function main(ns: NS): Promise<void> {
 
   switch (details.modelId) {
     case "BellaCuore":
-      correctPassword = await solveRoman(ns, host);
+      correctPassword = await solveRoman(ns, host, details);
       break;
 
     case "OctantVoxel":
-      correctPassword = await solveBaseConversion(ns, host);
+      correctPassword = await solveBaseConversion(ns, host, details);
       break;
 
     case "Pr0verFl0":
-    case "Pr0verFl0_":
-      correctPassword = await solvePr0verFl0(ns, host);
+      correctPassword = await solvePr0verFl0(ns, host, details);
       break;
 
     case "OpenWebAccessPoint":
@@ -92,7 +92,6 @@ export async function main(ns: NS): Promise<void> {
       break;
 
     case "DeskMemo_3.1":
-    case "DeskMemo":
       correctPassword = await solveDeskMemo(ns, host, details);
       break;
 
@@ -111,13 +110,10 @@ export async function main(ns: NS): Promise<void> {
       break;
 
     case "FreshInstall_1.0":
-    case "FreshInstall":
-      correctPassword = await solveFreshInstall(ns, host);
+      correctPassword = await solveFreshInstall(ns, host, details);
       break;
 
     case "PHP 5.4":
-    case "PHP 5.1":
-    case "PHP":
       correctPassword = await solveAnagram(ns, host, details);
       break;
 
@@ -133,6 +129,11 @@ export async function main(ns: NS): Promise<void> {
       correctPassword = await solveAccountsManager(ns, host, details);
       break;
 
+    case "Factori-Os":
+      // Delegiere die schwere Arbeit an das spezialisierte Sub-Modul
+      correctPassword = await solveFactoriOs(ns, host, details);
+      break;
+
     default:
       ns.tprint(
         `⚠️ Unbekanntes Server-Modell: ${details.modelId}. Versuche generischen Notfall-Knick...`,
@@ -144,6 +145,8 @@ export async function main(ns: NS): Promise<void> {
 
   // --- SPRINT 3: AUSWERTUNG & LOOT ---
   if (correctPassword !== null) {
+    // 🔥 FIX: Das gefundene Passwort MUSS in die passwords.txt geschrieben werden!
+    updatePasswordFile(ns, correctPassword);
     await handleSuccess(ns, host);
   } else {
     ns.print(
@@ -175,11 +178,15 @@ async function dictionaryAttack(
 ): Promise<boolean> {
   if (!ns.fileExists("passwords.txt", "home")) return false;
 
-  const list = ns
-    .read("passwords.txt")
-    .split(/[\r\n,]+/)
-    .map((p) => p.trim())
-    .filter((p) => p);
+  // Nutzt ein Set, um Duplikate zu entfernen, erlaubt aber den leeren String ""
+  const list = [
+    ...new Set(
+      ns
+        .read("passwords.txt")
+        .split(/[\r\n,]+/)
+        .map((p) => p.trim()),
+    ),
+  ];
 
   for (const pw of list) {
     if (details.passwordLength && pw.length > details.passwordLength) continue;

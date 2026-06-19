@@ -1,11 +1,8 @@
 import { NS } from "@ns";
 
-/**
- * Solver für FreshInstall - Erkennt Standard-Passwörter anhand der Details.
- */
-export async function solveFreshInstall(ns: NS, details: any): Promise<string | null> {
+export async function solveFreshInstall(ns: NS, host: string, details: any): Promise<string | null> {
   const len = details.passwordLength;
-  const isNumeric = details.isNumeric; 
+  const isNumeric = details.isNumeric || details.passwordFormat === "numeric"; 
 
   if (isNumeric) {
     if (len === 4) return "0000";
