@@ -17,7 +17,7 @@ export async function solveAccountsManager(
   const initResult = (await ns.dnet.authenticate(host, "0")) as any;
 
   if (initResult && initResult.code === 351) {
-    ns.tprint(`❌ [AccountsManager] Fehler auf ${host}: Direct Connection Required!`);
+    ns.print(`❌ [AccountsManager] Fehler auf ${host}: Direct Connection Required!`);
     return null;
   }
 
@@ -43,7 +43,7 @@ export async function solveAccountsManager(
     const result = (await ns.dnet.authenticate(host, guess.toString())) as any;
 
     if (result && result.code === 351) {
-      ns.tprint(`❌ [AccountsManager] Fehler auf ${host}: Direct Connection Required!`);
+      ns.print(`❌ [AccountsManager] Fehler auf ${host}: Direct Connection Required!`);
       return null;
     }
 

@@ -23,7 +23,7 @@ function getPermutations(str: string): string[] {
  */
 export async function solveAnagram(ns: NS, hostname: string, details: any): Promise<string | null> {
   if (!details.data) {
-    ns.tprint("🔴 [Anagram] Fehler: Keine Daten (Buchstabensalat) in den Serverdetails gefunden.");
+    ns.print("🔴 [Anagram] Fehler: Keine Daten (Buchstabensalat) in den Serverdetails gefunden.");
     return null;
   }
 
@@ -35,11 +35,11 @@ export async function solveAnagram(ns: NS, hostname: string, details: any): Prom
     const result = await ns.dnet.authenticate(hostname, guess);
     
     if (result.success) {
-      ns.tprint(`[Anagram] Erfolgreich authentifiziert mit Passwort: ${guess}`);
+      ns.print(`[Anagram] Erfolgreich authentifiziert mit Passwort: ${guess}`);
       return guess; // Gefundenes Passwort für das Hauptskript/Loot zurückgeben
     }
   }
 
-  ns.tprint(`🔴 [Anagram] Fehlgeschlagen. Kein Anagramm von '${details.data}' war korrekt.`);
+  ns.print(`🔴 [Anagram] Fehlgeschlagen. Kein Anagramm von '${details.data}' war korrekt.`);
   return null;
 }

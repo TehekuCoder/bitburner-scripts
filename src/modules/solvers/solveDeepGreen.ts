@@ -20,7 +20,7 @@ export async function solveDeepGreen(ns: NS, hostname: string, details: any): Pr
 
       const result = await ns.dnet.authenticate(hostname, guess);
       if (result.success) {
-        ns.tprint(`[DeepGreen] Erfolgreich authentifiziert mit Passwort: ${guess}`);
+        ns.print(`[DeepGreen] Erfolgreich authentifiziert mit Passwort: ${guess}`);
         return guess; // Direktes Passwort-Looting triggern
       }
 
@@ -64,10 +64,10 @@ export async function solveDeepGreen(ns: NS, hostname: string, details: any): Pr
   const finalGuess = currentGuess.join("");
   const finalResult = await ns.dnet.authenticate(hostname, finalGuess);
   if (finalResult.success) {
-    ns.tprint(`[DeepGreen] Erfolgreich authentifiziert mit finalem Passwort: ${finalGuess}`);
+    ns.print(`[DeepGreen] Erfolgreich authentifiziert mit finalem Passwort: ${finalGuess}`);
     return finalGuess;
   }
 
-  ns.tprint(`🔴 [DeepGreen] Fehler: Das rekonstruierte Passwort '${finalGuess}' wurde abgelehnt.`);
+  ns.print(`🔴 [DeepGreen] Fehler: Das rekonstruierte Passwort '${finalGuess}' wurde abgelehnt.`);
   return null;
 }

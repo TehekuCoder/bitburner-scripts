@@ -4,7 +4,7 @@ export async function solveBaseConversion(ns: NS, host: string, details: any): P
   const parts = (details.data || "").split(",");
   
   if (parts.length !== 2) {
-    ns.tprint(`🔴 [BaseConversion] Fehler: Ungültiges Datenformat (erwartet 'Basis,Wert') auf ${host}: ${details.data}`);
+    ns.print(`🔴 [BaseConversion] Fehler: Ungültiges Datenformat (erwartet 'Basis,Wert') auf ${host}: ${details.data}`);
     return null;
   }
 
@@ -13,7 +13,7 @@ export async function solveBaseConversion(ns: NS, host: string, details: any): P
   const decimalValue = parseInt(valueStr, base);
 
   if (isNaN(decimalValue)) {
-    ns.tprint(`🔴 [BaseConversion] Fehler: Konvertierung fehlgeschlagen für Basis ${base} und Wert ${valueStr} auf ${host}`);
+    ns.print(`🔴 [BaseConversion] Fehler: Konvertierung fehlgeschlagen für Basis ${base} und Wert ${valueStr} auf ${host}`);
     return null;
   }
 

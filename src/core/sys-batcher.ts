@@ -2,6 +2,24 @@ import { NS } from "@ns";
 import { calculateBatch } from "../utils/batch-calculator.js";
 import { getAllServers } from "../lib/network.js";
 
+// Globale Cache-Variablen zur Entlastung der Game-Engine
+let cachedServers: string[] = [];
+let lastCacheUpdate = 0;
+
+/**
+ * Aktualisiert die Serverliste nur alle 2 Sekunden und sortiert sie
+ * nach maximalem RAM, damit p-servs immer zuerst befüllt werden!
+ */
+function updateServerCache(ns: NS): void {
+  const now = Date.now();
+  if (now - lastCacheUpdate > 2000 || cachedServers.length === 0) {
+    cachedServers = getAllServers(ns).sort(
+      (a, b) => ns.getServerMaxRam(b) - ns.getServerMaxRam(a),
+    );
+    lastCacheUpdate = now;
+  }
+}
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.disableLog("getServerSecurityLevel");
@@ -13,18 +31,22 @@ export async function main(ns: NS): Promise<void> {
   // 🔒 TARGET-LOCK MECHANISMUS
   let target: string | null = null;
   let batchesSentForTarget = 0;
-  const BATCHES_PER_TARGET = 500; // Hält die Pipeline für mindestens 500 Wellen stabil
+  const BATCHES_PER_TARGET = 500;
 
   ns.print(`🚀 [Batcher] Initialisiert High-End-Dynamic-Batcher...`);
 
   while (true) {
-    const currentFreeNetworkRam = getNetworkFreeRam(ns);
-    const totalNetworkCapacity = getNetworkTotalRam(ns);
+    // 1. NETZWERK-CACHE AKTUALISIEREN
+    updateServerCache(ns);
 
-    // 1. ZIELWAHL MIT TARGET-LOCK (Verhindert das 41-Minuten-Target-Hopping)
+    const currentFreeNetworkRam = getNetworkFreeRam(ns, cachedServers);
+    const totalNetworkCapacity = getNetworkTotalRam(ns, cachedServers);
+
+    // 2. ZIELWAHL MIT TARGET-LOCK
     if (!target || batchesSentForTarget >= BATCHES_PER_TARGET) {
       const newTarget = findBestBatchTargetForNetwork(
         ns,
+        cachedServers,
         totalNetworkCapacity,
         SPACER,
       );
@@ -39,13 +61,13 @@ export async function main(ns: NS): Promise<void> {
 
     if (!target) {
       ns.print(
-        "⚠️ [Batcher] Kein passendes oder hackbares Ziel im Netzwerk gefunden. Warte...",
+        "⚠️ [Batcher] Kein passendes oder hackbares Ziel gefunden. Warte...",
       );
       await ns.sleep(5000);
       continue;
     }
 
-    // 2. AUTOMATISCHE PREP-PHASE
+    // 3. AUTOMATISCHE PREP-PHASE
     const minSec = ns.getServerMinSecurityLevel(target);
     const curSec = ns.getServerSecurityLevel(target);
     const maxMoney = ns.getServerMaxMoney(target);
@@ -57,9 +79,8 @@ export async function main(ns: NS): Promise<void> {
         `🔧 [Batcher] ${target} benötigt Vorbereitung. Starte Prep-Welle...`,
       );
 
-      executePrepPhase(ns, target);
+      executePrepPhase(ns, cachedServers, target);
 
-      // Schläft nur einmal pro Target-Sperre, anstatt ständig zu springen
       ns.print(
         `⏳ [Batcher] Prep aktiv. Pausiere Batcher für ${ns.format.number(prepTime / 1000, 1)}s`,
       );
@@ -67,7 +88,7 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // 3. DYNAMISCHE GREED-ANPASSUNG (Jetzt mit korrektem SPACER-Übergabewert!)
+    // 4. DYNAMISCHE GREED-ANPASSUNG
     let greedFactor = 0.04;
     let plan = calculateBatch(ns, target, greedFactor, SPACER);
 
@@ -80,19 +101,20 @@ export async function main(ns: NS): Promise<void> {
       plan = calculateBatch(ns, target, greedFactor, SPACER);
     }
 
-    // 4. PIPELINE-PUFFER-CHECK
+    // 5. PIPELINE-PUFFER-CHECK
     if (!plan || currentFreeNetworkRam < plan.totalRam) {
       await ns.sleep(SPACER);
       continue;
     }
 
-    // 5. DISPATCH DER WELLEN-KOMPONENTEN
+    // 6. DISPATCH DER WELLEN-KOMPONENTEN
     ns.print(
       `🔥 [Batcher] Welle #${batchId} -> ${target} [Greed: ${(greedFactor * 100).toFixed(1)}% | RAM: ${ns.format.ram(plan.totalRam)}]`,
     );
 
     dispatchBatchScript(
       ns,
+      cachedServers,
       "tasks/hack.js",
       plan.hackThreads,
       target,
@@ -101,6 +123,7 @@ export async function main(ns: NS): Promise<void> {
     );
     dispatchBatchScript(
       ns,
+      cachedServers,
       "tasks/weaken.js",
       plan.weaken1Threads,
       target,
@@ -109,6 +132,7 @@ export async function main(ns: NS): Promise<void> {
     );
     dispatchBatchScript(
       ns,
+      cachedServers,
       "tasks/grow.js",
       plan.growThreads,
       target,
@@ -117,6 +141,7 @@ export async function main(ns: NS): Promise<void> {
     );
     dispatchBatchScript(
       ns,
+      cachedServers,
       "tasks/weaken.js",
       plan.weaken2Threads,
       target,
@@ -132,6 +157,7 @@ export async function main(ns: NS): Promise<void> {
 
 function dispatchBatchScript(
   ns: NS,
+  allServers: string[],
   script: string,
   threads: number,
   target: string,
@@ -140,7 +166,6 @@ function dispatchBatchScript(
 ): void {
   if (threads <= 0) return;
 
-  const allServers = getAllServers(ns);
   const scriptRam = ns.getScriptRam(script);
   let threadsRemaining = threads;
 
@@ -168,7 +193,7 @@ function dispatchBatchScript(
   }
 }
 
-function executePrepPhase(ns: NS, target: string): void {
+function executePrepPhase(ns: NS, allServers: string[], target: string): void {
   const minSec = ns.getServerMinSecurityLevel(target);
   const curSec = ns.getServerSecurityLevel(target);
   const maxMoney = ns.getServerMaxMoney(target);
@@ -179,6 +204,7 @@ function executePrepPhase(ns: NS, target: string): void {
     const weakenThreads = Math.ceil(secDeficit / 0.05);
     dispatchBatchScript(
       ns,
+      allServers,
       "tasks/weaken.js",
       weakenThreads,
       target,
@@ -193,6 +219,7 @@ function executePrepPhase(ns: NS, target: string): void {
 
     dispatchBatchScript(
       ns,
+      allServers,
       "tasks/grow.js",
       growThreads,
       target,
@@ -201,6 +228,7 @@ function executePrepPhase(ns: NS, target: string): void {
     );
     dispatchBatchScript(
       ns,
+      allServers,
       "tasks/weaken.js",
       weakenThreadsNeeded,
       target,
@@ -212,25 +240,23 @@ function executePrepPhase(ns: NS, target: string): void {
 
 function findBestBatchTargetForNetwork(
   ns: NS,
+  allServers: string[],
   maxNetworkRam: number,
-  spacer: number
+  spacer: number,
 ): string | null {
-  const allServers = getAllServers(ns).filter(
+  const targets = allServers.filter(
     (s) => ns.hasRootAccess(s) && ns.getServerMaxMoney(s) > 0,
   );
 
   let bestTarget = null;
   let highestScore = 0;
-  
-  // 🛡️ TIME-CAP GUARDRAIL: Maximal 10 Minuten Laufzeit erlauben!
-  // Alles darüber blockiert den Orchestrator im Early/Mid-Game zu lange.
-  const MAX_ALLOWED_WEAKEN_TIME = 10 * 60 * 1000; 
+  const MAX_ALLOWED_WEAKEN_TIME = 10 * 60 * 1000;
 
-  for (const s of allServers) {
+  for (const s of targets) {
     if (ns.getServerRequiredHackingLevel(s) > ns.getHackingLevel()) continue;
 
     const weakenTime = ns.getWeakenTime(s);
-    if (weakenTime > MAX_ALLOWED_WEAKEN_TIME) continue; // 🛑 Überspringe den Server vorerst!
+    if (weakenTime > MAX_ALLOWED_WEAKEN_TIME) continue;
 
     const money = ns.getServerMaxMoney(s);
     const score = money / weakenTime;
@@ -245,8 +271,9 @@ function findBestBatchTargetForNetwork(
   }
   return bestTarget;
 }
-function getNetworkFreeRam(ns: NS): number {
-  return getAllServers(ns)
+
+function getNetworkFreeRam(ns: NS, allServers: string[]): number {
+  return allServers
     .filter((s) => ns.hasRootAccess(s))
     .reduce((total, s) => {
       let max = ns.getServerMaxRam(s);
@@ -255,8 +282,8 @@ function getNetworkFreeRam(ns: NS): number {
     }, 0);
 }
 
-function getNetworkTotalRam(ns: NS): number {
-  return getAllServers(ns)
+function getNetworkTotalRam(ns: NS, allServers: string[]): number {
+  return allServers
     .filter((s) => ns.hasRootAccess(s))
     .reduce((total, s) => {
       let max = ns.getServerMaxRam(s);

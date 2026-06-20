@@ -4,7 +4,7 @@ export async function solvePr0verFl0(ns: NS, host: string, details: any): Promis
   const len = details.passwordLength;
 
   if (!len) {
-    ns.tprint(`🔴 [Pr0verFl0] Fehler: Ungültige oder fehlende Passwortlänge auf ${host}.`);
+    ns.print(`🔴 [Pr0verFl0] Fehler: Ungültige oder fehlende Passwortlänge auf ${host}.`);
     return null;
   }
 

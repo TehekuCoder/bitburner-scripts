@@ -27,7 +27,7 @@ export async function solveOpenWebAccessPoint(ns: NS, hostname: string, details:
       
       const resLeak = await ns.dnet.authenticate(hostname, candidate);
       if (resLeak.success) {
-        ns.tprint(`🎯 [OpenWebAccessPoint] OWAP-Exploit erfolgreich bei ${hostname} (Versuch ${i + 1})! Passwort: ${candidate}`);
+        ns.print(`🎯 [OpenWebAccessPoint] OWAP-Exploit erfolgreich bei ${hostname} (Versuch ${i + 1})! Passwort: ${candidate}`);
         return candidate; 
       }
     }
@@ -42,7 +42,7 @@ export async function solveOpenWebAccessPoint(ns: NS, hostname: string, details:
       const candidate = exactMatch[1];
       const resExact = await ns.dnet.authenticate(hostname, candidate);
       if (resExact.success) {
-        ns.tprint(`[OpenWebAccessPoint] Volltreffer via Freitext-Analyse bei Versuch ${i + 1}: ${candidate}`);
+        ns.print(`[OpenWebAccessPoint] Volltreffer via Freitext-Analyse bei Versuch ${i + 1}: ${candidate}`);
         return candidate;
       }
     }
@@ -61,7 +61,7 @@ export async function solveOpenWebAccessPoint(ns: NS, hostname: string, details:
 
       const resCand = await ns.dnet.authenticate(hostname, candidate);
       if (resCand.success) {
-        ns.tprint(`[OpenWebAccessPoint] Failsafe-Erfolg via Speicher-Crawl bei Versuch ${i + 1}: ${candidate}`);
+        ns.print(`[OpenWebAccessPoint] Failsafe-Erfolg via Speicher-Crawl bei Versuch ${i + 1}: ${candidate}`);
         return candidate;
       }
     }
@@ -69,6 +69,6 @@ export async function solveOpenWebAccessPoint(ns: NS, hostname: string, details:
     await ns.sleep(200);
   }
 
-  ns.tprint(`🔴 [OpenWebAccessPoint] Fehlgeschlagen. Kein Passwort auf ${hostname} isoliert.`);
+  ns.print(`🔴 [OpenWebAccessPoint] Fehlgeschlagen. Kein Passwort auf ${hostname} isoliert.`);
   return null;
 }

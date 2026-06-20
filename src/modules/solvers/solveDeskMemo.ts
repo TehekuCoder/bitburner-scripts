@@ -15,7 +15,7 @@ export async function solveDeskMemo(
   if (combined) {
     const resCombined = await ns.dnet.authenticate(hostname, combined);
     if (resCombined.success) {
-      ns.tprint(
+      ns.print(
         `[DeskMemo] Erfolgreich authentifiziert mit kombinierter Zahl: ${combined}`,
       );
       return combined; // Passwort für das Hauptskript/Loot zurückgeben
@@ -27,14 +27,14 @@ export async function solveDeskMemo(
   for (const seq of sequences) {
     const resSeq = await ns.dnet.authenticate(hostname, seq);
     if (resSeq.success) {
-      ns.tprint(
+      ns.print(
         `[DeskMemo] Erfolgreich authentifiziert mit Zahlenblock: ${seq}`,
       );
       return seq; // Passwort zurückgeben
     }
   }
 
-  ns.tprint(
+  ns.print(
     `🔴 [DeskMemo] Fehlgeschlagen. Keine Zahlenkombination aus dem Hinweis war korrekt.`,
   );
   return null;

@@ -8,7 +8,7 @@ export async function solveCloudBlare(ns: NS, host:string, details: any): Promis
   const numericOnly = data.replace(/\D/g, "");
 
   if (!numericOnly) {
-    ns.tprint("🔴 [CloudBlare(tm)] Fehler: Keine Ziffern in den Serverdaten gefunden.");
+    ns.print("🔴 [CloudBlare(tm)] Fehler: Keine Ziffern in den Serverdaten gefunden.");
     return null;
   }
 

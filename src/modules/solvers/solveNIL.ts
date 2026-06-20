@@ -19,7 +19,7 @@ export async function solveNIL(ns: NS, hostname: string, details: any): Promise<
 
     const result = await ns.dnet.authenticate(hostname, guess);
     if (result.success) {
-      ns.tprint(`[NIL] Erfolgreich authentifiziert mit Passwort: ${guess}`);
+      ns.print(`[NIL] Erfolgreich authentifiziert mit Passwort: ${guess}`);
       return guess; // Passwort direkt für das Hauptskript/Loot zurückgeben
     }
 
@@ -78,10 +78,10 @@ export async function solveNIL(ns: NS, hostname: string, details: any): Promise<
   const finalGuess = digits.join("");
   const finalResult = await ns.dnet.authenticate(hostname, finalGuess);
   if (finalResult.success) {
-    ns.tprint(`[NIL] Erfolgreich authentifiziert mit finalem Passwort: ${finalGuess}`);
+    ns.print(`[NIL] Erfolgreich authentifiziert mit finalem Passwort: ${finalGuess}`);
     return finalGuess;
   }
 
-  ns.tprint(`🔴 [NIL] Fehler: Rekonstruiertes Passwort '${finalGuess}' wurde vom Server abgelehnt.`);
+  ns.print(`🔴 [NIL] Fehler: Rekonstruiertes Passwort '${finalGuess}' wurde vom Server abgelehnt.`);
   return null;
 }

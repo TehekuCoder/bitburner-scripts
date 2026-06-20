@@ -36,7 +36,7 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
   if (ns.args.length < 5) {
-    ns.tprint("❌ Fehler: Zu wenige Argumente vom Crawler übergeben.");
+    ns.print("❌ Fehler: Zu wenige Argumente vom Crawler übergeben.");
     return;
   }
 
@@ -66,7 +66,7 @@ export async function main(ns: NS): Promise<void> {
   const smartGuesses = getHeuristicCandidates(details);
   for (const guess of smartGuesses) {
     if ((await ns.dnet.authenticate(host, guess)).success) {
-      ns.tprint(`🚀 [SOLVER] Blitz-Erfolg bei ${host} via Heuristik: "${guess}"`);
+      ns.print(`🚀 [SOLVER] Blitz-Erfolg bei ${host} via Heuristik: "${guess}"`);
       ns.writePort(5, `${host}:${guess}`);
       return;
     }
@@ -126,12 +126,12 @@ export async function main(ns: NS): Promise<void> {
     if (authResult.success) {
       ns.writePort(5, `${host}:${correctPassword}`);
       updateJsonDatabase(ns, host, correctPassword); // 🔥 Lokales JSON schreiben
-      ns.tprint(`🎉 [SUCCESS] ${host} erfolgreich gehackt! PW: "${correctPassword}"`);
+      ns.print(`🎉 [SUCCESS] ${host} erfolgreich gehackt! PW: "${correctPassword}"`);
       return;
     }
   }
 
-  ns.tprint(`❌ [FAILED] Konnte ${host} nicht brechen. Setze Cooldown.`);
+  ns.print(`❌ [FAILED] Konnte ${host} nicht brechen. Setze Cooldown.`);
   setServerCooldown(ns, host);
 }
 
