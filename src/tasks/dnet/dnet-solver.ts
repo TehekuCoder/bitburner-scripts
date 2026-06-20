@@ -30,7 +30,7 @@ export interface ServerAuthDetails {
 }
 
 const COOLDOWN_FILE = "/dnet-cooldowns.txt";
-const COOLDOWN_MS = 5 * 60 * 1000; // 5 Minuten Pause für blockierte Server
+const COOLDOWN_MS = 5 * 60 * 1000;
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -40,14 +40,12 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  // 1. Parameter vom Crawler einlesen
   const host = String(ns.args[0]);
   const modelId = String(ns.args[1]);
   const pwLen = Number(ns.args[2]);
   const pwHint = String(ns.args[3]);
   const data = String(ns.args[4]);
 
-  // 2. Persistenten Cooldown-Check durchführen (Datei-basiert)
   if (isServerInCooldown(ns, host)) {
     ns.print(`⏳ ${host} ist noch im Cooldown. Breche ab.`);
     return;
@@ -61,39 +59,20 @@ export async function main(ns: NS): Promise<void> {
     passwordHint: pwHint,
     data: data,
     logTrafficInterval: 60,
-    passwordFormat: "numeric", // Hinweis: Falls der Crawler das Format kennt, hier dynamisch mappen!
+    passwordFormat: "numeric",
   };
 
   // --- PHASE 1: HEURISTISCHE SCHNELLSCHÜSSE ---
   const smartGuesses = getHeuristicCandidates(details);
-  ns.print(`🎯 Generierte ${smartGuesses.length} Heuristik-Kandidaten...`);
-
   for (const guess of smartGuesses) {
-    const res = await ns.dnet.authenticate(host, guess);
-    if (res.success) {
-      ns.tprint(
-        `🚀 [SOLVER] Blitz-Erfolg bei ${host} via Heuristik: "${guess}"`,
-      );
+    if ((await ns.dnet.authenticate(host, guess)).success) {
+      ns.tprint(`🚀 [SOLVER] Blitz-Erfolg bei ${host} via Heuristik: "${guess}"`);
       ns.writePort(5, `${host}:${guess}`);
       return;
     }
   }
 
-  // --- PHASE 2: SCHNELLE DICTIONARY- & LOOT-ANGRIFFE ---
-  ns.print(
-    "⚠️ Heuristik fehlgeschlagen. Starte Standard-Wörterbuch-Attacke...",
-  );
-
-  if (await dictionaryAttack(ns, host, details)) {
-    ns.print(`🎉 [OK] Dictionary Attack erfolgreich auf ${host}.`);
-    return;
-  }
-  if (await fileLootAttack(ns, host, details)) {
-    ns.print(`🎉 [OK] File Loot Attack erfolgreich auf ${host}.`);
-    return;
-  }
-
-  // --- PHASE 3: MODULARE MODELL-WEICHE (KRYPTO) ---
+  // --- PHASE 2: MODULARE MODELL-WEICHE ---
   ns.print(`🔨 Krypto-Angriff auf ${host} [${modelId}] gestartet...`);
   let correctPassword: string | null = null;
 
@@ -114,15 +93,10 @@ export async function main(ns: NS): Promise<void> {
       correctPassword = await solveDeskMemo(ns, host, details);
       break;
     case "CloudBlare(tm)":
-      const passCloud = await solveCloudBlare(ns, host, details);
-      if (passCloud) {
-        const resCloud = await ns.dnet.authenticate(host, passCloud);
-        if (resCloud.success) correctPassword = passCloud;
-      }
+      correctPassword = await solveCloudBlare(ns, host, details);
       break;
     case "ZeroLogon":
-      const resZero = await ns.dnet.authenticate(host, "");
-      if (resZero.success) correctPassword = "";
+      if ((await ns.dnet.authenticate(host, "")).success) correctPassword = "";
       break;
     case "PHP 5.4":
       correctPassword = await solveAnagram(ns, host, details);
@@ -140,37 +114,29 @@ export async function main(ns: NS): Promise<void> {
       correctPassword = await solveFactoriOs(ns, host, details);
       break;
     default:
-      ns.print(
-        `⚠️ Unbekanntes Modell: ${details.modelId}. Versuche AccountsManager-Fallback...`,
-      );
-      correctPassword = await solveAccountsManager(ns, host, details);
+      ns.print(`⚠️ Unbekanntes Modell: ${details.modelId}. Starte Dictionary-Fallback...`);
+      if (await dictionaryAttack(ns, host, details)) return;
+      if (await fileLootAttack(ns, host, details)) return;
       break;
   }
 
-  // --- PHASE 4: FINALE AUSWERTUNG & NETZWERK-AUTH ---
+  // --- PHASE 3: FINALE AUSWERTUNG ---
   if (correctPassword !== null) {
     const authResult = await ns.dnet.authenticate(host, correctPassword);
     if (authResult.success) {
       ns.writePort(5, `${host}:${correctPassword}`);
-      updatePasswordFile(ns, correctPassword);
-      ns.tprint(
-        `🎉 [SUCCESS] ${host} erfolgreich gehackt! PW: "${correctPassword}"`,
-      );
+      updateJsonDatabase(ns, host, correctPassword); // 🔥 Lokales JSON schreiben
+      ns.tprint(`🎉 [SUCCESS] ${host} erfolgreich gehackt! PW: "${correctPassword}"`);
       return;
     }
   }
 
-  // Wenn ALLE Stricke gerissen sind (Heuristik, Dictionary, Krypto fehlgeschlagen):
   ns.tprint(`❌ [FAILED] Konnte ${host} nicht brechen. Setze Cooldown.`);
   setServerCooldown(ns, host);
 }
 
-// ============================================================================
-// HILFSFUNKTIONEN FÜR PERSISTENTEN COOLDOWN
-// ============================================================================
-
 function isServerInCooldown(ns: NS, host: string): boolean {
-  if (!ns.fileExists(COOLDOWN_FILE, "home")) return false;
+  if (!ns.fileExists(COOLDOWN_FILE)) return false;
   const lines = ns.read(COOLDOWN_FILE).split("\n");
   const now = Date.now();
 
@@ -178,7 +144,7 @@ function isServerInCooldown(ns: NS, host: string): boolean {
     const [cHost, cTime] = line.split(",");
     if (cHost === host) {
       if (now - Number(cTime) < COOLDOWN_MS) {
-        return true; // Noch gesperrt
+        return true;
       }
     }
   }
@@ -189,8 +155,7 @@ function setServerCooldown(ns: NS, host: string): void {
   let content = "";
   const now = Date.now();
 
-  if (ns.fileExists(COOLDOWN_FILE, "home")) {
-    // Altes Zeug filtern, um die Datei sauber zu halten
+  if (ns.fileExists(COOLDOWN_FILE)) {
     const lines = ns.read(COOLDOWN_FILE).split("\n");
     content = lines
       .filter((line) => {
@@ -204,47 +169,47 @@ function setServerCooldown(ns: NS, host: string): void {
   ns.write(COOLDOWN_FILE, content, "w");
 }
 
-// ============================================================================
-// RESTLICHE HILFSFUNKTIONEN (Dictionary, Loot, Heuristik)
-// ============================================================================
-
-async function dictionaryAttack(
-  ns: NS,
-  host: string,
-  details: ServerAuthDetails,
-): Promise<boolean> {
-  if (!ns.fileExists("/passwords.txt", "home")) return false;
-
-  const list = [
-    ...new Set(
-      ns
-        .read("/passwords.txt")
-        .split(/[\r\n,]+/)
-        .map((p) => p.trim())
-        .filter((p) => p.length > 0),
-    ),
-  ];
-
-  for (const pw of list) {
-    if (details.passwordLength && pw.length !== details.passwordLength)
-      continue;
-    if (details.passwordFormat === "numeric" && !/^\d+$/.test(pw)) continue;
-    if (details.passwordFormat === "alphabetic" && !/^[a-zA-Z]+$/.test(pw))
-      continue;
-
-    if ((await ns.dnet.authenticate(host, pw)).success) {
-      ns.writePort(5, `${host}:${pw}`);
-      return true;
+// 🔥 NEU: Schreibt sauber strukturiert Key-Value-Paare in das lokale JSON
+function updateJsonDatabase(ns: NS, host: string, newPw: string): void {
+  const file = "/dnet-master-db.json";
+  let db: Record<string, string> = {};
+  
+  if (ns.fileExists(file)) {
+    try {
+      db = JSON.parse(ns.read(file));
+    } catch {
+      db = {};
     }
   }
+  
+  db[host] = newPw;
+  ns.write(file, JSON.stringify(db, null, 2), "w");
+}
+
+async function dictionaryAttack(ns: NS, host: string, details: ServerAuthDetails): Promise<boolean> {
+  const jsonDbFile = "/dnet-master-db.json";
+  if (!ns.fileExists(jsonDbFile)) return false;
+
+  try {
+    const db = JSON.parse(ns.read(jsonDbFile));
+    // Wir extrahieren alle eindeutigen, validen Passwörter aus den existierenden Einträgen
+    const list = [...new Set(Object.values(db) as string[])].filter(
+      (pw) => pw !== undefined && !pw.includes("You have discovered") && pw.length < 30
+    );
+
+    for (const pw of list) {
+      if (details.passwordLength && pw.length !== details.passwordLength) continue;
+      if ((await ns.dnet.authenticate(host, pw)).success) {
+        ns.writePort(5, `${host}:${pw}`);
+        updateJsonDatabase(ns, host, pw);
+        return true;
+      }
+    }
+  } catch {}
   return false;
 }
 
-async function fileLootAttack(
-  ns: NS,
-  host: string,
-  details: ServerAuthDetails,
-): Promise<boolean> {
+async function fileLootAttack(ns: NS, host: string, details: ServerAuthDetails): Promise<boolean> {
   try {
     const files = ns.ls(host, ".txt");
     for (const file of files) {
@@ -252,33 +217,13 @@ async function fileLootAttack(
       if (content.length <= (details.passwordLength || 20)) {
         if ((await ns.dnet.authenticate(host, content)).success) {
           ns.writePort(5, `${host}:${content}`);
+          updateJsonDatabase(ns, host, content);
           return true;
         }
       }
     }
   } catch {}
   return false;
-}
-
-function updatePasswordFile(ns: NS, newPw: string): void {
-  const file = "/passwords.txt";
-  if (
-    !newPw ||
-    newPw.includes("You have discovered") ||
-    newPw.includes(" shares of")
-  )
-    return;
-
-  const pws = new Set<string>();
-  if (ns.fileExists(file)) {
-    ns.read(file)
-      .split(/[\n,]+/)
-      .forEach((p) => p.trim() && pws.add(p.trim()));
-  }
-
-  if (!pws.has(newPw)) {
-    ns.write(file, `\n${newPw}`, "a");
-  }
 }
 
 function getHeuristicCandidates(details: ServerAuthDetails): string[] {

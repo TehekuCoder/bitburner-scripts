@@ -11,7 +11,7 @@ interface ScriptList {
   trade: string;
   hacknet: string;
   replicator: string; // dnet-master
-  crawler: string;    // 🔥 NEU: Der dnet-crawler Pfad
+  crawler: string; // 🔥 NEU: Der dnet-crawler Pfad
   hack: string;
   grow: string;
   weak: string;
@@ -56,7 +56,9 @@ export async function main(ns: NS): Promise<void> {
         bnMults = { ...bnMults, ...JSON.parse(fileContent) };
       }
     } catch {
-      ns.print("⚠️ [KERNEL] Fehler beim Parsen der bn-multipliers.txt. Failsafe aktiv.");
+      ns.print(
+        "⚠️ [KERNEL] Fehler beim Parsen der bn-multipliers.txt. Failsafe aktiv.",
+      );
     }
   }
 
@@ -90,11 +92,17 @@ export async function main(ns: NS): Promise<void> {
 
     if (bnMults.ServerMaxMoney === 0 && state.strategy === "MONEY") {
       state.strategy = "XP_SPRINT";
-      state.progressBar = "📉 BN-Sonderregel: Kein Server-Geld! Wechsle auf XP-Sprint.";
+      state.progressBar =
+        "📉 BN-Sonderregel: Kein Server-Geld! Wechsle auf XP-Sprint.";
     }
 
     const player: Player = ns.getPlayer();
-    const bestTarget: string = findBestTarget(ns, allNodes, player, bnMults.ServerMaxMoney);
+    const bestTarget: string = findBestTarget(
+      ns,
+      allNodes,
+      player,
+      bnMults.ServerMaxMoney,
+    );
 
     saveState(ns, state);
 
@@ -132,7 +140,10 @@ export async function main(ns: NS): Promise<void> {
     // ======================================================================
     for (const node of allNodes) {
       if (ns.hasRootAccess(node)) {
-        if (node === "home" && ["REP", "TRAIN", "CORP", "CRIME"].includes(state.strategy)) {
+        if (
+          node === "home" &&
+          ["REP", "TRAIN", "CORP", "CRIME"].includes(state.strategy)
+        ) {
           continue;
         }
 
@@ -147,14 +158,18 @@ export async function main(ns: NS): Promise<void> {
           ];
 
           for (const p of procs) {
-            if (standardScripts.includes(p.filename) && p.args[2] === undefined) {
+            if (
+              standardScripts.includes(p.filename) &&
+              p.args[2] === undefined
+            ) {
               ns.kill(p.pid);
             }
           }
           continue;
         }
 
-        let activeScript = state.strategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
+        let activeScript =
+          state.strategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
 
         if (homeMax >= 128 && state.strategy !== "XP_SPRINT") {
           if (currentSecurity > securityThresh) {
@@ -168,7 +183,11 @@ export async function main(ns: NS): Promise<void> {
 
         let ramBuffer = 0;
         if (node === "home") {
-          if (["CRIME", "REP", "TRAIN", "CORP", "SHOP", "XP_SPRINT"].includes(state.strategy)) {
+          if (
+            ["CRIME", "REP", "TRAIN", "CORP", "SHOP", "XP_SPRINT"].includes(
+              state.strategy,
+            )
+          ) {
             ramBuffer = 24;
           } else {
             ramBuffer = 8;
@@ -180,18 +199,35 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    drawSysKernelDashboard(ns, state, bestTarget, allNodes, homeMax >= 128, bnMults.ServerMaxMoney);
+    drawSysKernelDashboard(
+      ns,
+      state,
+      bestTarget,
+      allNodes,
+      homeMax >= 128,
+      bnMults.ServerMaxMoney,
+    );
     await ns.sleep(2000);
   }
 }
 
-function findBestTarget(ns: NS, nodes: string[], player: Player, serverMaxMoneyMult: number): string {
+function findBestTarget(
+  ns: NS,
+  nodes: string[],
+  player: Player,
+  serverMaxMoneyMult: number,
+): string {
   let best = "n00dles";
   let maxWeight = 0;
   const isNoMoneyNode = serverMaxMoneyMult === 0;
 
   for (const node of nodes) {
-    if (node === "home" || node === "darkweb" || node.startsWith("hacknet-node")) continue;
+    if (
+      node === "home" ||
+      node === "darkweb" ||
+      node.startsWith("hacknet-node")
+    )
+      continue;
     if (!ns.hasRootAccess(node)) continue;
 
     const srv = ns.getServer(node);
@@ -224,7 +260,13 @@ function findBestTarget(ns: NS, nodes: string[], player: Player, serverMaxMoneyM
   return best;
 }
 
-function deployWorker(ns: NS, targetNode: string, scriptFilename: string, hackTarget: string, ramBuffer: number): void {
+function deployWorker(
+  ns: NS,
+  targetNode: string,
+  scriptFilename: string,
+  hackTarget: string,
+  ramBuffer: number,
+): void {
   if (!ns.fileExists(scriptFilename, "home")) return;
 
   const scriptCost = ns.getScriptRam(scriptFilename);
@@ -242,7 +284,10 @@ function deployWorker(ns: NS, targetNode: string, scriptFilename: string, hackTa
   ];
 
   for (const p of procs) {
-    if (allWorkerScripts.includes(p.filename) && (p.filename !== scriptFilename || p.args[0] !== hackTarget)) {
+    if (
+      allWorkerScripts.includes(p.filename) &&
+      (p.filename !== scriptFilename || p.args[0] !== hackTarget)
+    ) {
       ns.kill(p.pid);
       freedRam += ns.getScriptRam(p.filename, targetNode) * p.threads;
     }
@@ -256,35 +301,73 @@ function deployWorker(ns: NS, targetNode: string, scriptFilename: string, hackTa
   }
 }
 
-function manageSuites(ns: NS, scripts: ScriptList, state: BotState, triggerBackdoor: boolean): void {
+function manageSuites(
+  ns: NS,
+  scripts: ScriptList,
+  state: BotState,
+  triggerBackdoor: boolean,
+): void {
   const homeMaxRam = ns.getServerMaxRam("home");
   const playerMoney = ns.getPlayer().money;
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
   // --- HACKNET HOT-SWAP MANAGER ---
-  const targetHacknetScript = hasFormulas ? "tasks/hacknet.js" : "tasks/hacknet-early.js";
-  const obsoleteHacknetScript = hasFormulas ? "tasks/hacknet-early.js" : "tasks/hacknet.js";
+  const targetHacknetScript = hasFormulas
+    ? "tasks/hacknet.js"
+    : "tasks/hacknet-early.js";
+  const obsoleteHacknetScript = hasFormulas
+    ? "tasks/hacknet-early.js"
+    : "tasks/hacknet.js";
 
   if (ns.isRunning(obsoleteHacknetScript, "home")) {
-    ns.print(`🔄 [KERNEL] Formulas-Status geändert. Beende ${obsoleteHacknetScript}...`);
+    ns.print(
+      `🔄 [KERNEL] Formulas-Status geändert. Beende ${obsoleteHacknetScript}...`,
+    );
     ns.scriptKill(obsoleteHacknetScript, "home");
   }
 
-  if (ns.fileExists(targetHacknetScript, "home") && !ns.isRunning(targetHacknetScript, "home")) {
-    ns.print(`⚡ [KERNEL] Starte adaptives Hacknet-Subsystem (${hasFormulas ? "Advanced ROI" : "Early-Heuristic"})...`);
-    ns.exec(targetHacknetScript, "home", 1);
+  const hasBrute = ns.fileExists("BruteSSH.exe", "home");
+
+  // 🔥 ABSOLUTE SPERRE BIS BRUTESSH.EXE DA IST
+  if (!hasBrute) {
+    if (ns.isRunning(targetHacknetScript, "home")) {
+      ns.print(
+        "⏳ [KERNEL] BruteSSH.exe fehlt. Blockiere Hacknet für TOR/Brute-Ansparphase.",
+      );
+      ns.scriptKill(targetHacknetScript, "home");
+    }
+  } else {
+    // Nur wenn Brute existiert UND das Skript nicht läuft, wird es gestartet!
+    if (
+      ns.fileExists(targetHacknetScript, "home") &&
+      !ns.isRunning(targetHacknetScript, "home")
+    ) {
+      ns.print(
+        `⚡ [KERNEL] Starte adaptives Hacknet-Subsystem (${hasFormulas ? "Advanced ROI" : "Early-Heuristic"})...`,
+      );
+      ns.exec(targetHacknetScript, "home", 1);
+    }
   }
 
   // --- RESTLICHE SUITEN ---
-  if (triggerBackdoor && ns.fileExists(scripts.backdoor, "home") && !ns.isRunning(scripts.backdoor, "home")) {
+  if (
+    triggerBackdoor &&
+    ns.fileExists(scripts.backdoor, "home") &&
+    !ns.isRunning(scripts.backdoor, "home")
+  ) {
     ns.exec(scripts.backdoor, "home", 1);
   }
 
-  if (ns.fileExists(scripts.trade, "home") && !ns.isRunning(scripts.trade, "home")) {
+  if (
+    ns.fileExists(scripts.trade, "home") &&
+    !ns.isRunning(scripts.trade, "home")
+  ) {
     const hasTix = ns.stock.hasTixApiAccess();
     if (
       (homeMaxRam >= 128 && playerMoney >= 25_000_000_000) ||
-      (hasTix && ns.stock.purchase4SMarketDataTixApi() && playerMoney >= 100_000_000)
+      (hasTix &&
+        ns.stock.purchase4SMarketDataTixApi() &&
+        playerMoney >= 100_000_000)
     )
       ns.exec(scripts.trade, "home", 1);
   }
@@ -293,16 +376,15 @@ function manageSuites(ns: NS, scripts: ScriptList, state: BotState, triggerBackd
   // --- 🔥 DARKNET DOUBLE-TRIGGER SUITE ---
   // ======================================================================
   if (ns.fileExists("DarkscapeNavigator.exe", "home")) {
-    
-    // 1. Starte den zentralen Port-Manager (Master), falls er schläft
     if (!ns.isRunning(scripts.replicator, "home")) {
       ns.tprint("🌐 DarkscapeNavigator erkannt. Starte Darknet-Master...");
       ns.exec(scripts.replicator, "home", 1);
     }
 
-    // 2. 🔥 NEU: Entfessle den Scout-Wurm (Crawler) lokal auf 'home', 
-    // damit er anfängt, die ersten Nachbarn zu scannen und zu infizieren!
-    if (ns.fileExists(scripts.crawler, "home") && !ns.isRunning(scripts.crawler, "home")) {
+    if (
+      ns.fileExists(scripts.crawler, "home") &&
+      !ns.isRunning(scripts.crawler, "home")
+    ) {
       ns.print("📡 [KERNEL] Starte initialen Darknet-Crawler auf home...");
       ns.exec(scripts.crawler, "home", 1);
     }
@@ -310,13 +392,22 @@ function manageSuites(ns: NS, scripts: ScriptList, state: BotState, triggerBackd
   // ======================================================================
 }
 
-function drawSysKernelDashboard(ns: NS, state: BotState, bestTarget: string, allNodes: string[], isFleetMode: boolean, serverMaxMoneyMult: number): void {
+function drawSysKernelDashboard(
+  ns: NS,
+  state: BotState,
+  bestTarget: string,
+  allNodes: string[],
+  isFleetMode: boolean,
+  serverMaxMoneyMult: number,
+): void {
   ns.clearLog();
   const rootCount = allNodes.filter((n) => ns.hasRootAccess(n)).length;
   ns.print(`========================================`);
   ns.print(`👑 BIT-OS SYS-KERNEL - Units: ${rootCount}/${allNodes.length}`);
   ns.print(`========================================`);
-  ns.print(`ENGINE-MODE: ${isFleetMode ? "DYNAMIC FLEET (>=128GB)" : "LEGACY LOOP (<128GB)"}`);
+  ns.print(
+    `ENGINE-MODE: ${isFleetMode ? "DYNAMIC FLEET (>=128GB)" : "LEGACY LOOP (<128GB)"}`,
+  );
   ns.print(`STRATEGIE:  ${state.strategy}`);
   ns.print(`ZIEL:       ${bestTarget}`);
   if (serverMaxMoneyMult !== 1.0) {

@@ -38,12 +38,15 @@ export async function main(ns: NS): Promise<void> {
 
         // 🔥 FIX: ns.clear() entfernt!
         // Das "w"-Argument überschreibt die Datei komplett oder erstellt sie, falls sie fehlt.
-        await ns.write(jsonDbFile, JSON.stringify(passwordDb, null, 2), "w");
+        // ... (im while-Loop des Masters, beim Schreiben der txt-Datei)
+        const uniquePasswords = [...new Set(Object.values(passwordDb))].filter(
+          (pw) =>
+            pw &&
+            !pw.includes("You have discovered") &&
+            !pw.includes("shares of") &&
+            pw.length < 30, // Echte Passwörter sind selten so lang
+        );
 
-        // Extrahiere alle einzigartigen Passwörter als reine Klartext-Liste
-        const uniquePasswords = [...new Set(Object.values(passwordDb))];
-
-        // 🔥 FIX: Auch hier ns.clear() entfernt!
         await ns.write(textDbFile, uniquePasswords.join("\n"), "w");
       }
     }

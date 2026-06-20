@@ -245,6 +245,19 @@ export async function main(ns: NS): Promise<void> {
       ns.run("utils/fill-ram.js", 1);
     }
 
+    if (hasSingularity) {
+      // 1. TOR Router kaufen (Kostet 250k)
+      if (!ns.hasTorRouter() && p.money >= 250_000) {
+        ns.print("🛒 [Dispatcher] Kaufe TOR-Router...");
+        ns.singularity.purchaseTor();
+      }
+      
+      // 2. Brute.exe kaufen (Kostet 500k, setzt TOR voraus)
+      if (ns.hasTorRouter() && !ns.fileExists("BruteSSH.exe", "home") && p.money >= 500_000) {
+        ns.print("🛒 [Dispatcher] Kaufe Brute.exe...");
+        ns.singularity.purchaseProgram("BruteSSH.exe");
+      }
+    }
     // --- 5. EXECUTION LAYER ---
     manageMicroservices(ns, mode);
 
