@@ -62,11 +62,27 @@ export async function main(ns: NS): Promise<void> {
     passwordFormat: "numeric",
   };
 
+  // 🔍 Prüfen, ob der Host im aktuellen Boot-Zyklus überhaupt erreichbar ist
+  const connectedServers = ns.dnet.probe();
+
+  if (!connectedServers.includes(host)) {
+    ns.print(
+      `⚠️ [dnet-solver] Host '${host}' ist nach Reload nicht direkt verbunden. Breche ab...`,
+    );
+
+    // TODO: Hier ggf. den ungültigen Eintrag aus deiner DB/deinem State löschen
+    return; // 🔥 FIX 1: return statt continue, da wir nicht in einer Schleife sind
+  }
+
+  // 🔥 FIX 2: Der fehlerhafte, blinde Authentifizierungsversuch mit der undefinierten Variable wurde entfernt.
+
   // --- PHASE 1: HEURISTISCHE SCHNELLSCHÜSSE ---
   const smartGuesses = getHeuristicCandidates(details);
   for (const guess of smartGuesses) {
     if ((await ns.dnet.authenticate(host, guess)).success) {
-      ns.print(`🚀 [SOLVER] Blitz-Erfolg bei ${host} via Heuristik: "${guess}"`);
+      ns.print(
+        `🚀 [SOLVER] Blitz-Erfolg bei ${host} via Heuristik: "${guess}"`,
+      );
       ns.writePort(5, `${host}:${guess}`);
       return;
     }
@@ -114,7 +130,9 @@ export async function main(ns: NS): Promise<void> {
       correctPassword = await solveFactoriOs(ns, host, details);
       break;
     default:
-      ns.print(`⚠️ Unbekanntes Modell: ${details.modelId}. Starte Dictionary-Fallback...`);
+      ns.print(
+        `⚠️ Unbekanntes Modell: ${details.modelId}. Starte Dictionary-Fallback...`,
+      );
       if (await dictionaryAttack(ns, host, details)) return;
       if (await fileLootAttack(ns, host, details)) return;
       break;
@@ -125,8 +143,10 @@ export async function main(ns: NS): Promise<void> {
     const authResult = await ns.dnet.authenticate(host, correctPassword);
     if (authResult.success) {
       ns.writePort(5, `${host}:${correctPassword}`);
-      updateJsonDatabase(ns, host, correctPassword); // 🔥 Lokales JSON schreiben
-      ns.print(`🎉 [SUCCESS] ${host} erfolgreich gehackt! PW: "${correctPassword}"`);
+      updateJsonDatabase(ns, host, correctPassword); // Lokales JSON schreiben
+      ns.print(
+        `🎉 [SUCCESS] ${host} erfolgreich gehackt! PW: "${correctPassword}"`,
+      );
       return;
     }
   }
@@ -169,11 +189,10 @@ function setServerCooldown(ns: NS, host: string): void {
   ns.write(COOLDOWN_FILE, content, "w");
 }
 
-// 🔥 NEU: Schreibt sauber strukturiert Key-Value-Paare in das lokale JSON
 function updateJsonDatabase(ns: NS, host: string, newPw: string): void {
   const file = "/dnet-master-db.json";
   let db: Record<string, string> = {};
-  
+
   if (ns.fileExists(file)) {
     try {
       db = JSON.parse(ns.read(file));
@@ -181,24 +200,31 @@ function updateJsonDatabase(ns: NS, host: string, newPw: string): void {
       db = {};
     }
   }
-  
+
   db[host] = newPw;
   ns.write(file, JSON.stringify(db, null, 2), "w");
 }
 
-async function dictionaryAttack(ns: NS, host: string, details: ServerAuthDetails): Promise<boolean> {
+async function dictionaryAttack(
+  ns: NS,
+  host: string,
+  details: ServerAuthDetails,
+): Promise<boolean> {
   const jsonDbFile = "/dnet-master-db.json";
   if (!ns.fileExists(jsonDbFile)) return false;
 
   try {
     const db = JSON.parse(ns.read(jsonDbFile));
-    // Wir extrahieren alle eindeutigen, validen Passwörter aus den existierenden Einträgen
     const list = [...new Set(Object.values(db) as string[])].filter(
-      (pw) => pw !== undefined && !pw.includes("You have discovered") && pw.length < 30
+      (pw) =>
+        pw !== undefined &&
+        !pw.includes("You have discovered") &&
+        pw.length < 30,
     );
 
     for (const pw of list) {
-      if (details.passwordLength && pw.length !== details.passwordLength) continue;
+      if (details.passwordLength && pw.length !== details.passwordLength)
+        continue;
       if ((await ns.dnet.authenticate(host, pw)).success) {
         ns.writePort(5, `${host}:${pw}`);
         updateJsonDatabase(ns, host, pw);
@@ -209,7 +235,11 @@ async function dictionaryAttack(ns: NS, host: string, details: ServerAuthDetails
   return false;
 }
 
-async function fileLootAttack(ns: NS, host: string, details: ServerAuthDetails): Promise<boolean> {
+async function fileLootAttack(
+  ns: NS,
+  host: string,
+  details: ServerAuthDetails,
+): Promise<boolean> {
   try {
     const files = ns.ls(host, ".txt");
     for (const file of files) {

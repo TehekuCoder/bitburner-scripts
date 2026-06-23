@@ -1,5 +1,10 @@
 import { NS, Player, FactionName, CompanyName } from "@ns";
-import { loadState, saveState, BotState, BotStrategy } from "./state-manager.js";
+import {
+  loadState,
+  saveState,
+  BotState,
+  BotStrategy,
+} from "./state-manager.js";
 import { breakAndInfectNetwork } from "../lib/network.js";
 
 interface FactionConfig {
@@ -104,10 +109,23 @@ export async function main(ns: NS): Promise<void> {
       );
 
       if (nextLockedCombatFaction) {
+        // 💀 Dynamische Kill-Anforderungen ermitteln
+        let requiredKills = 0;
+        if (nextLockedCombatFaction.name === "The Dark Army") requiredKills = 5;
+        if (nextLockedCombatFaction.name === "Speakers for the Dead")
+          requiredKills = 30;
+
         const currentLowestCombatStat = Math.min(
           ...COMBAT_STATS.map((s) => p.skills[s]),
         );
-        if (currentLowestCombatStat < nextLockedCombatFaction.minStat) {
+        // Prio 1: Haben wir genug Leichen im Keller?
+        if (p.numPeopleKilled < requiredKills) {
+          mode = "KILLS";
+          targetStat = requiredKills; // Missbraucht als temporärer Speicher für die Anzeige
+          targetFaction = nextLockedCombatFaction.name;
+        }
+        // Prio 2: Wenn Kills passen, Stats ins Ziel bringen
+        else if (currentLowestCombatStat < nextLockedCombatFaction.minStat) {
           mode = "TRAIN";
           targetStat = nextLockedCombatFaction.minStat;
           targetFaction = nextLockedCombatFaction.name;
@@ -148,6 +166,10 @@ export async function main(ns: NS): Promise<void> {
       currentVal = Math.min(...COMBAT_STATS.map((s) => p.skills[s]));
       targetVal = targetStat;
       label = `🏋️ Training (Combat)`;
+    } else if (mode === "KILLS") {
+      currentVal = p.numPeopleKilled;
+      targetVal = targetStat;
+      label = `💀 Mordaufträge`;
     }
 
     const now = Date.now();
@@ -221,6 +243,7 @@ export async function main(ns: NS): Promise<void> {
       targetFaction: targetFaction || undefined,
       targetCompany: targetCompany,
       targetStat: mode === "TRAIN" ? targetStat : undefined,
+      targetKills: mode === "KILLS" ? targetStat : undefined,
       progressBar: finalBar,
     });
 
@@ -251,9 +274,13 @@ export async function main(ns: NS): Promise<void> {
         ns.print("🛒 [Dispatcher] Kaufe TOR-Router...");
         ns.singularity.purchaseTor();
       }
-      
+
       // 2. Brute.exe kaufen (Kostet 500k, setzt TOR voraus)
-      if (ns.hasTorRouter() && !ns.fileExists("BruteSSH.exe", "home") && p.money >= 500_000) {
+      if (
+        ns.hasTorRouter() &&
+        !ns.fileExists("BruteSSH.exe", "home") &&
+        p.money >= 500_000
+      ) {
         ns.print("🛒 [Dispatcher] Kaufe Brute.exe...");
         ns.singularity.purchaseProgram("BruteSSH.exe");
       }
@@ -307,6 +334,7 @@ function manageMicroservices(ns: NS, currentMode: string): void {
     TRAIN: "tasks/train.js",
     MONEY: "tasks/crime.js",
     XP_SPRINT: "tasks/crime.js",
+    KILLS: "tasks/crime.js",
   };
 
   const targetScript = modeToScript[currentMode];

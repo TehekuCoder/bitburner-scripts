@@ -10,8 +10,8 @@ interface ScriptList {
   xpfarm: string;
   trade: string;
   hacknet: string;
-  replicator: string; // dnet-master
-  crawler: string; // 🔥 NEU: Der dnet-crawler Pfad
+  replicator: string;
+  crawler: string;
   hack: string;
   grow: string;
   weak: string;
@@ -27,7 +27,7 @@ export async function main(ns: NS): Promise<void> {
     trade: "modules/trading-bot.js",
     hacknet: "tasks/hacknet-early.js",
     replicator: "core/dnet-master.js",
-    crawler: "tasks/dnet/dnet-crawler.js", // 🔥 NEU: Registrierung des Crawlers
+    crawler: "tasks/dnet/dnet-crawler.js",
     hack: "tasks/hack.js",
     grow: "tasks/grow.js",
     weak: "tasks/weaken.js",
@@ -85,6 +85,7 @@ export async function main(ns: NS): Promise<void> {
       playerHacking: ns.getHackingLevel(),
     };
 
+    // Synchronisiert mit der Hacknet-Sperre (< 64 GB)
     if (homeMax < 64) {
       state.strategy = "MONEY";
       state.progressBar = "💰 Early-Game-Booster (Warte auf 64GB RAM)";
@@ -106,7 +107,7 @@ export async function main(ns: NS): Promise<void> {
 
     saveState(ns, state);
 
-    // Verwalte alle Suiten (inklusive des überarbeiteten Darknet-Zünders)
+    // Aufruf des Microservice-Managers
     manageSuites(ns, scripts, state, triggerBackdoor);
 
     if (
@@ -135,9 +136,7 @@ export async function main(ns: NS): Promise<void> {
     const securityThresh = minSecurity + 2;
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-    // ======================================================================
     // --- WORKER DEPLOYMENT ---
-    // ======================================================================
     for (const node of allNodes) {
       if (ns.hasRootAccess(node)) {
         if (
@@ -156,7 +155,6 @@ export async function main(ns: NS): Promise<void> {
             "tasks/grow.js",
             "tasks/weaken.js",
           ];
-
           for (const p of procs) {
             if (
               standardScripts.includes(p.filename) &&
@@ -211,6 +209,103 @@ export async function main(ns: NS): Promise<void> {
   }
 }
 
+function manageSuites(
+  ns: NS,
+  scripts: ScriptList,
+  state: BotState,
+  triggerBackdoor: boolean,
+): void {
+  const homeMaxRam = ns.getServerMaxRam("home");
+  const playerMoney = ns.getPlayer().money;
+  const hasFormulas = ns.fileExists("Formulas.exe", "home");
+
+  // --- HACKNET HOT-SWAP MANAGER ---
+  const targetHacknetScript = hasFormulas
+    ? "tasks/hacknet.js"
+    : "tasks/hacknet-early.js";
+  const obsoleteHacknetScript = hasFormulas
+    ? "tasks/hacknet-early.js"
+    : "tasks/hacknet.js";
+
+  // Altes/Falsches Skript sofort terminieren bei Formulas-Wechsel
+  if (ns.isRunning(obsoleteHacknetScript, "home")) {
+    ns.scriptKill(obsoleteHacknetScript, "home");
+  }
+
+  const hasBrute = ns.fileExists("BruteSSH.exe", "home");
+
+  // 1. Prioritäts-Weiche: Zu wenig RAM? (Geändert auf striktes < 64)
+  if (homeMaxRam < 64) {
+    if (ns.isRunning(targetHacknetScript, "home")) {
+      ns.print(
+        "⏳ [KERNEL] Blockiere Hacknet: Fokus liegt auf 64GB RAM Upgrade.",
+      );
+      ns.scriptKill(targetHacknetScript, "home");
+    }
+  }
+  // 2. Prioritäts-Weiche: Genug RAM, aber noch keine Brute.exe?
+  else if (!hasBrute) {
+    if (ns.isRunning(targetHacknetScript, "home")) {
+      ns.print(
+        "⏳ [KERNEL] Blockiere Hacknet: Spare Geld für TOR / BruteSSH.exe.",
+      );
+      ns.scriptKill(targetHacknetScript, "home");
+    }
+  }
+  // 3. Freigabe: RAM >= 64 UND Brute.exe vorhanden -> Starten!
+  else {
+    if (
+      ns.fileExists(targetHacknetScript, "home") &&
+      !ns.isRunning(targetHacknetScript, "home")
+    ) {
+      ns.print(
+        `⚡ [KERNEL] Bedingungen erfüllt. Starte Hacknet (${hasFormulas ? "Advanced ROI" : "Early-Heuristic"})...`,
+      );
+      ns.exec(targetHacknetScript, "home", 1);
+    }
+  }
+
+  // --- RESTLICHE SUITEN ---
+  if (
+    triggerBackdoor &&
+    ns.fileExists(scripts.backdoor, "home") &&
+    !ns.isRunning(scripts.backdoor, "home")
+  ) {
+    ns.exec(scripts.backdoor, "home", 1);
+  }
+
+  if (
+    ns.fileExists(scripts.trade, "home") &&
+    !ns.isRunning(scripts.trade, "home")
+  ) {
+    const hasTix = ns.stock.hasTixApiAccess();
+    if (
+      (homeMaxRam >= 128 && playerMoney >= 25_000_000_000) ||
+      (hasTix &&
+        ns.stock.purchase4SMarketDataTixApi() &&
+        playerMoney >= 100_000_000)
+    )
+      ns.exec(scripts.trade, "home", 1);
+  }
+
+  // --- DARKNET DOUBLE-TRIGGER SUITE ---
+  if (ns.fileExists("DarkscapeNavigator.exe", "home")) {
+    if (!ns.isRunning(scripts.replicator, "home")) {
+      ns.tprint("🌐 DarkscapeNavigator erkannt. Starte Darknet-Master...");
+      ns.exec(scripts.replicator, "home", 1);
+    }
+
+    if (
+      ns.fileExists(scripts.crawler, "home") &&
+      !ns.isRunning(scripts.crawler, "home")
+    ) {
+      ns.print("📡 [KERNEL] Starte initialen Darknet-Crawler auf home...");
+      ns.exec(scripts.crawler, "home", 1);
+    }
+  }
+}
+
+// --- HELFER-FUNKTIONEN (Unverändert) ---
 function findBestTarget(
   ns: NS,
   nodes: string[],
@@ -299,97 +394,6 @@ function deployWorker(
     if (targetNode !== "home") ns.scp(scriptFilename, targetNode, "home");
     ns.exec(scriptFilename, targetNode, threads, hackTarget);
   }
-}
-
-function manageSuites(
-  ns: NS,
-  scripts: ScriptList,
-  state: BotState,
-  triggerBackdoor: boolean,
-): void {
-  const homeMaxRam = ns.getServerMaxRam("home");
-  const playerMoney = ns.getPlayer().money;
-  const hasFormulas = ns.fileExists("Formulas.exe", "home");
-
-  // --- HACKNET HOT-SWAP MANAGER ---
-  const targetHacknetScript = hasFormulas
-    ? "tasks/hacknet.js"
-    : "tasks/hacknet-early.js";
-  const obsoleteHacknetScript = hasFormulas
-    ? "tasks/hacknet-early.js"
-    : "tasks/hacknet.js";
-
-  if (ns.isRunning(obsoleteHacknetScript, "home")) {
-    ns.print(
-      `🔄 [KERNEL] Formulas-Status geändert. Beende ${obsoleteHacknetScript}...`,
-    );
-    ns.scriptKill(obsoleteHacknetScript, "home");
-  }
-
-  const hasBrute = ns.fileExists("BruteSSH.exe", "home");
-
-  // 🔥 ABSOLUTE SPERRE BIS BRUTESSH.EXE DA IST
-  if (!hasBrute) {
-    if (ns.isRunning(targetHacknetScript, "home")) {
-      ns.print(
-        "⏳ [KERNEL] BruteSSH.exe fehlt. Blockiere Hacknet für TOR/Brute-Ansparphase.",
-      );
-      ns.scriptKill(targetHacknetScript, "home");
-    }
-  } else {
-    // Nur wenn Brute existiert UND das Skript nicht läuft, wird es gestartet!
-    if (
-      ns.fileExists(targetHacknetScript, "home") &&
-      !ns.isRunning(targetHacknetScript, "home")
-    ) {
-      ns.print(
-        `⚡ [KERNEL] Starte adaptives Hacknet-Subsystem (${hasFormulas ? "Advanced ROI" : "Early-Heuristic"})...`,
-      );
-      ns.exec(targetHacknetScript, "home", 1);
-    }
-  }
-
-  // --- RESTLICHE SUITEN ---
-  if (
-    triggerBackdoor &&
-    ns.fileExists(scripts.backdoor, "home") &&
-    !ns.isRunning(scripts.backdoor, "home")
-  ) {
-    ns.exec(scripts.backdoor, "home", 1);
-  }
-
-  if (
-    ns.fileExists(scripts.trade, "home") &&
-    !ns.isRunning(scripts.trade, "home")
-  ) {
-    const hasTix = ns.stock.hasTixApiAccess();
-    if (
-      (homeMaxRam >= 128 && playerMoney >= 25_000_000_000) ||
-      (hasTix &&
-        ns.stock.purchase4SMarketDataTixApi() &&
-        playerMoney >= 100_000_000)
-    )
-      ns.exec(scripts.trade, "home", 1);
-  }
-
-  // ======================================================================
-  // --- 🔥 DARKNET DOUBLE-TRIGGER SUITE ---
-  // ======================================================================
-  if (ns.fileExists("DarkscapeNavigator.exe", "home")) {
-    if (!ns.isRunning(scripts.replicator, "home")) {
-      ns.tprint("🌐 DarkscapeNavigator erkannt. Starte Darknet-Master...");
-      ns.exec(scripts.replicator, "home", 1);
-    }
-
-    if (
-      ns.fileExists(scripts.crawler, "home") &&
-      !ns.isRunning(scripts.crawler, "home")
-    ) {
-      ns.print("📡 [KERNEL] Starte initialen Darknet-Crawler auf home...");
-      ns.exec(scripts.crawler, "home", 1);
-    }
-  }
-  // ======================================================================
 }
 
 function drawSysKernelDashboard(
