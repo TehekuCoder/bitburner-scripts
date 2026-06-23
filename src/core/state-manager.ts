@@ -8,7 +8,8 @@ export type BotStrategy =
   | "CORP"
   | "TRAIN"
   | "PURE_HACK"
-  | "KILLS";
+  | "KILLS"
+  | "CRIME";
 
 export interface BotState {
   strategy: BotStrategy;

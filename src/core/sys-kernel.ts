@@ -42,11 +42,14 @@ export async function main(ns: NS): Promise<void> {
     ns.exec("sys-hud.ts", "home", 1);
   }
 
-  let bnMults = {
+  // Record<string, number> erlaubt uns den flexiblen Zugriff auf ALLE geladenen Multiplikatoren
+  let bnMults: Record<string, number> = {
     ServerMaxMoney: 1.0,
-    HacknetProduction: 1.0,
+    HacknetNodeMoney: 1.0,
     CrimeMoney: 1.0,
+    CompanyWorkMoney: 1.0,
     FactionWorkRepGain: 1.0,
+    ScriptHackMoney: 1.0,
   };
 
   if (ns.fileExists("bn-multipliers.txt", "home")) {
@@ -85,17 +88,44 @@ export async function main(ns: NS): Promise<void> {
       playerHacking: ns.getHackingLevel(),
     };
 
-    // Synchronisiert mit der Hacknet-Sperre (< 64 GB)
-    if (homeMax < 64) {
-      state.strategy = "MONEY";
-      state.progressBar = "💰 Early-Game-Booster (Warte auf 64GB RAM)";
-    }
+    // ======================================================================
+    // --- 🧠 DYNAMISCHE STRATEGIE-MATRIX (MULTIPLIER-GESTEUERT) ---
+    // ======================================================================
+    if (["MONEY", "CRIME", "CORP"].includes(state.strategy)) {
+      if (bnMults.ServerMaxMoney === 0) {
+        state.strategy = "XP_SPRINT";
+        state.progressBar =
+          "📉 BN-Sonderregel: Kein Server-Geld! Wechsle auf XP-Sprint.";
+      } else if (homeMax < 64) {
+        state.strategy = "CRIME";
+        state.progressBar = `🥷 Early-Game-Crime Booster (Warte auf 64GB RAM)`;
+      } else {
+        const player = ns.getPlayer();
+        const combatAvg =
+          (player.skills.strength +
+            player.skills.defense +
+            player.skills.dexterity +
+            player.skills.agility) /
+          4;
 
-    if (bnMults.ServerMaxMoney === 0 && state.strategy === "MONEY") {
-      state.strategy = "XP_SPRINT";
-      state.progressBar =
-        "📉 BN-Sonderregel: Kein Server-Geld! Wechsle auf XP-Sprint.";
+        // Wenn Firmenarbeit stark geboostet ist (wie in BN5) und wir erste Grundstats haben
+        if (
+          bnMults.CompanyWorkMoney > 1.0 &&
+          combatAvg >= 30 &&
+          homeMax < 256
+        ) {
+          state.strategy = "CORP"; // <-- Hier jetzt CORP statt COMPANY
+          state.progressBar = `🏢 BN5-Spezial: Nutze hocheffiziente Firmen-Arbeit (${(bnMults.CompanyWorkMoney * 100).toFixed(0)}%)`;
+        } else if (homeMax >= 128) {
+          state.strategy = "MONEY";
+          state.progressBar = `💻 Late-Game Hacking-Fleet aktiv (RAM >= 128GB)`;
+        } else {
+          state.strategy = "CRIME";
+          state.progressBar = `🥷 Mid-Game-Crime Loop für stabiles Einkommen`;
+        }
+      }
     }
+    // ======================================================================
 
     const player: Player = ns.getPlayer();
     const bestTarget: string = findBestTarget(
@@ -107,8 +137,8 @@ export async function main(ns: NS): Promise<void> {
 
     saveState(ns, state);
 
-    // Aufruf des Microservice-Managers
-    manageSuites(ns, scripts, state, triggerBackdoor);
+    // Übergabe der Multiplikatoren an die Verwaltung der Subsysteme
+    manageSuites(ns, scripts, state, triggerBackdoor, bnMults);
 
     if (
       homeMax >= 64 &&
@@ -182,9 +212,14 @@ export async function main(ns: NS): Promise<void> {
         let ramBuffer = 0;
         if (node === "home") {
           if (
-            ["CRIME", "REP", "TRAIN", "CORP", "SHOP", "XP_SPRINT"].includes(
-              state.strategy,
-            )
+            [
+              "CRIME",
+              "REP",
+              "TRAIN",
+              "CORP",
+              "SHOP",
+              "XP_SPRINT"
+            ].includes(state.strategy)
           ) {
             ramBuffer = 24;
           } else {
@@ -214,12 +249,12 @@ function manageSuites(
   scripts: ScriptList,
   state: BotState,
   triggerBackdoor: boolean,
+  bnMults: Record<string, number>,
 ): void {
   const homeMaxRam = ns.getServerMaxRam("home");
   const playerMoney = ns.getPlayer().money;
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  // --- HACKNET HOT-SWAP MANAGER ---
   const targetHacknetScript = hasFormulas
     ? "tasks/hacknet.js"
     : "tasks/hacknet-early.js";
@@ -227,14 +262,14 @@ function manageSuites(
     ? "tasks/hacknet-early.js"
     : "tasks/hacknet.js";
 
-  // Altes/Falsches Skript sofort terminieren bei Formulas-Wechsel
   if (ns.isRunning(obsoleteHacknetScript, "home")) {
     ns.scriptKill(obsoleteHacknetScript, "home");
   }
 
   const hasBrute = ns.fileExists("BruteSSH.exe", "home");
 
-  // 1. Prioritäts-Weiche: Zu wenig RAM? (Geändert auf striktes < 64)
+  // --- ARCHITEKTUR-ENTSCHEIDUNG HACKNET ---
+  // 1. Sperre im absoluten Early-Game (unter 64GB RAM gehört jeder Dollar den Server-Upgrades)
   if (homeMaxRam < 64) {
     if (ns.isRunning(targetHacknetScript, "home")) {
       ns.print(
@@ -243,7 +278,7 @@ function manageSuites(
       ns.scriptKill(targetHacknetScript, "home");
     }
   }
-  // 2. Prioritäts-Weiche: Genug RAM, aber noch keine Brute.exe?
+  // 2. Erlaubnis ab 64GB RAM, um den Netburners-Gegenwert einzufahren
   else if (!hasBrute) {
     if (ns.isRunning(targetHacknetScript, "home")) {
       ns.print(
@@ -252,16 +287,24 @@ function manageSuites(
       ns.scriptKill(targetHacknetScript, "home");
     }
   }
-  // 3. Freigabe: RAM >= 64 UND Brute.exe vorhanden -> Starten!
+  // 3. Start-Freigabe
   else {
     if (
       ns.fileExists(targetHacknetScript, "home") &&
       !ns.isRunning(targetHacknetScript, "home")
     ) {
-      ns.print(
-        `⚡ [KERNEL] Bedingungen erfüllt. Starte Hacknet (${hasFormulas ? "Advanced ROI" : "Early-Heuristic"})...`,
-      );
-      ns.exec(targetHacknetScript, "home", 1);
+      // Eine elegante Injektion: Wenn Hacknet stark nerfed ist (< 40%), übergeben wir
+      // dem Skript via Argumente dein gewünschtes Netburners-Hard-Cap!
+      if (bnMults.HacknetNodeMoney < 0.4) {
+        ns.print(
+          "⚠️ [KERNEL] Hacknet-Produktion stark eingeschränkt! Starte im Netburners-Failsafe-Modus.",
+        );
+        // Args: MaxNodes=4, MaxLevel=100, MaxRam=8, MaxCores=4
+        ns.exec(targetHacknetScript, "home", 1, 4, 100, 8, 4);
+      } else {
+        ns.print(`⚡ [KERNEL] Starte unlimitiertes Hacknet-Subsystem...`);
+        ns.exec(targetHacknetScript, "home", 1);
+      }
     }
   }
 
@@ -288,7 +331,6 @@ function manageSuites(
       ns.exec(scripts.trade, "home", 1);
   }
 
-  // --- DARKNET DOUBLE-TRIGGER SUITE ---
   if (ns.fileExists("DarkscapeNavigator.exe", "home")) {
     if (!ns.isRunning(scripts.replicator, "home")) {
       ns.tprint("🌐 DarkscapeNavigator erkannt. Starte Darknet-Master...");
@@ -305,6 +347,7 @@ function manageSuites(
   }
 }
 
+// (Die Helferfunktionen findBestTarget, deployWorker und drawSysKernelDashboard bleiben unverändert)
 // --- HELFER-FUNKTIONEN (Unverändert) ---
 function findBestTarget(
   ns: NS,

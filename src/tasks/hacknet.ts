@@ -10,6 +10,13 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const h = ns.hacknet;
 
+  // --- ARGUMENTEN-LAYER FÜR DYNAMISCHE DECKELUNG ---
+  const isCappedMode = ns.args.length > 0;
+  const maxNodes = (ns.args[0] as number) || 30; // Fallback auf dein originales Advanced-Cap (30)
+  const maxLevels = (ns.args[1] as number) || Infinity;
+  const maxRam = (ns.args[2] as number) || Infinity;
+  const maxCores = (ns.args[3] as number) || Infinity;
+
   // --- SAFE ENVIRONMENT LAYER (FAILSAFE-FALLBACK) ---
   let bnMults = { HacknetProduction: 1.0 };
 
@@ -34,6 +41,33 @@ export async function main(ns: NS): Promise<void> {
   }
 
   while (true) {
+    const numNodes = h.numNodes();
+
+    // 📊 Berechne aktuelle Gesamtwerte für den Cap-Check
+    let totalLevels = 0;
+    let totalRam = 0;
+    let totalCores = 0;
+
+    for (let i = 0; i < numNodes; i++) {
+      const stats = h.getNodeStats(i);
+      totalLevels += stats.level;
+      totalRam += stats.ram;
+      totalCores += stats.cores;
+    }
+
+    // 🛑 ABBRUCHBEDINGUNG: Wenn alle Netburners-Ziele erreicht sind
+    if (
+      isCappedMode &&
+      totalLevels >= maxLevels &&
+      totalRam >= maxRam &&
+      totalCores >= maxCores
+    ) {
+      ns.print(
+        "🛑 [Hacknet-Advanced] Netburners-Minimum erreicht. Schalte System ab, um Geld für CORP zu sparen!",
+      );
+      return;
+    }
+
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
     const hNetMults = ns.getHacknetMultipliers();
     const currentMoney = ns.getServerMoneyAvailable("home");
@@ -41,9 +75,9 @@ export async function main(ns: NS): Promise<void> {
     // 🧠 1. DYNAMISCHES BUDGET NACH SPIELPHASE
     let baseBudgetPercent = 0.1; // Standard: 10%
     if (currentMoney < 50_000_000) {
-      baseBudgetPercent = 0.35; // Early-Game Push: 35% (Hacknet zieht dich hoch)
+      baseBudgetPercent = 0.35; // Early-Game Push: 35%
     } else if (currentMoney > 10_000_000_000) {
-      baseBudgetPercent = 0.02; // Late-Game: 2% (Erträge vernachlässigbar ggü. Batcher)
+      baseBudgetPercent = 0.02; // Late-Game: 2%
     }
 
     // Skalierung mit der BitNode-Effizienz
@@ -52,18 +86,15 @@ export async function main(ns: NS): Promise<void> {
     let bestUpgrade: HacknetUpgrade | null = null;
     let highestROI = -1;
 
-    // 🏆 2. ROI FÜR EINEN NEUEN KNOTEN (Dynamic Cap & Amortisiertes Math)
-    // Das Vanilla-Limit für Standard-Nodes ist 30.
-    if (h.numNodes() < 30) {
+    // 🏆 2. ROI FÜR EINEN NEUEN KNOTEN (Unter Berücksichtigung des Caps)
+    if (numNodes < maxNodes) {
       const baseCost = h.getPurchaseNodeCost();
 
       if (baseCost <= budget) {
-        // Wir tricksen die ROI-Falle aus: Wir berechnen den Nutzen so, als würden wir
-        // den neuen Node direkt an das Niveau von Node 0 angleichen!
         let targetLvl = 10,
           targetRam = 2,
           targetCores = 1;
-        if (h.numNodes() > 0) {
+        if (numNodes > 0) {
           const node0 = h.getNodeStats(0);
           targetLvl = node0.level;
           targetRam = node0.ram;
@@ -79,9 +110,8 @@ export async function main(ns: NS): Promise<void> {
             )
           : targetLvl * 0.5;
 
-        // Kosten-Akkumulation für das Hochziehen (Annäherung über Level-Formel)
         let estimatedTotalCost = baseCost;
-        if (h.numNodes() > 0 && hasFormulas) {
+        if (numNodes > 0 && hasFormulas) {
           try {
             estimatedTotalCost += ns.formulas.hacknetNodes.levelUpgradeCost(
               1,
@@ -89,7 +119,6 @@ export async function main(ns: NS): Promise<void> {
               hNetMults.levelCost,
             );
           } catch {
-            // Failsafe, falls im Hintergrund doch mal was schiefgeht
             estimatedTotalCost += baseCost * 2;
           }
         }
@@ -98,13 +127,13 @@ export async function main(ns: NS): Promise<void> {
 
         if (roi > highestROI) {
           highestROI = roi;
-          bestUpgrade = { type: "Neuer Node", cost: baseCost }; // Gekauft wird erst mal nur die Basis
+          bestUpgrade = { type: "Neuer Node", cost: baseCost };
         }
       }
     }
 
     // 3. ROI FÜR UPGRADES BESTEHENDER KNOTEN PRÜFEN
-    for (let i = 0; i < h.numNodes(); i++) {
+    for (let i = 0; i < numNodes; i++) {
       const node: NodeStats = h.getNodeStats(i);
 
       const checkROI = (cost: number, newGain: number) => {
@@ -118,46 +147,52 @@ export async function main(ns: NS): Promise<void> {
         return false;
       };
 
-      // Level-Upgrade
-      const lvlCost = h.getLevelUpgradeCost(i, 1);
-      const nextLvlGain = hasFormulas
-        ? ns.formulas.hacknetNodes.moneyGainRate(
-            node.level + 1,
-            node.ram,
-            node.cores,
-            hNetMults.production,
-          )
-        : 0;
-      if (checkROI(lvlCost, nextLvlGain)) {
-        bestUpgrade = { type: "Level", index: i, cost: lvlCost };
+      // Level-Upgrade (nur wenn Gesamt-Level-Cap noch nicht erreicht)
+      if (!isCappedMode || totalLevels < maxLevels) {
+        const lvlCost = h.getLevelUpgradeCost(i, 1);
+        const nextLvlGain = hasFormulas
+          ? ns.formulas.hacknetNodes.moneyGainRate(
+              node.level + 1,
+              node.ram,
+              node.cores,
+              hNetMults.production,
+            )
+          : 0;
+        if (checkROI(lvlCost, nextLvlGain)) {
+          bestUpgrade = { type: "Level", index: i, cost: lvlCost };
+        }
       }
 
-      // RAM-Upgrade
-      const ramCost = h.getRamUpgradeCost(i, 1);
-      const nextRamGain = hasFormulas
-        ? ns.formulas.hacknetNodes.moneyGainRate(
-            node.level,
-            node.ram * 2,
-            node.cores,
-            hNetMults.production,
-          )
-        : 0;
-      if (checkROI(ramCost, nextRamGain)) {
-        bestUpgrade = { type: "RAM", index: i, cost: ramCost };
+      // RAM-Upgrade (nur wenn Gesamt-RAM-Cap noch nicht erreicht)
+      if (!isCappedMode || totalRam < maxRam) {
+        const ramCost = h.getRamUpgradeCost(i, 1);
+        const nextRamGain = hasFormulas
+          ? ns.formulas.hacknetNodes.moneyGainRate(
+              node.level,
+              node.ram * 2,
+              node.cores,
+              hNetMults.production,
+            )
+          : 0;
+        if (checkROI(ramCost, nextRamGain)) {
+          bestUpgrade = { type: "RAM", index: i, cost: ramCost };
+        }
       }
 
-      // Core-Upgrade
-      const coreCost = h.getCoreUpgradeCost(i, 1);
-      const nextCoreGain = hasFormulas
-        ? ns.formulas.hacknetNodes.moneyGainRate(
-            node.level,
-            node.ram,
-            node.cores + 1,
-            hNetMults.production,
-          )
-        : 0;
-      if (checkROI(coreCost, nextCoreGain)) {
-        bestUpgrade = { type: "Core", index: i, cost: coreCost };
+      // Core-Upgrade (nur wenn Gesamt-Core-Cap noch nicht erreicht)
+      if (!isCappedMode || totalCores < maxCores) {
+        const coreCost = h.getCoreUpgradeCost(i, 1);
+        const nextCoreGain = hasFormulas
+          ? ns.formulas.hacknetNodes.moneyGainRate(
+              node.level,
+              node.ram,
+              node.cores + 1,
+              hNetMults.production,
+            )
+          : 0;
+        if (checkROI(coreCost, nextCoreGain)) {
+          bestUpgrade = { type: "Core", index: i, cost: coreCost };
+        }
       }
     }
 
@@ -180,8 +215,7 @@ export async function main(ns: NS): Promise<void> {
 
       await ns.sleep(50);
     } else {
-      // Standby-Modus, wenn Budget erschöpft oder alles maximiert
-      const sleepTime = hasFormulas ? 15000 : 10000;
+      const sleepTime = isCappedMode ? 4000 : hasFormulas ? 15000 : 10000;
       ns.print(
         `[HACKNET] Standby. Budget: $${ns.format.number(budget)} (${(baseBudgetPercent * 100).toFixed(0)}% Allocation)`,
       );
