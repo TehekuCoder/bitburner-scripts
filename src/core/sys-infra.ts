@@ -14,7 +14,9 @@ export async function main(ns: NS): Promise<void> {
       handleHomeServerPurchases(ns, dynamicReserve);
       handleProgramPurchases(ns);
     } else {
-      ns.print("ℹ️ [INFRA] Singularity-Upgrades inaktiv (SF4 nicht verfügbar).");
+      ns.print(
+        "ℹ️ [INFRA] Singularity-Upgrades inaktiv (SF4 nicht verfügbar).",
+      );
     }
 
     // Cloud-Server-Käufe laufen immer, da sie keine Singularity-Rechte benötigen
@@ -40,7 +42,9 @@ function handleHomeServerPurchases(ns: NS, reserveMoney: number): void {
   const coreCost = sing.getUpgradeHomeCoresCost();
   if (availableMoney >= coreCost) {
     if (sing.upgradeHomeCores()) {
-      ns.print(`[HOME] ✅ Cores erweitert! Cost: $${ns.format.number(coreCost)}`);
+      ns.print(
+        `[HOME] ✅ Cores erweitert! Cost: $${ns.format.number(coreCost)}`,
+      );
     }
   }
 }
@@ -49,9 +53,11 @@ function handleProgramPurchases(ns: NS): void {
   const sing = ns.singularity;
   const money = ns.getPlayer().money;
 
+  // TOR-Router Kauf (Zusätzlich abgesichert über den Rückgabewert)
   if (!ns.hasTorRouter() && money >= 200_000) {
-    sing.purchaseTor();
-    ns.print("[INFRA] 📡 TOR-Router erfolgreich gekauft.");
+    if (sing.purchaseTor()) {
+      ns.print("[INFRA] 📡 TOR-Router erfolgreich gekauft.");
+    }
   }
 
   if (ns.hasTorRouter()) {
@@ -64,10 +70,13 @@ function handleProgramPurchases(ns: NS): void {
       "SQLInject.exe" as ProgramName,
       "Formulas.exe" as ProgramName,
     ];
+
     for (const prog of programs) {
       if (!ns.fileExists(prog, "home")) {
-        // Falls wir genug Geld haben, kaufen wir das Tool sofort
-        sing.purchaseProgram(prog);
+        // 🔥 Wichtig: Nur loggen, wenn purchaseProgram wirklich 'true' zurückgibt!
+        if (sing.purchaseProgram(prog)) {
+          ns.print(`[INFRA] 📡 ${prog} erfolgreich gekauft.`);
+        }
       }
     }
   }
@@ -77,7 +86,7 @@ function handleServerPurchases(ns: NS): void {
   const maxServers = ns.cloud.getServerLimit();
   const currentServers = ns.cloud.getServerNames();
   const maxRam = ns.cloud.getRamLimit();
-  
+
   // Wir nutzen 90% des Geldes für Cloud-Server, um immer einen kleinen Puffer zu haben
   const serverBudget = ns.getPlayer().money * 0.9;
   if (serverBudget < 50_000) return;
@@ -88,16 +97,16 @@ function handleServerPurchases(ns: NS): void {
   const hasSQLInject = ns.fileExists("SQLInject.exe", "home");
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  let allowedMaxRam = 64; 
+  let allowedMaxRam = 64;
 
   if (hasFormulas) {
-    allowedMaxRam = maxRam;                      // STUFE 4: Endgame (Unbegrenzt)
+    allowedMaxRam = maxRam; // STUFE 4: Endgame (Unbegrenzt)
   } else if (hasSQLInject) {
-    allowedMaxRam = Math.min(2048, maxRam);      // STUFE 3: Perfekter RAM-Schub, um die 5B für Formulas zu generieren!
+    allowedMaxRam = Math.min(2048, maxRam); // STUFE 3: Perfekter RAM-Schub, um die 5B für Formulas zu generieren!
   } else if (hasHTTPWorm) {
-    allowedMaxRam = 512;                         // STUFE 2: Mid-Game
+    allowedMaxRam = 512; // STUFE 2: Mid-Game
   } else {
-    allowedMaxRam = 64;                          // STUFE 1: Frühes Early-Game
+    allowedMaxRam = 64; // STUFE 1: Frühes Early-Game
   }
 
   // 1. KAUF NEUER SERVER (Bis zum Limit von 25 Stück)
@@ -110,7 +119,7 @@ function handleServerPurchases(ns: NS): void {
     ) {
       targetRam *= 2;
     }
-    
+
     const cost = ns.cloud.getServerCost(targetRam);
     if (serverBudget >= cost && targetRam >= 8) {
       let nextFreeNumber = 1;
@@ -128,12 +137,14 @@ function handleServerPurchases(ns: NS): void {
       }
 
       if (name === "") name = `p-serv-${Date.now()}`;
-      
+
       if (ns.cloud.purchaseServer(name, targetRam)) {
-        ns.print(`[CLOUD] 🖥️ Neuen Server gekauft: ${name} (${ns.format.ram(targetRam)})`);
+        ns.print(
+          `[CLOUD] 🖥️ Neuen Server gekauft: ${name} (${ns.format.ram(targetRam)})`,
+        );
       }
     }
-  } 
+  }
   // 2. BATCH-UPGRADE EXISTIERENDER SERVER (Kaufrausch-Modus)
   else {
     let upgradeOccurred = true;
@@ -155,17 +166,20 @@ function handleServerPurchases(ns: NS): void {
 
       if (worstServer !== "") {
         const nextRam = minRam * 2;
-        
+
         // Abbrechen, wenn der schwächste Server bereits das Stufen-Limit erreicht hat
         if (nextRam > allowedMaxRam) break;
 
-        const upgradeCost = ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
+        const upgradeCost =
+          ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
 
         if (ns.getPlayer().money >= upgradeCost) {
           if (ns.cloud.upgradeServer(worstServer, nextRam)) {
-            ns.print(`[CLOUD] 📈 Upgrade: ${worstServer} auf ${ns.format.ram(nextRam)} ($${ns.format.number(upgradeCost)})`);
+            ns.print(
+              `[CLOUD] 📈 Upgrade: ${worstServer} auf ${ns.format.ram(nextRam)} ($${ns.format.number(upgradeCost)})`,
+            );
             // Schleife bleibt aktiv: Wenn noch Geld da ist, wird sofort der nächste Server hochgezogen!
-            upgradeOccurred = true; 
+            upgradeOccurred = true;
           }
         }
       }

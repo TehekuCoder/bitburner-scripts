@@ -2,24 +2,14 @@ import { NS } from "@ns";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
+  const currentHost = ns.getHostname();
 
-  const targetHost = ns.args[0] as string;
-  const password = ns.args[1] as string;
+  if (currentHost === "home") return;
 
-  if (targetHost && password !== undefined) {
-    const sessionConnected = await ns.dnet.connectToSession(targetHost, password);
-    if (!sessionConnected) {
-      ns.print(`🔴 Loot-Fehler: Keine Session auf ${targetHost}.`);
-      return;
-    }
+  const files = ns.ls(currentHost, ".cache");
+  if (files.length > 0) {
+    ns.print(`💰 ${files.length} Cache-Dateien gefunden. Verarbeite...`);
   }
-
-  const host = targetHost || ns.getHostname();
-
-  // Social Engineering triggern
-  await ns.dnet.phishingAttack();
-
-  const files = ns.ls(host, ".cache");
 
   for (const file of files) {
     try {
@@ -32,16 +22,14 @@ export async function main(ns: NS): Promise<void> {
             : potentialPw.trim();
 
           if (cleanPw) {
-            // 1. Lokal sichern
             ns.write("/passwords.txt", `\n${cleanPw}`, "a");
-            // 2. 🔥 NEU: Global an den Master funken, falls es ein Serverpasswort war!
-            ns.writePort(5, `${host}:${cleanPw}`);
+            ns.writePort(5, `${currentHost}:${cleanPw}`);
           }
         }
-        ns.rm(file, host);
+        ns.rm(file, currentHost);
       }
     } catch (e) {
-      ns.print(`⚠️ Fehler beim Looten von ${file} auf ${host}: ${e}`);
+      ns.print(`⚠️ Fehler beim Looten von ${file}: ${e}`);
     }
   }
 }

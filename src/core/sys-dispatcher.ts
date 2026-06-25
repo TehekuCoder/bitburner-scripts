@@ -93,7 +93,14 @@ export async function main(ns: NS): Promise<void> {
     let targetStat = 0;
 
     // --- 1. STRATEGIE-MATRIX ---
-    const factionToWorkFor = findNextFaction(ns, p);
+    // Gatekeeper: Haben wir die ersten 3 Hacking-Tools?
+    const hasEssentialTools =
+      ns.fileExists("BruteSSH.exe", "home") &&
+      ns.fileExists("FTPCrack.exe", "home") &&
+      ns.fileExists("relaySMTP.exe", "home");
+
+    // Factions werden erst angefahren, wenn die 3 Tools vorhanden sind
+    const factionToWorkFor = hasEssentialTools ? findNextFaction(ns, p) : null;
 
     if (factionToWorkFor) {
       mode = "REP";
@@ -101,7 +108,7 @@ export async function main(ns: NS): Promise<void> {
     } else if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
     } else if (homeMaxRam < 128) {
-      mode = "MONEY";
+      mode = "MONEY"; // Fallback auf Kriminalität via tasks/crime.js
     } else {
       // Kampf-Fraktionen prüfen
       const nextLockedCombatFaction = HACKING_FACTIONS.find(
@@ -109,7 +116,6 @@ export async function main(ns: NS): Promise<void> {
       );
 
       if (nextLockedCombatFaction) {
-        // 💀 Dynamische Kill-Anforderungen ermitteln
         let requiredKills = 0;
         if (nextLockedCombatFaction.name === "The Dark Army") requiredKills = 5;
         if (nextLockedCombatFaction.name === "Speakers for the Dead")
@@ -118,21 +124,19 @@ export async function main(ns: NS): Promise<void> {
         const currentLowestCombatStat = Math.min(
           ...COMBAT_STATS.map((s) => p.skills[s]),
         );
-        // Prio 1: Haben wir genug Leichen im Keller?
+
         if (p.numPeopleKilled < requiredKills) {
           mode = "KILLS";
-          targetStat = requiredKills; // Missbraucht als temporärer Speicher für die Anzeige
+          targetStat = requiredKills;
           targetFaction = nextLockedCombatFaction.name;
-        }
-        // Prio 2: Wenn Kills passen, Stats ins Ziel bringen
-        else if (currentLowestCombatStat < nextLockedCombatFaction.minStat) {
+        } else if (currentLowestCombatStat < nextLockedCombatFaction.minStat) {
           mode = "TRAIN";
           targetStat = nextLockedCombatFaction.minStat;
           targetFaction = nextLockedCombatFaction.name;
         }
       }
 
-      // Megacorporations prüfen (für End-Game Fraktionen)
+      // Megacorporations prüfen (Arbeiten in der Firma)
       if (mode !== "TRAIN" && p.skills.hacking >= 250) {
         const missingCorpFaction = HACKING_FACTIONS.find(
           (f) =>
@@ -143,7 +147,7 @@ export async function main(ns: NS): Promise<void> {
         );
 
         if (missingCorpFaction) {
-          mode = "CORP";
+          mode = "CORP"; // Schaltet sauber auf Firmen-Arbeit um
           targetCompany = MEGACORPS[missingCorpFaction.name];
         }
       }
@@ -275,7 +279,7 @@ export async function main(ns: NS): Promise<void> {
         ns.singularity.purchaseTor();
       }
 
-      // 2. Brute.exe kaufen (Kostet 500k, setzt TOR voraus)
+      // 2. BruteSSH.exe kaufen (Kostet 500k, setzt TOR voraus)
       if (
         ns.hasTorRouter() &&
         !ns.fileExists("BruteSSH.exe", "home") &&

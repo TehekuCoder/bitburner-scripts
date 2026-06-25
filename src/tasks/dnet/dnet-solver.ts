@@ -1,6 +1,6 @@
 import { NS } from "@ns";
 
-// Import aller modularen Krypto-Solver
+// 🔄 Absolute Entwarnung: Diese Imports bleiben hier, da dein Solver damit trotzdem nur 3,85 GB verbraucht!
 import { solveRoman } from "/modules/solvers/solveRoman";
 import { solveBaseConversion } from "/modules/solvers/solveBaseConversion";
 import { solvePr0verFl0 } from "/modules/solvers/solvePr0verFl0";
@@ -62,19 +62,14 @@ export async function main(ns: NS): Promise<void> {
     passwordFormat: "numeric",
   };
 
-  // 🔍 Prüfen, ob der Host im aktuellen Boot-Zyklus überhaupt erreichbar ist
+  // 🔍 Erreichbarkeit prüfen
   const connectedServers = ns.dnet.probe();
-
   if (!connectedServers.includes(host)) {
     ns.print(
       `⚠️ [dnet-solver] Host '${host}' ist nach Reload nicht direkt verbunden. Breche ab...`,
     );
-
-    // TODO: Hier ggf. den ungültigen Eintrag aus deiner DB/deinem State löschen
-    return; // 🔥 FIX 1: return statt continue, da wir nicht in einer Schleife sind
+    return; // 🔥 Dein FIX 1: Sauberer Abbruch
   }
-
-  // 🔥 FIX 2: Der fehlerhafte, blinde Authentifizierungsversuch mit der undefinierten Variable wurde entfernt.
 
   // --- PHASE 1: HEURISTISCHE SCHNELLSCHÜSSE ---
   const smartGuesses = getHeuristicCandidates(details);
@@ -88,7 +83,7 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
-  // --- PHASE 2: MODULARE MODELL-WEICHE ---
+  // --- PHASE 2: MODULARE MODELL-WEICHE (Ruft deine Module wieder auf!) ---
   ns.print(`🔨 Krypto-Angriff auf ${host} [${modelId}] gestartet...`);
   let correctPassword: string | null = null;
 
@@ -143,7 +138,7 @@ export async function main(ns: NS): Promise<void> {
     const authResult = await ns.dnet.authenticate(host, correctPassword);
     if (authResult.success) {
       ns.writePort(5, `${host}:${correctPassword}`);
-      updateJsonDatabase(ns, host, correctPassword); // Lokales JSON schreiben
+      updateJsonDatabase(ns, host, correctPassword);
       ns.print(
         `🎉 [SUCCESS] ${host} erfolgreich gehackt! PW: "${correctPassword}"`,
       );
@@ -155,18 +150,14 @@ export async function main(ns: NS): Promise<void> {
   setServerCooldown(ns, host);
 }
 
+// --- HILFSFUNKTIONEN ---
 function isServerInCooldown(ns: NS, host: string): boolean {
   if (!ns.fileExists(COOLDOWN_FILE)) return false;
   const lines = ns.read(COOLDOWN_FILE).split("\n");
   const now = Date.now();
-
   for (const line of lines) {
     const [cHost, cTime] = line.split(",");
-    if (cHost === host) {
-      if (now - Number(cTime) < COOLDOWN_MS) {
-        return true;
-      }
-    }
+    if (cHost === host && now - Number(cTime) < COOLDOWN_MS) return true;
   }
   return false;
 }
@@ -174,17 +165,12 @@ function isServerInCooldown(ns: NS, host: string): boolean {
 function setServerCooldown(ns: NS, host: string): void {
   let content = "";
   const now = Date.now();
-
   if (ns.fileExists(COOLDOWN_FILE)) {
     const lines = ns.read(COOLDOWN_FILE).split("\n");
     content = lines
-      .filter((line) => {
-        const [_, cTime] = line.split(",");
-        return now - Number(cTime) < COOLDOWN_MS;
-      })
+      .filter((line) => now - Number(line.split(",")[1]) < COOLDOWN_MS)
       .join("\n");
   }
-
   content += (content ? "\n" : "") + `${host},${now}`;
   ns.write(COOLDOWN_FILE, content, "w");
 }
@@ -192,7 +178,6 @@ function setServerCooldown(ns: NS, host: string): void {
 function updateJsonDatabase(ns: NS, host: string, newPw: string): void {
   const file = "/dnet-master-db.json";
   let db: Record<string, string> = {};
-
   if (ns.fileExists(file)) {
     try {
       db = JSON.parse(ns.read(file));
@@ -200,7 +185,6 @@ function updateJsonDatabase(ns: NS, host: string, newPw: string): void {
       db = {};
     }
   }
-
   db[host] = newPw;
   ns.write(file, JSON.stringify(db, null, 2), "w");
 }
@@ -212,7 +196,6 @@ async function dictionaryAttack(
 ): Promise<boolean> {
   const jsonDbFile = "/dnet-master-db.json";
   if (!ns.fileExists(jsonDbFile)) return false;
-
   try {
     const db = JSON.parse(ns.read(jsonDbFile));
     const list = [...new Set(Object.values(db) as string[])].filter(
@@ -221,7 +204,6 @@ async function dictionaryAttack(
         !pw.includes("You have discovered") &&
         pw.length < 30,
     );
-
     for (const pw of list) {
       if (details.passwordLength && pw.length !== details.passwordLength)
         continue;
@@ -260,25 +242,21 @@ function getHeuristicCandidates(details: ServerAuthDetails): string[] {
   const candidates: string[] = [];
   const len = details.passwordLength;
   const model = details.modelId?.toLowerCase() || "";
-
   if (model.includes("laika")) {
     if (len === 3) candidates.push("max");
     if (len === 4) candidates.push("fido", "spot");
     if (len === 5) candidates.push("rover");
   }
-
   if (model.includes("fresh") || model.includes("install")) {
     if (len === 4) candidates.push("0000");
     if (len === 5) candidates.push("12345", "admin");
     if (len === 8) candidates.push("password");
   }
-
   if (candidates.length === 0) {
     if (len === 3) candidates.push("max");
     if (len === 4) candidates.push("fido", "spot", "0000");
     if (len === 5) candidates.push("rover", "12345", "admin");
     if (len === 8) candidates.push("password");
   }
-
   return [...new Set(candidates)].filter((pw) => pw.length === len);
 }
