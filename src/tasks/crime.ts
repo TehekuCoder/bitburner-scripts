@@ -6,44 +6,52 @@ export async function main(ns: NS): Promise<void> {
   ns.print("🥷 Crime-Worker gestartet...");
 
   const sing = ns.singularity;
-  const MIN_SUCCESS_CHANCE = 0.70; // 70% Mindestchance
+  const MIN_SUCCESS_CHANCE = 0.7; // 70% Mindestchance
 
   while (true) {
     // --- 1. STATE VIA MANAGER LADEN & LOKAL CASTEN ---
     const state = loadState(ns);
-    // "as string" löst die TS2367 Overlap-Fehler für CRIME und KILLS
-    const mode = (state?.strategy || "IDLE") as string; 
+    const mode = (state?.strategy || "IDLE") as string;
 
-    if (mode !== "CRIME" && mode !== "MONEY" && mode !== "KILLS") {
+    // 🔥 REPARIERT: XP_SPRINT zur Whitelist hinzugefügt
+    if (
+      mode !== "CRIME" &&
+      mode !== "MONEY" &&
+      mode !== "KILLS" &&
+      mode !== "XP_SPRINT"
+    ) {
       ns.print(`[EXIT] Modus ist nun ${mode}. Beende Crime-Worker.`);
       return;
     }
 
     const p = ns.getPlayer();
-    // REPARIERT: Bitburner Enums für Crimes sind komplett kleingeschrieben
-    let bestCrime: CrimeType = ns.enums.CrimeType.shoplift; 
+    let bestCrime: CrimeType = ns.enums.CrimeType.shoplift;
 
     // --- 2. LOGIK-WEICHE: MORD ODER GELD? ---
     if (mode === "KILLS") {
-      // "as any" erlaubt uns das dynamische Abfragen von targetKills (TS2339)
       const targetKills = (state as any)?.targetKills || 30;
       const currentKills = p.numPeopleKilled;
 
       if (currentKills < targetKills) {
         bestCrime = ns.enums.CrimeType.homicide;
-        
-        if (sing.getCrimeChance(ns.enums.CrimeType.homicide) < 0.10) {
+
+        if (sing.getCrimeChance(ns.enums.CrimeType.homicide) < 0.1) {
           bestCrime = ns.enums.CrimeType.mug;
-          ns.print(`[WARN] Homicide-Chance zu gering. Trainiere via 'mug' vor...`);
+          ns.print(
+            `[WARN] Homicide-Chance zu gering. Trainiere via 'mug' vor...`,
+          );
         }
       } else {
-        ns.print(`[INFO] Ziel von ${targetKills} Kills erreicht (Aktuell: ${currentKills}).`);
-        mode === "KILLS" ? bestCrime = ns.enums.CrimeType.homicide : null;
+        ns.print(
+          `[INFO] Ziel von ${targetKills} Kills erreicht (Aktuell: ${currentKills}).`,
+        );
+        bestCrime = ns.enums.CrimeType.homicide;
       }
-    } 
-    
+    }
+
     // --- NORMALE MATHEMATISCHE OPTIMIERUNG ---
-    if (mode === "CRIME" || mode === "MONEY") {
+    // 🔥 REPARIERT: XP_SPRINT fällt jetzt sauber in die Geld-Gewinn-Optimierung
+    if (mode === "CRIME" || mode === "MONEY" || mode === "XP_SPRINT") {
       let maxMoneyPerSecond = 0;
       const crimes = Object.values(ns.enums.CrimeType) as CrimeType[];
 
@@ -51,7 +59,10 @@ export async function main(ns: NS): Promise<void> {
         const crimeStats = sing.getCrimeStats(crime);
         const chance = sing.getCrimeChance(crime);
 
-        if (chance < MIN_SUCCESS_CHANCE && crime !== ns.enums.CrimeType.shoplift) {
+        if (
+          chance < MIN_SUCCESS_CHANCE &&
+          crime !== ns.enums.CrimeType.shoplift
+        ) {
           continue;
         }
 
@@ -68,11 +79,14 @@ export async function main(ns: NS): Promise<void> {
 
     // --- 3. VERBRECHEN AUSFÜHREN ---
     const currentWork = sing.getCurrentWork();
-    const isAlreadyDoingBestCrime = 
-      currentWork?.type === "CRIME" && (currentWork as any).crimeType === bestCrime;
+    const isAlreadyDoingBestCrime =
+      currentWork?.type === "CRIME" &&
+      (currentWork as any).crimeType === bestCrime;
 
     if (!isAlreadyDoingBestCrime) {
-      const currentChanceStr = (sing.getCrimeChance(bestCrime) * 100).toFixed(1);
+      const currentChanceStr = (sing.getCrimeChance(bestCrime) * 100).toFixed(
+        1,
+      );
       ns.print(`[CRIME] Aktion: ${bestCrime} (${currentChanceStr}% Chance)`);
       sing.commitCrime(bestCrime);
     }
@@ -80,7 +94,7 @@ export async function main(ns: NS): Promise<void> {
     // --- 4. HUD INTERACTION & STATE UPDATE ---
     if (state) {
       const chancePct = (sing.getCrimeChance(bestCrime) * 100).toFixed(0);
-      
+
       if (mode === "KILLS") {
         const tKills = (state as any).targetKills || 30;
         state.progressBar = `🥷 Morde: ${p.numPeopleKilled}/${tKills} | ${bestCrime} (${chancePct}%)`;

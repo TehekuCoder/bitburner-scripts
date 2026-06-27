@@ -99,15 +99,15 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    let greedFactor = 0.04;
+    let greedFactor = 0.4;
     let plan = calculateBatch(ns, target, greedFactor, SPACER);
 
     while (
       plan &&
       plan.totalRam > currentFreeNetworkRam &&
-      greedFactor > 0.005
+      greedFactor > 0.01
     ) {
-      greedFactor -= 0.005;
+      greedFactor -= 0.01;
       plan = calculateBatch(ns, target, greedFactor, SPACER);
     }
 
@@ -116,46 +116,75 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
+    // 🎯 ATOMARE HOST-SUCHE: Finde EINEN Server, der den GESAMTEN Batch tragen kann
+    let batchHost: string | null = null;
+    for (const server of cachedServers) {
+      if (!ns.hasRootAccess(server)) continue;
+      let maxRam = ns.getServerMaxRam(server);
+      if (server === "home") maxRam = Math.max(0, maxRam - 64);
+
+      const freeRam = maxRam - ns.getServerUsedRam(server);
+      if (freeRam >= plan.totalRam) {
+        batchHost = server;
+        break; // Perfekt, dieser Riese packt den ganzen Batch!
+      }
+    }
+
+    // Fallback: Wenn kein einzelner Server den Riesen-Batch packt, nutzen wir das gesamte Netzwerk
+    if (!batchHost) {
+      // Wenn der Batch zu groß für JEDEN einzelnen Server ist, drosseln wir die Gier,
+      // um atomares Batching zu erzwingen und Desyncs zu verhindern.
+      await ns.sleep(SPACER);
+      continue;
+    }
+
     ns.print(
       `🔥 [Batcher] Welle #${batchId} -> ${target} [Greed: ${(greedFactor * 100).toFixed(1)}% | RAM: ${ns.format.ram(plan.totalRam)}]`,
     );
 
-    dispatchBatchScript(
-      ns,
-      cachedServers,
-      "tasks/hack.js",
-      plan.hackThreads,
-      target,
-      plan.hackDelay,
-      batchId,
-    );
-    dispatchBatchScript(
-      ns,
-      cachedServers,
-      "tasks/weaken.js",
-      plan.weaken1Threads,
-      target,
-      plan.weaken1Delay,
-      batchId,
-    );
-    dispatchBatchScript(
-      ns,
-      cachedServers,
-      "tasks/grow.js",
-      plan.growThreads,
-      target,
-      plan.growDelay,
-      batchId,
-    );
-    dispatchBatchScript(
-      ns,
-      cachedServers,
-      "tasks/weaken.js",
-      plan.weaken2Threads,
-      target,
-      plan.weaken2Delay,
-      batchId,
-    );
+    // Dateicheck vorab (einmalig statt viermal im Loop)
+    const scripts = ["/tasks/hack.js", "/tasks/weaken.js", "/tasks/grow.js"];
+    if (batchHost !== "home") {
+      ns.scp(scripts, batchHost, "home");
+    }
+
+    // ⚡ BLITZSCHNELLES DISPATCHING (Keine Server-Schleifen mehr!)
+    if (plan.hackThreads > 0)
+      ns.exec(
+        "/tasks/hack.js",
+        batchHost,
+        plan.hackThreads,
+        target,
+        plan.hackDelay,
+        batchId,
+      );
+    if (plan.weaken1Threads > 0)
+      ns.exec(
+        "/tasks/weaken.js",
+        batchHost,
+        plan.weaken1Threads,
+        target,
+        plan.weaken1Delay,
+        batchId,
+      );
+    if (plan.growThreads > 0)
+      ns.exec(
+        "/tasks/grow.js",
+        batchHost,
+        plan.growThreads,
+        target,
+        plan.growDelay,
+        batchId,
+      );
+    if (plan.weaken2Threads > 0)
+      ns.exec(
+        "/tasks/weaken.js",
+        batchHost,
+        plan.weaken2Threads,
+        target,
+        plan.weaken2Delay,
+        batchId,
+      );
 
     batchId++;
     batchesSentForTarget++;

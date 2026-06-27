@@ -55,7 +55,6 @@ const HACKING_FACTIONS: FactionConfig[] = [
   { name: "Daedalus" as FactionName, minStat: 1500 },
 ];
 
-// Globaler Cache für Augmentations-Preise (verhindert CPU-Lag)
 const repCache: Record<string, number> = {};
 
 export async function main(ns: NS): Promise<void> {
@@ -75,7 +74,6 @@ export async function main(ns: NS): Promise<void> {
   ns.print("⚙️ [Dispatcher] Initialisiere Augmentations-Cache...");
   buildReputationCache(ns);
 
-  // Telemetrie für stabile ETA-Berechnungen
   let lastValue = 0;
   let lastTime = Date.now();
   let emaRate = 0;
@@ -92,25 +90,26 @@ export async function main(ns: NS): Promise<void> {
     let targetCompany: CompanyName | undefined = undefined;
     let targetStat = 0;
 
-    // --- 1. STRATEGIE-MATRIX ---
-    // Gatekeeper: Haben wir die ersten 3 Hacking-Tools?
+    // --- 1. STRATEGIE-MATRIX (REORGANISIERT) ---
     const hasEssentialTools =
       ns.fileExists("BruteSSH.exe", "home") &&
       ns.fileExists("FTPCrack.exe", "home") &&
       ns.fileExists("relaySMTP.exe", "home");
 
-    // Factions werden erst angefahren, wenn die 3 Tools vorhanden sind
     const factionToWorkFor = hasEssentialTools ? findNextFaction(ns, p) : null;
 
-    if (factionToWorkFor) {
+    if (p.skills.hacking < 50) {
+      mode = "XP_SPRINT";
+    }
+    // 🔥 CRITICAL GATEKEEPER: Unter 128GB RAM hat Geld-Generierung via Crime absolute Priorität!
+    else if (homeMaxRam < 128) {
+      mode = "CRIME"; // Harmonisiert mit dem Kernel-String
+    }
+    // Erst AB 128GB RAM erlauben wir Fraktions- und Corporate-Grinds
+    else if (factionToWorkFor) {
       mode = "REP";
       targetFaction = factionToWorkFor;
-    } else if (p.skills.hacking < 50) {
-      mode = "XP_SPRINT";
-    } else if (homeMaxRam < 128) {
-      mode = "MONEY"; // Fallback auf Kriminalität via tasks/crime.js
     } else {
-      // Kampf-Fraktionen prüfen
       const nextLockedCombatFaction = HACKING_FACTIONS.find(
         (f) => !p.factions.includes(f.name) && f.minStat > 0,
       );
@@ -136,7 +135,6 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-      // Megacorporations prüfen (Arbeiten in der Firma)
       if (mode !== "TRAIN" && p.skills.hacking >= 250) {
         const missingCorpFaction = HACKING_FACTIONS.find(
           (f) =>
@@ -147,7 +145,7 @@ export async function main(ns: NS): Promise<void> {
         );
 
         if (missingCorpFaction) {
-          mode = "CORP"; // Schaltet sauber auf Firmen-Arbeit um
+          mode = "CORP";
           targetCompany = MEGACORPS[missingCorpFaction.name];
         }
       }
@@ -196,7 +194,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // ETA Formatierung
     let etaStr = "Berechne...";
     if (targetVal === 0 && ["REP", "CORP", "TRAIN"].includes(mode)) {
       etaStr = "Fertig (Max)";
@@ -225,15 +222,17 @@ export async function main(ns: NS): Promise<void> {
       generatedBar = `🥷 ${targetFaction} | Karma/Gang Grind aktiv`;
     } else if (mode === "XP_SPRINT") {
       generatedBar = "👶 Early Game: XP SPRINT (Hacking < 50)";
+    } else if (mode === "CRIME") {
+      generatedBar = "🥷 Mid-Game-Crime Loop für stabiles Einkommen";
     } else {
-      generatedBar = "💰 Maximiere Profit (Batcher / Crime)";
+      generatedBar = "💰 Maximiere Profit (Batcher)";
     }
 
     const currentState = loadState(ns);
     let finalBar = generatedBar;
 
     if (
-      (mode === "MONEY" || mode === "XP_SPRINT") &&
+      (mode === "CRIME" || mode === "XP_SPRINT") &&
       ns.isRunning("tasks/crime.js", "home")
     ) {
       if (currentState?.progressBar?.startsWith("🥷")) {
@@ -251,44 +250,63 @@ export async function main(ns: NS): Promise<void> {
       progressBar: finalBar,
     });
 
-    // --- 4. HINTERGRUND-DIENSTE (ORCHESTRIERUNG) ---
-    if (
-      getFreeRam() > 12 &&
-      !ns.isRunning("tasks/faction-shopping.js", "home")
-    ) {
-      ns.run("tasks/faction-shopping.js", 1);
-    }
+   // --- 4. HINTERGRUND-DIENSTE ---
+    // 🔥 RADIKALER EARLY-GAME-RIEGEL: 
+    // Wenn wir unter 128GB RAM sind und Geld/XP brauchen, jagen wir JEDEN Hintergrund-Dienst vom Hof,
+    // um die magischen 18.35 GB für tasks/crime.js freizuschaufeln.
+    const isEarlyGameCrime =
+      homeMaxRam < 128 &&
+      (mode === "CRIME" || mode === "XP_SPRINT" || mode === "KILLS");
 
-    if (
-      ns.fileExists("Formulas.exe", "home") &&
-      !ns.isRunning("core/sys-batcher.js", "home") &&
-      getFreeRam() > 20
-    ) {
-      ns.print("🚀 Dispatcher: Formulas.exe aktiv! Starte HWGW-Batcher...");
-      ns.run("core/sys-batcher.js", 1);
-    }
-
-    if (!ns.isRunning("utils/fill-ram.js", "home") && getFreeRam() > 15) {
-      ns.run("utils/fill-ram.js", 1);
-    }
-
-    if (hasSingularity) {
-      // 1. TOR Router kaufen (Kostet 250k)
-      if (!ns.hasTorRouter() && p.money >= 250_000) {
-        ns.print("🛒 [Dispatcher] Kaufe TOR-Router...");
-        ns.singularity.purchaseTor();
+    if (isEarlyGameCrime) {
+      // Falls noch aktiv, beenden wir Shopping sofort
+      if (ns.isRunning("tasks/faction-shopping.js", "home")) {
+        ns.print(
+          "🛑 [Dispatcher] Schließe faction-shopping für Crime-RAM-Priorität.",
+        );
+        ns.scriptKill("tasks/faction-shopping.js", "home");
       }
 
-      // 2. BruteSSH.exe kaufen (Kostet 500k, setzt TOR voraus)
+      // Sicherheits-Check für Hacknet-Skripte (Sperrliste erweitert)
+      const rogueScripts = [
+        "tasks/hacknet.js",
+        "tasks/hacknet-early.js"
+      ];
+      for (const script of rogueScripts) {
+        if (ns.fileExists(script, "home") && ns.isRunning(script, "home")) {
+          ns.print(
+            `🛑 [Dispatcher] Schließe ${script} für Crime-RAM-Priorität.`,
+          );
+          ns.scriptKill(script, "home");
+        }
+      }
+    } else {
       if (
-        ns.hasTorRouter() &&
-        !ns.fileExists("BruteSSH.exe", "home") &&
-        p.money >= 500_000
+        getFreeRam() > 12 &&
+        !ns.isRunning("tasks/faction-shopping.js", "home")
       ) {
-        ns.print("🛒 [Dispatcher] Kaufe Brute.exe...");
-        ns.singularity.purchaseProgram("BruteSSH.exe");
+        ns.run("tasks/faction-shopping.js", 1);
+      }
+
+      if (
+        ns.fileExists("Formulas.exe", "home") &&
+        !ns.isRunning("core/sys-batcher.js", "home") &&
+        getFreeRam() > 20
+      ) {
+        ns.print("🚀 Dispatcher: Formulas.exe aktiv! Starte HWGW-Batcher...");
+        ns.run("core/sys-batcher.js", 1);
+      }
+
+      if (
+        homeMaxRam >= 128 &&
+        !ns.isRunning("utils/fill-ram.js", "home") &&
+        getFreeRam() > 15
+      ) {
+        ns.print("🚀 [Dispatcher] 128GB+ RAM erreicht. Starte RAM-Filler...");
+        ns.run("utils/fill-ram.js", 1);
       }
     }
+
     // --- 5. EXECUTION LAYER ---
     manageMicroservices(ns, mode);
 
@@ -336,27 +354,48 @@ function manageMicroservices(ns: NS, currentMode: string): void {
     REP: "tasks/faction-grind.js",
     CORP: "tasks/corp.js",
     TRAIN: "tasks/train.js",
-    MONEY: "tasks/crime.js",
+    CRIME: "tasks/crime.js",
     XP_SPRINT: "tasks/crime.js",
     KILLS: "tasks/crime.js",
   };
 
   const targetScript = modeToScript[currentMode];
 
+  // 1. Alle unpassenden Microservices killen
   for (const [mode, script] of Object.entries(modeToScript)) {
     if (script !== targetScript && ns.isRunning(script, "home")) {
       ns.scriptKill(script, "home");
     }
   }
 
+  // 2. Target-Script starten mit RAM-Check und Feedback
   if (
     targetScript &&
     !ns.isRunning(targetScript, "home") &&
     ns.fileExists(targetScript, "home")
   ) {
-    const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
-    if (freeRam > ns.getScriptRam(targetScript, "home")) {
-      ns.run(targetScript, 1);
+    const maxRam = ns.getServerMaxRam("home");
+    const usedRam = ns.getServerUsedRam("home");
+    const freeRam = maxRam - usedRam;
+    const requiredRam = ns.getScriptRam(targetScript, "home");
+
+    if (freeRam >= requiredRam) {
+      const pid = ns.run(targetScript, 1);
+      if (pid === 0) {
+        ns.print(
+          `🛑 [Dispatcher] Fehler beim Start von ${targetScript} (PID 0).`,
+        );
+      } else {
+        ns.print(`🚀 [Dispatcher] ${targetScript} erfolgreich gestartet.`);
+      }
+    } else {
+      // 🔥 LAUTSTARKE WARNUNG IM LOG
+      ns.print(
+        `⚠️ [Dispatcher] RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB. Frei: ${freeRam.toFixed(2)} GB.`,
+      );
+      ns.print(
+        `👉 Tipp: Kill ein paar Threads deiner Hacking-Scripts auf 'home', um Platz zu machen!`,
+      );
     }
   }
 }

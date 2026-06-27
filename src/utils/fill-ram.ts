@@ -5,6 +5,18 @@ export async function main(ns: NS): Promise<void> {
   const target = "home";
   ns.disableLog("ALL");
 
+  // 🔥 NEU: EARLY-GAME SCHUTZRIEGEL
+  // Wenn wir weniger als 128 GB RAM haben, ist fill-ram kontraproduktiv.
+  // Wir beenden das Skript sofort, damit Core-Dienste wie 'crime' Atmen können.
+  if (ns.getServerMaxRam(target) < 128) {
+    ns.print(`[INFO] Home-RAM < 128GB (Legacy Mode). fill-ram wird deaktiviert.`);
+    
+    // Cleanup: Falls noch alte Reste laufen, killen wir sie vor dem Exit
+    ns.scriptKill("tasks/share.js", target);
+    ns.scriptKill("tasks/weaken-xp.js", target);
+    return; 
+  }
+
   // FIX: Absolute Pfade nutzen, da ns.ps() relative Pfadangaben wie "../" verwirft!
   const fillerScripts = ["tasks/share.js", "tasks/weaken-xp.js"];
 
@@ -37,8 +49,6 @@ export async function main(ns: NS): Promise<void> {
     // 2. DYNAMISCHE PRIORITÄTS-RESERVE
     let reserve = 32;
     if (ns.isRunning("core/sys-batcher.js", "home")) {
-      // 30% statt 50% Reserve reichen völlig, um dem Batcher Luft zum Atmen zu geben,
-      // ohne wertvolle Rechenleistung komplett brachliegen zu lassen.
       reserve = Math.max(maxRam * 0.3, 128);
     }
 
@@ -90,7 +100,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 10 Sekunden reichen völlig aus, um das System nicht mit Abfragen zu fluten
     await ns.sleep(10000);
   }
 }

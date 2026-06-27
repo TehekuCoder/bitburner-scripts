@@ -48,13 +48,13 @@ export async function main(ns: NS): Promise<void> {
     const solverScript = "/tasks/dnet/dnet-solver.js";
     const lootScript = "/tasks/dnet/dnet-loot.js";
 
-    // 📊 ZENTRALE RAM- UND PROZESS-METRIKEN
+    // 📊 ZENTRALE RAM- UND PROZESS-METRIKEN (Jetzt dynamisch veränderbar!)
     const maxRam = ns.getServerMaxRam(currentHost);
-    const freeRam = maxRam - ns.getServerUsedRam(currentHost);
+    let freeRam = maxRam - ns.getServerUsedRam(currentHost);
     let requiredSolverRam = ns.getScriptRam(solverScript, currentHost);
     const requiredLootRam = ns.getScriptRam(lootScript, currentHost) || 6.5;
 
-    const isSolverRunning = ns.scriptRunning(solverScript, currentHost);
+    let isSolverRunning = ns.scriptRunning(solverScript, currentHost);
     const isLootRunning = ns.scriptRunning(lootScript, currentHost);
     const isLootDue =
       now - lastLootTime > LOOT_INTERVAL_MS && currentHost !== "home";
@@ -81,6 +81,13 @@ export async function main(ns: NS): Promise<void> {
           try {
             await ns.dnet.connectToSession(hostname, storedPassword);
             details = ns.dnet.getServerDetails(hostname) as any;
+
+            // Wenn der Login TROTZDEM fehlschlug (falsches PW in DB):
+            if (!details.hasSession) {
+              ns.print(
+                `⚠️ Direkt-Login für ${hostname} fehlgeschlagen (Passwort ungültig?). Weiche auf Solver aus.`,
+              );
+            }
           } catch (e) {
             ns.print(
               `❌ Gespeichertes Passwort für ${hostname} schlug fehl: ${e}`,
@@ -108,6 +115,10 @@ export async function main(ns: NS): Promise<void> {
         );
         ns.scriptKill(solverScript, currentHost);
         await ns.sleep(200);
+
+        // 🔥 JETZT NEU: Variablen sofort künstlich updaten!
+        isSolverRunning = false;
+        freeRam = maxRam - ns.getServerUsedRam(currentHost);
       }
       // Targets nullen, um den Durchlauf sauber in den Loot-Fallback zu zwingen
       targetToCrack = null;
@@ -224,6 +235,10 @@ export async function main(ns: NS): Promise<void> {
 
     // 3. REPLIKATION / AUSBREITUNG
     for (const hostname of processedServers) {
+      // 🛡️ AIRBAG: Wenn der Server im aktuellen Universum (noch) nicht existiert, überspringen!
+      if (!ns.serverExists(hostname)) {
+        continue;
+      }
       if (!ns.scriptRunning(scriptName, hostname)) {
         const targetMaxRam = ns.getServerMaxRam(hostname);
         if (targetMaxRam >= 8) {

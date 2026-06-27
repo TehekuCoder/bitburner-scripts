@@ -4,56 +4,49 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const h = ns.hacknet;
 
-  // --- ARGUMENTEN-LAYER FÜR DYNAMISCHE DECKELUNG ---
   const isCappedMode = ns.args.length > 0;
-  const maxNodes = (ns.args[0] as number) || 15; // Fallback auf dein originales Early-Cap (15)
+  const maxNodes = (ns.args[0] as number) || 15;
   const maxLevels = (ns.args[1] as number) || Infinity;
   const maxRam = (ns.args[2] as number) || Infinity;
   const maxCores = (ns.args[3] as number) || Infinity;
 
   ns.print(
-    `⚡ Micro-Hacknet Subsystem aktiv (${isCappedMode ? "CAPPED MODE" : "ULTRA-LOW RAM-MODE"})`,
+    `⚡ Micro-Hacknet Subsystem aktiv (${isCappedMode ? "CAPPED MODE" : "LOW-RAM NO-FORMULAS"})`,
   );
 
   while (true) {
     const numNodes = h.numNodes();
 
-    // 📊 Berechne aktuelle Gesamtwerte für den Cap-Check
-    let totalLevels = 0;
-    let totalRam = 0;
-    let totalCores = 0;
-
+    // 📊 Validierung pro Node
+    let allNodesMaxed = numNodes >= maxNodes;
     for (let i = 0; i < numNodes; i++) {
       const stats = h.getNodeStats(i);
-      totalLevels += stats.level;
-      totalRam += stats.ram;
-      totalCores += stats.cores;
+      if (
+        stats.level < maxLevels ||
+        stats.ram < maxRam ||
+        stats.cores < maxCores
+      ) {
+        allNodesMaxed = false;
+        break;
+      }
     }
 
-    // 🛑 ABBRUCHBEDINGUNG: Wenn alle Netburners-Ziele erreicht sind
-    if (
-      isCappedMode &&
-      totalLevels >= maxLevels &&
-      totalRam >= maxRam &&
-      totalCores >= maxCores
-    ) {
+    if (isCappedMode && allNodesMaxed) {
       ns.tprint(
-        "🛑 [Hacknet-Early] Netburners-Minimum erreicht. Schalte System ab, um Geld für CORP zu sparen!",
+        "🛑 [Hacknet-Early] Netburners-Minimum erreicht. Schalte System ab.",
       );
-      return; // Beendet das Skript sauber
+      return;
     }
 
     const currentMoney = ns.getServerMoneyAvailable("home");
-
-    // Aggressives Early-Game-Budget: 35% des Geldes investieren
-    let budget = currentMoney * 0.35;
-    if (currentMoney > 20_000_000) budget = currentMoney * 0.1; // Später drosseln
+    let budget =
+      currentMoney > 20_000_000 ? currentMoney * 0.1 : currentMoney * 0.35;
 
     let bestCost = Infinity;
     let purchaseType: "Level" | "RAM" | "Core" | "NewNode" | null = null;
     let targetIndex = -1;
 
-    // 1. Kosten für neuen Knoten prüfen (Berücksichtigt dynamisches Cap)
+    // 1. Kosten für neuen Knoten prüfen
     if (numNodes < maxNodes) {
       const nodeCost = h.getPurchaseNodeCost();
       if (nodeCost <= budget && nodeCost < bestCost) {
@@ -62,42 +55,37 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 2. Günstigstes Upgrade auf bestehenden Nodes suchen (nur wenn das jeweilige Cap noch nicht voll ist)
+    // 2. Günstigstes Upgrade suchen (Mit striktem, individuellem Cap-Filter)
     for (let i = 0; i < numNodes; i++) {
-      const lvlCost = h.getLevelUpgradeCost(i, 1);
-      const ramCost = h.getRamUpgradeCost(i, 1);
-      const coreCost = h.getCoreUpgradeCost(i, 1);
+      const stats = h.getNodeStats(i);
 
-      if (
-        (!isCappedMode || totalLevels < maxLevels) &&
-        lvlCost <= budget &&
-        lvlCost < bestCost
-      ) {
-        bestCost = lvlCost;
-        purchaseType = "Level";
-        targetIndex = i;
+      if (stats.level < maxLevels) {
+        const lvlCost = h.getLevelUpgradeCost(i, 1);
+        if (lvlCost <= budget && lvlCost < bestCost) {
+          bestCost = lvlCost;
+          purchaseType = "Level";
+          targetIndex = i;
+        }
       }
-      if (
-        (!isCappedMode || totalRam < maxRam) &&
-        ramCost <= budget &&
-        ramCost < bestCost
-      ) {
-        bestCost = ramCost;
-        purchaseType = "RAM";
-        targetIndex = i;
+      if (stats.ram < maxRam) {
+        const ramCost = h.getRamUpgradeCost(i, 1);
+        if (ramCost <= budget && ramCost < bestCost) {
+          bestCost = ramCost;
+          purchaseType = "RAM";
+          targetIndex = i;
+        }
       }
-      if (
-        (!isCappedMode || totalCores < maxCores) &&
-        coreCost <= budget &&
-        coreCost < bestCost
-      ) {
-        bestCost = coreCost;
-        purchaseType = "Core";
-        targetIndex = i;
+      if (stats.cores < maxCores) {
+        const coreCost = h.getCoreUpgradeCost(i, 1);
+        if (coreCost <= budget && coreCost < bestCost) {
+          bestCost = coreCost;
+          purchaseType = "Core";
+          targetIndex = i;
+        }
       }
     }
 
-    // 3. Kauf ausführen
+    // 🚀 3. KAUF AUSFÜHREN
     if (purchaseType !== null) {
       if (purchaseType === "NewNode") {
         h.purchaseNode();
@@ -112,11 +100,9 @@ export async function main(ns: NS): Promise<void> {
           `[Hacknet] Node ${targetIndex}: ${purchaseType}-Upgrade für $${ns.format.number(bestCost)}`,
         );
       }
-      await ns.sleep(100); // Schnelle Kauftaktung bei Erfolg
+      await ns.sleep(100);
     } else {
-      // Wenn nichts bezahlbar ist oder wir auf ein bestimmtes Cap warten, entspannt schlafen
-      const sleepTime = isCappedMode ? 5000 : 15000;
-      await ns.sleep(sleepTime);
+      await ns.sleep(isCappedMode ? 5000 : 15000);
     }
   }
 }

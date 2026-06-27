@@ -212,14 +212,9 @@ export async function main(ns: NS): Promise<void> {
         let ramBuffer = 0;
         if (node === "home") {
           if (
-            [
-              "CRIME",
-              "REP",
-              "TRAIN",
-              "CORP",
-              "SHOP",
-              "XP_SPRINT"
-            ].includes(state.strategy)
+            ["CRIME", "REP", "TRAIN", "CORP", "SHOP", "XP_SPRINT"].includes(
+              state.strategy,
+            )
           ) {
             ramBuffer = 24;
           } else {
@@ -269,16 +264,16 @@ function manageSuites(
   const hasBrute = ns.fileExists("BruteSSH.exe", "home");
 
   // --- ARCHITEKTUR-ENTSCHEIDUNG HACKNET ---
-  // 1. Sperre im absoluten Early-Game (unter 64GB RAM gehört jeder Dollar den Server-Upgrades)
-  if (homeMaxRam < 64) {
+  // 1. Sperre im absoluten Early-Game (unter 128GB RAM gehört jeder Dollar den Server-Upgrades / Crime)
+  if (homeMaxRam < 128) {
     if (ns.isRunning(targetHacknetScript, "home")) {
       ns.print(
-        "⏳ [KERNEL] Blockiere Hacknet: Fokus liegt auf 64GB RAM Upgrade.",
+        "⏳ [KERNEL] Blockiere Hacknet: Fokus liegt auf 128GB RAM Upgrade.",
       );
       ns.scriptKill(targetHacknetScript, "home");
     }
   }
-  // 2. Erlaubnis ab 64GB RAM, um den Netburners-Gegenwert einzufahren
+  // 2. Erlaubnis ab 128GB RAM, um den Netburners-Gegenwert einzufahren
   else if (!hasBrute) {
     if (ns.isRunning(targetHacknetScript, "home")) {
       ns.print(
@@ -347,8 +342,6 @@ function manageSuites(
   }
 }
 
-// (Die Helferfunktionen findBestTarget, deployWorker und drawSysKernelDashboard bleiben unverändert)
-// --- HELFER-FUNKTIONEN (Unverändert) ---
 function findBestTarget(
   ns: NS,
   nodes: string[],
