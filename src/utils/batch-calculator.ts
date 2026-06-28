@@ -20,10 +20,7 @@ export function calculateBatch(
   hackPercent = 0.04,
   spacer = 40,
 ): BatchPlan | null {
-  // FIX: Verhindert den Systemabsturz, falls Formulas.exe noch nicht gekauft wurde!
-  if (!ns.formulas || !ns.formulas.hacking) {
-    return null;
-  }
+  if (!ns.formulas || !ns.formulas.hacking) return null;
 
   const player: Player = ns.getPlayer();
   const server: Server = ns.getServer(targetName);
@@ -34,12 +31,13 @@ export function calculateBatch(
   server.hackDifficulty = server.minDifficulty;
   server.moneyAvailable = server.moneyMax;
 
-  // 2. Thread-Berechnungen via Formulas
   const pctPerThread = ns.formulas.hacking.hackPercent(server, player);
   if (pctPerThread <= 0) return null;
 
+  // FIX: Wenn 1 Thread bereits MEHR klaut als die erlaubte Gier, 
+  // ist der Server/RAM nicht bereit für diesen Gier-Faktor.
   let hackThreads = Math.floor(hackPercent / pctPerThread);
-  if (hackThreads < 1) hackThreads = 1;
+  if (hackThreads < 1) return null; 
 
   const hackSecIncrease = ns.hackAnalyzeSecurity(hackThreads, targetName);
   const weaken1Threads = Math.ceil(hackSecIncrease / 0.05);
@@ -47,34 +45,25 @@ export function calculateBatch(
   // Zustand nach dem Hack simulieren
   server.moneyAvailable = server.moneyMax * (1 - hackThreads * pctPerThread);
 
-  // Wie viele Grows braucht es für den Reset?
-  const growThreads = ns.formulas.hacking.growThreads(
-    server,
-    player,
-    server.moneyMax,
-  );
-
+  // Perfekte Berechnung der Grow-Threads via Formulas
+  const growThreads = ns.formulas.hacking.growThreads(server, player, server.moneyMax);
   const growSecIncrease = ns.growthAnalyzeSecurity(growThreads, targetName);
   const weaken2Threads = Math.ceil(growSecIncrease / 0.05);
 
-  // 3. Zeit- und Delay-Berechnungen (Synchronisiert mit dem Spacer)
   const tW = ns.formulas.hacking.weakenTime(server, player);
   const tG = ns.formulas.hacking.growTime(server, player);
   const tH = ns.formulas.hacking.hackTime(server, player);
 
-  // Exakte HWGW-Taktung: Landung im Abstand des Spacers
   const hackDelay = tW - spacer - tH;
   const weaken1Delay = 0;
   const growDelay = tW + spacer - tG;
   const weaken2Delay = spacer * 2;
 
-  // Absicherung gegen negative Delays bei extrem hohen Hacking-Leveln
   if (hackDelay < 0 || growDelay < 0) return null;
 
-  // 4. RAM-Kosten prüfen
-  const ramHack = ns.getScriptRam("tasks/hack.js");
-  const ramGrow = ns.getScriptRam("tasks/grow.js");
-  const ramWeaken = ns.getScriptRam("tasks/weaken.js");
+  const ramHack = ns.getScriptRam("/tasks/hack.js");
+  const ramGrow = ns.getScriptRam("/tasks/grow.js");
+  const ramWeaken = ns.getScriptRam("/tasks/weaken.js");
 
   const totalRam =
     hackThreads * ramHack +

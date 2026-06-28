@@ -8,7 +8,7 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  ns.disableLog("ALL"); // BEHOBEN: Reaktiviert, um GUI-Lag bei hunderten Threads zu verhindern
+  ns.disableLog("ALL");
 
   const maxMoney = ns.getServerMaxMoney(target);
   const minSecurity = ns.getServerMinSecurityLevel(target);
@@ -18,11 +18,18 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
+  // Schwellenwerte für optimale Ausbeute im Early/Mid-Game
   const moneyThresh = maxMoney * 0.90;
   const securityThresh = minSecurity + 2;
 
   while (true) {
     try {
+      // Sicherheits-Check falls Root-Zugriff im Loop flöten geht (z.B. BN-Mechaniken)
+      if (!ns.hasRootAccess(target)) {
+        await ns.sleep(5000);
+        continue;
+      }
+
       const currentSecurity = ns.getServerSecurityLevel(target);
       const currentMoney = ns.getServerMoneyAvailable(target);
 
@@ -34,11 +41,8 @@ export async function main(ns: NS): Promise<void> {
         await ns.hack(target);
       }
     } catch (e: unknown) {
-      // Falls der Server während eines Modus-Wechsels (z.B. Source-File-Mechaniken) zickt
-      await ns.sleep(10000);
+      await ns.sleep(5000);
     }
-
-    // Ein minimaler Sicherheits-Tick von 1ms reicht völlig aus, falls die API im Catch hakt
     await ns.sleep(1);
   }
 }

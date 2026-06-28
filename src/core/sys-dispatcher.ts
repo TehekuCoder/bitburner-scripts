@@ -72,7 +72,6 @@ export async function main(ns: NS): Promise<void> {
   }
 
   ns.print("⚙️ [Dispatcher] Initialisiere Augmentations-Cache...");
-  buildReputationCache(ns);
 
   let lastValue = 0;
   let lastTime = Date.now();
@@ -80,6 +79,8 @@ export async function main(ns: NS): Promise<void> {
   let lastMode = "";
 
   while (true) {
+    buildReputationCache(ns);
+
     breakAndInfectNetwork(ns);
 
     let mode: BotStrategy = "MONEY";
@@ -90,7 +91,7 @@ export async function main(ns: NS): Promise<void> {
     let targetCompany: CompanyName | undefined = undefined;
     let targetStat = 0;
 
-    // --- 1. STRATEGIE-MATRIX (REORGANISIERT) ---
+    // --- 1. STRATEGIE-MATRIX ---
     const hasEssentialTools =
       ns.fileExists("BruteSSH.exe", "home") &&
       ns.fileExists("FTPCrack.exe", "home") &&
@@ -100,13 +101,10 @@ export async function main(ns: NS): Promise<void> {
 
     if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
-    }
-    // 🔥 CRITICAL GATEKEEPER: Unter 128GB RAM hat Geld-Generierung via Crime absolute Priorität!
-    else if (homeMaxRam < 128) {
-      mode = "CRIME"; // Harmonisiert mit dem Kernel-String
-    }
-    // Erst AB 128GB RAM erlauben wir Fraktions- und Corporate-Grinds
-    else if (factionToWorkFor) {
+    } else if (homeMaxRam < 256
+    ) {
+      mode = "CRIME";
+    } else if (factionToWorkFor) {
       mode = "REP";
       targetFaction = factionToWorkFor;
     } else {
@@ -250,33 +248,19 @@ export async function main(ns: NS): Promise<void> {
       progressBar: finalBar,
     });
 
-   // --- 4. HINTERGRUND-DIENSTE ---
-    // 🔥 RADIKALER EARLY-GAME-RIEGEL: 
-    // Wenn wir unter 128GB RAM sind und Geld/XP brauchen, jagen wir JEDEN Hintergrund-Dienst vom Hof,
-    // um die magischen 18.35 GB für tasks/crime.js freizuschaufeln.
+    // --- 4. HINTERGRUND-DIENSTE & AUTOMATISIERUNG ---
+
     const isEarlyGameCrime =
       homeMaxRam < 128 &&
       (mode === "CRIME" || mode === "XP_SPRINT" || mode === "KILLS");
 
     if (isEarlyGameCrime) {
-      // Falls noch aktiv, beenden wir Shopping sofort
       if (ns.isRunning("tasks/faction-shopping.js", "home")) {
-        ns.print(
-          "🛑 [Dispatcher] Schließe faction-shopping für Crime-RAM-Priorität.",
-        );
         ns.scriptKill("tasks/faction-shopping.js", "home");
       }
-
-      // Sicherheits-Check für Hacknet-Skripte (Sperrliste erweitert)
-      const rogueScripts = [
-        "tasks/hacknet.js",
-        "tasks/hacknet-early.js"
-      ];
+      const rogueScripts = ["tasks/hacknet.js", "tasks/hacknet-early.js"];
       for (const script of rogueScripts) {
         if (ns.fileExists(script, "home") && ns.isRunning(script, "home")) {
-          ns.print(
-            `🛑 [Dispatcher] Schließe ${script} für Crime-RAM-Priorität.`,
-          );
           ns.scriptKill(script, "home");
         }
       }
@@ -287,24 +271,155 @@ export async function main(ns: NS): Promise<void> {
       ) {
         ns.run("tasks/faction-shopping.js", 1);
       }
+    }
 
-      if (
-        ns.fileExists("Formulas.exe", "home") &&
-        !ns.isRunning("core/sys-batcher.js", "home") &&
-        getFreeRam() > 20
-      ) {
-        ns.print("🚀 Dispatcher: Formulas.exe aktiv! Starte HWGW-Batcher...");
-        ns.run("core/sys-batcher.js", 1);
+    // 🌟 2. AUTOMATISIERTE HACKING-STEUERUNG (Batcher vs. Dynamischer Worker)
+    const hasFormulas = ns.fileExists("Formulas.exe", "home");
+
+    // HIER GEÄNDERT: Warte auf 256 GB Home-RAM vor dem Batcher-Start 🔥
+    const BATCHER_MIN_RAM = 256;
+    const BATCHER_MIN_PSERV_RAM = 64;
+
+    const pServers = ns.cloud.getServerNames();
+
+    const maxPservRam =
+      pServers.length > 0
+        ? Math.max(...pServers.map((s: string) => ns.getServerMaxRam(s)))
+        : 0;
+
+    const canRunBatcher =
+      hasFormulas &&
+      homeMaxRam >= BATCHER_MIN_RAM &&
+      maxPservRam >= BATCHER_MIN_PSERV_RAM;
+
+    if (canRunBatcher) {
+      // 🚀 BATCHER-MODUS (Infrastruktur ist bereit)
+      if (ns.isRunning("tasks/work.js", "home")) {
+        ns.print(
+          "🛑 [Dispatcher] Beende Fallback-Worker für HWGW-Batcher-Wechsel.",
+        );
+        ns.scriptKill("tasks/work.js", "home");
       }
 
-      if (
-        homeMaxRam >= 128 &&
-        !ns.isRunning("utils/fill-ram.js", "home") &&
-        getFreeRam() > 15
-      ) {
-        ns.print("🚀 [Dispatcher] 128GB+ RAM erreicht. Starte RAM-Filler...");
-        ns.run("utils/fill-ram.js", 1);
+      if (!ns.isRunning("core/sys-batcher.js", "home")) {
+        if (ns.isRunning("utils/fill-ram.js", "home")) {
+          ns.scriptKill("utils/fill-ram.js", "home");
+        }
+        if (getFreeRam() > 15) {
+          ns.print(
+            `🚀 [Dispatcher] Infrastruktur bereit (Max Cloud-Server: ${maxPservRam}GB). Starte HWGW-Batcher...`,
+          );
+          ns.run("core/sys-batcher.js", 1);
+        }
       }
+    } else {
+      // 📉 WORKER-MODUS (Fallback, weil Home-RAM < 256GB, Server zu klein sind oder Formulas fehlen)
+      if (ns.isRunning("core/sys-batcher.js", "home")) {
+        ns.print(
+          `🛑 [Dispatcher] Infrastruktur unzureichend (Home: ${homeMaxRam}/${BATCHER_MIN_RAM}GB). Beende Batcher.`,
+        );
+        ns.scriptKill("core/sys-batcher.js", "home");
+      }
+
+      const fallbackTarget = findBestFallbackTarget(ns, p.skills.hacking);
+      const workerScript = "tasks/work.js";
+      const workerRam = ns.getScriptRam(workerScript, "home");
+
+      // --- 1. CLOUD-SERVER (P-SERVS) FLUTEN ---
+      for (const server of pServers) {
+        ns.scp(workerScript, server, "home");
+
+        const processes = ns.ps(server);
+        const runningWorker = processes.find(
+          (proc) => proc.filename === workerScript,
+        );
+
+        const maxRam = ns.getServerMaxRam(server);
+        const maxPossibleThreads = Math.floor(maxRam / workerRam);
+
+        if (maxPossibleThreads === 0) continue; // Server zu klein
+
+        if (runningWorker) {
+          // Prüfen: Ziel falsch ODER nicht alle Threads ausgenutzt (weil RAM aufgerüstet wurde)?
+          if (runningWorker.args[0] !== fallbackTarget) {
+            ns.print(
+              `🔄 [Dispatcher] Richtungswechsel auf ${server}: ${runningWorker.args[0]} -> ${fallbackTarget}`,
+            );
+            ns.scriptKill(workerScript, server);
+          } else if (runningWorker.threads < maxPossibleThreads) {
+            ns.print(
+              `📈 [Dispatcher] RAM-Upgrade erkannt! Skaliere ${server} auf volle ${maxPossibleThreads} Threads hoch.`,
+            );
+            ns.scriptKill(workerScript, server);
+          } else {
+            // Alles läuft perfekt auf Maximum -> ignorieren
+            continue;
+          }
+        }
+
+        // Wenn wir hier ankommen, wurde das alte Skript gekillt oder es lief noch keines.
+        const usedRam = ns.getServerUsedRam(server);
+        const freeRam = maxRam - usedRam;
+        const threads = Math.floor(freeRam / workerRam);
+
+        if (threads > 0) {
+          ns.exec(workerScript, server, threads, fallbackTarget);
+          ns.print(
+            `🌊 [Dispatcher] Flute Cloud-Server ${server} mit ${threads} Threads auf Ziel: ${fallbackTarget}`,
+          );
+        }
+      }
+
+      // --- 2. HOME-SERVER ALS BACKUP MITNUTZEN ---
+      const homeProcesses = ns.ps("home");
+      const runningWorkerOnHome = homeProcesses.find(
+        (proc) => proc.filename === workerScript,
+      );
+
+      if (
+        runningWorkerOnHome &&
+        runningWorkerOnHome.args[0] !== fallbackTarget
+      ) {
+        ns.scriptKill(workerScript, "home");
+      }
+
+      // Prüfen, ob der korrekte Worker bereits auf Home läuft
+      const isWorkerRunningOnHome = homeProcesses.some(
+        (proc) =>
+          proc.filename === workerScript && proc.args[0] === fallbackTarget,
+      );
+
+      if (!isWorkerRunningOnHome) {
+        const homeFreeRam = getFreeRam();
+        const reservedRam = 20;
+        if (homeFreeRam > reservedRam + workerRam) {
+          const homeThreads = Math.floor(
+            (homeFreeRam - reservedRam) / workerRam,
+          );
+          if (homeThreads > 0) {
+            ns.run(workerScript, homeThreads, fallbackTarget);
+            ns.print(
+              `🏠 [Dispatcher] Nutze ${homeThreads} Threads auf 'home' für Ziel: ${fallbackTarget}`,
+            );
+          }
+        }
+      }
+    }
+
+    // 3. RAM-Filler (Darf erst ran, wenn Home-RAM groß genug und Batcher aktiv ist)
+    const executionAllowed =
+      !hasFormulas || ns.isRunning("core/sys-batcher.js", "home");
+    if (
+      homeMaxRam >= 256 &&
+      !isEarlyGameCrime &&
+      executionAllowed &&
+      !ns.isRunning("utils/fill-ram.js", "home") &&
+      getFreeRam() > 15
+    ) {
+      ns.print(
+        "🚀 [Dispatcher] Starte RAM-Filler für restliche Kapazitäten...",
+      );
+      ns.run("utils/fill-ram.js", 1);
     }
 
     // --- 5. EXECUTION LAYER ---
@@ -361,14 +476,12 @@ function manageMicroservices(ns: NS, currentMode: string): void {
 
   const targetScript = modeToScript[currentMode];
 
-  // 1. Alle unpassenden Microservices killen
   for (const [mode, script] of Object.entries(modeToScript)) {
     if (script !== targetScript && ns.isRunning(script, "home")) {
       ns.scriptKill(script, "home");
     }
   }
 
-  // 2. Target-Script starten mit RAM-Check und Feedback
   if (
     targetScript &&
     !ns.isRunning(targetScript, "home") &&
@@ -389,7 +502,6 @@ function manageMicroservices(ns: NS, currentMode: string): void {
         ns.print(`🚀 [Dispatcher] ${targetScript} erfolgreich gestartet.`);
       }
     } else {
-      // 🔥 LAUTSTARKE WARNUNG IM LOG
       ns.print(
         `⚠️ [Dispatcher] RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB. Frei: ${freeRam.toFixed(2)} GB.`,
       );
@@ -398,4 +510,37 @@ function manageMicroservices(ns: NS, currentMode: string): void {
       );
     }
   }
+}
+
+function findBestFallbackTarget(ns: NS, currentHackingLevel: number): string {
+  let bestTarget = "n00dles";
+  let maxMoney = ns.getServerMaxMoney("n00dles");
+
+  const visited = new Set<string>();
+  const queue = ["home"];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    const neighbors = ns.scan(current);
+    for (const neighbor of neighbors) {
+      if (!visited.has(neighbor)) {
+        queue.push(neighbor);
+      }
+    }
+
+    if (current === "home" || !ns.hasRootAccess(current)) continue;
+
+    const serverMaxMoney = ns.getServerMaxMoney(current);
+    const reqHacking = ns.getServerRequiredHackingLevel(current);
+
+    if (serverMaxMoney > maxMoney && reqHacking <= currentHackingLevel) {
+      bestTarget = current;
+      maxMoney = serverMaxMoney;
+    }
+  }
+
+  return bestTarget;
 }
