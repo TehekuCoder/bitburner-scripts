@@ -23,7 +23,7 @@ export async function main(ns: NS): Promise<void> {
     dispatcher: "core/sys-dispatcher.js",
     infra: "core/sys-infra.js",
     backdoor: "tasks/backdoor.js",
-    xpfarm: "tasks/weaken-xp.js",
+    xpfarm: "tasks/xp-grind.js",
     trade: "modules/trading-bot.js",
     hacknet: "tasks/hacknet-early.js",
     replicator: "core/dnet-master.js",
@@ -91,38 +91,32 @@ export async function main(ns: NS): Promise<void> {
     // ======================================================================
     // --- 🧠 DYNAMISCHE STRATEGIE-MATRIX (MULTIPLIER-GESTEUERT) ---
     // ======================================================================
-    if (["MONEY", "CRIME", "CORP"].includes(state.strategy)) {
-      if (bnMults.ServerMaxMoney === 0) {
-        state.strategy = "XP_SPRINT";
-        state.progressBar =
-          "📉 BN-Sonderregel: Kein Server-Geld! Wechsle auf XP-Sprint.";
-      } else if (homeMax < 64) {
-        state.strategy = "CRIME";
-        state.progressBar = `🥷 Early-Game-Crime Booster (Warte auf 64GB RAM)`;
-      } else {
-        const player = ns.getPlayer();
-        const combatAvg =
-          (player.skills.strength +
-            player.skills.defense +
-            player.skills.dexterity +
-            player.skills.agility) /
-          4;
+    // FIX: Der Dispatcher ist das Hauptgehirn. Der Kernel greift nur noch bei
+    // absoluten Notfällen (BitNode-Restriktionen) oder Upgrades ein.
 
-        // Wenn Firmenarbeit stark geboostet ist (wie in BN5) und wir erste Grundstats haben
-        if (
-          bnMults.CompanyWorkMoney > 1.0 &&
-          combatAvg >= 30 &&
-          homeMax < 256
-        ) {
-          state.strategy = "CORP"; // <-- Hier jetzt CORP statt COMPANY
-          state.progressBar = `🏢 BN5-Spezial: Nutze hocheffiziente Firmen-Arbeit (${(bnMults.CompanyWorkMoney * 100).toFixed(0)}%)`;
-        } else if (homeMax >= 128) {
-          state.strategy = "MONEY";
-          state.progressBar = `💻 Late-Game Hacking-Fleet aktiv (RAM >= 128GB)`;
-        } else {
-          state.strategy = "CRIME";
-          state.progressBar = `🥷 Mid-Game-Crime Loop für stabiles Einkommen`;
-        }
+    if (bnMults.ServerMaxMoney === 0) {
+      // Höchste Priorität: Wenn wir absolut kein Geld aus Servern ziehen können.
+      state.strategy = "XP_SPRINT";
+      state.progressBar =
+        "📉 BN-Sonderregel: Kein Server-Geld! Wechsle auf XP-Sprint.";
+    } else if (state.strategy === "MONEY") {
+      // Nur wenn der Dispatcher auf "MONEY" (Standard) steht, prüfen wir,
+      // ob wir wegen eines BN-Multiplikators lieber arbeiten gehen sollten.
+      const player = ns.getPlayer();
+      const combatAvg =
+        (player.skills.strength +
+          player.skills.defense +
+          player.skills.dexterity +
+          player.skills.agility) /
+        4;
+
+      if (bnMults.CompanyWorkMoney > 1.0 && combatAvg >= 30) {
+        state.strategy = "CORP";
+        state.progressBar = `🏢 BN-Spezial: Nutze hocheffiziente Firmen-Arbeit (${(bnMults.CompanyWorkMoney * 100).toFixed(0)}%)`;
+      }
+      // Wir setzen die Standard-Nachricht nur, wenn der Dispatcher noch nichts gesetzt hat
+      else if (!state.progressBar || state.progressBar === "") {
+        state.progressBar = `💻 Hacking-Fleet aktiv (Ressourcen optimal genutzt)`;
       }
     }
     // ======================================================================
@@ -136,12 +130,12 @@ export async function main(ns: NS): Promise<void> {
     );
 
     saveState(ns, state);
-
-    // Übergabe der Multiplikatoren an die Verwaltung der Subsysteme
+    // ... (Code über diesem Bereich bleibt gleich) ...
     manageSuites(ns, scripts, state, triggerBackdoor, bnMults);
 
+    // 1. FIX: Dispatcher (Batcher) erst ab 256 GB starten!
     if (
-      homeMax >= 64 &&
+      homeMax >= 256 &&
       ns.fileExists(scripts.dispatcher, "home") &&
       !ns.isRunning(scripts.dispatcher, "home")
     ) {
@@ -157,14 +151,17 @@ export async function main(ns: NS): Promise<void> {
       ns.exec(scripts.infra, "home", 1);
     }
 
-    const maxMoney = ns.getServerMaxMoney(bestTarget);
-    const minSecurity = ns.getServerMinSecurityLevel(bestTarget);
-    const currentSecurity = ns.getServerSecurityLevel(bestTarget);
-    const currentMoney = ns.getServerMoneyAvailable(bestTarget);
-
-    const moneyThresh = maxMoney * 0.9;
-    const securityThresh = minSecurity + 2;
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
+
+    // --- ZENTRALE FLOTTEN-PRÜFUNG ---
+    const pServers = ns.cloud.getServerNames();
+    const eligiblePServers = pServers.filter(
+      (s) => ns.getServerMaxRam(s) >= 64,
+    );
+
+    // Die Flotte ist NUR bereit, wenn Home groß genug ist UND wir fähige P-Server haben
+    const isFleetReady =
+      hasFormulas && homeMax >= 256 && eligiblePServers.length > 0;
 
     // --- WORKER DEPLOYMENT ---
     for (const node of allNodes) {
@@ -176,43 +173,39 @@ export async function main(ns: NS): Promise<void> {
           continue;
         }
 
-        if (hasFormulas && homeMax >= 64) {
+        // 2. NEU: Gnadenloses Aufräumen, wenn der Dispatcher läuft.
+        // Der Dispatcher (sys-dispatcher.ts) startet ab 256 GB auf Home.
+        // Wenn er läuft, übernimmt er (via Batcher/Filler) die Kontrolle. Der Kernel muss schweigen.
+        const isDispatcherRunning = ns.isRunning(scripts.dispatcher, "home");
+
+        if (isDispatcherRunning && isFleetReady) {
           const procs = ns.ps(node);
           const standardScripts = [
             "tasks/work.js",
-            "tasks/weaken-xp.js",
-            "tasks/hack.js",
-            "tasks/grow.js",
-            "tasks/weaken.js",
+            "tasks/xp-grind.js",
+            // Wir killen HIER keine Einzel-Skripte (hack/grow/weaken) mehr blind,
+            // denn die werden vom Dispatcher/Batcher gesteuert!
+            // Wir killen nur die alten "All-in-One"-Fallback-Skripte, falls noch welche laufen.
           ];
           for (const p of procs) {
-            if (
-              standardScripts.includes(p.filename) &&
-              p.args[2] === undefined
-            ) {
+            if (standardScripts.includes(p.filename)) {
               ns.kill(p.pid);
             }
           }
-          continue;
+          continue; // WICHTIG: Wenn Dispatcher läuft, überspringt der Kernel das Deployment auf diesem Node.
         }
 
+        // --- FALLBACK-MODUS (Nur wenn Home < 256GB und Dispatcher NICHT läuft) ---
         let activeScript =
           state.strategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
 
-        if (homeMax >= 128 && state.strategy !== "XP_SPRINT") {
-          if (currentSecurity > securityThresh) {
-            activeScript = scripts.weak;
-          } else if (currentMoney < moneyThresh) {
-            activeScript = scripts.grow;
-          } else {
-            activeScript = scripts.hack;
-          }
-        }
+        // Da wir nur im Fallback sind, nutzen wir immer das All-in-One "work.js".
+        // Die Aufspaltung in Einzel-Skripte passiert exklusiv im Dispatcher/Batcher.
 
         let ramBuffer = 0;
         if (node === "home") {
           if (
-            ["CRIME", "REP", "TRAIN", "CORP", "SHOP", "XP_SPRINT"].includes(
+            ["CRIME", "REP", "TRAIN", "CORP", "XP_SPRINT"].includes(
               state.strategy,
             )
           ) {
@@ -232,7 +225,7 @@ export async function main(ns: NS): Promise<void> {
       state,
       bestTarget,
       allNodes,
-      homeMax >= 128,
+      isFleetReady, // Hier isFleetReady statt homeMax >= 256 übergeben
       bnMults.ServerMaxMoney,
     );
     await ns.sleep(2000);
@@ -391,6 +384,11 @@ function findBestTarget(
   return best;
 }
 
+function isBatchReady(ns: NS, node: string): boolean {
+  // Ein Server braucht mind. 64GB, um einen vernünftigen Batch-Zyklus stabil zu hosten
+  return ns.getServerMaxRam(node) >= 64;
+}
+
 function deployWorker(
   ns: NS,
   targetNode: string,
@@ -408,7 +406,7 @@ function deployWorker(
 
   const allWorkerScripts = [
     "tasks/work.js",
-    "tasks/weaken-xp.js",
+    "tasks/xp-grind.js",
     "tasks/hack.js",
     "tasks/grow.js",
     "tasks/weaken.js",
@@ -446,7 +444,7 @@ function drawSysKernelDashboard(
   ns.print(`👑 BIT-OS SYS-KERNEL - Units: ${rootCount}/${allNodes.length}`);
   ns.print(`========================================`);
   ns.print(
-    `ENGINE-MODE: ${isFleetMode ? "DYNAMIC FLEET (>=128GB)" : "LEGACY LOOP (<128GB)"}`,
+    `ENGINE-MODE: ${isFleetMode ? "DYNAMIC FLEET (>= 256GB)" : "BASIC LOOP (< 256GB)"}`,
   );
   ns.print(`STRATEGIE:  ${state.strategy}`);
   ns.print(`ZIEL:       ${bestTarget}`);

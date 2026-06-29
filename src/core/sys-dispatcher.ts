@@ -4,6 +4,7 @@ import {
   saveState,
   BotState,
   BotStrategy,
+  patchState,
 } from "./state-manager.js";
 import { breakAndInfectNetwork } from "../lib/network.js";
 
@@ -73,14 +74,20 @@ export async function main(ns: NS): Promise<void> {
 
   ns.print("⚙️ [Dispatcher] Initialisiere Augmentations-Cache...");
 
+  // Konfigurationen für Hacking-Infrastruktur
+  const BATCHER_MIN_RAM = 256;
+  const BATCHER_MIN_PSERV_RAM = 64;
+
   let lastValue = 0;
   let lastTime = Date.now();
   let emaRate = 0;
   let lastMode = "";
 
+  let cachedFallbackTarget = "n00dles";
+  let lastFallbackUpdate = 0;
+
   while (true) {
     buildReputationCache(ns);
-
     breakAndInfectNetwork(ns);
 
     let mode: BotStrategy = "MONEY";
@@ -91,49 +98,89 @@ export async function main(ns: NS): Promise<void> {
     let targetCompany: CompanyName | undefined = undefined;
     let targetStat = 0;
 
+    // --- 0. INFRASTRUKTUR VORABBERECHNUNG ---
+    const pServers = ns.cloud.getServerNames();
+    const eligiblePServers = pServers.filter(
+      (s) => ns.getServerMaxRam(s) >= BATCHER_MIN_PSERV_RAM,
+    );
+    const maxPservRam =
+      pServers.length > 0
+        ? Math.max(...pServers.map((s: string) => ns.getServerMaxRam(s)))
+        : 0;
+
+    const hasFormulas = ns.fileExists("Formulas.exe", "home");
+    const canRunBatcher =
+      hasFormulas &&
+      homeMaxRam >= BATCHER_MIN_RAM &&
+      eligiblePServers.length > 0;
+
     // --- 1. STRATEGIE-MATRIX ---
+    const playerMoney = p.money;
+    const MONEY_THRESHOLD_FOR_REP = 10_000_000; // 10 Mio Sicherheitspolster
+
     const hasEssentialTools =
       ns.fileExists("BruteSSH.exe", "home") &&
-      ns.fileExists("FTPCrack.exe", "home") &&
-      ns.fileExists("relaySMTP.exe", "home");
+      ns.fileExists("FTPCrack.exe", "home");
 
-    const factionToWorkFor = hasEssentialTools ? findNextFaction(ns, p) : null;
+    const isReadyForFactionGrind = playerMoney > MONEY_THRESHOLD_FOR_REP;
+
+    // Wir erlauben Fraktionsarbeit NUR, wenn wir entweder die Tools/Geld haben UND fähige P-Server besitzen
+    const factionToWorkFor =
+      (hasEssentialTools || isReadyForFactionGrind) &&
+      eligiblePServers.length > 0
+        ? findNextFaction(ns, p)
+        : null;
 
     if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
-    } else if (homeMaxRam < 256
-    ) {
+    } else if (homeMaxRam < 256) {
       mode = "CRIME";
     } else if (factionToWorkFor) {
       mode = "REP";
       targetFaction = factionToWorkFor;
     } else {
-      const nextLockedCombatFaction = HACKING_FACTIONS.find(
-        (f) => !p.factions.includes(f.name) && f.minStat > 0,
-      );
-
-      if (nextLockedCombatFaction) {
-        let requiredKills = 0;
-        if (nextLockedCombatFaction.name === "The Dark Army") requiredKills = 5;
-        if (nextLockedCombatFaction.name === "Speakers for the Dead")
-          requiredKills = 30;
-
-        const currentLowestCombatStat = Math.min(
-          ...COMBAT_STATS.map((s) => p.skills[s]),
+      // WICHTIGER FIX: Wenn wir keine fähigen P-Server haben, hat Geld-Generierung absolute Priorität!
+      // Wir überspringen das Training für spätere Fraktionen (wie Tetrads), bis die aktuelle Basis steht.
+      if (eligiblePServers.length === 0) {
+        mode = "MONEY";
+      } else {
+        // Erst wenn wir mindestens einen P-Server >= 64GB haben, erlauben wir weiteres Combat-Fortschreiten
+        const nextLockedCombatFaction = HACKING_FACTIONS.find(
+          (f) => !p.factions.includes(f.name) && f.minStat > 0,
         );
 
-        if (p.numPeopleKilled < requiredKills) {
-          mode = "KILLS";
-          targetStat = requiredKills;
-          targetFaction = nextLockedCombatFaction.name;
-        } else if (currentLowestCombatStat < nextLockedCombatFaction.minStat) {
-          mode = "TRAIN";
-          targetStat = nextLockedCombatFaction.minStat;
-          targetFaction = nextLockedCombatFaction.name;
+        if (nextLockedCombatFaction) {
+          let requiredKills = 0;
+          if (nextLockedCombatFaction.name === "The Dark Army")
+            requiredKills = 5;
+          if (nextLockedCombatFaction.name === "Speakers for the Dead")
+            requiredKills = 30;
+
+          const currentLowestCombatStat = Math.min(
+            ...COMBAT_STATS.map((s) => p.skills[s]),
+          );
+
+          if (p.numPeopleKilled < requiredKills) {
+            mode = "KILLS";
+            targetStat = requiredKills;
+            targetFaction = nextLockedCombatFaction.name;
+          } else if (
+            currentLowestCombatStat < nextLockedCombatFaction.minStat
+          ) {
+            mode = "TRAIN";
+            targetStat = nextLockedCombatFaction.minStat;
+            targetFaction = nextLockedCombatFaction.name;
+          }
         }
       }
 
-      if (mode !== "TRAIN" && p.skills.hacking >= 250) {
+      if (Date.now() - lastFallbackUpdate > 300_000 || mode === "MONEY") {
+        cachedFallbackTarget = findBestFallbackTarget(ns, p.skills.hacking);
+        lastFallbackUpdate = Date.now();
+      }
+
+      // Firmen-Arbeitscheck (Mega-Corporations)
+      if (mode === "MONEY" && p.skills.hacking >= 250) {
         const missingCorpFaction = HACKING_FACTIONS.find(
           (f) =>
             !p.factions.includes(f.name) &&
@@ -222,7 +269,18 @@ export async function main(ns: NS): Promise<void> {
       generatedBar = "👶 Early Game: XP SPRINT (Hacking < 50)";
     } else if (mode === "CRIME") {
       generatedBar = "🥷 Mid-Game-Crime Loop für stabiles Einkommen";
-    } else {
+    }
+    // 🔥 NEU: KILLS-Modus abgefangen
+    else if (mode === "KILLS") {
+      generatedBar = `💀 Eliminierungs-Aufträge aktiv (${currentVal}/${targetVal} Kills)`;
+    }
+    // 🔥 NEU: Fallback-Phasen ohne starke Infrastruktur anzeigen
+    else if (mode === "MONEY" && !canRunBatcher) {
+      const fallbackTarget = findBestFallbackTarget(ns, p.skills.hacking);
+      generatedBar = `🏗️ Aufbau-Phase: Generiere Basis-Geld auf ${fallbackTarget} (Warte auf P-Server)`;
+    }
+    // Greift nur, wenn MONEY aktiv UND canRunBatcher true ist
+    else {
       generatedBar = "💰 Maximiere Profit (Batcher)";
     }
 
@@ -238,6 +296,28 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    let sharePercent = 0.0;
+    if (mode === "REP") sharePercent = 0.4;
+    if (mode === "MONEY") sharePercent = 0.1;
+
+    // Optional: Passe das XP-Cap dynamisch an dein Hacking-Level an
+    let dynamicMaxXp = 1000;
+    if (p.skills.hacking > 800) dynamicMaxXp = 1500;
+
+    saveState(ns, {
+      ...currentState,
+      strategy: mode,
+      targetFaction: targetFaction || undefined,
+      targetCompany: targetCompany,
+      targetStat: mode === "TRAIN" ? targetStat : undefined,
+      targetKills: mode === "KILLS" ? targetStat : undefined,
+      progressBar: finalBar,
+      fillerConfig: {
+        shareMaxRamPercent: sharePercent,
+        maxXpLevel: dynamicMaxXp,
+      },
+    });
+
     saveState(ns, {
       ...currentState,
       strategy: mode,
@@ -249,7 +329,6 @@ export async function main(ns: NS): Promise<void> {
     });
 
     // --- 4. HINTERGRUND-DIENSTE & AUTOMATISIERUNG ---
-
     const isEarlyGameCrime =
       homeMaxRam < 128 &&
       (mode === "CRIME" || mode === "XP_SPRINT" || mode === "KILLS");
@@ -273,27 +352,8 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 🌟 2. AUTOMATISIERTE HACKING-STEUERUNG (Batcher vs. Dynamischer Worker)
-    const hasFormulas = ns.fileExists("Formulas.exe", "home");
-
-    // HIER GEÄNDERT: Warte auf 256 GB Home-RAM vor dem Batcher-Start 🔥
-    const BATCHER_MIN_RAM = 256;
-    const BATCHER_MIN_PSERV_RAM = 64;
-
-    const pServers = ns.cloud.getServerNames();
-
-    const maxPservRam =
-      pServers.length > 0
-        ? Math.max(...pServers.map((s: string) => ns.getServerMaxRam(s)))
-        : 0;
-
-    const canRunBatcher =
-      hasFormulas &&
-      homeMaxRam >= BATCHER_MIN_RAM &&
-      maxPservRam >= BATCHER_MIN_PSERV_RAM;
-
+    // 🌟 AUTOMATISIERTE HACKING-STEUERUNG
     if (canRunBatcher) {
-      // 🚀 BATCHER-MODUS (Infrastruktur ist bereit)
       if (ns.isRunning("tasks/work.js", "home")) {
         ns.print(
           "🛑 [Dispatcher] Beende Fallback-Worker für HWGW-Batcher-Wechsel.",
@@ -313,11 +373,8 @@ export async function main(ns: NS): Promise<void> {
         }
       }
     } else {
-      // 📉 WORKER-MODUS (Fallback, weil Home-RAM < 256GB, Server zu klein sind oder Formulas fehlen)
       if (ns.isRunning("core/sys-batcher.js", "home")) {
-        ns.print(
-          `🛑 [Dispatcher] Infrastruktur unzureichend (Home: ${homeMaxRam}/${BATCHER_MIN_RAM}GB). Beende Batcher.`,
-        );
+        ns.print(`🛑 [Dispatcher] Infrastruktur unzureichend. Beende Batcher.`);
         ns.scriptKill("core/sys-batcher.js", "home");
       }
 
@@ -328,7 +385,6 @@ export async function main(ns: NS): Promise<void> {
       // --- 1. CLOUD-SERVER (P-SERVS) FLUTEN ---
       for (const server of pServers) {
         ns.scp(workerScript, server, "home");
-
         const processes = ns.ps(server);
         const runningWorker = processes.find(
           (proc) => proc.filename === workerScript,
@@ -337,10 +393,9 @@ export async function main(ns: NS): Promise<void> {
         const maxRam = ns.getServerMaxRam(server);
         const maxPossibleThreads = Math.floor(maxRam / workerRam);
 
-        if (maxPossibleThreads === 0) continue; // Server zu klein
+        if (maxPossibleThreads === 0) continue;
 
         if (runningWorker) {
-          // Prüfen: Ziel falsch ODER nicht alle Threads ausgenutzt (weil RAM aufgerüstet wurde)?
           if (runningWorker.args[0] !== fallbackTarget) {
             ns.print(
               `🔄 [Dispatcher] Richtungswechsel auf ${server}: ${runningWorker.args[0]} -> ${fallbackTarget}`,
@@ -348,25 +403,20 @@ export async function main(ns: NS): Promise<void> {
             ns.scriptKill(workerScript, server);
           } else if (runningWorker.threads < maxPossibleThreads) {
             ns.print(
-              `📈 [Dispatcher] RAM-Upgrade erkannt! Skaliere ${server} auf volle ${maxPossibleThreads} Threads hoch.`,
+              `📈 [Dispatcher] RAM-Upgrade erkannt! Skaliere ${server} hoch.`,
             );
             ns.scriptKill(workerScript, server);
           } else {
-            // Alles läuft perfekt auf Maximum -> ignorieren
             continue;
           }
         }
 
-        // Wenn wir hier ankommen, wurde das alte Skript gekillt oder es lief noch keines.
         const usedRam = ns.getServerUsedRam(server);
         const freeRam = maxRam - usedRam;
         const threads = Math.floor(freeRam / workerRam);
 
         if (threads > 0) {
           ns.exec(workerScript, server, threads, fallbackTarget);
-          ns.print(
-            `🌊 [Dispatcher] Flute Cloud-Server ${server} mit ${threads} Threads auf Ziel: ${fallbackTarget}`,
-          );
         }
       }
 
@@ -383,7 +433,6 @@ export async function main(ns: NS): Promise<void> {
         ns.scriptKill(workerScript, "home");
       }
 
-      // Prüfen, ob der korrekte Worker bereits auf Home läuft
       const isWorkerRunningOnHome = homeProcesses.some(
         (proc) =>
           proc.filename === workerScript && proc.args[0] === fallbackTarget,
@@ -398,31 +447,32 @@ export async function main(ns: NS): Promise<void> {
           );
           if (homeThreads > 0) {
             ns.run(workerScript, homeThreads, fallbackTarget);
-            ns.print(
-              `🏠 [Dispatcher] Nutze ${homeThreads} Threads auf 'home' für Ziel: ${fallbackTarget}`,
-            );
           }
         }
       }
     }
 
-    // 3. RAM-Filler (Darf erst ran, wenn Home-RAM groß genug und Batcher aktiv ist)
+    // RAM-Filler Steuerung
+    const isRamReady = homeMaxRam >= 256 || maxPservRam >= 64;
     const executionAllowed =
       !hasFormulas || ns.isRunning("core/sys-batcher.js", "home");
+
     if (
-      homeMaxRam >= 256 &&
+      isRamReady &&
       !isEarlyGameCrime &&
       executionAllowed &&
       !ns.isRunning("utils/fill-ram.js", "home") &&
       getFreeRam() > 15
     ) {
-      ns.print(
-        "🚀 [Dispatcher] Starte RAM-Filler für restliche Kapazitäten...",
-      );
+      ns.print("🚀 [Dispatcher] Infrastruktur bereit. Starte RAM-Filler...");
       ns.run("utils/fill-ram.js", 1);
     }
 
     // --- 5. EXECUTION LAYER ---
+    if (mode === "CORP" && targetCompany) {
+      ensureJob(ns, targetCompany); // Automatisierte Bewerbung vor Scriptstart
+    }
+
     manageMicroservices(ns, mode);
 
     await ns.sleep(2000);
@@ -505,9 +555,6 @@ function manageMicroservices(ns: NS, currentMode: string): void {
       ns.print(
         `⚠️ [Dispatcher] RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB. Frei: ${freeRam.toFixed(2)} GB.`,
       );
-      ns.print(
-        `👉 Tipp: Kill ein paar Threads deiner Hacking-Scripts auf 'home', um Platz zu machen!`,
-      );
     }
   }
 }
@@ -541,6 +588,11 @@ function findBestFallbackTarget(ns: NS, currentHackingLevel: number): string {
       maxMoney = serverMaxMoney;
     }
   }
-
   return bestTarget;
+}
+
+function ensureJob(ns: NS, targetCompany: CompanyName) {
+  const p = ns.getPlayer();
+  if (p.jobs[targetCompany]) return;
+  ns.singularity.applyToCompany(targetCompany, "Software");
 }

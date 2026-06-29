@@ -313,10 +313,16 @@ function findBestBatchTargetForNetwork(
 
   let bestTarget = null;
   let highestScore = 0;
-  const MAX_ALLOWED_WEAKEN_TIME = 10 * 60 * 1000; // 10 Minuten Max-Limit
+
+  // 🌟 DYNAMISCHES ZEIT-LIMIT 🌟
+  // Basis: 10 Minuten.
+  // Skalierung: Für je 100 Hacking-Level erlauben wir 2 zusätzliche Minuten.
+  const playerHackLevel = ns.getHackingLevel();
+  const maxAllowedWeakenMinutes = 10 + (playerHackLevel / 100) * 2;
+  const DYNAMIC_MAX_WEAKEN_TIME = maxAllowedWeakenMinutes * 60 * 1000;
 
   for (const s of targets) {
-    if (ns.getServerRequiredHackingLevel(s) > ns.getHackingLevel()) continue;
+    if (ns.getServerRequiredHackingLevel(s) > playerHackLevel) continue;
 
     // Nutze deinen robusten Calculator unter Idealbedingungen!
     const testPlan = calculateBatch(ns, s, 0.01, spacer);
@@ -325,9 +331,11 @@ function findBestBatchTargetForNetwork(
     if (!testPlan || testPlan.totalRam > maxSingleServerRam) continue;
 
     const idealExecutionTime = testPlan.executionTime;
-    if (idealExecutionTime > MAX_ALLOWED_WEAKEN_TIME) continue;
 
-    // Score-Berechnung ist nun 100% statisch und stabil, egal wie leer das Geld aktuell ist!
+    // 🚀 Nutze das neue dynamische Limit anstelle der statischen 10 Minuten
+    if (idealExecutionTime > DYNAMIC_MAX_WEAKEN_TIME) continue;
+
+    // Score-Berechnung ist 100% statisch und stabil, egal wie leer das Geld aktuell ist!
     const money = ns.getServerMaxMoney(s);
     const score = money / idealExecutionTime;
 
@@ -337,23 +345,4 @@ function findBestBatchTargetForNetwork(
     }
   }
   return bestTarget;
-}
-function getNetworkFreeRam(ns: NS, allServers: string[]): number {
-  return allServers
-    .filter((s) => ns.hasRootAccess(s))
-    .reduce((total, s) => {
-      let max = ns.getServerMaxRam(s);
-      if (s === "home") max = Math.max(0, max - 64);
-      return total + (max - ns.getServerUsedRam(s));
-    }, 0);
-}
-
-function getNetworkTotalRam(ns: NS, allServers: string[]): number {
-  return allServers
-    .filter((s) => ns.hasRootAccess(s))
-    .reduce((total, s) => {
-      let max = ns.getServerMaxRam(s);
-      if (s === "home") max = Math.max(0, max - 64);
-      return total + max;
-    }, 0);
 }

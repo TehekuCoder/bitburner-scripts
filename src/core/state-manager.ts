@@ -21,6 +21,12 @@ export interface BotState {
   playerHacking: number; // Verhindert das Laden von Endgame-States nach einem Reset
   jobField?: JobField;
   targetKills?: number;
+  
+  // 🚀 NEU: Zentrale Ressourcen-Kontrolle für fill-ram
+  fillerConfig?: {
+    shareMaxRamPercent: number; // Wie viel % des Home-RAMs darf Share fressen (0.0 - 1.0)
+    maxXpLevel: number;          // Bis zu welchem Hacking-Level macht XP-Grind Sinn
+  };
 }
 
 const STATE_FILE = "bitos_state.txt";
