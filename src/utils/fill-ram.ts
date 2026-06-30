@@ -19,7 +19,7 @@ export async function main(ns: NS): Promise<void> {
     const state = loadState(ns) as any;
     const p = ns.getPlayer();
 
-    // 🚀 FIX: Synchronisiere die RAM-Berechnung für 'home' mit dem Batcher
+    // Synchronisiere die RAM-Berechnung für 'home' mit dem Batcher
     let maxRam = ns.getServerMaxRam(target);
     if (target === "home") maxRam = Math.max(0, maxRam - 64);
 
@@ -37,6 +37,11 @@ export async function main(ns: NS): Promise<void> {
     let activeScript = "";
     let targetThreads = 0;
 
+    // 🧠 BATCHER-SCHUTZ UPGRADE: Aktiv, wenn Strategy "MONEY" ODER Batcher RAM angemeldet hat!
+    const isBatcherActive = 
+      state?.strategy === "MONEY" || 
+      (state?.batcherRamNeeded && state.batcherRamNeeded > 0);
+
     // A: XP-Grind Logik
     if (
       p.skills.hacking < maxXpLevel &&
@@ -52,20 +57,16 @@ export async function main(ns: NS): Promise<void> {
         .filter((proc) => proc.filename === activeScript)
         .reduce((acc, proc) => acc + proc.threads, 0);
 
-      // 🧠 BATCHER-SCHUTZ (XP-BLOCK): Dynamische Berechnung statt starrer 50%
-      const isBatcherActive = state?.strategy === "MONEY";
       let reserve = 64;
-
       if (isBatcherActive) {
-        // Falls der Batcher RAM anfordert, reservieren wir diesen Wert + 4 GB Sicherheitsmarge
+        // Nutze den angemeldeten RAM-Wert + Sicherheitsmarge
         const dynamicNeeded = state?.batcherRamNeeded
           ? state.batcherRamNeeded + 4
           : 40;
         reserve = Math.max(dynamicNeeded, Math.floor(maxRam * 0.3));
       }
 
-      const availableRam =
-        maxRam - (usedRam - currentThreads * scriptRam) - reserve;
+      const availableRam = maxRam - (usedRam - currentThreads * scriptRam) - reserve;
       targetThreads = Math.floor(availableRam / scriptRam);
     }
     // B: Share-Logik
@@ -82,16 +83,11 @@ export async function main(ns: NS): Promise<void> {
         .filter((proc) => proc.filename === activeScript)
         .reduce((acc, proc) => acc + proc.threads, 0);
 
-      // 🧠 BATCHER-SCHUTZ (SHARE-BLOCK): Physischen Freiraum präzise schützen
-      const isBatcherActive = state?.strategy === "MONEY";
       const shareReserve = isBatcherActive
-        ? state?.batcherRamNeeded
-          ? state.batcherRamNeeded + 4
-          : 40
+        ? (state?.batcherRamNeeded ? state.batcherRamNeeded + 4 : 40)
         : 32;
 
-      const physicalAvailableRam =
-        maxRam - (usedRam - currentThreads * scriptRam) - shareReserve;
+      const physicalAvailableRam = maxRam - (usedRam - currentThreads * scriptRam) - shareReserve;
       const physicalMaxThreads = Math.floor(physicalAvailableRam / scriptRam);
 
       targetThreads = Math.min(targetThreads, physicalMaxThreads);
@@ -130,14 +126,7 @@ export async function main(ns: NS): Promise<void> {
               ns.serverExists("joesguns") && ns.hasRootAccess("joesguns")
                 ? "joesguns"
                 : "foodnstuff";
-            ns.exec(
-              activeScript,
-              target,
-              targetThreads,
-              xpTarget,
-              0,
-              Math.random(),
-            );
+            ns.exec(activeScript, target, targetThreads, xpTarget, 0, Math.random());
           } else {
             ns.exec(activeScript, target, targetThreads);
           }
