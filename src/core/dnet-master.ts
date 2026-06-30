@@ -1,7 +1,7 @@
 import { NS } from "@ns";
 
 export async function main(ns: NS): Promise<void> {
-  //   ns.disableLog("ALL");
+    ns.disableLog("ALL");
   const PORT_ID = 5;
 
   // Pfade absolut im VFS anlegen, um Verwirrung zu vermeiden

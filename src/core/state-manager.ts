@@ -22,7 +22,10 @@ export interface BotState {
   jobField?: JobField;
   targetKills?: number;
   
-  // 🚀 NEU: Zentrale Ressourcen-Kontrolle für fill-ram
+  // 🚀 NEU: RAM-Bedarf des aktuellen Batcher-Ziels (Verhindert Deadlocks mit fill-ram)
+  batcherRamNeeded?: number;
+
+  // Zentrale Ressourcen-Kontrolle für fill-ram
   fillerConfig?: {
     shareMaxRamPercent: number; // Wie viel % des Home-RAMs darf Share fressen (0.0 - 1.0)
     maxXpLevel: number;          // Bis zu welchem Hacking-Level macht XP-Grind Sinn
@@ -88,8 +91,6 @@ export function loadState(ns: NS): BotState | null {
     const state = JSON.parse(content) as BotState;
 
     // --- CONTEXT ACCURACY CHECK ---
-    // Wenn das gespeicherte Hacking-Level HÖHER ist als unser aktuelles Level,
-    // hat ein Augmentation-Reset stattgefunden.
     if (state.playerHacking > ns.getHackingLevel()) {
       ns.print(
         "⚠️ [State-Manager] Veralteten Zustand nach Augmentation Reset erkannt. Bereinige...",

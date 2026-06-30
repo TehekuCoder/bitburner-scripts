@@ -1,6 +1,7 @@
 import { NS } from "@ns";
 import { calculateBatch } from "../utils/batch-calculator.js";
 import { getAllServers } from "../lib/network.js";
+import { patchState } from "./state-manager.js"; // 🚀 NEU: State-Anbindung
 
 let cachedServers: string[] = [];
 let lastCacheUpdate = 0;
@@ -24,14 +25,19 @@ export async function main(ns: NS): Promise<void> {
   let batchesSentForTarget = 0;
   const BATCHES_PER_TARGET = 500;
 
-  ns.print("🚀 [Batcher] Initialisiert High-End-Dynamic-Batcher...");
+  let lastLogStatus = "";
+  let stallSettleTicks = 0;
+  let currentGreedFactor = 0.4; // 🔒 NEU: Zentraler, gelockter Greed-Factor
+
+  ns.print(
+    "🚀 [Batcher] Initialisiert High-End-Dynamic-Batcher mit Greed-Lock...",
+  );
 
   while (true) {
     updateServerCache(ns);
 
-    // Ermittle die absolute Obergrenze UND den größten aktuell FREIEN Slot eines Einzleservers
     let maxSingleServerRam = 0;
-    let maxSingleServerFreeRam = 0; // 🚀 NEU: Der größte freie Block
+    let maxSingleServerFreeRam = 0;
 
     for (const server of cachedServers) {
       if (!ns.hasRootAccess(server)) continue;
@@ -42,14 +48,13 @@ export async function main(ns: NS): Promise<void> {
         maxSingleServerRam = maxRam;
       }
 
-      // Berechne den aktuell freien Speicher dieses Servers
       let freeRam = maxRam - ns.getServerUsedRam(server);
       if (freeRam > maxSingleServerFreeRam) {
         maxSingleServerFreeRam = freeRam;
       }
     }
 
-    // 🔄 JETZT STABIL: Reevaluation prüft nur noch harte Infrastruktur-Limits
+    // TARGETING & GREED-LOCK
     if (
       !target ||
       batchesSentForTarget >= BATCHES_PER_TARGET ||
@@ -58,14 +63,31 @@ export async function main(ns: NS): Promise<void> {
       const newTarget = findBestBatchTargetForNetwork(
         ns,
         cachedServers,
-        maxSingleServerRam, // Wichtig für atomare Slots
+        maxSingleServerRam,
         SPACER,
       );
       if (newTarget) {
-        if (newTarget !== target) {
-          ns.print(`🎯 [Batcher] Fokussiere neues Primärziel: ${newTarget}`);
+        // Falls neues Ziel ODER Reset (z.B. nach erzwungenem Prep-Neustart)
+        if (newTarget !== target || batchesSentForTarget === 0) {
+          ns.print(`🎯 [Batcher] Fokussiere Ziel: ${newTarget}`);
           target = newTarget;
           batchesSentForTarget = 0;
+
+          // 🔒 HIER PASSIERT DER LOCK:
+          // Wir ermitteln den maximalen Greed-Faktor, der ÜBERHAUPT auf den größten Server passt.
+          currentGreedFactor = 0.4;
+          let lockPlan = calculateBatch(ns, target, currentGreedFactor, SPACER);
+          while (
+            lockPlan &&
+            lockPlan.totalRam > maxSingleServerRam &&
+            currentGreedFactor > 0.01
+          ) {
+            currentGreedFactor -= 0.01;
+            lockPlan = calculateBatch(ns, target, currentGreedFactor, SPACER);
+          }
+          ns.print(
+            `🔒 [Batcher] Greed-Factor für ${target} permanent auf ${(currentGreedFactor * 100).toFixed(1)}% eingefroren (RAM: ${lockPlan ? lockPlan.totalRam.toFixed(1) : "???"} GB).`,
+          );
         }
       }
     }
@@ -81,8 +103,11 @@ export async function main(ns: NS): Promise<void> {
     const maxMoney = ns.getServerMaxMoney(target);
     const curMoney = ns.getServerMoneyAvailable(target);
 
-    // 🚨 INITIAL-PREP & FLUSH
-    if (curSec > minSec || curMoney < maxMoney) {
+    const isMassiveDesync = curSec > minSec + 1 || curMoney < maxMoney * 0.85;
+    const needsInitialPrep =
+      batchesSentForTarget === 0 && (curSec > minSec || curMoney < maxMoney);
+
+    if (needsInitialPrep || isMassiveDesync) {
       const currentWeakenTime = ns.getWeakenTime(target);
 
       if (batchesSentForTarget === 0) {
@@ -91,11 +116,11 @@ export async function main(ns: NS): Promise<void> {
         );
         executePrepPhase(ns, cachedServers, target);
         await ns.sleep(currentWeakenTime + SPACER * 2);
-        continue; // Bricht hier ab, batchesSentForTarget bleibt 0, was für Prep-Wellen korrekt ist.
+        continue;
       }
 
       ns.print(
-        `🛑 [Batcher] Desynchronisation auf ${target} erkannt! Flushe Pipeline...`,
+        `🛑 [Batcher] Harte Desynchronisation auf ${target} erkannt (Sec: ${curSec.toFixed(1)}/${minSec}, Money: ${ns.format.percent(curMoney / maxMoney)})! Flushe Pipeline...`,
       );
       await ns.sleep(currentWeakenTime + SPACER);
 
@@ -104,55 +129,62 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // Verhindert das Spammen des Logs im Wartemodus
-    let lastLogStatus = "";
+    // 🎯 Kein dynamisches Runterrechnen mehr! Wir nutzen stur den gelockten Wert.
+    let plan = calculateBatch(ns, target, currentGreedFactor, SPACER);
 
-    // 📈 DYNAMISCHE GIER-BERECHNUNG
-    let greedFactor = 0.4;
-    let plan = calculateBatch(ns, target, greedFactor, SPACER);
-
-    // 🎯 FIX: Wir drosseln so lange, bis der Batch in den größten aktuell FREIEN Einzelslot passt!
-    while (
-      plan &&
-      plan.totalRam > maxSingleServerFreeRam &&
-      greedFactor > 0.01
-    ) {
-      const lastRam = plan.totalRam;
-      greedFactor -= 0.01;
-      plan = calculateBatch(ns, target, greedFactor, SPACER);
-
-      // 🛡️ EFFIZIENZ-BREAK: Wenn wir das Thread-Minimum (z.B. 1 Hack-Thread) erreicht haben,
-      // sinkt der RAM-Bedarf nicht weiter. Wir brechen ab, um CPU-Zyklen zu sparen.
-      if (plan && plan.totalRam === lastRam) {
-        break;
-      }
+    if (plan) {
+      patchState(ns, { batcherRamNeeded: plan.totalRam });
     }
 
-    // 📊 INTELLIGENTES LOGGING & WARTE-LOGIK (Anti-Spam-Schutz)
+    // Wenn der RAM im Netzwerk gerade knapp ist, warten wir einfach, bis wieder Platz ist.
     if (!plan || maxSingleServerFreeRam < plan.totalRam) {
       const requiredRam = plan ? plan.totalRam.toFixed(1) : "???";
       const statusMsg = `WAIT_${target}_${requiredRam}_${maxSingleServerFreeRam.toFixed(1)}`;
 
-      // Zeigt die Warnung NUR an, wenn sich der Status oder die Werte geändert haben!
       if (lastLogStatus !== statusMsg) {
         ns.print(
-          `⏳ [Batcher] Infrastruktur ausgelastet. Warte auf Beendigung laufender Wellen für ${target} (Benötigt: ${requiredRam} GB | Größter freier Slot: ${maxSingleServerFreeRam.toFixed(1)} GB)`,
+          `⏳ [Batcher] Infrastruktur ausgelastet. Warte auf RAM für ${target} (Benötigt: ${requiredRam} GB | Frei: ${maxSingleServerFreeRam.toFixed(1)} GB)`,
         );
         lastLogStatus = statusMsg;
       }
-      await ns.sleep(2000);
+
+      await ns.sleep(SPACER);
       continue;
     }
 
-    // Sobald eine Welle erfolgreich startet, setzen wir den Status zurück
+    // 🛡️ GATEKEEPER: Präzisions-Schutz vor Post-Stall Desynchronisation
+    if (lastLogStatus.startsWith("WAIT_")) {
+      const freshSec = ns.getServerSecurityLevel(target);
+      const freshMoney = ns.getServerMoneyAvailable(target);
+
+      if (freshSec > minSec || freshMoney < maxMoney) {
+        stallSettleTicks++;
+
+        if (stallSettleTicks > 25) {
+          ns.print(
+            `⚠️ [Batcher] ${target} stabilisiert sich nicht von allein. Erzwinge Prep-Phase...`,
+          );
+          batchesSentForTarget = 0;
+          stallSettleTicks = 0;
+          await ns.sleep(SPACER);
+          continue;
+        }
+
+        ns.print(
+          `⏳ [Batcher] RAM bereit! Warte auf das Auslaufen alter Wellen (Settle: ${stallSettleTicks}/25 | Sec: ${freshSec.toFixed(2)}/${minSec})`,
+        );
+        await ns.sleep(SPACER);
+        continue;
+      }
+    }
+
+    stallSettleTicks = 0;
     lastLogStatus = "RUNNING";
 
-    // Dein Log zur Kontrolle (wird jetzt nur noch bei echten Berechnungen ausgegeben)
     ns.print(
       `ℹ️ [Debug] Target: ${target} | Batch-RAM: ${plan.totalRam.toFixed(1)} GB | Größter freier Slot: ${maxSingleServerFreeRam.toFixed(1)} GB`,
     );
 
-    // Atomaren Host für die Ausführung zuweisen (Wird durch den oberen Check garantiert gefunden)
     let batchHost = "";
     for (const server of cachedServers) {
       if (!ns.hasRootAccess(server)) continue;
@@ -165,7 +197,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     ns.print(
-      `🔥 [Batcher] Welle #${batchId} -> ${target} [Greed: ${(greedFactor * 100).toFixed(1)}% | RAM: ${ns.format.ram(plan.totalRam)} auf ${batchHost}]`,
+      `🔥 [Batcher] Welle #${batchId} -> ${target} [Greed: ${(currentGreedFactor * 100).toFixed(1)}% | RAM: ${ns.format.ram(plan.totalRam)} auf ${batchHost}]`,
     );
     const scripts = ["/tasks/hack.js", "/tasks/weaken.js", "/tasks/grow.js"];
     if (batchHost !== "home") {
@@ -210,11 +242,10 @@ export async function main(ns: NS): Promise<void> {
       );
 
     batchId++;
-    batchesSentForTarget++; // Erhöhung findet NUR bei erfolgreichem Hacking-Inflow statt
+    batchesSentForTarget++;
     await ns.sleep(SPACER);
   }
 }
-
 function dispatchBatchScript(
   ns: NS,
   allServers: string[],
