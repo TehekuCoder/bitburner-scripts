@@ -27,7 +27,7 @@ export async function main(ns: NS): Promise<void> {
 
   let lastLogStatus = "";
   let stallSettleTicks = 0;
-  let currentGreedFactor = 0.4; // 🔒 NEU: Zentraler, gelockter Greed-Factor
+  let currentGreedFactor = 0.4;
 
   ns.print(
     "🚀 [Batcher] Initialisiert High-End-Dynamic-Batcher mit Greed-Lock...",
@@ -54,41 +54,36 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // TARGETING & GREED-LOCK
-    if (
-      !target ||
-      batchesSentForTarget >= BATCHES_PER_TARGET ||
-      batchesSentForTarget === 0
-    ) {
+    // 🎯 TARGETING & GREED-LOCK (Jetzt sauber entkoppelt und spam-frei!)
+    if (!target || batchesSentForTarget >= BATCHES_PER_TARGET) {
       const newTarget = findBestBatchTargetForNetwork(
         ns,
         cachedServers,
         maxSingleServerRam,
         SPACER,
       );
-      if (newTarget) {
-        // Falls neues Ziel ODER Reset (z.B. nach erzwungenem Prep-Neustart)
-        if (newTarget !== target || batchesSentForTarget === 0) {
-          ns.print(`🎯 [Batcher] Fokussiere Ziel: ${newTarget}`);
-          target = newTarget;
-          batchesSentForTarget = 0;
 
-          // 🔒 HIER PASSIERT DER LOCK:
-          // Wir ermitteln den maximalen Greed-Faktor, der ÜBERHAUPT auf den größten Server passt.
-          currentGreedFactor = 0.4;
-          let lockPlan = calculateBatch(ns, target, currentGreedFactor, SPACER);
-          while (
-            lockPlan &&
-            lockPlan.totalRam > maxSingleServerRam &&
-            currentGreedFactor > 0.01
-          ) {
-            currentGreedFactor -= 0.01;
-            lockPlan = calculateBatch(ns, target, currentGreedFactor, SPACER);
-          }
-          ns.print(
-            `🔒 [Batcher] Greed-Factor für ${target} permanent auf ${(currentGreedFactor * 100).toFixed(1)}% eingefroren (RAM: ${lockPlan ? lockPlan.totalRam.toFixed(1) : "???"} GB).`,
-          );
+      if (newTarget) {
+        ns.print(`🎯 [Batcher] Fokussiere Ziel: ${newTarget}`);
+        target = newTarget;
+        batchesSentForTarget = 0;
+
+        // 🔒 Greed-Lock einmalig für diesen Zyklus berechnen
+        currentGreedFactor = 0.4;
+        let lockPlan = calculateBatch(ns, target, currentGreedFactor, SPACER);
+        while (
+          lockPlan &&
+          lockPlan.totalRam > maxSingleServerRam &&
+          currentGreedFactor > 0.01
+        ) {
+          currentGreedFactor -= 0.01;
+          lockPlan = calculateBatch(ns, target, currentGreedFactor, SPACER);
         }
+        ns.print(
+          `🔒 [Batcher] Greed-Factor für ${target} permanent auf ${(currentGreedFactor * 100).toFixed(1)}% eingefroren (RAM: ${lockPlan ? lockPlan.totalRam.toFixed(1) : "???"} GB).`,
+        );
+      } else {
+        target = null;
       }
     }
 
@@ -129,14 +124,12 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // 🎯 Kein dynamisches Runterrechnen mehr! Wir nutzen stur den gelockten Wert.
     let plan = calculateBatch(ns, target, currentGreedFactor, SPACER);
 
     if (plan) {
       patchState(ns, { batcherRamNeeded: plan.totalRam });
     }
 
-    // Wenn der RAM im Netzwerk gerade knapp ist, warten wir einfach, bis wieder Platz ist.
     if (!plan || maxSingleServerFreeRam < plan.totalRam) {
       const requiredRam = plan ? plan.totalRam.toFixed(1) : "???";
       const statusMsg = `WAIT_${target}_${requiredRam}_${maxSingleServerFreeRam.toFixed(1)}`;
