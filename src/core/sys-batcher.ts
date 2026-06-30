@@ -26,12 +26,11 @@ export async function main(ns: NS): Promise<void> {
   const BATCHES_PER_TARGET = 500;
 
   let lastLogStatus = "";
-  let stallSettleTicks = 0;
-  let currentGreedFactor = 0.4;
+  let stallSettleTicks = 0; 
+  let currentGreedFactor = 0.4; 
+  let lockedPlan: any = null; // 🔒 NEU: Hält den exakten Thread-Plan bombenfest
 
-  ns.print(
-    "🚀 [Batcher] Initialisiert High-End-Dynamic-Batcher mit Greed-Lock...",
-  );
+  ns.print("🚀 [Batcher] Initialisiert High-End-Dynamic-Batcher mit Immutable Plan Lock...");
 
   while (true) {
     updateServerCache(ns);
@@ -54,7 +53,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 🎯 TARGETING & GREED-LOCK (Jetzt sauber entkoppelt und spam-frei!)
+    // 🎯 TARGETING & IMMUTABLE PLAN LOCK
     if (!target || batchesSentForTarget >= BATCHES_PER_TARGET) {
       const newTarget = findBestBatchTargetForNetwork(
         ns,
@@ -62,13 +61,13 @@ export async function main(ns: NS): Promise<void> {
         maxSingleServerRam,
         SPACER,
       );
-
+      
       if (newTarget) {
         ns.print(`🎯 [Batcher] Fokussiere Ziel: ${newTarget}`);
         target = newTarget;
         batchesSentForTarget = 0;
 
-        // 🔒 Greed-Lock einmalig für diesen Zyklus berechnen
+        // Greed-Faktor ermitteln
         currentGreedFactor = 0.4;
         let lockPlan = calculateBatch(ns, target, currentGreedFactor, SPACER);
         while (
@@ -79,11 +78,16 @@ export async function main(ns: NS): Promise<void> {
           currentGreedFactor -= 0.01;
           lockPlan = calculateBatch(ns, target, currentGreedFactor, SPACER);
         }
+
+        // 🔒 PLAN EINFRIEREN: Dieser Plan wird ab jetzt unmodifiziert verwendet!
+        lockedPlan = lockPlan;
+        
         ns.print(
-          `🔒 [Batcher] Greed-Factor für ${target} permanent auf ${(currentGreedFactor * 100).toFixed(1)}% eingefroren (RAM: ${lockPlan ? lockPlan.totalRam.toFixed(1) : "???"} GB).`,
+          `🔒 [Batcher] Architektur für ${target} eingefroren: Greed ${(currentGreedFactor * 100).toFixed(1)}% | RAM: ${lockedPlan ? lockedPlan.totalRam.toFixed(1) : "???"} GB.`,
         );
       } else {
         target = null;
+        lockedPlan = null;
       }
     }
 
@@ -104,11 +108,12 @@ export async function main(ns: NS): Promise<void> {
 
     if (needsInitialPrep || isMassiveDesync) {
       const currentWeakenTime = ns.getWeakenTime(target);
+      
+      // Bei Desynchronisation werfen wir den alten Plan weg, da sich Serverdaten geändert haben könnten
+      lockedPlan = null; 
 
       if (batchesSentForTarget === 0) {
-        ns.print(
-          `🔧 [Batcher] ${target} benötigt Prep. Starte kalibrierte Welle...`,
-        );
+        ns.print(`🔧 [Batcher] ${target} benötigt Prep. Starte kalibrierte Welle...`);
         executePrepPhase(ns, cachedServers, target);
         await ns.sleep(currentWeakenTime + SPACER * 2);
         continue;
@@ -124,12 +129,18 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    let plan = calculateBatch(ns, target, currentGreedFactor, SPACER);
+    // Wenn aus irgendeinem Grund kein Plan existiert, generieren wir einen Sicherheits-Fallback
+    if (!lockedPlan) {
+      lockedPlan = calculateBatch(ns, target, currentGreedFactor, SPACER);
+    }
+
+    let plan = lockedPlan;
 
     if (plan) {
       patchState(ns, { batcherRamNeeded: plan.totalRam });
     }
 
+    // RAM-Check gegen den absolut statischen Plan
     if (!plan || maxSingleServerFreeRam < plan.totalRam) {
       const requiredRam = plan ? plan.totalRam.toFixed(1) : "???";
       const statusMsg = `WAIT_${target}_${requiredRam}_${maxSingleServerFreeRam.toFixed(1)}`;
@@ -145,7 +156,7 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // 🛡️ GATEKEEPER: Präzisions-Schutz vor Post-Stall Desynchronisation
+    // 🛡️ GATEKEEPER
     if (lastLogStatus.startsWith("WAIT_")) {
       const freshSec = ns.getServerSecurityLevel(target);
       const freshMoney = ns.getServerMoneyAvailable(target);
@@ -154,11 +165,10 @@ export async function main(ns: NS): Promise<void> {
         stallSettleTicks++;
 
         if (stallSettleTicks > 25) {
-          ns.print(
-            `⚠️ [Batcher] ${target} stabilisiert sich nicht von allein. Erzwinge Prep-Phase...`,
-          );
-          batchesSentForTarget = 0;
+          ns.print(`⚠️ [Batcher] ${target} stabilisiert sich nicht von allein. Erzwinge Prep-Phase...`);
+          batchesSentForTarget = 0; 
           stallSettleTicks = 0;
+          lockedPlan = null;
           await ns.sleep(SPACER);
           continue;
         }
@@ -167,7 +177,7 @@ export async function main(ns: NS): Promise<void> {
           `⏳ [Batcher] RAM bereit! Warte auf das Auslaufen alter Wellen (Settle: ${stallSettleTicks}/25 | Sec: ${freshSec.toFixed(2)}/${minSec})`,
         );
         await ns.sleep(SPACER);
-        continue;
+        continue; 
       }
     }
 
@@ -198,41 +208,13 @@ export async function main(ns: NS): Promise<void> {
     }
 
     if (plan.hackThreads > 0)
-      ns.exec(
-        "/tasks/hack.js",
-        batchHost,
-        plan.hackThreads,
-        target,
-        plan.hackDelay,
-        batchId,
-      );
+      ns.exec("/tasks/hack.js", batchHost, plan.hackThreads, target, plan.hackDelay, batchId);
     if (plan.weaken1Threads > 0)
-      ns.exec(
-        "/tasks/weaken.js",
-        batchHost,
-        plan.weaken1Threads,
-        target,
-        plan.weaken1Delay,
-        batchId,
-      );
+      ns.exec("/tasks/weaken.js", batchHost, plan.weaken1Threads, target, plan.weaken1Delay, batchId);
     if (plan.growThreads > 0)
-      ns.exec(
-        "/tasks/grow.js",
-        batchHost,
-        plan.growThreads,
-        target,
-        plan.growDelay,
-        batchId,
-      );
+      ns.exec("/tasks/grow.js", batchHost, plan.growThreads, target, plan.growDelay, batchId);
     if (plan.weaken2Threads > 0)
-      ns.exec(
-        "/tasks/weaken.js",
-        batchHost,
-        plan.weaken2Threads,
-        target,
-        plan.weaken2Delay,
-        batchId,
-      );
+      ns.exec("/tasks/weaken.js", batchHost, plan.weaken2Threads, target, plan.weaken2Delay, batchId);
 
     batchId++;
     batchesSentForTarget++;
