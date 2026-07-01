@@ -11,10 +11,7 @@ export async function main(ns: NS): Promise<void> {
     // --- 1. STATE & STRATEGIE VIA MANAGER LADEN & CASTEN ---
     const state = loadState(ns);
     
-    // "as string" verhindert Compiler-Fehler bei der Modus-Prüfung
     const mode = (state?.strategy || "IDLE") as string; 
-    
-    // "as any" schützt vor TS2339, falls die Felder nicht im Basis-Interface stehen
     const targetCompany = (state as any)?.targetCompany as CompanyName || undefined;
     const jobField = (state as any)?.jobField as JobField || "Software";
 
@@ -27,12 +24,12 @@ export async function main(ns: NS): Promise<void> {
     // Ohne zugewiesene Zielfirma können wir nichts tun
     if (!targetCompany) {
       ns.print("[WARN] Modus ist CORP, aber kein 'targetCompany' definiert.");
-      await ns.sleep(5000);
+      await ns.sleep(2000);
       continue;
     }
 
     // --- 2. BEFÖRDERUNGEN AUTOMATISCH PRÜFEN ---
-    // Versucht alle 10 Sekunden den nächsten Karriereschritt zu triggern
+    // Versucht bei jedem Durchlauf den nächsten Karriereschritt zu triggern
     const isPromoted = sing.applyToCompany(targetCompany, jobField); 
     
     const playerJobs = ns.getPlayer().jobs;
@@ -64,7 +61,7 @@ export async function main(ns: NS): Promise<void> {
       saveState(ns, state);
     }
 
-    // Da Firmen-Ruf sich kontinuierlich aufbaut, reicht ein Check alle 10 Sekunden vollkommen aus
-    await ns.sleep(10000);
+    // 2 Sekunden Taktung für ein flüssiges HUD-Update
+    await ns.sleep(2000);
   }
 }

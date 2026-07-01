@@ -35,6 +35,7 @@ const MEGACORPS: Record<string, CompanyName> = {
 
 const HACKING_FACTIONS: FactionConfig[] = [
   { name: "CyberSec" as FactionName, minStat: 0 },
+  { name: "Silhouette" as FactionName, minStat: 0 },
   { name: "Tian Di Hui" as FactionName, minStat: 0 },
   { name: "Netburners" as FactionName, minStat: 0 },
   { name: "NiteSec" as FactionName, minStat: 0 },
@@ -98,6 +99,11 @@ export async function main(ns: NS): Promise<void> {
     let targetCompany: CompanyName | undefined = undefined;
     let targetStat = 0;
 
+    // 🔥 FIX 1: Automatische Breitband-Bewerbung ausführen, sobald Level erreicht ist
+    if (p.skills.hacking >= 250) {
+      applyToAllMegacorps(ns, p);
+    }
+
     // --- 0. INFRASTRUKTUR VORABBERECHNUNG ---
     const pServers = ns.cloud.getServerNames();
     const eligiblePServers = pServers.filter(
@@ -116,7 +122,7 @@ export async function main(ns: NS): Promise<void> {
 
     // --- 1. STRATEGIE-MATRIX ---
     const playerMoney = p.money;
-    const MONEY_THRESHOLD_FOR_REP = 10_000_000; // 10 Mio Sicherheitspolster
+    const MONEY_THRESHOLD_FOR_REP = 10_000_000;
 
     const hasEssentialTools =
       ns.fileExists("BruteSSH.exe", "home") &&
@@ -124,13 +130,13 @@ export async function main(ns: NS): Promise<void> {
 
     const isReadyForFactionGrind = playerMoney > MONEY_THRESHOLD_FOR_REP;
 
-    // Wir erlauben Fraktionsarbeit NUR, wenn wir entweder die Tools/Geld haben UND fähige P-Server besitzen
     const factionToWorkFor =
       (hasEssentialTools || isReadyForFactionGrind) &&
       eligiblePServers.length > 0
         ? findNextFaction(ns, p)
         : null;
 
+    // Grund-Einteilung nach Spielfortschritt
     if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
     } else if (homeMaxRam < 256) {
@@ -139,59 +145,91 @@ export async function main(ns: NS): Promise<void> {
       mode = "REP";
       targetFaction = factionToWorkFor;
     } else {
-      // WICHTIGER FIX: Wenn wir keine fähigen P-Server haben, hat Geld-Generierung absolute Priorität!
-      // Wir überspringen das Training für spätere Fraktionen (wie Tetrads), bis die aktuelle Basis steht.
-      if (eligiblePServers.length === 0) {
-        mode = "MONEY";
-      } else {
-        // Erst wenn wir mindestens einen P-Server >= 64GB haben, erlauben wir weiteres Combat-Fortschreiten
-        const nextLockedCombatFaction = HACKING_FACTIONS.find(
-          (f) => !p.factions.includes(f.name) && f.minStat > 0,
+      // --- CORP & PROGRESSION MATRIX ---
+      if (p.skills.hacking >= 250) {
+        // 1. Brauchen wir Silhouette überhaupt noch?
+        const needsSilhouette =
+          !p.factions.includes("Silhouette" as FactionName) &&
+          (repCache["Silhouette"] ?? 0) > 0;
+
+        // 2. Sind wir bereits irgendwo CTO, CFO oder CEO?
+        const isExecutive = Object.values(p.jobs).some((title) =>
+          [
+            "Chief Technology Officer",
+            "Chief Financial Officer",
+            "Chief Executive Officer",
+          ].includes(title),
         );
 
-        if (nextLockedCombatFaction) {
-          let requiredKills = 0;
-          if (nextLockedCombatFaction.name === "The Dark Army")
-            requiredKills = 5;
-          if (nextLockedCombatFaction.name === "Speakers for the Dead")
-            requiredKills = 30;
+        // 3. Überprüfung der restlichen Bedingungen
+        const hasEnoughKarma = ns.heart.break() <= -22; // Je negativer, desto besser (-22, -23...)
+        const hasEnoughMoney = p.money >= 15_000_000;
 
-          const currentLowestCombatStat = Math.min(
-            ...COMBAT_STATS.map((s) => p.skills[s]),
+        // 🔥 SILHOUETTE PRE-GRIND ROUTINE
+        if (needsSilhouette && (!isExecutive || !hasEnoughKarma)) {
+          if (!hasEnoughKarma) {
+            // Wenn das Karma fehlt, schicken wir den Bot zurück in den Crime-Modus (Homicide)
+            mode = "CRIME";
+          } else {
+            // Karma passt, aber wir sind kein Chef? Ab zur ersten Firma (z.B. ECorp) und Karriere machen!
+            mode = "CORP";
+            targetCompany = Object.values(MEGACORPS)[0]; // Schnappt sich "ECorp" als Sprungbrett
+          }
+        }
+        // REGULÄRER MEGACORP-GRIND (Wenn Silhouette erledigt oder nicht offen ist)
+        else {
+          const missingCorpFaction = HACKING_FACTIONS.find(
+            (f) =>
+              !p.factions.includes(f.name) &&
+              MEGACORPS[f.name] !== undefined &&
+              ns.singularity.getCompanyRep(MEGACORPS[f.name]) < 400_000 &&
+              (repCache[f.name] ?? 0) > 0,
           );
 
-          if (p.numPeopleKilled < requiredKills) {
-            mode = "KILLS";
-            targetStat = requiredKills;
-            targetFaction = nextLockedCombatFaction.name;
-          } else if (
-            currentLowestCombatStat < nextLockedCombatFaction.minStat
-          ) {
-            mode = "TRAIN";
-            targetStat = nextLockedCombatFaction.minStat;
-            targetFaction = nextLockedCombatFaction.name;
+          if (missingCorpFaction) {
+            mode = "CORP";
+            targetCompany = MEGACORPS[missingCorpFaction.name];
           }
         }
       }
 
-      if (Date.now() - lastFallbackUpdate > 300_000 || mode === "MONEY") {
-        cachedFallbackTarget = findBestFallbackTarget(ns, p.skills.hacking);
-        lastFallbackUpdate = Date.now();
-      }
+      // Wenn KEINE Corp-Arbeit ansteht (mode ist immer noch MONEY), greifen die Kampf-Fraktionen
+      if (mode === "MONEY") {
+        if (eligiblePServers.length === 0) {
+          mode = "MONEY";
+        } else {
+          const nextLockedCombatFaction = HACKING_FACTIONS.find(
+            (f) => !p.factions.includes(f.name) && f.minStat > 0,
+          );
 
-      // Firmen-Arbeitscheck (Mega-Corporations)
-      if (mode === "MONEY" && p.skills.hacking >= 250) {
-        const missingCorpFaction = HACKING_FACTIONS.find(
-          (f) =>
-            !p.factions.includes(f.name) &&
-            MEGACORPS[f.name] !== undefined &&
-            ns.singularity.getCompanyRep(MEGACORPS[f.name]) < 400_000 &&
-            (repCache[f.name] ?? 0) > 0,
-        );
+          if (nextLockedCombatFaction) {
+            let requiredKills = 0;
+            if (nextLockedCombatFaction.name === "The Dark Army")
+              requiredKills = 5;
+            if (nextLockedCombatFaction.name === "Speakers for the Dead")
+              requiredKills = 30;
 
-        if (missingCorpFaction) {
-          mode = "CORP";
-          targetCompany = MEGACORPS[missingCorpFaction.name];
+            const currentLowestCombatStat = Math.min(
+              ...COMBAT_STATS.map((s) => p.skills[s]),
+            );
+
+            if (p.numPeopleKilled < requiredKills) {
+              mode = "KILLS";
+              targetStat = requiredKills;
+              targetFaction = nextLockedCombatFaction.name;
+            } else if (
+              currentLowestCombatStat < nextLockedCombatFaction.minStat
+            ) {
+              mode = "TRAIN";
+              targetStat = nextLockedCombatFaction.minStat;
+              targetFaction = nextLockedCombatFaction.name;
+            }
+          }
+        }
+
+        if (Date.now() - lastFallbackUpdate > 300_000 || mode === "MONEY") {
+          cachedFallbackTarget = findBestFallbackTarget(ns, p.skills.hacking);
+          lastFallbackUpdate = Date.now();
         }
       }
     }
@@ -269,18 +307,12 @@ export async function main(ns: NS): Promise<void> {
       generatedBar = "👶 Early Game: XP SPRINT (Hacking < 50)";
     } else if (mode === "CRIME") {
       generatedBar = "🥷 Mid-Game-Crime Loop für stabiles Einkommen";
-    }
-    // 🔥 NEU: KILLS-Modus abgefangen
-    else if (mode === "KILLS") {
+    } else if (mode === "KILLS") {
       generatedBar = `💀 Eliminierungs-Aufträge aktiv (${currentVal}/${targetVal} Kills)`;
-    }
-    // 🔥 NEU: Fallback-Phasen ohne starke Infrastruktur anzeigen
-    else if (mode === "MONEY" && !canRunBatcher) {
+    } else if (mode === "MONEY" && !canRunBatcher) {
       const fallbackTarget = findBestFallbackTarget(ns, p.skills.hacking);
       generatedBar = `🏗️ Aufbau-Phase: Generiere Basis-Geld auf ${fallbackTarget} (Warte auf P-Server)`;
-    }
-    // Greift nur, wenn MONEY aktiv UND canRunBatcher true ist
-    else {
+    } else {
       generatedBar = "💰 Maximiere Profit (Batcher)";
     }
 
@@ -300,10 +332,10 @@ export async function main(ns: NS): Promise<void> {
     if (mode === "REP") sharePercent = 0.4;
     if (mode === "MONEY") sharePercent = 0.1;
 
-    // Optional: Passe das XP-Cap dynamisch an dein Hacking-Level an
     let dynamicMaxXp = 1000;
     if (p.skills.hacking > 800) dynamicMaxXp = 1500;
 
+    // 🔥 FIX 3: Nur noch EIN sauberer SaveState-Aufruf, um Datenverlust zu verhindern
     saveState(ns, {
       ...currentState,
       strategy: mode,
@@ -316,16 +348,6 @@ export async function main(ns: NS): Promise<void> {
         shareMaxRamPercent: sharePercent,
         maxXpLevel: dynamicMaxXp,
       },
-    });
-
-    saveState(ns, {
-      ...currentState,
-      strategy: mode,
-      targetFaction: targetFaction || undefined,
-      targetCompany: targetCompany,
-      targetStat: mode === "TRAIN" ? targetStat : undefined,
-      targetKills: mode === "KILLS" ? targetStat : undefined,
-      progressBar: finalBar,
     });
 
     // --- 4. HINTERGRUND-DIENSTE & AUTOMATISIERUNG ---
@@ -352,12 +374,8 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 🌟 AUTOMATISIERTE HACKING-STEUERUNG
     if (canRunBatcher) {
       if (ns.isRunning("tasks/work.js", "home")) {
-        ns.print(
-          "🛑 [Dispatcher] Beende Fallback-Worker für HWGW-Batcher-Wechsel.",
-        );
         ns.scriptKill("tasks/work.js", "home");
       }
 
@@ -366,15 +384,11 @@ export async function main(ns: NS): Promise<void> {
           ns.scriptKill("utils/fill-ram.js", "home");
         }
         if (getFreeRam() > 15) {
-          ns.print(
-            `🚀 [Dispatcher] Infrastruktur bereit (Max Cloud-Server: ${maxPservRam}GB). Starte HWGW-Batcher...`,
-          );
           ns.run("core/sys-batcher.js", 1);
         }
       }
     } else {
       if (ns.isRunning("core/sys-batcher.js", "home")) {
-        ns.print(`🛑 [Dispatcher] Infrastruktur unzureichend. Beende Batcher.`);
         ns.scriptKill("core/sys-batcher.js", "home");
       }
 
@@ -382,7 +396,6 @@ export async function main(ns: NS): Promise<void> {
       const workerScript = "tasks/work.js";
       const workerRam = ns.getScriptRam(workerScript, "home");
 
-      // --- 1. CLOUD-SERVER (P-SERVS) FLUTEN ---
       for (const server of pServers) {
         ns.scp(workerScript, server, "home");
         const processes = ns.ps(server);
@@ -397,14 +410,8 @@ export async function main(ns: NS): Promise<void> {
 
         if (runningWorker) {
           if (runningWorker.args[0] !== fallbackTarget) {
-            ns.print(
-              `🔄 [Dispatcher] Richtungswechsel auf ${server}: ${runningWorker.args[0]} -> ${fallbackTarget}`,
-            );
             ns.scriptKill(workerScript, server);
           } else if (runningWorker.threads < maxPossibleThreads) {
-            ns.print(
-              `📈 [Dispatcher] RAM-Upgrade erkannt! Skaliere ${server} hoch.`,
-            );
             ns.scriptKill(workerScript, server);
           } else {
             continue;
@@ -420,7 +427,6 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-      // --- 2. HOME-SERVER ALS BACKUP MITNUTZEN ---
       const homeProcesses = ns.ps("home");
       const runningWorkerOnHome = homeProcesses.find(
         (proc) => proc.filename === workerScript,
@@ -452,7 +458,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // RAM-Filler Steuerung
     const isRamReady = homeMaxRam >= 256 || maxPservRam >= 64;
     const executionAllowed =
       !hasFormulas || ns.isRunning("core/sys-batcher.js", "home");
@@ -464,17 +469,10 @@ export async function main(ns: NS): Promise<void> {
       !ns.isRunning("utils/fill-ram.js", "home") &&
       getFreeRam() > 15
     ) {
-      ns.print("🚀 [Dispatcher] Infrastruktur bereit. Starte RAM-Filler...");
       ns.run("utils/fill-ram.js", 1);
     }
 
-    // --- 5. EXECUTION LAYER ---
-    if (mode === "CORP" && targetCompany) {
-      ensureJob(ns, targetCompany); // Automatisierte Bewerbung vor Scriptstart
-    }
-
     manageMicroservices(ns, mode);
-
     await ns.sleep(2000);
   }
 }
@@ -591,8 +589,15 @@ function findBestFallbackTarget(ns: NS, currentHackingLevel: number): string {
   return bestTarget;
 }
 
-function ensureJob(ns: NS, targetCompany: CompanyName) {
-  const p = ns.getPlayer();
-  if (p.jobs[targetCompany]) return;
-  ns.singularity.applyToCompany(targetCompany, "Software");
+function applyToAllMegacorps(ns: NS, p: Player): void {
+  for (const corpName of Object.values(MEGACORPS)) {
+    if (!p.jobs[corpName]) {
+      const success = ns.singularity.applyToCompany(corpName, "Software");
+      if (success) {
+        ns.print(
+          `💼 [Auto-Career] Einstiegsjob bei ${corpName} erfolgreich angenommen.`,
+        );
+      }
+    }
+  }
 }
