@@ -15,54 +15,59 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
+  // --- MATHEMATISCHE CONFIGS ---
+  const GLOBAL_SHARE_POWER_CAP = 1.42; // Der magische Sweet-Spot (~44.000 Threads global)
+  const MAX_USEFUL_HACK_LEVEL = 3000;  // Maximal benötigtes Level für das BitNode-Ende
+
   while (true) {
     const state = loadState(ns) as any;
     const p = ns.getPlayer();
+    const currentSharePower = ns.getSharePower();
 
-    // Synchronisiere die RAM-Berechnung für 'home' mit dem Batcher
     let maxRam = ns.getServerMaxRam(target);
     if (target === "home") maxRam = Math.max(0, maxRam - 64);
 
     let allowedSharePercent = 0.0;
-    let maxXpLevel = 1000;
+    let maxXpLevel = MAX_USEFUL_HACK_LEVEL;
 
     if (state?.fillerConfig) {
       allowedSharePercent = state.fillerConfig.shareMaxRamPercent;
-      maxXpLevel = state.fillerConfig.maxXpLevel;
+      maxXpLevel = state.fillerConfig.maxXpLevel || MAX_USEFUL_HACK_LEVEL;
     } else if (state) {
-      if (state.strategy === "REP") allowedSharePercent = 0.4;
+      if (state.strategy === "REP") allowedSharePercent = 0.6; // Aggressiver im Rep-Modus
       else if (state.strategy === "MONEY") allowedSharePercent = 0.1;
+    }
+
+    // 🛑 MATHEMATISCHER SHARE-STOPP: Wenn das Netzwerk das Cap erreicht hat, drosseln wir lokal!
+    if (currentSharePower >= GLOBAL_SHARE_POWER_CAP && state?.strategy !== "REP") {
+      allowedSharePercent = 0.02; // Nur noch eine minimale Erhaltungsdosis RAM erlauben
     }
 
     let activeScript = "";
     let targetThreads = 0;
 
-    // 🧠 BATCHER-SCHUTZ UPGRADE: Aktiv, wenn Strategy "MONEY" ODER Batcher RAM angemeldet hat!
     const isBatcherActive = 
       state?.strategy === "MONEY" || 
       (state?.batcherRamNeeded && state.batcherRamNeeded > 0);
 
-    // A: XP-Grind Logik
+    // A: XP-Grind Logik mit smarter Cap-Bremse
     if (
       p.skills.hacking < maxXpLevel &&
+      p.skills.hacking < MAX_USEFUL_HACK_LEVEL && // Absolutes mathematisches Limit
+      state?.strategy !== "MONEY" &&               // Wenn Geld läuft, hat XP-Grind Feierabend
       (state?.strategy === "XP_SPRINT" || p.skills.hacking < 250)
     ) {
       activeScript = "/tasks/xp-grind.js";
 
       const usedRam = ns.getServerUsedRam(target);
       const scriptRam = ns.getScriptRam(activeScript, target);
-
-      const currentThreads = ns
-        .ps(target)
+      const currentThreads = ns.ps(target)
         .filter((proc) => proc.filename === activeScript)
         .reduce((acc, proc) => acc + proc.threads, 0);
 
       let reserve = 64;
       if (isBatcherActive) {
-        // Nutze den angemeldeten RAM-Wert + Sicherheitsmarge
-        const dynamicNeeded = state?.batcherRamNeeded
-          ? state.batcherRamNeeded + 4
-          : 40;
+        const dynamicNeeded = state?.batcherRamNeeded ? state.batcherRamNeeded + 4 : 40;
         reserve = Math.max(dynamicNeeded, Math.floor(maxRam * 0.3));
       }
 
@@ -78,8 +83,7 @@ export async function main(ns: NS): Promise<void> {
       targetThreads = Math.floor(maxAllowedShareRam / scriptRam);
 
       const usedRam = ns.getServerUsedRam(target);
-      const currentThreads = ns
-        .ps(target)
+      const currentThreads = ns.ps(target)
         .filter((proc) => proc.filename === activeScript)
         .reduce((acc, proc) => acc + proc.threads, 0);
 
@@ -95,37 +99,27 @@ export async function main(ns: NS): Promise<void> {
 
     if (targetThreads < 0) targetThreads = 0;
 
-    // --- ANTI-LEAK-CLEANUP ---
+    // --- ANTI-LEAK-CLEANUP & SCALING ---
     for (const fScript of fillerScripts) {
       if (fScript !== activeScript && ns.isRunning(fScript, target)) {
         ns.scriptKill(fScript, target);
       }
     }
 
-    // --- EXECUTION / SCALING ---
     if (activeScript !== "") {
-      const currentThreads = ns
-        .ps(target)
+      const currentThreads = ns.ps(target)
         .filter((proc) => proc.filename === activeScript)
         .reduce((acc, proc) => acc + proc.threads, 0);
 
       const threadDiff = Math.abs(targetThreads - currentThreads);
       const shouldScaleDown = targetThreads < currentThreads;
-      const shouldScaleUp =
-        targetThreads > currentThreads &&
-        (threadDiff > currentThreads * 0.1 || currentThreads === 0);
+      const shouldScaleUp = targetThreads > currentThreads && (threadDiff > currentThreads * 0.1 || currentThreads === 0);
 
       if (shouldScaleDown || shouldScaleUp) {
-        if (currentThreads > 0) {
-          ns.scriptKill(activeScript, target);
-        }
-
+        if (currentThreads > 0) ns.scriptKill(activeScript, target);
         if (targetThreads > 0) {
           if (activeScript === "/tasks/xp-grind.js") {
-            const xpTarget =
-              ns.serverExists("joesguns") && ns.hasRootAccess("joesguns")
-                ? "joesguns"
-                : "foodnstuff";
+            const xpTarget = ns.serverExists("joesguns") && ns.hasRootAccess("joesguns") ? "joesguns" : "foodnstuff";
             ns.exec(activeScript, target, targetThreads, xpTarget, 0, Math.random());
           } else {
             ns.exec(activeScript, target, targetThreads);

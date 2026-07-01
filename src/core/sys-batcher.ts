@@ -1,7 +1,7 @@
 import { NS } from "@ns";
 import { calculateBatch } from "../utils/batch-calculator.js";
 import { getAllServers } from "../lib/network.js";
-import { patchState } from "./state-manager.js"; // 🚀 NEU: State-Anbindung
+import { patchState } from "./state-manager.js";
 
 let cachedServers: string[] = [];
 let lastCacheUpdate = 0;
@@ -28,37 +28,33 @@ export async function main(ns: NS): Promise<void> {
   let lastLogStatus = "";
   let stallSettleTicks = 0; 
   let currentGreedFactor = 0.4; 
-  let lockedPlan: any = null; // 🔒 NEU: Hält den exakten Thread-Plan bombenfest
+  let lockedPlan: any = null;
 
-  ns.print("🚀 [Batcher] Initialisiert High-End-Dynamic-Batcher mit Immutable Plan Lock...");
+  ns.print("🚀 [Batcher] Initialisiert High-End-Dynamic-Batcher mit Network-Pool-Allokation...");
 
   while (true) {
     updateServerCache(ns);
 
-    let maxSingleServerRam = 0;
-    let maxSingleServerFreeRam = 0;
+    // --- NEU: Wir poolen das gesamte Netzwerk-RAM ---
+    let totalNetworkRam = 0;
+    let totalFreeNetworkRam = 0;
 
     for (const server of cachedServers) {
       if (!ns.hasRootAccess(server)) continue;
       let maxRam = ns.getServerMaxRam(server);
-      if (server === "home") maxRam = Math.max(0, maxRam - 64);
+      if (server === "home") maxRam = Math.max(0, maxRam - 64); // Home-Reserve
 
-      if (maxRam > maxSingleServerRam) {
-        maxSingleServerRam = maxRam;
-      }
-
-      let freeRam = maxRam - ns.getServerUsedRam(server);
-      if (freeRam > maxSingleServerFreeRam) {
-        maxSingleServerFreeRam = freeRam;
-      }
+      totalNetworkRam += maxRam;
+      totalFreeNetworkRam += (maxRam - ns.getServerUsedRam(server));
     }
 
     // 🎯 TARGETING & IMMUTABLE PLAN LOCK
     if (!target || batchesSentForTarget >= BATCHES_PER_TARGET) {
+      // Nutzt nun das gesamte Netzwerk-RAM zur Target-Validierung
       const newTarget = findBestBatchTargetForNetwork(
         ns,
         cachedServers,
-        maxSingleServerRam,
+        totalNetworkRam,
         SPACER,
       );
       
@@ -67,19 +63,19 @@ export async function main(ns: NS): Promise<void> {
         target = newTarget;
         batchesSentForTarget = 0;
 
-        // Greed-Faktor ermitteln
         currentGreedFactor = 0.4;
         let lockPlan = calculateBatch(ns, target, currentGreedFactor, SPACER);
+        
+        // Der Greed-Faktor skaliert nun gegen das GESAMTE Netzwerk, nicht gegen einen Server!
         while (
           lockPlan &&
-          lockPlan.totalRam > maxSingleServerRam &&
+          lockPlan.totalRam > totalNetworkRam &&
           currentGreedFactor > 0.01
         ) {
           currentGreedFactor -= 0.01;
           lockPlan = calculateBatch(ns, target, currentGreedFactor, SPACER);
         }
 
-        // 🔒 PLAN EINFRIEREN: Dieser Plan wird ab jetzt unmodifiziert verwendet!
         lockedPlan = lockPlan;
         
         ns.print(
@@ -108,8 +104,6 @@ export async function main(ns: NS): Promise<void> {
 
     if (needsInitialPrep || isMassiveDesync) {
       const currentWeakenTime = ns.getWeakenTime(target);
-      
-      // Bei Desynchronisation werfen wir den alten Plan weg, da sich Serverdaten geändert haben könnten
       lockedPlan = null; 
 
       if (batchesSentForTarget === 0) {
@@ -120,7 +114,7 @@ export async function main(ns: NS): Promise<void> {
       }
 
       ns.print(
-        `🛑 [Batcher] Harte Desynchronisation auf ${target} erkannt (Sec: ${curSec.toFixed(1)}/${minSec}, Money: ${ns.format.percent(curMoney / maxMoney)})! Flushe Pipeline...`,
+        `🛑 [Batcher] Harte Desynchronisation auf ${target} erkannt! Flushe Pipeline...`,
       );
       await ns.sleep(currentWeakenTime + SPACER);
 
@@ -129,7 +123,6 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // Wenn aus irgendeinem Grund kein Plan existiert, generieren wir einen Sicherheits-Fallback
     if (!lockedPlan) {
       lockedPlan = calculateBatch(ns, target, currentGreedFactor, SPACER);
     }
@@ -140,14 +133,14 @@ export async function main(ns: NS): Promise<void> {
       patchState(ns, { batcherRamNeeded: plan.totalRam });
     }
 
-    // RAM-Check gegen den absolut statischen Plan
-    if (!plan || maxSingleServerFreeRam < plan.totalRam) {
+    // --- NEU: RAM-Check gegen das freie Gesamtnetzwerk ---
+    if (!plan || totalFreeNetworkRam < plan.totalRam) {
       const requiredRam = plan ? plan.totalRam.toFixed(1) : "???";
-      const statusMsg = `WAIT_${target}_${requiredRam}_${maxSingleServerFreeRam.toFixed(1)}`;
+      const statusMsg = `WAIT_${target}_${requiredRam}_${totalFreeNetworkRam.toFixed(1)}`;
 
       if (lastLogStatus !== statusMsg) {
         ns.print(
-          `⏳ [Batcher] Infrastruktur ausgelastet. Warte auf RAM für ${target} (Benötigt: ${requiredRam} GB | Frei: ${maxSingleServerFreeRam.toFixed(1)} GB)`,
+          `⏳ [Batcher] Infrastruktur ausgelastet. Warte auf RAM für ${target} (Benötigt: ${requiredRam} GB | Frei gepoolt: ${totalFreeNetworkRam.toFixed(1)} GB)`,
         );
         lastLogStatus = statusMsg;
       }
@@ -165,7 +158,7 @@ export async function main(ns: NS): Promise<void> {
         stallSettleTicks++;
 
         if (stallSettleTicks > 25) {
-          ns.print(`⚠️ [Batcher] ${target} stabilisiert sich nicht von allein. Erzwinge Prep-Phase...`);
+          ns.print(`⚠️ [Batcher] ${target} stabilisiert sich nicht. Erzwinge Prep-Phase...`);
           batchesSentForTarget = 0; 
           stallSettleTicks = 0;
           lockedPlan = null;
@@ -174,7 +167,7 @@ export async function main(ns: NS): Promise<void> {
         }
 
         ns.print(
-          `⏳ [Batcher] RAM bereit! Warte auf das Auslaufen alter Wellen (Settle: ${stallSettleTicks}/25 | Sec: ${freshSec.toFixed(2)}/${minSec})`,
+          `⏳ [Batcher] RAM bereit! Warte auf das Auslaufen alter Wellen (Settle: ${stallSettleTicks}/25)`,
         );
         await ns.sleep(SPACER);
         continue; 
@@ -184,43 +177,23 @@ export async function main(ns: NS): Promise<void> {
     stallSettleTicks = 0;
     lastLogStatus = "RUNNING";
 
+    // --- NEU: Exekution via verstreutem Dispatcher ---
     ns.print(
-      `ℹ️ [Debug] Target: ${target} | Batch-RAM: ${plan.totalRam.toFixed(1)} GB | Größter freier Slot: ${maxSingleServerFreeRam.toFixed(1)} GB`,
+      `🔥 [Batcher] Welle #${batchId} -> ${target} [Greed: ${(currentGreedFactor * 100).toFixed(1)}% | RAM: ${ns.format.ram(plan.totalRam)} netzwerkweit verteilt]`,
     );
 
-    let batchHost = "";
-    for (const server of cachedServers) {
-      if (!ns.hasRootAccess(server)) continue;
-      let maxRam = ns.getServerMaxRam(server);
-      if (server === "home") maxRam = Math.max(0, maxRam - 64);
-      if (maxRam - ns.getServerUsedRam(server) >= plan.totalRam) {
-        batchHost = server;
-        break;
-      }
-    }
-
-    ns.print(
-      `🔥 [Batcher] Welle #${batchId} -> ${target} [Greed: ${(currentGreedFactor * 100).toFixed(1)}% | RAM: ${ns.format.ram(plan.totalRam)} auf ${batchHost}]`,
-    );
-    const scripts = ["/tasks/hack.js", "/tasks/weaken.js", "/tasks/grow.js"];
-    if (batchHost !== "home") {
-      ns.scp(scripts, batchHost, "home");
-    }
-
-    if (plan.hackThreads > 0)
-      ns.exec("/tasks/hack.js", batchHost, plan.hackThreads, target, plan.hackDelay, batchId);
-    if (plan.weaken1Threads > 0)
-      ns.exec("/tasks/weaken.js", batchHost, plan.weaken1Threads, target, plan.weaken1Delay, batchId);
-    if (plan.growThreads > 0)
-      ns.exec("/tasks/grow.js", batchHost, plan.growThreads, target, plan.growDelay, batchId);
-    if (plan.weaken2Threads > 0)
-      ns.exec("/tasks/weaken.js", batchHost, plan.weaken2Threads, target, plan.weaken2Delay, batchId);
+    // Wir nutzen deine mächtige Cluster-Funktion für JEDEN Bestandteil des Batches!
+    dispatchBatchScript(ns, cachedServers, "/tasks/hack.js", plan.hackThreads, target, plan.hackDelay, batchId);
+    dispatchBatchScript(ns, cachedServers, "/tasks/weaken.js", plan.weaken1Threads, target, plan.weaken1Delay, batchId);
+    dispatchBatchScript(ns, cachedServers, "/tasks/grow.js", plan.growThreads, target, plan.growDelay, batchId);
+    dispatchBatchScript(ns, cachedServers, "/tasks/weaken.js", plan.weaken2Threads, target, plan.weaken2Delay, batchId);
 
     batchId++;
     batchesSentForTarget++;
     await ns.sleep(SPACER);
   }
 }
+
 function dispatchBatchScript(
   ns: NS,
   allServers: string[],
@@ -268,49 +241,23 @@ function executePrepPhase(ns: NS, allServers: string[], target: string): void {
   if (curSec > minSec) {
     const secDeficit = curSec - minSec;
     const weakenThreads = Math.ceil(secDeficit / 0.05);
-    dispatchBatchScript(
-      ns,
-      allServers,
-      "/tasks/weaken.js",
-      weakenThreads,
-      target,
-      0,
-      Date.now(),
-    );
+    dispatchBatchScript(ns, allServers, "/tasks/weaken.js", weakenThreads, target, 0, Date.now());
   } else if (curMoney < maxMoney) {
     serverMock.hackDifficulty = minSec;
     serverMock.moneyAvailable = Math.max(1, curMoney);
 
-    const growThreads = Math.ceil(
-      ns.formulas.hacking.growThreads(serverMock, player, maxMoney),
-    );
+    const growThreads = Math.ceil(ns.formulas.hacking.growThreads(serverMock, player, maxMoney));
     const weakenThreadsNeeded = Math.ceil((growThreads * 0.004) / 0.05);
 
-    dispatchBatchScript(
-      ns,
-      allServers,
-      "/tasks/grow.js",
-      growThreads,
-      target,
-      0,
-      Date.now(),
-    );
-    dispatchBatchScript(
-      ns,
-      allServers,
-      "/tasks/weaken.js",
-      weakenThreadsNeeded,
-      target,
-      50,
-      Date.now(),
-    );
+    dispatchBatchScript(ns, allServers, "/tasks/grow.js", growThreads, target, 0, Date.now());
+    dispatchBatchScript(ns, allServers, "/tasks/weaken.js", weakenThreadsNeeded, target, 50, Date.now());
   }
 }
 
 function findBestBatchTargetForNetwork(
   ns: NS,
   allServers: string[],
-  maxSingleServerRam: number,
+  totalNetworkRam: number, // Modifiziert
   spacer: number,
 ): string | null {
   const targets = allServers.filter(
@@ -320,9 +267,6 @@ function findBestBatchTargetForNetwork(
   let bestTarget = null;
   let highestScore = 0;
 
-  // 🌟 DYNAMISCHES ZEIT-LIMIT 🌟
-  // Basis: 10 Minuten.
-  // Skalierung: Für je 100 Hacking-Level erlauben wir 2 zusätzliche Minuten.
   const playerHackLevel = ns.getHackingLevel();
   const maxAllowedWeakenMinutes = 10 + (playerHackLevel / 100) * 2;
   const DYNAMIC_MAX_WEAKEN_TIME = maxAllowedWeakenMinutes * 60 * 1000;
@@ -330,18 +274,14 @@ function findBestBatchTargetForNetwork(
   for (const s of targets) {
     if (ns.getServerRequiredHackingLevel(s) > playerHackLevel) continue;
 
-    // Nutze deinen robusten Calculator unter Idealbedingungen!
     const testPlan = calculateBatch(ns, s, 0.01, spacer);
 
-    // Wenn selbst der kleinste 1%-Batch nicht in deinen größten Server-Slot passt -> Ignorieren
-    if (!testPlan || testPlan.totalRam > maxSingleServerRam) continue;
+    // Validiert nun gegen das gesamte verfügbare Netzwerk-Potenzial!
+    if (!testPlan || testPlan.totalRam > totalNetworkRam) continue;
 
     const idealExecutionTime = testPlan.executionTime;
-
-    // 🚀 Nutze das neue dynamische Limit anstelle der statischen 10 Minuten
     if (idealExecutionTime > DYNAMIC_MAX_WEAKEN_TIME) continue;
 
-    // Score-Berechnung ist 100% statisch und stabil, egal wie leer das Geld aktuell ist!
     const money = ns.getServerMaxMoney(s);
     const score = money / idealExecutionTime;
 

@@ -296,7 +296,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // --- 3. UI DASHBOARD UPDATE ---
+    // --- 3. UI DASHBOARD UPDATE & FILLER CONFIG ANPASSUNG ---
     let generatedBar = "";
     if (["REP", "CORP", "TRAIN"].includes(mode) && targetVal > 0) {
       const pct = ((currentVal / targetVal) * 100).toFixed(1);
@@ -328,14 +328,25 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    // --- SCHARFE TRENNUNG DER FILLER-STRATEGIEN ---
     let sharePercent = 0.0;
     if (mode === "REP") sharePercent = 0.4;
     if (mode === "MONEY") sharePercent = 0.1;
 
+    // Dynamisches XP-Cap: Wenn wir im CRIME-Modus sind oder der Batcher läuft,
+    // zwingen wir das XP-Level auf den aktuellen Wert ab, damit fill-ram KEIN RAM stiehlt.
     let dynamicMaxXp = 1000;
-    if (p.skills.hacking > 800) dynamicMaxXp = 1500;
+    if (mode === "CRIME") {
+      dynamicMaxXp = p.skills.hacking; // Stoppt XP-Grind sofort bei Level 50!
+    } else if (p.skills.hacking > 800) {
+      dynamicMaxXp = 1500;
+    }
 
-    // 🔥 FIX 3: Nur noch EIN sauberer SaveState-Aufruf, um Datenverlust zu verhindern
+    // Wenn fill-ram aktiv ist, aber wir die Worker-Skripte nutzen, fill-ram sicherheitshalber beenden
+    if (!canRunBatcher && ns.isRunning("utils/fill-ram.js", "home")) {
+      ns.scriptKill("utils/fill-ram.js", "home");
+    }
+
     saveState(ns, {
       ...currentState,
       strategy: mode,

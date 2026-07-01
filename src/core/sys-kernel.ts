@@ -1,5 +1,5 @@
-import { NS, Player, Server } from "@ns";
-import { loadState, saveState, BotState } from "./state-manager.js";
+import { NS, Player } from "@ns";
+import { loadState, saveState, patchState, BotState } from "./state-manager.js";
 import { getAllServers, breakAndInfectNetwork } from "../lib/network.js";
 
 interface ScriptList {
@@ -76,32 +76,27 @@ export async function main(ns: NS): Promise<void> {
     lastRootCount = currentRootCount;
 
     const homeMax = ns.getServerMaxRam("home");
-    const loadedState = loadState(ns);
 
-    const state: BotState = {
-      strategy: loadedState?.strategy || "MONEY",
-      targetFaction: loadedState?.targetFaction || undefined,
-      targetCompany: loadedState?.targetCompany || undefined,
-      targetStat: loadedState?.targetStat || undefined,
-      progressBar: loadedState?.progressBar || "",
-      lastUpdate: Date.now(),
-      playerHacking: ns.getHackingLevel(),
-    };
+    // 🔥 FIX 1: Wir laden den State nur noch temporär für lokale Abfragen
+    const currentState = loadState(ns);
+    let activeStrategy = currentState?.strategy || "MONEY";
+    let activeProgressBar = currentState?.progressBar || "";
 
     // ======================================================================
     // --- 🧠 DYNAMISCHE STRATEGIE-MATRIX (MULTIPLIER-GESTEUERT) ---
     // ======================================================================
-    // FIX: Der Dispatcher ist das Hauptgehirn. Der Kernel greift nur noch bei
-    // absoluten Notfällen (BitNode-Restriktionen) oder Upgrades ein.
 
     if (bnMults.ServerMaxMoney === 0) {
       // Höchste Priorität: Wenn wir absolut kein Geld aus Servern ziehen können.
-      state.strategy = "XP_SPRINT";
-      state.progressBar =
+      activeStrategy = "XP_SPRINT";
+      activeProgressBar =
         "📉 BN-Sonderregel: Kein Server-Geld! Wechsle auf XP-Sprint.";
-    } else if (state.strategy === "MONEY") {
-      // Nur wenn der Dispatcher auf "MONEY" (Standard) steht, prüfen wir,
-      // ob wir wegen eines BN-Multiplikators lieber arbeiten gehen sollten.
+      // Nur bei echten BN-Sonderregeln patchen wir den globalen State direkt
+      patchState(ns, {
+        strategy: activeStrategy,
+        progressBar: activeProgressBar,
+      });
+    } else if (activeStrategy === "MONEY") {
       const player = ns.getPlayer();
       const combatAvg =
         (player.skills.strength +
@@ -111,14 +106,23 @@ export async function main(ns: NS): Promise<void> {
         4;
 
       if (bnMults.CompanyWorkMoney > 1.0 && combatAvg >= 30) {
-        state.strategy = "CORP";
-        state.progressBar = `🏢 BN-Spezial: Nutze hocheffiziente Firmen-Arbeit (${(bnMults.CompanyWorkMoney * 100).toFixed(0)}%)`;
+        activeStrategy = "CORP";
+        activeProgressBar = `🏢 BN-Spezial: Nutze hocheffiziente Firmen-Arbeit (${(bnMults.CompanyWorkMoney * 100).toFixed(0)}%)`;
+        patchState(ns, {
+          strategy: activeStrategy,
+          progressBar: activeProgressBar,
+        });
       }
       // Wir setzen die Standard-Nachricht nur, wenn der Dispatcher noch nichts gesetzt hat
-      else if (!state.progressBar || state.progressBar === "") {
-        state.progressBar = `💻 Hacking-Fleet aktiv (Ressourcen optimal genutzt)`;
+      else if (!activeProgressBar || activeProgressBar === "") {
+        activeProgressBar = `💻 Hacking-Fleet aktiv (Ressourcen optimal genutzt)`;
+        patchState(ns, { progressBar: activeProgressBar });
       }
     }
+
+    // 🔥 FIX 2: Standard-Update für den Kernel läuft isoliert via patchState.
+    // Der Kernel überschreibt niemals fremde ProgressBars!
+    patchState(ns, {});
     // ======================================================================
 
     const player: Player = ns.getPlayer();
@@ -128,12 +132,17 @@ export async function main(ns: NS): Promise<void> {
       player,
       bnMults.ServerMaxMoney,
     );
+    const localStateSnapshot: BotState = {
+      strategy: activeStrategy,
+      targetFaction: currentState?.targetFaction,
+      targetCompany: currentState?.targetCompany,
+      targetStat: currentState?.targetStat,
+      progressBar: activeProgressBar,
+      lastUpdate: Date.now(),
+      playerHacking: ns.getHackingLevel(),
+    };
+    manageSuites(ns, scripts, localStateSnapshot, triggerBackdoor, bnMults);
 
-    saveState(ns, state);
-    // ... (Code über diesem Bereich bleibt gleich) ...
-    manageSuites(ns, scripts, state, triggerBackdoor, bnMults);
-
-    // 1. FIX: Dispatcher (Batcher) erst ab 256 GB starten!
     if (
       homeMax >= 256 &&
       ns.fileExists(scripts.dispatcher, "home") &&
@@ -168,45 +177,32 @@ export async function main(ns: NS): Promise<void> {
       if (ns.hasRootAccess(node)) {
         if (
           node === "home" &&
-          ["REP", "TRAIN", "CORP", "CRIME"].includes(state.strategy)
+          ["REP", "TRAIN", "CORP", "CRIME"].includes(activeStrategy)
         ) {
           continue;
         }
 
-        // 2. NEU: Gnadenloses Aufräumen, wenn der Dispatcher läuft.
-        // Der Dispatcher (sys-dispatcher.ts) startet ab 256 GB auf Home.
-        // Wenn er läuft, übernimmt er (via Batcher/Filler) die Kontrolle. Der Kernel muss schweigen.
         const isDispatcherRunning = ns.isRunning(scripts.dispatcher, "home");
 
         if (isDispatcherRunning && isFleetReady) {
           const procs = ns.ps(node);
-          const standardScripts = [
-            "tasks/work.js",
-            "tasks/xp-grind.js",
-            // Wir killen HIER keine Einzel-Skripte (hack/grow/weaken) mehr blind,
-            // denn die werden vom Dispatcher/Batcher gesteuert!
-            // Wir killen nur die alten "All-in-One"-Fallback-Skripte, falls noch welche laufen.
-          ];
+          const standardScripts = ["tasks/work.js", "tasks/xp-grind.js"];
           for (const p of procs) {
             if (standardScripts.includes(p.filename)) {
               ns.kill(p.pid);
             }
           }
-          continue; // WICHTIG: Wenn Dispatcher läuft, überspringt der Kernel das Deployment auf diesem Node.
+          continue;
         }
 
-        // --- FALLBACK-MODUS (Nur wenn Home < 256GB und Dispatcher NICHT läuft) ---
         let activeScript =
-          state.strategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
-
-        // Da wir nur im Fallback sind, nutzen wir immer das All-in-One "work.js".
-        // Die Aufspaltung in Einzel-Skripte passiert exklusiv im Dispatcher/Batcher.
+          activeStrategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
 
         let ramBuffer = 0;
         if (node === "home") {
           if (
             ["CRIME", "REP", "TRAIN", "CORP", "XP_SPRINT"].includes(
-              state.strategy,
+              activeStrategy,
             )
           ) {
             ramBuffer = 24;
@@ -220,9 +216,10 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    const freshStateForDashboard = loadState(ns);
     drawSysKernelDashboard(
       ns,
-      state,
+      freshStateForDashboard || localStateSnapshot,
       bestTarget,
       allNodes,
       isFleetReady, // Hier isFleetReady statt homeMax >= 256 übergeben

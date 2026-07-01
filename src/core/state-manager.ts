@@ -21,6 +21,7 @@ export interface BotState {
   playerHacking: number; // Verhindert das Laden von Endgame-States nach einem Reset
   jobField?: JobField;
   targetKills?: number;
+
   
   // 🚀 NEU: RAM-Bedarf des aktuellen Batcher-Ziels (Verhindert Deadlocks mit fill-ram)
   batcherRamNeeded?: number;
