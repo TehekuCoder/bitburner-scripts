@@ -369,19 +369,33 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // ====================================================================================
-    // --- 4. OPTIMIERTE WORKER ALLOKATION (STRIKTE KLASSENTRENNUNG) ---
+    // --- 4. STRATEGIE-AWARE WORKER ALLOKATION (GEWALTENTRENNUNG) ---
     // ====================================================================================
-    const allNetworkServers = getAllServers(ns);
-    const workerScript = "tasks/work.js";
+    const allNetworkServers: string[] = getAllServers(ns);
+
+    const activeStrategy = currentState?.strategy || "MONEY";
+    const batcherTarget = currentState?.batcherTarget || null; // 🎯 Liest das geschützte Batcher-Ziel
+
+    // Dynamische Skript-Weiche für XP_SPRINT
+    const workerScript =
+      activeStrategy === "XP_SPRINT" ? "tasks/xp-grind.js" : "tasks/work.js";
+    const obsoleteScript =
+      activeStrategy === "XP_SPRINT" ? "tasks/work.js" : "tasks/xp-grind.js";
+
     const workerRam = ns.getScriptRam(workerScript, "home");
-    const fallbackTarget = findBestFallbackTarget(ns, p.skills.hacking);
+
+    // 🔥 Berechnet das optimale Ziel für die Flotte und ignoriert dabei das Batcher-Ziel
+    const fallbackTarget = findBestFallbackTarget(
+      ns,
+      p.skills.hacking,
+      batcherTarget,
+    );
 
     // --------------------------------------------------------------------------------
     // KLASSE A: Die Grinding-Zwerge (Gehackte Server, die NICHT dir gehören)
-    // Diese Server laufen IMMER auf work.js, völlig egal ob der Batcher aktiv ist oder nicht!
     // --------------------------------------------------------------------------------
     const infectedServers = allNetworkServers.filter(
-      (s) =>
+      (s: string) =>
         s !== "home" &&
         !pServers.includes(s) &&
         ns.hasRootAccess(s) &&
@@ -389,6 +403,9 @@ export async function main(ns: NS): Promise<void> {
     );
 
     for (const server of infectedServers) {
+      if (ns.isRunning(obsoleteScript, server))
+        ns.scriptKill(obsoleteScript, server);
+
       ns.scp(workerScript, server, "home");
       const processes = ns.ps(server);
       const runningWorker = processes.find(
@@ -401,14 +418,13 @@ export async function main(ns: NS): Promise<void> {
       if (maxPossibleThreads === 0) continue;
 
       if (runningWorker) {
-        // Falls das Ziel gewechselt hat oder der Server gewachsen ist -> Reset
         if (
           runningWorker.args[0] !== fallbackTarget ||
           runningWorker.threads < maxPossibleThreads
         ) {
           ns.scriptKill(workerScript, server);
         } else {
-          continue; // Läuft perfekt, ignoriere und weiter
+          continue;
         }
       }
 
@@ -423,10 +439,15 @@ export async function main(ns: NS): Promise<void> {
 
     // --------------------------------------------------------------------------------
     // KLASSE B: Die Heavy-Lifter (Home & Gekaufte Server)
-    // Diese schalten dynamisch zwischen Batcher-Infrastruktur und work.js um.
     // --------------------------------------------------------------------------------
+    if (ns.isRunning(obsoleteScript, "home"))
+      ns.scriptKill(obsoleteScript, "home");
+    for (const server of pServers) {
+      if (ns.isRunning(obsoleteScript, server))
+        ns.scriptKill(obsoleteScript, server);
+    }
+
     if (canRunBatcher) {
-      // 🔥 Scharfer Schutz: work.js wird NUR noch auf Home und den P-Servern gekillt!
       if (ns.isRunning(workerScript, "home"))
         ns.scriptKill(workerScript, "home");
       for (const server of pServers) {
@@ -434,7 +455,6 @@ export async function main(ns: NS): Promise<void> {
           ns.scriptKill(workerScript, server);
       }
 
-      // Batcher starten, falls er schläft
       if (!ns.isRunning("core/sys-batcher.js", "home")) {
         if (ns.isRunning("utils/fill-ram.js", "home")) {
           ns.scriptKill("utils/fill-ram.js", "home");
@@ -444,12 +464,10 @@ export async function main(ns: NS): Promise<void> {
         }
       }
     } else {
-      // Batcher stoppen, falls er läuft
       if (ns.isRunning("core/sys-batcher.js", "home")) {
         ns.scriptKill("core/sys-batcher.js", "home");
       }
 
-      // Wenn der Batcher aus ist, nutzen auch die P-Server ihr RAM für work.js
       for (const server of pServers) {
         ns.scp(workerScript, server, "home");
         const processes = ns.ps(server);
@@ -482,38 +500,49 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-      // Home-Server Worker Handling (mit der Sicherheitsreserve von 20 GB)
-      const homeProcesses = ns.ps("home");
-      const runningWorkerOnHome = homeProcesses.find(
-        (proc) => proc.filename === workerScript,
+      const homeShouldRunWorker = !["REP", "TRAIN", "CORP", "CRIME"].includes(
+        activeStrategy,
       );
 
-      if (
-        runningWorkerOnHome &&
-        runningWorkerOnHome.args[0] !== fallbackTarget
-      ) {
-        ns.scriptKill(workerScript, "home");
-      }
-
-      const isWorkerRunningOnHome = homeProcesses.some(
-        (proc) =>
-          proc.filename === workerScript && proc.args[0] === fallbackTarget,
-      );
-
-      if (!isWorkerRunningOnHome) {
-        const homeFreeRam = getFreeRam();
-        const reservedRam = 20;
-        if (homeFreeRam > reservedRam + workerRam) {
-          const homeThreads = Math.floor(
-            (homeFreeRam - reservedRam) / workerRam,
+      if (!homeShouldRunWorker) {
+        if (ns.isRunning(workerScript, "home")) {
+          ns.print(
+            `🛑 [Dispatcher] Strategie ${activeStrategy} aktiv. Rufe Worker von 'home' zurück!`,
           );
-          if (homeThreads > 0) {
-            ns.run(workerScript, homeThreads, fallbackTarget);
+          ns.scriptKill(workerScript, "home");
+        }
+      } else {
+        const homeProcesses = ns.ps("home");
+        const runningWorkerOnHome = homeProcesses.find(
+          (proc) => proc.filename === workerScript,
+        );
+
+        if (
+          runningWorkerOnHome &&
+          runningWorkerOnHome.args[0] !== fallbackTarget
+        ) {
+          ns.scriptKill(workerScript, "home");
+        }
+
+        const isWorkerRunningOnHome = homeProcesses.some(
+          (proc) =>
+            proc.filename === workerScript && proc.args[0] === fallbackTarget,
+        );
+
+        if (!isWorkerRunningOnHome) {
+          const homeFreeRam = getFreeRam();
+          const reservedRam = 20;
+          if (homeFreeRam > reservedRam + workerRam) {
+            const homeThreads = Math.floor(
+              (homeFreeRam - reservedRam) / workerRam,
+            );
+            if (homeThreads > 0) {
+              ns.run(workerScript, homeThreads, fallbackTarget);
+            }
           }
         }
       }
     }
-
     const isRamReady = homeMaxRam >= 256 || maxPservRam >= 64;
     const executionAllowed =
       !hasFormulas || ns.isRunning("core/sys-batcher.js", "home");
@@ -612,7 +641,11 @@ function manageMicroservices(ns: NS, currentMode: string): void {
   }
 }
 
-function findBestFallbackTarget(ns: NS, currentHackingLevel: number): string {
+export function findBestFallbackTarget(
+  ns: NS,
+  hackingLevel: number,
+  blacklistTarget: string | null = null,
+): string {
   let bestTarget = "n00dles";
   let maxMoney = ns.getServerMaxMoney("n00dles");
 
@@ -624,6 +657,7 @@ function findBestFallbackTarget(ns: NS, currentHackingLevel: number): string {
     if (visited.has(current)) continue;
     visited.add(current);
 
+    // Nachbarn scannen (muss VOR den continues passieren, damit das Netzwerk weiter aufgedeckt wird)
     const neighbors = ns.scan(current);
     for (const neighbor of neighbors) {
       if (!visited.has(neighbor)) {
@@ -631,12 +665,17 @@ function findBestFallbackTarget(ns: NS, currentHackingLevel: number): string {
       }
     }
 
+    // Sicherheits-Guards
     if (current === "home" || !ns.hasRootAccess(current)) continue;
+
+    // 🔥 NEU: Wenn dieser Server das aktuelle Batcher-Ziel ist, überspringen wir ihn für die Worker!
+    if (current === blacklistTarget) continue;
 
     const serverMaxMoney = ns.getServerMaxMoney(current);
     const reqHacking = ns.getServerRequiredHackingLevel(current);
 
-    if (serverMaxMoney > maxMoney && reqHacking <= currentHackingLevel) {
+    // 🔥 FIX: 'currentHackingLevel' zu 'hackingLevel' korrigiert, passend zur Funktionssignatur
+    if (serverMaxMoney > maxMoney && reqHacking <= hackingLevel) {
       bestTarget = current;
       maxMoney = serverMaxMoney;
     }

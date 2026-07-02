@@ -26,16 +26,17 @@ export async function main(ns: NS): Promise<void> {
   const BATCHES_PER_TARGET = 500;
 
   let lastLogStatus = "";
-  let stallSettleTicks = 0; 
-  let currentGreedFactor = 0.4; 
+  let stallSettleTicks = 0;
+  let currentGreedFactor = 0.4;
   let lockedPlan: any = null;
 
-  ns.print("🚀 [Batcher] Initialisiert High-End-Dynamic-Batcher mit Network-Pool-Allokation...");
+  ns.print(
+    "🚀 [Batcher] Initialisiert High-End-Dynamic-Batcher mit Network-Pool-Allokation...",
+  );
 
   while (true) {
     updateServerCache(ns);
 
-    // --- NEU: Wir poolen das gesamte Netzwerk-RAM ---
     let totalNetworkRam = 0;
     let totalFreeNetworkRam = 0;
 
@@ -45,19 +46,18 @@ export async function main(ns: NS): Promise<void> {
       if (server === "home") maxRam = Math.max(0, maxRam - 64); // Home-Reserve
 
       totalNetworkRam += maxRam;
-      totalFreeNetworkRam += (maxRam - ns.getServerUsedRam(server));
+      totalFreeNetworkRam += maxRam - ns.getServerUsedRam(server);
     }
 
     // 🎯 TARGETING & IMMUTABLE PLAN LOCK
     if (!target || batchesSentForTarget >= BATCHES_PER_TARGET) {
-      // Nutzt nun das gesamte Netzwerk-RAM zur Target-Validierung
       const newTarget = findBestBatchTargetForNetwork(
         ns,
         cachedServers,
         totalNetworkRam,
         SPACER,
       );
-      
+
       if (newTarget) {
         ns.print(`🎯 [Batcher] Fokussiere Ziel: ${newTarget}`);
         target = newTarget;
@@ -65,8 +65,7 @@ export async function main(ns: NS): Promise<void> {
 
         currentGreedFactor = 0.4;
         let lockPlan = calculateBatch(ns, target, currentGreedFactor, SPACER);
-        
-        // Der Greed-Faktor skaliert nun gegen das GESAMTE Netzwerk, nicht gegen einen Server!
+
         while (
           lockPlan &&
           lockPlan.totalRam > totalNetworkRam &&
@@ -77,7 +76,7 @@ export async function main(ns: NS): Promise<void> {
         }
 
         lockedPlan = lockPlan;
-        
+
         ns.print(
           `🔒 [Batcher] Architektur für ${target} eingefroren: Greed ${(currentGreedFactor * 100).toFixed(1)}% | RAM: ${lockedPlan ? lockedPlan.totalRam.toFixed(1) : "???"} GB.`,
         );
@@ -104,10 +103,16 @@ export async function main(ns: NS): Promise<void> {
 
     if (needsInitialPrep || isMassiveDesync) {
       const currentWeakenTime = ns.getWeakenTime(target);
-      lockedPlan = null; 
+      lockedPlan = null;
+
+      if(target) {
+        patchState(ns, {batcherTarget: target});
+      }
 
       if (batchesSentForTarget === 0) {
-        ns.print(`🔧 [Batcher] ${target} benötigt Prep. Starte kalibrierte Welle...`);
+        ns.print(
+          `🔧 [Batcher] ${target} benötigt Prep. Starte kalibrierte Welle...`,
+        );
         executePrepPhase(ns, cachedServers, target);
         await ns.sleep(currentWeakenTime + SPACER * 2);
         continue;
@@ -130,10 +135,11 @@ export async function main(ns: NS): Promise<void> {
     let plan = lockedPlan;
 
     if (plan) {
-      patchState(ns, { batcherRamNeeded: plan.totalRam });
+      patchState(ns, { batcherRamNeeded: plan.totalRam,
+        batcherTarget:target
+       });
     }
 
-    // --- NEU: RAM-Check gegen das freie Gesamtnetzwerk ---
     if (!plan || totalFreeNetworkRam < plan.totalRam) {
       const requiredRam = plan ? plan.totalRam.toFixed(1) : "???";
       const statusMsg = `WAIT_${target}_${requiredRam}_${totalFreeNetworkRam.toFixed(1)}`;
@@ -158,10 +164,13 @@ export async function main(ns: NS): Promise<void> {
         stallSettleTicks++;
 
         if (stallSettleTicks > 25) {
-          ns.print(`⚠️ [Batcher] ${target} stabilisiert sich nicht. Erzwinge Prep-Phase...`);
-          batchesSentForTarget = 0; 
+          ns.print(
+            `⚠️ [Batcher] ${target} stabilisiert sich nicht. Erzwinge Prep-Phase...`,
+          );
+          batchesSentForTarget = 0;
           stallSettleTicks = 0;
           lockedPlan = null;
+          lastLogStatus = "PREPPING"; // 🔥 FIX: Status zurücksetzen, um Gatekeeper-Schleife zu brechen
           await ns.sleep(SPACER);
           continue;
         }
@@ -170,23 +179,54 @@ export async function main(ns: NS): Promise<void> {
           `⏳ [Batcher] RAM bereit! Warte auf das Auslaufen alter Wellen (Settle: ${stallSettleTicks}/25)`,
         );
         await ns.sleep(SPACER);
-        continue; 
+        continue;
       }
     }
 
     stallSettleTicks = 0;
     lastLogStatus = "RUNNING";
 
-    // --- NEU: Exekution via verstreutem Dispatcher ---
     ns.print(
       `🔥 [Batcher] Welle #${batchId} -> ${target} [Greed: ${(currentGreedFactor * 100).toFixed(1)}% | RAM: ${ns.format.ram(plan.totalRam)} netzwerkweit verteilt]`,
     );
 
-    // Wir nutzen deine mächtige Cluster-Funktion für JEDEN Bestandteil des Batches!
-    dispatchBatchScript(ns, cachedServers, "/tasks/hack.js", plan.hackThreads, target, plan.hackDelay, batchId);
-    dispatchBatchScript(ns, cachedServers, "/tasks/weaken.js", plan.weaken1Threads, target, plan.weaken1Delay, batchId);
-    dispatchBatchScript(ns, cachedServers, "/tasks/grow.js", plan.growThreads, target, plan.growDelay, batchId);
-    dispatchBatchScript(ns, cachedServers, "/tasks/weaken.js", plan.weaken2Threads, target, plan.weaken2Delay, batchId);
+    // 🔥 FIX: Führende Slashes entfernt, um korrekte RAM-Auslesung zu garantieren
+    dispatchBatchScript(
+      ns,
+      cachedServers,
+      "tasks/hack.js",
+      plan.hackThreads,
+      target,
+      plan.hackDelay,
+      batchId,
+    );
+    dispatchBatchScript(
+      ns,
+      cachedServers,
+      "tasks/weaken.js",
+      plan.weaken1Threads,
+      target,
+      plan.weaken1Delay,
+      batchId,
+    );
+    dispatchBatchScript(
+      ns,
+      cachedServers,
+      "tasks/grow.js",
+      plan.growThreads,
+      target,
+      plan.growDelay,
+      batchId,
+    );
+    dispatchBatchScript(
+      ns,
+      cachedServers,
+      "tasks/weaken.js",
+      plan.weaken2Threads,
+      target,
+      plan.weaken2Delay,
+      batchId,
+    );
 
     batchId++;
     batchesSentForTarget++;
@@ -205,6 +245,15 @@ function dispatchBatchScript(
 ): void {
   if (threads <= 0) return;
   const scriptRam = ns.getScriptRam(script);
+
+  // 🛡️ Failsafe gegen fehlerhafte Pfade / 0-RAM-Teilung
+  if (scriptRam === 0) {
+    ns.print(
+      `❌ [Batcher] SCHWERWIEGENDER FEHLER: Skript-RAM für ${script} ist 0! Pfad prüfen.`,
+    );
+    return;
+  }
+
   let threadsRemaining = threads;
 
   for (const server of allServers) {
@@ -228,36 +277,68 @@ function dispatchBatchScript(
 }
 
 function executePrepPhase(ns: NS, allServers: string[], target: string): void {
-  if (!ns.formulas || !ns.formulas.hacking) return;
-
   const minSec = ns.getServerMinSecurityLevel(target);
   const curSec = ns.getServerSecurityLevel(target);
   const maxMoney = ns.getServerMaxMoney(target);
   const curMoney = ns.getServerMoneyAvailable(target);
 
-  const serverMock = ns.getServer(target);
-  const player = ns.getPlayer();
-
+  // 🔥 FIX: Pfade korrigiert ("tasks/..." statt "/tasks/...")
   if (curSec > minSec) {
     const secDeficit = curSec - minSec;
     const weakenThreads = Math.ceil(secDeficit / 0.05);
-    dispatchBatchScript(ns, allServers, "/tasks/weaken.js", weakenThreads, target, 0, Date.now());
+    dispatchBatchScript(
+      ns,
+      allServers,
+      "tasks/weaken.js",
+      weakenThreads,
+      target,
+      0,
+      Date.now(),
+    );
   } else if (curMoney < maxMoney) {
-    serverMock.hackDifficulty = minSec;
-    serverMock.moneyAvailable = Math.max(1, curMoney);
+    let growThreads = 0;
 
-    const growThreads = Math.ceil(ns.formulas.hacking.growThreads(serverMock, player, maxMoney));
+    // 🔥 FIX: Dynamischer Fallback, falls Formulas.exe noch fehlt
+    if (ns.formulas && ns.formulas.hacking) {
+      const serverMock = ns.getServer(target);
+      const player = ns.getPlayer();
+      serverMock.hackDifficulty = minSec;
+      serverMock.moneyAvailable = Math.max(1, curMoney);
+      growThreads = Math.ceil(
+        ns.formulas.hacking.growThreads(serverMock, player, maxMoney),
+      );
+    } else {
+      const growthMultiplier = maxMoney / Math.max(1, curMoney);
+      growThreads = Math.ceil(ns.growthAnalyze(target, growthMultiplier));
+    }
+
     const weakenThreadsNeeded = Math.ceil((growThreads * 0.004) / 0.05);
 
-    dispatchBatchScript(ns, allServers, "/tasks/grow.js", growThreads, target, 0, Date.now());
-    dispatchBatchScript(ns, allServers, "/tasks/weaken.js", weakenThreadsNeeded, target, 50, Date.now());
+    dispatchBatchScript(
+      ns,
+      allServers,
+      "tasks/grow.js",
+      growThreads,
+      target,
+      0,
+      Date.now(),
+    );
+    dispatchBatchScript(
+      ns,
+      allServers,
+      "tasks/weaken.js",
+      weakenThreadsNeeded,
+      target,
+      50,
+      Date.now(),
+    );
   }
 }
 
 function findBestBatchTargetForNetwork(
   ns: NS,
   allServers: string[],
-  totalNetworkRam: number, // Modifiziert
+  totalNetworkRam: number,
   spacer: number,
 ): string | null {
   const targets = allServers.filter(
@@ -275,8 +356,6 @@ function findBestBatchTargetForNetwork(
     if (ns.getServerRequiredHackingLevel(s) > playerHackLevel) continue;
 
     const testPlan = calculateBatch(ns, s, 0.01, spacer);
-
-    // Validiert nun gegen das gesamte verfügbare Netzwerk-Potenzial!
     if (!testPlan || testPlan.totalRam > totalNetworkRam) continue;
 
     const idealExecutionTime = testPlan.executionTime;

@@ -25,6 +25,7 @@ export interface BotState {
   
   // 🚀 NEU: RAM-Bedarf des aktuellen Batcher-Ziels (Verhindert Deadlocks mit fill-ram)
   batcherRamNeeded?: number;
+  batcherTarget?: string;
 
   // Zentrale Ressourcen-Kontrolle für fill-ram
   fillerConfig?: {
