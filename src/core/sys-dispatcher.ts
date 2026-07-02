@@ -6,7 +6,8 @@ import {
   BotStrategy,
   patchState,
 } from "./state-manager.js";
-import { breakAndInfectNetwork } from "../lib/network.js";
+// 🔥 OPTIMIERUNG: getAllServers aus deiner Netzwerk-Library importieren
+import { breakAndInfectNetwork, getAllServers } from "../lib/network.js";
 
 interface FactionConfig {
   name: FactionName;
@@ -75,7 +76,6 @@ export async function main(ns: NS): Promise<void> {
 
   ns.print("⚙️ [Dispatcher] Initialisiere Augmentations-Cache...");
 
-  // Konfigurationen für Hacking-Infrastruktur
   const BATCHER_MIN_RAM = 256;
   const BATCHER_MIN_PSERV_RAM = 64;
 
@@ -99,7 +99,6 @@ export async function main(ns: NS): Promise<void> {
     let targetCompany: CompanyName | undefined = undefined;
     let targetStat = 0;
 
-    // 🔥 FIX 1: Automatische Breitband-Bewerbung ausführen, sobald Level erreicht ist
     if (p.skills.hacking >= 250) {
       applyToAllMegacorps(ns, p);
     }
@@ -136,7 +135,6 @@ export async function main(ns: NS): Promise<void> {
         ? findNextFaction(ns, p)
         : null;
 
-    // Grund-Einteilung nach Spielfortschritt
     if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
     } else if (homeMaxRam < 256) {
@@ -145,14 +143,11 @@ export async function main(ns: NS): Promise<void> {
       mode = "REP";
       targetFaction = factionToWorkFor;
     } else {
-      // --- CORP & PROGRESSION MATRIX ---
       if (p.skills.hacking >= 250) {
-        // 1. Brauchen wir Silhouette überhaupt noch?
         const needsSilhouette =
           !p.factions.includes("Silhouette" as FactionName) &&
           (repCache["Silhouette"] ?? 0) > 0;
 
-        // 2. Sind wir bereits irgendwo CTO, CFO oder CEO?
         const isExecutive = Object.values(p.jobs).some((title) =>
           [
             "Chief Technology Officer",
@@ -161,23 +156,17 @@ export async function main(ns: NS): Promise<void> {
           ].includes(title),
         );
 
-        // 3. Überprüfung der restlichen Bedingungen
-        const hasEnoughKarma = ns.heart.break() <= -22; // Je negativer, desto besser (-22, -23...)
+        const hasEnoughKarma = ns.heart.break() <= -22;
         const hasEnoughMoney = p.money >= 15_000_000;
 
-        // 🔥 SILHOUETTE PRE-GRIND ROUTINE
         if (needsSilhouette && (!isExecutive || !hasEnoughKarma)) {
           if (!hasEnoughKarma) {
-            // Wenn das Karma fehlt, schicken wir den Bot zurück in den Crime-Modus (Homicide)
             mode = "CRIME";
           } else {
-            // Karma passt, aber wir sind kein Chef? Ab zur ersten Firma (z.B. ECorp) und Karriere machen!
             mode = "CORP";
-            targetCompany = Object.values(MEGACORPS)[0]; // Schnappt sich "ECorp" als Sprungbrett
+            targetCompany = Object.values(MEGACORPS)[0];
           }
-        }
-        // REGULÄRER MEGACORP-GRIND (Wenn Silhouette erledigt oder nicht offen ist)
-        else {
+        } else {
           const missingCorpFaction = HACKING_FACTIONS.find(
             (f) =>
               !p.factions.includes(f.name) &&
@@ -193,7 +182,6 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-      // Wenn KEINE Corp-Arbeit ansteht (mode ist immer noch MONEY), greifen die Kampf-Fraktionen
       if (mode === "MONEY") {
         if (eligiblePServers.length === 0) {
           mode = "MONEY";
@@ -328,21 +316,17 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // --- SCHARFE TRENNUNG DER FILLER-STRATEGIEN ---
     let sharePercent = 0.0;
     if (mode === "REP") sharePercent = 0.4;
     if (mode === "MONEY") sharePercent = 0.1;
 
-    // Dynamisches XP-Cap: Wenn wir im CRIME-Modus sind oder der Batcher läuft,
-    // zwingen wir das XP-Level auf den aktuellen Wert ab, damit fill-ram KEIN RAM stiehlt.
     let dynamicMaxXp = 1000;
     if (mode === "CRIME") {
-      dynamicMaxXp = p.skills.hacking; // Stoppt XP-Grind sofort bei Level 50!
+      dynamicMaxXp = p.skills.hacking;
     } else if (p.skills.hacking > 800) {
       dynamicMaxXp = 1500;
     }
 
-    // Wenn fill-ram aktiv ist, aber wir die Worker-Skripte nutzen, fill-ram sicherheitshalber beenden
     if (!canRunBatcher && ns.isRunning("utils/fill-ram.js", "home")) {
       ns.scriptKill("utils/fill-ram.js", "home");
     }
@@ -361,7 +345,6 @@ export async function main(ns: NS): Promise<void> {
       },
     });
 
-    // --- 4. HINTERGRUND-DIENSTE & AUTOMATISIERUNG ---
     const isEarlyGameCrime =
       homeMaxRam < 128 &&
       (mode === "CRIME" || mode === "XP_SPRINT" || mode === "KILLS");
@@ -385,11 +368,73 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    if (canRunBatcher) {
-      if (ns.isRunning("tasks/work.js", "home")) {
-        ns.scriptKill("tasks/work.js", "home");
+    // ====================================================================================
+    // --- 4. OPTIMIERTE WORKER ALLOKATION (STRIKTE KLASSENTRENNUNG) ---
+    // ====================================================================================
+    const allNetworkServers = getAllServers(ns);
+    const workerScript = "tasks/work.js";
+    const workerRam = ns.getScriptRam(workerScript, "home");
+    const fallbackTarget = findBestFallbackTarget(ns, p.skills.hacking);
+
+    // --------------------------------------------------------------------------------
+    // KLASSE A: Die Grinding-Zwerge (Gehackte Server, die NICHT dir gehören)
+    // Diese Server laufen IMMER auf work.js, völlig egal ob der Batcher aktiv ist oder nicht!
+    // --------------------------------------------------------------------------------
+    const infectedServers = allNetworkServers.filter(
+      (s) =>
+        s !== "home" &&
+        !pServers.includes(s) &&
+        ns.hasRootAccess(s) &&
+        ns.getServerMaxRam(s) > 0,
+    );
+
+    for (const server of infectedServers) {
+      ns.scp(workerScript, server, "home");
+      const processes = ns.ps(server);
+      const runningWorker = processes.find(
+        (proc) => proc.filename === workerScript,
+      );
+
+      const maxRam = ns.getServerMaxRam(server);
+      const maxPossibleThreads = Math.floor(maxRam / workerRam);
+
+      if (maxPossibleThreads === 0) continue;
+
+      if (runningWorker) {
+        // Falls das Ziel gewechselt hat oder der Server gewachsen ist -> Reset
+        if (
+          runningWorker.args[0] !== fallbackTarget ||
+          runningWorker.threads < maxPossibleThreads
+        ) {
+          ns.scriptKill(workerScript, server);
+        } else {
+          continue; // Läuft perfekt, ignoriere und weiter
+        }
       }
 
+      const usedRam = ns.getServerUsedRam(server);
+      const freeRam = maxRam - usedRam;
+      const threads = Math.floor(freeRam / workerRam);
+
+      if (threads > 0) {
+        ns.exec(workerScript, server, threads, fallbackTarget);
+      }
+    }
+
+    // --------------------------------------------------------------------------------
+    // KLASSE B: Die Heavy-Lifter (Home & Gekaufte Server)
+    // Diese schalten dynamisch zwischen Batcher-Infrastruktur und work.js um.
+    // --------------------------------------------------------------------------------
+    if (canRunBatcher) {
+      // 🔥 Scharfer Schutz: work.js wird NUR noch auf Home und den P-Servern gekillt!
+      if (ns.isRunning(workerScript, "home"))
+        ns.scriptKill(workerScript, "home");
+      for (const server of pServers) {
+        if (ns.isRunning(workerScript, server))
+          ns.scriptKill(workerScript, server);
+      }
+
+      // Batcher starten, falls er schläft
       if (!ns.isRunning("core/sys-batcher.js", "home")) {
         if (ns.isRunning("utils/fill-ram.js", "home")) {
           ns.scriptKill("utils/fill-ram.js", "home");
@@ -399,14 +444,12 @@ export async function main(ns: NS): Promise<void> {
         }
       }
     } else {
+      // Batcher stoppen, falls er läuft
       if (ns.isRunning("core/sys-batcher.js", "home")) {
         ns.scriptKill("core/sys-batcher.js", "home");
       }
 
-      const fallbackTarget = findBestFallbackTarget(ns, p.skills.hacking);
-      const workerScript = "tasks/work.js";
-      const workerRam = ns.getScriptRam(workerScript, "home");
-
+      // Wenn der Batcher aus ist, nutzen auch die P-Server ihr RAM für work.js
       for (const server of pServers) {
         ns.scp(workerScript, server, "home");
         const processes = ns.ps(server);
@@ -420,9 +463,10 @@ export async function main(ns: NS): Promise<void> {
         if (maxPossibleThreads === 0) continue;
 
         if (runningWorker) {
-          if (runningWorker.args[0] !== fallbackTarget) {
-            ns.scriptKill(workerScript, server);
-          } else if (runningWorker.threads < maxPossibleThreads) {
+          if (
+            runningWorker.args[0] !== fallbackTarget ||
+            runningWorker.threads < maxPossibleThreads
+          ) {
             ns.scriptKill(workerScript, server);
           } else {
             continue;
@@ -438,6 +482,7 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
+      // Home-Server Worker Handling (mit der Sicherheitsreserve von 20 GB)
       const homeProcesses = ns.ps("home");
       const runningWorkerOnHome = homeProcesses.find(
         (proc) => proc.filename === workerScript,
@@ -487,7 +532,6 @@ export async function main(ns: NS): Promise<void> {
     await ns.sleep(2000);
   }
 }
-
 function buildReputationCache(ns: NS): void {
   const ownedAugs = ns.singularity.getOwnedAugmentations(true);
 

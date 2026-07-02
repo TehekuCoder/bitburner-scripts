@@ -42,7 +42,6 @@ export async function main(ns: NS): Promise<void> {
     ns.exec("sys-hud.ts", "home", 1);
   }
 
-  // Record<string, number> erlaubt uns den flexiblen Zugriff auf ALLE geladenen Multiplikatoren
   let bnMults: Record<string, number> = {
     ServerMaxMoney: 1.0,
     HacknetNodeMoney: 1.0,
@@ -77,21 +76,15 @@ export async function main(ns: NS): Promise<void> {
 
     const homeMax = ns.getServerMaxRam("home");
 
-    // 🔥 FIX 1: Wir laden den State nur noch temporär für lokale Abfragen
     const currentState = loadState(ns);
     let activeStrategy = currentState?.strategy || "MONEY";
     let activeProgressBar = currentState?.progressBar || "";
 
-    // ======================================================================
-    // --- 🧠 DYNAMISCHE STRATEGIE-MATRIX (MULTIPLIER-GESTEUERT) ---
-    // ======================================================================
-
+    // --- 🧠 DYNAMISCHE STRATEGIE-MATRIX ---
     if (bnMults.ServerMaxMoney === 0) {
-      // Höchste Priorität: Wenn wir absolut kein Geld aus Servern ziehen können.
       activeStrategy = "XP_SPRINT";
       activeProgressBar =
         "📉 BN-Sonderregel: Kein Server-Geld! Wechsle auf XP-Sprint.";
-      // Nur bei echten BN-Sonderregeln patchen wir den globalen State direkt
       patchState(ns, {
         strategy: activeStrategy,
         progressBar: activeProgressBar,
@@ -112,18 +105,13 @@ export async function main(ns: NS): Promise<void> {
           strategy: activeStrategy,
           progressBar: activeProgressBar,
         });
-      }
-      // Wir setzen die Standard-Nachricht nur, wenn der Dispatcher noch nichts gesetzt hat
-      else if (!activeProgressBar || activeProgressBar === "") {
+      } else if (!activeProgressBar || activeProgressBar === "") {
         activeProgressBar = `💻 Hacking-Fleet aktiv (Ressourcen optimal genutzt)`;
         patchState(ns, { progressBar: activeProgressBar });
       }
     }
 
-    // 🔥 FIX 2: Standard-Update für den Kernel läuft isoliert via patchState.
-    // Der Kernel überschreibt niemals fremde ProgressBars!
     patchState(ns, {});
-    // ======================================================================
 
     const player: Player = ns.getPlayer();
     const bestTarget: string = findBestTarget(
@@ -161,37 +149,30 @@ export async function main(ns: NS): Promise<void> {
     }
 
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
-
-    // --- ZENTRALE FLOTTEN-PRÜFUNG ---
     const pServers = ns.cloud.getServerNames();
     const eligiblePServers = pServers.filter(
       (s) => ns.getServerMaxRam(s) >= 64,
     );
-
-    // Die Flotte ist NUR bereit, wenn Home groß genug ist UND wir fähige P-Server haben
     const isFleetReady =
       hasFormulas && homeMax >= 256 && eligiblePServers.length > 0;
 
-    // --- WORKER DEPLOYMENT ---
+    // ======================================================================
+    // --- 🔥 FIX: OPTIMIERTES WORKER DEPLOYMENT & GEWALTENTRENNUNG ---
+    // ======================================================================
+    const isDispatcherRunning = ns.isRunning(scripts.dispatcher, "home");
+
     for (const node of allNodes) {
       if (ns.hasRootAccess(node)) {
+        // Wenn der Dispatcher läuft, zieht sich der Kernel komplett aus dem
+        // Flotten-Management zurück. Der Dispatcher kontrolliert ab jetzt alle Worker!
+        if (isDispatcherRunning) {
+          continue;
+        }
+
         if (
           node === "home" &&
           ["REP", "TRAIN", "CORP", "CRIME"].includes(activeStrategy)
         ) {
-          continue;
-        }
-
-        const isDispatcherRunning = ns.isRunning(scripts.dispatcher, "home");
-
-        if (isDispatcherRunning && isFleetReady) {
-          const procs = ns.ps(node);
-          const standardScripts = ["tasks/work.js", "tasks/xp-grind.js"];
-          for (const p of procs) {
-            if (standardScripts.includes(p.filename)) {
-              ns.kill(p.pid);
-            }
-          }
           continue;
         }
 
@@ -215,6 +196,7 @@ export async function main(ns: NS): Promise<void> {
         deployWorker(ns, node, activeScript, bestTarget, ramBuffer);
       }
     }
+    // ======================================================================
 
     const freshStateForDashboard = loadState(ns);
     drawSysKernelDashboard(
@@ -222,13 +204,12 @@ export async function main(ns: NS): Promise<void> {
       freshStateForDashboard || localStateSnapshot,
       bestTarget,
       allNodes,
-      isFleetReady, // Hier isFleetReady statt homeMax >= 256 übergeben
+      isFleetReady,
       bnMults.ServerMaxMoney,
     );
     await ns.sleep(2000);
   }
 }
-
 function manageSuites(
   ns: NS,
   scripts: ScriptList,

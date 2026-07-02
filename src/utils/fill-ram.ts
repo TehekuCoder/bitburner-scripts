@@ -15,9 +15,8 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  // --- MATHEMATISCHE CONFIGS ---
-  const GLOBAL_SHARE_POWER_CAP = 1.42; // Der magische Sweet-Spot (~44.000 Threads global)
-  const MAX_USEFUL_HACK_LEVEL = 3000;  // Maximal benötigtes Level für das BitNode-Ende
+  const GLOBAL_SHARE_POWER_CAP = 1.42;
+  const MAX_USEFUL_HACK_LEVEL = 3000;
 
   while (true) {
     const state = loadState(ns) as any;
@@ -34,44 +33,56 @@ export async function main(ns: NS): Promise<void> {
       allowedSharePercent = state.fillerConfig.shareMaxRamPercent;
       maxXpLevel = state.fillerConfig.maxXpLevel || MAX_USEFUL_HACK_LEVEL;
     } else if (state) {
-      if (state.strategy === "REP") allowedSharePercent = 0.6; // Aggressiver im Rep-Modus
+      if (state.strategy === "REP") allowedSharePercent = 0.6;
       else if (state.strategy === "MONEY") allowedSharePercent = 0.1;
     }
 
-    // 🛑 MATHEMATISCHER SHARE-STOPP: Wenn das Netzwerk das Cap erreicht hat, drosseln wir lokal!
-    if (currentSharePower >= GLOBAL_SHARE_POWER_CAP && state?.strategy !== "REP") {
-      allowedSharePercent = 0.02; // Nur noch eine minimale Erhaltungsdosis RAM erlauben
+    if (
+      currentSharePower >= GLOBAL_SHARE_POWER_CAP &&
+      state?.strategy !== "REP"
+    ) {
+      allowedSharePercent = 0.02;
     }
 
     let activeScript = "";
     let targetThreads = 0;
 
-    const isBatcherActive = 
-      state?.strategy === "MONEY" || 
+    const isBatcherActive =
+      state?.strategy === "MONEY" ||
       (state?.batcherRamNeeded && state.batcherRamNeeded > 0);
 
-    // A: XP-Grind Logik mit smarter Cap-Bremse
+    // A: XP-Grind Logik
     if (
       p.skills.hacking < maxXpLevel &&
-      p.skills.hacking < MAX_USEFUL_HACK_LEVEL && // Absolutes mathematisches Limit
-      state?.strategy !== "MONEY" &&               // Wenn Geld läuft, hat XP-Grind Feierabend
+      p.skills.hacking < MAX_USEFUL_HACK_LEVEL &&
+      state?.strategy !== "MONEY" &&
       (state?.strategy === "XP_SPRINT" || p.skills.hacking < 250)
     ) {
       activeScript = "/tasks/xp-grind.js";
 
       const usedRam = ns.getServerUsedRam(target);
       const scriptRam = ns.getScriptRam(activeScript, target);
-      const currentThreads = ns.ps(target)
-        .filter((proc) => proc.filename === activeScript)
+
+      // 🔥 FIX 1: Pfad-Normalisierung mit Regex, um Schrägstriche zu ignorieren
+      const currentThreads = ns
+        .ps(target)
+        .filter(
+          (proc) =>
+            proc.filename.replace(/^\//, "") ===
+            activeScript.replace(/^\//, ""),
+        )
         .reduce((acc, proc) => acc + proc.threads, 0);
 
       let reserve = 64;
       if (isBatcherActive) {
-        const dynamicNeeded = state?.batcherRamNeeded ? state.batcherRamNeeded + 4 : 40;
+        const dynamicNeeded = state?.batcherRamNeeded
+          ? state.batcherRamNeeded + 4
+          : 40;
         reserve = Math.max(dynamicNeeded, Math.floor(maxRam * 0.3));
       }
 
-      const availableRam = maxRam - (usedRam - currentThreads * scriptRam) - reserve;
+      const availableRam =
+        maxRam - (usedRam - currentThreads * scriptRam) - reserve;
       targetThreads = Math.floor(availableRam / scriptRam);
     }
     // B: Share-Logik
@@ -83,15 +94,25 @@ export async function main(ns: NS): Promise<void> {
       targetThreads = Math.floor(maxAllowedShareRam / scriptRam);
 
       const usedRam = ns.getServerUsedRam(target);
-      const currentThreads = ns.ps(target)
-        .filter((proc) => proc.filename === activeScript)
+
+      // 🔥 FIX 2: Pfad-Normalisierung hier ebenfalls einbauen
+      const currentThreads = ns
+        .ps(target)
+        .filter(
+          (proc) =>
+            proc.filename.replace(/^\//, "") ===
+            activeScript.replace(/^\//, ""),
+        )
         .reduce((acc, proc) => acc + proc.threads, 0);
 
       const shareReserve = isBatcherActive
-        ? (state?.batcherRamNeeded ? state.batcherRamNeeded + 4 : 40)
+        ? state?.batcherRamNeeded
+          ? state.batcherRamNeeded + 4
+          : 40
         : 32;
 
-      const physicalAvailableRam = maxRam - (usedRam - currentThreads * scriptRam) - shareReserve;
+      const physicalAvailableRam =
+        maxRam - (usedRam - currentThreads * scriptRam) - shareReserve;
       const physicalMaxThreads = Math.floor(physicalAvailableRam / scriptRam);
 
       targetThreads = Math.min(targetThreads, physicalMaxThreads);
@@ -101,26 +122,50 @@ export async function main(ns: NS): Promise<void> {
 
     // --- ANTI-LEAK-CLEANUP & SCALING ---
     for (const fScript of fillerScripts) {
-      if (fScript !== activeScript && ns.isRunning(fScript, target)) {
+      // 🔥 FIX 3: Auch beim generellen Cleanup Schrägstriche normalisieren
+      const isRunningNormalized = ns
+        .ps(target)
+        .some(
+          (p) => p.filename.replace(/^\//, "") === fScript.replace(/^\//, ""),
+        );
+      if (fScript !== activeScript && isRunningNormalized) {
         ns.scriptKill(fScript, target);
       }
     }
 
     if (activeScript !== "") {
-      const currentThreads = ns.ps(target)
-        .filter((proc) => proc.filename === activeScript)
+      // 🔥 FIX 4: Letzte Instanz-Prüfung vor dem eigentlichen Skript-Skalieren
+      const currentThreads = ns
+        .ps(target)
+        .filter(
+          (proc) =>
+            proc.filename.replace(/^\//, "") ===
+            activeScript.replace(/^\//, ""),
+        )
         .reduce((acc, proc) => acc + proc.threads, 0);
 
       const threadDiff = Math.abs(targetThreads - currentThreads);
       const shouldScaleDown = targetThreads < currentThreads;
-      const shouldScaleUp = targetThreads > currentThreads && (threadDiff > currentThreads * 0.1 || currentThreads === 0);
+      const shouldScaleUp =
+        targetThreads > currentThreads &&
+        (threadDiff > currentThreads * 0.1 || currentThreads === 0);
 
       if (shouldScaleDown || shouldScaleUp) {
         if (currentThreads > 0) ns.scriptKill(activeScript, target);
         if (targetThreads > 0) {
           if (activeScript === "/tasks/xp-grind.js") {
-            const xpTarget = ns.serverExists("joesguns") && ns.hasRootAccess("joesguns") ? "joesguns" : "foodnstuff";
-            ns.exec(activeScript, target, targetThreads, xpTarget, 0, Math.random());
+            const xpTarget =
+              ns.serverExists("joesguns") && ns.hasRootAccess("joesguns")
+                ? "joesguns"
+                : "foodnstuff";
+            ns.exec(
+              activeScript,
+              target,
+              targetThreads,
+              xpTarget,
+              0,
+              Math.random(),
+            );
           } else {
             ns.exec(activeScript, target, targetThreads);
           }
