@@ -8,7 +8,7 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  // ns.disableLog("ALL");
+  ns.disableLog("ALL");
 
   const maxMoney = ns.getServerMaxMoney(target);
   const minSecurity = ns.getServerMinSecurityLevel(target);
