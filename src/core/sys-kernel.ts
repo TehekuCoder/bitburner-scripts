@@ -161,6 +161,12 @@ export async function main(ns: NS): Promise<void> {
     // ======================================================================
     const isDispatcherRunning = ns.isRunning(scripts.dispatcher, "home");
 
+    // 🧹 NEU: Wenn Fleet/Dispatcher die Kontrolle übernimmt, säubern wir 'home' von alten work.js Altlasten
+    if (isDispatcherRunning && ns.isRunning(scripts.worker, "home")) {
+      ns.print("🧹 [Kernel] Bereinige veralteten Early-Game-Modus (work.js) von 'home'...");
+      ns.scriptKill(scripts.worker, "home");
+    }
+
     for (const node of allNodes) {
       if (ns.hasRootAccess(node)) {
         // Wenn der Dispatcher läuft, zieht sich der Kernel komplett aus dem
@@ -234,8 +240,6 @@ function manageSuites(
 
   const hasBrute = ns.fileExists("BruteSSH.exe", "home");
 
-  // --- ARCHITEKTUR-ENTSCHEIDUNG HACKNET ---
-  // 1. Sperre im absoluten Early-Game (unter 128GB RAM gehört jeder Dollar den Server-Upgrades / Crime)
   if (homeMaxRam < 128) {
     if (ns.isRunning(targetHacknetScript, "home")) {
       ns.print(
@@ -244,7 +248,6 @@ function manageSuites(
       ns.scriptKill(targetHacknetScript, "home");
     }
   }
-  // 2. Erlaubnis ab 128GB RAM, um den Netburners-Gegenwert einzufahren
   else if (!hasBrute) {
     if (ns.isRunning(targetHacknetScript, "home")) {
       ns.print(
@@ -253,19 +256,15 @@ function manageSuites(
       ns.scriptKill(targetHacknetScript, "home");
     }
   }
-  // 3. Start-Freigabe
   else {
     if (
       ns.fileExists(targetHacknetScript, "home") &&
       !ns.isRunning(targetHacknetScript, "home")
     ) {
-      // Eine elegante Injektion: Wenn Hacknet stark nerfed ist (< 40%), übergeben wir
-      // dem Skript via Argumente dein gewünschtes Netburners-Hard-Cap!
       if (bnMults.HacknetNodeMoney < 0.4) {
         ns.print(
           "⚠️ [KERNEL] Hacknet-Produktion stark eingeschränkt! Starte im Netburners-Failsafe-Modus.",
         );
-        // Args: MaxNodes=4, MaxLevel=100, MaxRam=8, MaxCores=4
         ns.exec(targetHacknetScript, "home", 1, 4, 100, 8, 4);
       } else {
         ns.print(`⚡ [KERNEL] Starte unlimitiertes Hacknet-Subsystem...`);
@@ -274,7 +273,6 @@ function manageSuites(
     }
   }
 
-  // --- RESTLICHE SUITEN ---
   if (
     triggerBackdoor &&
     ns.fileExists(scripts.backdoor, "home") &&
@@ -363,7 +361,6 @@ function findBestTarget(
 }
 
 function isBatchReady(ns: NS, node: string): boolean {
-  // Ein Server braucht mind. 64GB, um einen vernünftigen Batch-Zyklus stabil zu hosten
   return ns.getServerMaxRam(node) >= 64;
 }
 
@@ -425,7 +422,15 @@ function drawSysKernelDashboard(
     `ENGINE-MODE: ${isFleetMode ? "DYNAMIC FLEET (>= 256GB)" : "BASIC LOOP (< 256GB)"}`,
   );
   ns.print(`STRATEGIE:  ${state.strategy}`);
-  ns.print(`ZIEL:       ${bestTarget}`);
+
+  // 🔥 NEU: Intelligente Primär- und Sekundärziel-Anzeige im Fleet-Modus
+  if (isFleetMode && state.batcherTarget) {
+    ns.print(`PRIMÄRZIEL (BATCH): ${state.batcherTarget}`);
+    ns.print(`SEKUNDÄRZIEL (FLEET): ${bestTarget}`);
+  } else {
+    ns.print(`ZIEL:       ${bestTarget}`);
+  }
+
   if (serverMaxMoneyMult !== 1.0) {
     ns.print(`BN-MONEY:   ${(serverMaxMoneyMult * 100).toFixed(0)}% Effizienz`);
   }
