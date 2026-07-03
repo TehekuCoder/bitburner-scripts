@@ -7,7 +7,6 @@ import {
   patchState,
 } from "./state-manager.js";
 import { breakAndInfectNetwork, getAllServers } from "../lib/network.js";
-// 🔥 NEU: Import der BitNode-Multiplikatoren
 import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
 
 interface FactionConfig {
@@ -37,35 +36,24 @@ const MEGACORPS: Record<string, CompanyName> = {
 };
 
 const HACKING_FACTIONS: FactionConfig[] = [
-  // --- PHASE 1: Early Game & Essenzielle Hacking-Augments ---
   { name: "CyberSec" as FactionName, minStat: 0, priority: 1 },
   { name: "Tian Di Hui" as FactionName, minStat: 0, priority: 2 },
   { name: "NiteSec" as FactionName, minStat: 0, priority: 3 },
   { name: "Netburners" as FactionName, minStat: 0, priority: 4 }, 
-
-  // --- PHASE 2: Mid-Game Hacking & Story-Server ---
   { name: "The Black Hand" as FactionName, minStat: 0, priority: 5 },
   { name: "BitRunners" as FactionName, minStat: 0, priority: 6 },
-  
-  // --- PHASE 3: Die besten Stadt-Fraktionen ---
-  { name: "Volhaven" as FactionName, minStat: 0, priority: 7 }, // Beste Stadt für Hacking!
+  { name: "Volhaven" as FactionName, minStat: 0, priority: 7 }, 
   { name: "Aevum" as FactionName, minStat: 0, priority: 8 },
   { name: "Sector-12" as FactionName, minStat: 0, priority: 9 },
   { name: "New Tokyo" as FactionName, minStat: 0, priority: 10 },
   { name: "Ishima" as FactionName, minStat: 0, priority: 11 },
   { name: "Chongqing" as FactionName, minStat: 0, priority: 12 },
-
-  // --- PHASE 4: Combat & Crime Basis (Vorbereitung für Late-Game Syndikate) ---
   { name: "Slum Snakes" as FactionName, minStat: 30, priority: 13 },
   { name: "Tetrads" as FactionName, minStat: 75, priority: 14 },
-
-  // --- PHASE 5: Corporate & Elite-Syndikate ---
   { name: "Silhouette" as FactionName, minStat: 0, priority: 15 }, 
   { name: "The Syndicate" as FactionName, minStat: 200, priority: 16 },
   { name: "The Dark Army" as FactionName, minStat: 300, priority: 17 },
   { name: "Speakers for the Dead" as FactionName, minStat: 300, priority: 18 },
-
-  // --- PHASE 6: End-Game (Die teuersten Augments & Red Pill) ---
   { name: "The Covenant" as FactionName, minStat: 850, priority: 19 },
   { name: "Illuminati" as FactionName, minStat: 1200, priority: 20 },
   { name: "Daedalus" as FactionName, minStat: 1500, priority: 21 },
@@ -89,7 +77,6 @@ export async function main(ns: NS): Promise<void> {
 
   ns.print("⚙️ [Dispatcher] Initialisiere Multiplikatoren und Cache...");
 
-  // 🔥 OPTIMIERUNG: Laden der BitNode-Multiplikatoren (Fallback auf Defaults)
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
 
   buildReputationCache(ns);
@@ -142,12 +129,8 @@ export async function main(ns: NS): Promise<void> {
       homeMaxRam >= BATCHER_MIN_RAM &&
       eligiblePServers.length > 0;
 
-    // ====================================================================================
-    // --- 1. DYNAMISCHE STRATEGIE-MATRIX (INTELLIGENT DURCH BN-MULTS) ---
-    // ====================================================================================
+    // --- 1. DYNAMISCHE STRATEGIE-MATRIX ---
     const playerMoney = p.money;
-
-    // 💡 MULTI-TUNE 1: Wenn FactionRep-Gewinn geringer ist, brauchen wir mehr Geld für Spenden/Infrastruktur, bevor wir grinden
     const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
     const MONEY_THRESHOLD_FOR_REP =
       factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
@@ -163,13 +146,11 @@ export async function main(ns: NS): Promise<void> {
         ? findNextFaction(ns, p)
         : null;
 
-    // 💡 MULTI-TUNE 2: Überprüfung von Crime-Multiplikatoren (z.B. für BN8)
     const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
 
     if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
     }
-    // Wenn Crime extrem lukrativ ist (BN8) und wir noch keinen Batcher haben, bleiben wir länger im Crime-Loop!
     else if (homeMaxRam < 256 || (crimeMoneyMult > 5 && !canRunBatcher)) {
       mode = "CRIME";
     } else if (factionToWorkFor) {
@@ -443,24 +424,30 @@ export async function main(ns: NS): Promise<void> {
       );
 
       const maxRam = ns.getServerMaxRam(server);
-      const maxPossibleThreads = Math.floor(maxRam / workerRam);
+      if (maxRam < workerRam) continue;
 
-      if (maxPossibleThreads === 0) continue;
+      let threadsToRun = 0;
+      let shouldStart = false;
 
       if (runningWorker) {
-        if (
-          runningWorker.args[0] !== fallbackTarget ||
-          runningWorker.threads < maxPossibleThreads
-        ) {
+        // Zählt den RAM so, als wäre der laufende Worker bereits gekillt
+        const ramWithoutWorker = maxRam - ns.getServerUsedRam(server) + (runningWorker.threads * workerRam);
+        const maxPossibleThreadsNow = Math.floor(ramWithoutWorker / workerRam);
+
+        if (runningWorker.args[0] !== fallbackTarget || runningWorker.threads < maxPossibleThreadsNow) {
           ns.scriptKill(workerScript, server);
-        } else {
-          continue;
+          threadsToRun = maxPossibleThreadsNow;
+          shouldStart = true;
         }
+      } else {
+        const currentFreeRam = maxRam - ns.getServerUsedRam(server);
+        threadsToRun = Math.floor(currentFreeRam / workerRam);
+        shouldStart = true;
       }
 
-      const freeRam = maxRam - ns.getServerUsedRam(server);
-      const threads = Math.floor(freeRam / workerRam);
-      if (threads > 0) ns.exec(workerScript, server, threads, fallbackTarget);
+      if (shouldStart && threadsToRun > 0) {
+        ns.exec(workerScript, server, threadsToRun, fallbackTarget);
+      }
     }
 
     // KLASSE B: Heavy-Lifter (Home & Gekaufte Server)
@@ -496,24 +483,29 @@ export async function main(ns: NS): Promise<void> {
         );
 
         const maxRam = ns.getServerMaxRam(server);
-        const maxPossibleThreads = Math.floor(maxRam / workerRam);
+        if (maxRam < workerRam) continue;
 
-        if (maxPossibleThreads === 0) continue;
+        let threadsToRun = 0;
+        let shouldStart = false;
 
         if (runningWorker) {
-          if (
-            runningWorker.args[0] !== fallbackTarget ||
-            runningWorker.threads < maxPossibleThreads
-          ) {
+          const ramWithoutWorker = maxRam - ns.getServerUsedRam(server) + (runningWorker.threads * workerRam);
+          const maxPossibleThreadsNow = Math.floor(ramWithoutWorker / workerRam);
+
+          if (runningWorker.args[0] !== fallbackTarget || runningWorker.threads < maxPossibleThreadsNow) {
             ns.scriptKill(workerScript, server);
-          } else {
-            continue;
+            threadsToRun = maxPossibleThreadsNow;
+            shouldStart = true;
           }
+        } else {
+          const currentFreeRam = maxRam - ns.getServerUsedRam(server);
+          threadsToRun = Math.floor(currentFreeRam / workerRam);
+          shouldStart = true;
         }
 
-        const freeRam = maxRam - ns.getServerUsedRam(server);
-        const threads = Math.floor(freeRam / workerRam);
-        if (threads > 0) ns.exec(workerScript, server, threads, fallbackTarget);
+        if (shouldStart && threadsToRun > 0) {
+          ns.exec(workerScript, server, threadsToRun, fallbackTarget);
+        }
       }
 
       const homeShouldRunWorker = !["REP", "TRAIN", "CORP", "CRIME"].includes(
@@ -578,8 +570,6 @@ export async function main(ns: NS): Promise<void> {
   }
 }
 
-// (Hier folgen die Hilfsfunktionen buildReputationCache, findNextFaction, manageMicroservices, findBestFallbackTarget und applyToAllMegacorps unverändert...)
-
 function buildReputationCache(ns: NS): void {
   const ownedAugs = ns.singularity.getOwnedAugmentations(true);
 
@@ -613,7 +603,6 @@ function findNextFaction(ns: NS, p: Player): FactionName | null {
       };
     })
     .filter((f) => f.missingRep > 0)
-    // Sortiere primär nach Priorität, sekundär nach fehlender Reputation
     .sort((a, b) => {
       if (a.priority !== b.priority) {
         return a.priority - b.priority;

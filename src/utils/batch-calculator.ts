@@ -18,7 +18,7 @@ export function calculateBatch(
   ns: NS,
   targetName: string,
   hackPercent = 0.04,
-  spacer = 40,
+  spacer = 40
 ): BatchPlan | null {
   if (!ns.formulas || !ns.formulas.hacking) return null;
 
@@ -34,18 +34,15 @@ export function calculateBatch(
   const pctPerThread = ns.formulas.hacking.hackPercent(server, player);
   if (pctPerThread <= 0) return null;
 
-  // FIX: Wenn 1 Thread bereits MEHR klaut als die erlaubte Gier, 
-  // ist der Server/RAM nicht bereit für diesen Gier-Faktor.
   let hackThreads = Math.floor(hackPercent / pctPerThread);
   if (hackThreads < 1) return null; 
 
-  const hackSecIncrease = ns.hackAnalyzeSecurity(hackThreads, targetName);
+  // KORREKTUR: Veraltete Signatur entfernt. hackAnalyzeSecurity nutzt nur noch Threads.
+  const hackSecIncrease = ns.hackAnalyzeSecurity(hackThreads);
   const weaken1Threads = Math.ceil(hackSecIncrease / 0.05);
 
-  // Zustand nach dem Hack simulieren
   server.moneyAvailable = server.moneyMax * (1 - hackThreads * pctPerThread);
 
-  // Perfekte Berechnung der Grow-Threads via Formulas
   const growThreads = ns.formulas.hacking.growThreads(server, player, server.moneyMax);
   const growSecIncrease = ns.growthAnalyzeSecurity(growThreads, targetName);
   const weaken2Threads = Math.ceil(growSecIncrease / 0.05);
