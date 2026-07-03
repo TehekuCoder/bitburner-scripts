@@ -157,15 +157,40 @@ export async function main(ns: NS): Promise<void> {
       hasFormulas && homeMax >= 256 && eligiblePServers.length > 0;
 
     // ======================================================================
-    // --- 🔥 FIX: OPTIMIERTES WORKER DEPLOYMENT & GEWALTENTRENNUNG ---
+    // --- 🧹 CLEANUP-TRIGGER: DYNAMIC FLEET EVAKUIERUNG ---
     // ======================================================================
     const isDispatcherRunning = ns.isRunning(scripts.dispatcher, "home");
 
-    // 🧹 NEU: Wenn Fleet/Dispatcher die Kontrolle übernimmt, säubern wir 'home' von alten work.js Altlasten
-    if (isDispatcherRunning && ns.isRunning(scripts.worker, "home")) {
-      ns.print("🧹 [Kernel] Bereinige veralteten Early-Game-Modus (work.js) von 'home'...");
-      ns.scriptKill(scripts.worker, "home");
+    // Sobald die Flotte bereit ist ODER der Dispatcher bereits das Kommando hat,
+    // säubern wir die High-Performance-Zonen (home + P-Server) radikal von Basis-Workern.
+    if (isFleetReady || isDispatcherRunning) {
+      // 1. Home-Server säubern (sowohl work.js als auch xp-grind.js)
+      if (
+        ns.isRunning(scripts.worker, "home") ||
+        ns.isRunning(scripts.xpfarm, "home")
+      ) {
+        ns.print(
+          "🧹 [Kernel] ENGINE-MODE: DYNAMIC FLEET zündet. Säubere 'home'...",
+        );
+        ns.scriptKill(scripts.worker, "home");
+        ns.scriptKill(scripts.xpfarm, "home");
+      }
+
+      // 2. Alle P-Server evakuieren, damit sie exklusiv dem Batcher gehören
+      for (const pServer of pServers) {
+        if (
+          ns.isRunning(scripts.worker, pServer) ||
+          ns.isRunning(scripts.xpfarm, pServer)
+        ) {
+          ns.print(
+            `🧹 [Kernel] Befreie P-Server '${pServer}' von Early-Game-Altlasten...`,
+          );
+          ns.scriptKill(scripts.worker, pServer);
+          ns.scriptKill(scripts.xpfarm, pServer);
+        }
+      }
     }
+    // ======================================================================
 
     for (const node of allNodes) {
       if (ns.hasRootAccess(node)) {
@@ -247,16 +272,14 @@ function manageSuites(
       );
       ns.scriptKill(targetHacknetScript, "home");
     }
-  }
-  else if (!hasBrute) {
+  } else if (!hasBrute) {
     if (ns.isRunning(targetHacknetScript, "home")) {
       ns.print(
         "⏳ [KERNEL] Blockiere Hacknet: Spare Geld für TOR / BruteSSH.exe.",
       );
       ns.scriptKill(targetHacknetScript, "home");
     }
-  }
-  else {
+  } else {
     if (
       ns.fileExists(targetHacknetScript, "home") &&
       !ns.isRunning(targetHacknetScript, "home")
