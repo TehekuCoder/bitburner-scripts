@@ -6,12 +6,14 @@ import {
   BotStrategy,
   patchState,
 } from "./state-manager.js";
-// 🔥 OPTIMIERUNG: getAllServers aus deiner Netzwerk-Library importieren
 import { breakAndInfectNetwork, getAllServers } from "../lib/network.js";
+// 🔥 NEU: Import der BitNode-Multiplikatoren
+import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
 
 interface FactionConfig {
   name: FactionName;
   minStat: number;
+  priority: number;
 }
 
 const COMBAT_STATS: (keyof Player["skills"])[] = [
@@ -35,27 +37,38 @@ const MEGACORPS: Record<string, CompanyName> = {
 };
 
 const HACKING_FACTIONS: FactionConfig[] = [
-  { name: "CyberSec" as FactionName, minStat: 0 },
-  { name: "Silhouette" as FactionName, minStat: 0 },
-  { name: "Tian Di Hui" as FactionName, minStat: 0 },
-  { name: "Netburners" as FactionName, minStat: 0 },
-  { name: "NiteSec" as FactionName, minStat: 0 },
-  { name: "The Black Hand" as FactionName, minStat: 0 },
-  { name: "BitRunners" as FactionName, minStat: 0 },
-  { name: "Sector-12" as FactionName, minStat: 0 },
-  { name: "Aevum" as FactionName, minStat: 0 },
-  { name: "Volhaven" as FactionName, minStat: 0 },
-  { name: "Chongqing" as FactionName, minStat: 0 },
-  { name: "New Tokyo" as FactionName, minStat: 0 },
-  { name: "Ishima" as FactionName, minStat: 0 },
-  { name: "Slum Snakes" as FactionName, minStat: 30 },
-  { name: "Tetrads" as FactionName, minStat: 75 },
-  { name: "The Syndicate" as FactionName, minStat: 200 },
-  { name: "The Dark Army" as FactionName, minStat: 300 },
-  { name: "Speakers for the Dead" as FactionName, minStat: 300 },
-  { name: "The Covenant" as FactionName, minStat: 850 },
-  { name: "Illuminati" as FactionName, minStat: 1200 },
-  { name: "Daedalus" as FactionName, minStat: 1500 },
+  // --- PHASE 1: Early Game & Essenzielle Hacking-Augments ---
+  { name: "CyberSec" as FactionName, minStat: 0, priority: 1 },
+  { name: "Tian Di Hui" as FactionName, minStat: 0, priority: 2 },
+  { name: "NiteSec" as FactionName, minStat: 0, priority: 3 },
+  { name: "Netburners" as FactionName, minStat: 0, priority: 4 }, 
+
+  // --- PHASE 2: Mid-Game Hacking & Story-Server ---
+  { name: "The Black Hand" as FactionName, minStat: 0, priority: 5 },
+  { name: "BitRunners" as FactionName, minStat: 0, priority: 6 },
+  
+  // --- PHASE 3: Die besten Stadt-Fraktionen ---
+  { name: "Volhaven" as FactionName, minStat: 0, priority: 7 }, // Beste Stadt für Hacking!
+  { name: "Aevum" as FactionName, minStat: 0, priority: 8 },
+  { name: "Sector-12" as FactionName, minStat: 0, priority: 9 },
+  { name: "New Tokyo" as FactionName, minStat: 0, priority: 10 },
+  { name: "Ishima" as FactionName, minStat: 0, priority: 11 },
+  { name: "Chongqing" as FactionName, minStat: 0, priority: 12 },
+
+  // --- PHASE 4: Combat & Crime Basis (Vorbereitung für Late-Game Syndikate) ---
+  { name: "Slum Snakes" as FactionName, minStat: 30, priority: 13 },
+  { name: "Tetrads" as FactionName, minStat: 75, priority: 14 },
+
+  // --- PHASE 5: Corporate & Elite-Syndikate ---
+  { name: "Silhouette" as FactionName, minStat: 0, priority: 15 }, 
+  { name: "The Syndicate" as FactionName, minStat: 200, priority: 16 },
+  { name: "The Dark Army" as FactionName, minStat: 300, priority: 17 },
+  { name: "Speakers for the Dead" as FactionName, minStat: 300, priority: 18 },
+
+  // --- PHASE 6: End-Game (Die teuersten Augments & Red Pill) ---
+  { name: "The Covenant" as FactionName, minStat: 850, priority: 19 },
+  { name: "Illuminati" as FactionName, minStat: 1200, priority: 20 },
+  { name: "Daedalus" as FactionName, minStat: 1500, priority: 21 },
 ];
 
 const repCache: Record<string, number> = {};
@@ -74,7 +87,12 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  ns.print("⚙️ [Dispatcher] Initialisiere Augmentations-Cache...");
+  ns.print("⚙️ [Dispatcher] Initialisiere Multiplikatoren und Cache...");
+
+  // 🔥 OPTIMIERUNG: Laden der BitNode-Multiplikatoren (Fallback auf Defaults)
+  const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
+
+  buildReputationCache(ns);
 
   const BATCHER_MIN_RAM = 256;
   const BATCHER_MIN_PSERV_RAM = 64;
@@ -86,9 +104,14 @@ export async function main(ns: NS): Promise<void> {
 
   let cachedFallbackTarget = "n00dles";
   let lastFallbackUpdate = 0;
+  let lastCacheRefresh = Date.now();
 
   while (true) {
-    buildReputationCache(ns);
+    if (Date.now() - lastCacheRefresh > 900_000) {
+      buildReputationCache(ns);
+      lastCacheRefresh = Date.now();
+    }
+
     breakAndInfectNetwork(ns);
 
     let mode: BotStrategy = "MONEY";
@@ -119,14 +142,19 @@ export async function main(ns: NS): Promise<void> {
       homeMaxRam >= BATCHER_MIN_RAM &&
       eligiblePServers.length > 0;
 
-    // --- 1. STRATEGIE-MATRIX ---
+    // ====================================================================================
+    // --- 1. DYNAMISCHE STRATEGIE-MATRIX (INTELLIGENT DURCH BN-MULTS) ---
+    // ====================================================================================
     const playerMoney = p.money;
-    const MONEY_THRESHOLD_FOR_REP = 10_000_000;
+
+    // 💡 MULTI-TUNE 1: Wenn FactionRep-Gewinn geringer ist, brauchen wir mehr Geld für Spenden/Infrastruktur, bevor wir grinden
+    const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
+    const MONEY_THRESHOLD_FOR_REP =
+      factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
 
     const hasEssentialTools =
       ns.fileExists("BruteSSH.exe", "home") &&
       ns.fileExists("FTPCrack.exe", "home");
-
     const isReadyForFactionGrind = playerMoney > MONEY_THRESHOLD_FOR_REP;
 
     const factionToWorkFor =
@@ -135,9 +163,14 @@ export async function main(ns: NS): Promise<void> {
         ? findNextFaction(ns, p)
         : null;
 
+    // 💡 MULTI-TUNE 2: Überprüfung von Crime-Multiplikatoren (z.B. für BN8)
+    const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
+
     if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
-    } else if (homeMaxRam < 256) {
+    }
+    // Wenn Crime extrem lukrativ ist (BN8) und wir noch keinen Batcher haben, bleiben wir länger im Crime-Loop!
+    else if (homeMaxRam < 256 || (crimeMoneyMult > 5 && !canRunBatcher)) {
       mode = "CRIME";
     } else if (factionToWorkFor) {
       mode = "REP";
@@ -157,14 +190,18 @@ export async function main(ns: NS): Promise<void> {
         );
 
         const hasEnoughKarma = ns.heart.break() <= -22;
-        const hasEnoughMoney = p.money >= 15_000_000;
 
         if (needsSilhouette && (!isExecutive || !hasEnoughKarma)) {
           if (!hasEnoughKarma) {
             mode = "CRIME";
           } else {
             mode = "CORP";
-            targetCompany = Object.values(MEGACORPS)[0];
+            const currentCorpJob = Object.keys(p.jobs).find(
+              (corp) => MEGACORPS[corp] !== undefined,
+            );
+            targetCompany = currentCorpJob
+              ? MEGACORPS[currentCorpJob]
+              : Object.values(MEGACORPS)[0];
           }
         } else {
           const missingCorpFaction = HACKING_FACTIONS.find(
@@ -284,7 +321,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // --- 3. UI DASHBOARD UPDATE & FILLER CONFIG ANPASSUNG ---
+    // --- 3. UI DASHBOARD UPDATE ---
     let generatedBar = "";
     if (["REP", "CORP", "TRAIN"].includes(mode) && targetVal > 0) {
       const pct = ((currentVal / targetVal) * 100).toFixed(1);
@@ -294,7 +331,10 @@ export async function main(ns: NS): Promise<void> {
     } else if (mode === "XP_SPRINT") {
       generatedBar = "👶 Early Game: XP SPRINT (Hacking < 50)";
     } else if (mode === "CRIME") {
-      generatedBar = "🥷 Mid-Game-Crime Loop für stabiles Einkommen";
+      generatedBar =
+        crimeMoneyMult > 5
+          ? "🥷 BN-Synergie: Dauerhafter Crime Loop aktiv (Mörderischer Profit)"
+          : "🥷 Mid-Game-Crime Loop für stabiles Einkommen";
     } else if (mode === "KILLS") {
       generatedBar = `💀 Eliminierungs-Aufträge aktiv (${currentVal}/${targetVal} Kills)`;
     } else if (mode === "MONEY" && !canRunBatcher) {
@@ -350,14 +390,12 @@ export async function main(ns: NS): Promise<void> {
       (mode === "CRIME" || mode === "XP_SPRINT" || mode === "KILLS");
 
     if (isEarlyGameCrime) {
-      if (ns.isRunning("tasks/faction-shopping.js", "home")) {
+      if (ns.isRunning("tasks/faction-shopping.js", "home"))
         ns.scriptKill("tasks/faction-shopping.js", "home");
-      }
       const rogueScripts = ["tasks/hacknet.js", "tasks/hacknet-early.js"];
       for (const script of rogueScripts) {
-        if (ns.fileExists(script, "home") && ns.isRunning(script, "home")) {
+        if (ns.fileExists(script, "home") && ns.isRunning(script, "home"))
           ns.scriptKill(script, "home");
-        }
       }
     } else {
       if (
@@ -368,32 +406,24 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // ====================================================================================
-    // --- 4. STRATEGIE-AWARE WORKER ALLOKATION (GEWALTENTRENNUNG) ---
-    // ====================================================================================
+    // --- 4. STRATEGIE-AWARE WORKER ALLOKATION ---
     const allNetworkServers: string[] = getAllServers(ns);
-
     const activeStrategy = currentState?.strategy || "MONEY";
-    const batcherTarget = currentState?.batcherTarget || null; // 🎯 Liest das geschützte Batcher-Ziel
+    const batcherTarget = currentState?.batcherTarget || null;
 
-    // Dynamische Skript-Weiche für XP_SPRINT
     const workerScript =
       activeStrategy === "XP_SPRINT" ? "tasks/xp-grind.js" : "tasks/work.js";
     const obsoleteScript =
       activeStrategy === "XP_SPRINT" ? "tasks/work.js" : "tasks/xp-grind.js";
-
     const workerRam = ns.getScriptRam(workerScript, "home");
 
-    // 🔥 Berechnet das optimale Ziel für die Flotte und ignoriert dabei das Batcher-Ziel
     const fallbackTarget = findBestFallbackTarget(
       ns,
       p.skills.hacking,
       batcherTarget,
     );
 
-    // --------------------------------------------------------------------------------
-    // KLASSE A: Die Grinding-Zwerge (Gehackte Server, die NICHT dir gehören)
-    // --------------------------------------------------------------------------------
+    // KLASSE A: Grinding-Flotte
     const infectedServers = allNetworkServers.filter(
       (s: string) =>
         s !== "home" &&
@@ -428,18 +458,12 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-      const usedRam = ns.getServerUsedRam(server);
-      const freeRam = maxRam - usedRam;
+      const freeRam = maxRam - ns.getServerUsedRam(server);
       const threads = Math.floor(freeRam / workerRam);
-
-      if (threads > 0) {
-        ns.exec(workerScript, server, threads, fallbackTarget);
-      }
+      if (threads > 0) ns.exec(workerScript, server, threads, fallbackTarget);
     }
 
-    // --------------------------------------------------------------------------------
-    // KLASSE B: Die Heavy-Lifter (Home & Gekaufte Server)
-    // --------------------------------------------------------------------------------
+    // KLASSE B: Heavy-Lifter (Home & Gekaufte Server)
     if (ns.isRunning(obsoleteScript, "home"))
       ns.scriptKill(obsoleteScript, "home");
     for (const server of pServers) {
@@ -456,17 +480,13 @@ export async function main(ns: NS): Promise<void> {
       }
 
       if (!ns.isRunning("core/sys-batcher.js", "home")) {
-        if (ns.isRunning("utils/fill-ram.js", "home")) {
+        if (ns.isRunning("utils/fill-ram.js", "home"))
           ns.scriptKill("utils/fill-ram.js", "home");
-        }
-        if (getFreeRam() > 15) {
-          ns.run("core/sys-batcher.js", 1);
-        }
+        if (getFreeRam() > 15) ns.run("core/sys-batcher.js", 1);
       }
     } else {
-      if (ns.isRunning("core/sys-batcher.js", "home")) {
+      if (ns.isRunning("core/sys-batcher.js", "home"))
         ns.scriptKill("core/sys-batcher.js", "home");
-      }
 
       for (const server of pServers) {
         ns.scp(workerScript, server, "home");
@@ -491,13 +511,9 @@ export async function main(ns: NS): Promise<void> {
           }
         }
 
-        const usedRam = ns.getServerUsedRam(server);
-        const freeRam = maxRam - usedRam;
+        const freeRam = maxRam - ns.getServerUsedRam(server);
         const threads = Math.floor(freeRam / workerRam);
-
-        if (threads > 0) {
-          ns.exec(workerScript, server, threads, fallbackTarget);
-        }
+        if (threads > 0) ns.exec(workerScript, server, threads, fallbackTarget);
       }
 
       const homeShouldRunWorker = !["REP", "TRAIN", "CORP", "CRIME"].includes(
@@ -536,13 +552,13 @@ export async function main(ns: NS): Promise<void> {
             const homeThreads = Math.floor(
               (homeFreeRam - reservedRam) / workerRam,
             );
-            if (homeThreads > 0) {
+            if (homeThreads > 0)
               ns.run(workerScript, homeThreads, fallbackTarget);
-            }
           }
         }
       }
     }
+
     const isRamReady = homeMaxRam >= 256 || maxPservRam >= 64;
     const executionAllowed =
       !hasFormulas || ns.isRunning("core/sys-batcher.js", "home");
@@ -561,6 +577,9 @@ export async function main(ns: NS): Promise<void> {
     await ns.sleep(2000);
   }
 }
+
+// (Hier folgen die Hilfsfunktionen buildReputationCache, findNextFaction, manageMicroservices, findBestFallbackTarget und applyToAllMegacorps unverändert...)
+
 function buildReputationCache(ns: NS): void {
   const ownedAugs = ns.singularity.getOwnedAugmentations(true);
 
@@ -582,16 +601,25 @@ function buildReputationCache(ns: NS): void {
 }
 
 function findNextFaction(ns: NS, p: Player): FactionName | null {
-  const activeFactionJobs = HACKING_FACTIONS.filter((f) =>
-    p.factions.includes(f.name),
-  )
+  const activeFactionJobs = HACKING_FACTIONS
+    .filter((f) => p.factions.includes(f.name))
     .map((f) => {
       const repNeeded = repCache[f.name] || 0;
       const currentRep = ns.singularity.getFactionRep(f.name);
-      return { name: f.name, missingRep: repNeeded - currentRep };
+      return { 
+        name: f.name, 
+        priority: f.priority,
+        missingRep: Math.max(0, repNeeded - currentRep) 
+      };
     })
     .filter((f) => f.missingRep > 0)
-    .sort((a, b) => a.missingRep - b.missingRep);
+    // Sortiere primär nach Priorität, sekundär nach fehlender Reputation
+    .sort((a, b) => {
+      if (a.priority !== b.priority) {
+        return a.priority - b.priority;
+      }
+      return a.missingRep - b.missingRep;
+    });
 
   return activeFactionJobs.length > 0 ? activeFactionJobs[0].name : null;
 }
@@ -619,23 +647,14 @@ function manageMicroservices(ns: NS, currentMode: string): void {
     !ns.isRunning(targetScript, "home") &&
     ns.fileExists(targetScript, "home")
   ) {
-    const maxRam = ns.getServerMaxRam("home");
-    const usedRam = ns.getServerUsedRam("home");
-    const freeRam = maxRam - usedRam;
+    const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
     const requiredRam = ns.getScriptRam(targetScript, "home");
 
     if (freeRam >= requiredRam) {
-      const pid = ns.run(targetScript, 1);
-      if (pid === 0) {
-        ns.print(
-          `🛑 [Dispatcher] Fehler beim Start von ${targetScript} (PID 0).`,
-        );
-      } else {
-        ns.print(`🚀 [Dispatcher] ${targetScript} erfolgreich gestartet.`);
-      }
+      ns.run(targetScript, 1);
     } else {
       ns.print(
-        `⚠️ [Dispatcher] RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB. Frei: ${freeRam.toFixed(2)} GB.`,
+        `⚠️ [Dispatcher] RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB.`,
       );
     }
   }
@@ -657,24 +676,21 @@ export function findBestFallbackTarget(
     if (visited.has(current)) continue;
     visited.add(current);
 
-    // Nachbarn scannen (muss VOR den continues passieren, damit das Netzwerk weiter aufgedeckt wird)
     const neighbors = ns.scan(current);
     for (const neighbor of neighbors) {
-      if (!visited.has(neighbor)) {
-        queue.push(neighbor);
-      }
+      if (!visited.has(neighbor)) queue.push(neighbor);
     }
 
-    // Sicherheits-Guards
-    if (current === "home" || !ns.hasRootAccess(current)) continue;
-
-    // 🔥 NEU: Wenn dieser Server das aktuelle Batcher-Ziel ist, überspringen wir ihn für die Worker!
-    if (current === blacklistTarget) continue;
+    if (
+      current === "home" ||
+      !ns.hasRootAccess(current) ||
+      current === blacklistTarget
+    )
+      continue;
 
     const serverMaxMoney = ns.getServerMaxMoney(current);
     const reqHacking = ns.getServerRequiredHackingLevel(current);
 
-    // 🔥 FIX: 'currentHackingLevel' zu 'hackingLevel' korrigiert, passend zur Funktionssignatur
     if (serverMaxMoney > maxMoney && reqHacking <= hackingLevel) {
       bestTarget = current;
       maxMoney = serverMaxMoney;
@@ -686,12 +702,7 @@ export function findBestFallbackTarget(
 function applyToAllMegacorps(ns: NS, p: Player): void {
   for (const corpName of Object.values(MEGACORPS)) {
     if (!p.jobs[corpName]) {
-      const success = ns.singularity.applyToCompany(corpName, "Software");
-      if (success) {
-        ns.print(
-          `💼 [Auto-Career] Einstiegsjob bei ${corpName} erfolgreich angenommen.`,
-        );
-      }
+      ns.singularity.applyToCompany(corpName, "Software");
     }
   }
 }

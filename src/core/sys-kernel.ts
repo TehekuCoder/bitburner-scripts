@@ -1,6 +1,7 @@
 import { NS, Player } from "@ns";
-import { loadState, saveState, patchState, BotState } from "./state-manager.js";
+import { loadState, patchState, BotState } from "./state-manager.js";
 import { getAllServers, breakAndInfectNetwork } from "../lib/network.js";
+import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js"; 
 
 interface ScriptList {
   worker: string;
@@ -36,32 +37,24 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
 
-  ns.print("🚀 [Kernel] Starte Subsysteme...");
+  // ======================================================================
+  // --- 🔄 BOOT-SEQUENCE: ENVIRONMENT ANALYSIS ---
+  // ======================================================================
+  try {
+    ns.print("🔄 [BOOT] Analysiere BitNode-Umgebung via Source-File 5...");
+    const realMults = ns.getBitNodeMultipliers();
+    ns.write("bn-multipliers.txt", JSON.stringify(realMults, null, 2), "w");
+    ns.print("✅ [BOOT] bn-multipliers.txt erfolgreich generiert.");
+  } catch {
+    ns.print("⚠️ [BOOT_WARN] Source-File 5 nicht aktiv. Nutze Failsafe-Matrix.");
+    ns.write("bn-multipliers.txt", JSON.stringify(DEFAULT_MULTIPLIERS, null, 2), "w");
+  }
+
+  const bnMults = loadBnMults(ns);
+  ns.print("🚀 [Kernel] Subsysteme werden initialisiert...");
 
   if (!ns.scriptRunning("sys-hud.ts", "home")) {
     ns.exec("sys-hud.ts", "home", 1);
-  }
-
-  let bnMults: Record<string, number> = {
-    ServerMaxMoney: 1.0,
-    HacknetNodeMoney: 1.0,
-    CrimeMoney: 1.0,
-    CompanyWorkMoney: 1.0,
-    FactionWorkRepGain: 1.0,
-    ScriptHackMoney: 1.0,
-  };
-
-  if (ns.fileExists("bn-multipliers.txt", "home")) {
-    try {
-      const fileContent = ns.read("bn-multipliers.txt");
-      if (fileContent) {
-        bnMults = { ...bnMults, ...JSON.parse(fileContent) };
-      }
-    } catch {
-      ns.print(
-        "⚠️ [KERNEL] Fehler beim Parsen der bn-multipliers.txt. Failsafe aktiv.",
-      );
-    }
   }
 
   let lastRootCount = -1;
@@ -75,51 +68,52 @@ export async function main(ns: NS): Promise<void> {
     lastRootCount = currentRootCount;
 
     const homeMax = ns.getServerMaxRam("home");
-
+    const player = ns.getPlayer();
     const currentState = loadState(ns);
+    
     let activeStrategy = currentState?.strategy || "MONEY";
     let activeProgressBar = currentState?.progressBar || "";
 
-    // --- 🧠 DYNAMISCHE STRATEGIE-MATRIX ---
-    if (bnMults.ServerMaxMoney === 0) {
+    // ======================================================================
+    // --- 🧠 DYNAMISCHE EFFIZIENZ-MATRIX (KORREKTUR-LOGIK) ---
+    // ======================================================================
+    
+    // 1. Totale Hacking-Insolvenz (z.B. BitNode 8 oder extreme Strafen)
+    const hackingEfficiency = bnMults.ServerMaxMoney * bnMults.ScriptHackMoneyGain;
+    
+    if (hackingEfficiency === 0) {
       activeStrategy = "XP_SPRINT";
-      activeProgressBar =
-        "📉 BN-Sonderregel: Kein Server-Geld! Wechsle auf XP-Sprint.";
-      patchState(ns, {
-        strategy: activeStrategy,
-        progressBar: activeProgressBar,
-      });
-    } else if (activeStrategy === "MONEY") {
-      const player = ns.getPlayer();
-      const combatAvg =
-        (player.skills.strength +
-          player.skills.defense +
-          player.skills.dexterity +
-          player.skills.agility) /
-        4;
-
-      if (bnMults.CompanyWorkMoney > 1.0 && combatAvg >= 30) {
+      activeProgressBar = "📉 BN-Sonderregel: Hacking wirft kein Geld ab! Fokus auf XP-Sprint.";
+    } 
+    // 2. Temporärer Early-Game Crime-Wechsel bei extrem schwachem Hacking-Yield
+    else if (activeStrategy === "MONEY" && hackingEfficiency < 0.2 && player.money < 50_000_000) {
+      if (bnMults.CrimeMoney > 0.5) {
+        activeStrategy = "CRIME";
+        activeProgressBar = `🥷 Hacking ineffizient (${(hackingEfficiency * 100).toFixed(0)}%). Generiere Startkapital über Verbrechen.`;
+      }
+    }
+    // 3. Strategischer Wechsel zu hochbezahlter Firmenarbeit (Company Work)
+    else if (activeStrategy === "MONEY" || activeStrategy === "CRIME") {
+      const combatAvg = (player.skills.strength + player.skills.defense + player.skills.dexterity + player.skills.agility) / 4;
+      
+      if (bnMults.CompanyWorkMoney > 1.2 && combatAvg >= 30) {
         activeStrategy = "CORP";
-        activeProgressBar = `🏢 BN-Spezial: Nutze hocheffiziente Firmen-Arbeit (${(bnMults.CompanyWorkMoney * 100).toFixed(0)}%)`;
-        patchState(ns, {
-          strategy: activeStrategy,
-          progressBar: activeProgressBar,
-        });
-      } else if (!activeProgressBar || activeProgressBar === "") {
-        activeProgressBar = `💻 Hacking-Fleet aktiv (Ressourcen optimal genutzt)`;
-        patchState(ns, { progressBar: activeProgressBar });
+        activeProgressBar = `🏢 BN-Spezial: Firmen-Arbeit stark skaliert (${(bnMults.CompanyWorkMoney * 100).toFixed(0)}%).`;
+      } else if (!activeProgressBar || activeProgressBar.startsWith("🥷") || activeProgressBar.startsWith("📉")) {
+        activeStrategy = "MONEY";
+        activeProgressBar = `💻 Hacking-Fleet aktiv (Netzwerk-Ressourcen optimal genutzt)`;
       }
     }
 
-    patchState(ns, {});
+    // Synchronisiere den ermittelten Zustand mit dem globalen State
+    patchState(ns, {
+      strategy: activeStrategy,
+      progressBar: activeProgressBar,
+    });
 
-    const player: Player = ns.getPlayer();
-    const bestTarget: string = findBestTarget(
-      ns,
-      allNodes,
-      player,
-      bnMults.ServerMaxMoney,
-    );
+    // Target-Validierung unter Einbeziehung des MaxMoney-Multiplikators
+    const bestTarget: string = findBestTarget(ns, allNodes, player, bnMults.ServerMaxMoney);
+    
     const localStateSnapshot: BotState = {
       strategy: activeStrategy,
       targetFaction: currentState?.targetFaction,
@@ -129,97 +123,73 @@ export async function main(ns: NS): Promise<void> {
       lastUpdate: Date.now(),
       playerHacking: ns.getHackingLevel(),
     };
+
+    // Subsysteme steuern (reagiert intern auf Hacknet & Stock Market Mults)
     manageSuites(ns, scripts, localStateSnapshot, triggerBackdoor, bnMults);
 
-    if (
-      homeMax >= 256 &&
-      ns.fileExists(scripts.dispatcher, "home") &&
-      !ns.isRunning(scripts.dispatcher, "home")
-    ) {
+    // ======================================================================
+    // --- 🚀 ORCHESTRIERUNG DER SUB-MANAGER ---
+    // ======================================================================
+    if (homeMax >= 256 && ns.fileExists(scripts.dispatcher, "home") && !ns.isRunning(scripts.dispatcher, "home")) {
       ns.print("👑 Overlord: Starte zentralen System-Dispatcher...");
       ns.exec(scripts.dispatcher, "home", 1);
     }
 
-    if (
-      ns.fileExists(scripts.infra, "home") &&
-      !ns.isRunning(scripts.infra, "home")
-    ) {
+    if (ns.fileExists(scripts.infra, "home") && !ns.isRunning(scripts.infra, "home")) {
       ns.print("🛠️ Overlord: Starte Infrastruktur-Manager...");
       ns.exec(scripts.infra, "home", 1);
     }
 
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
     const pServers = ns.cloud.getServerNames();
-    const eligiblePServers = pServers.filter(
-      (s) => ns.getServerMaxRam(s) >= 64,
-    );
-    const isFleetReady =
-      hasFormulas && homeMax >= 256 && eligiblePServers.length > 0;
+    const eligiblePServers = pServers.filter((s) => ns.getServerMaxRam(s) >= 64);
+    const isFleetReady = hasFormulas && homeMax >= 256 && eligiblePServers.length > 0;
+    const isDispatcherRunning = ns.isRunning(scripts.dispatcher, "home");
 
     // ======================================================================
     // --- 🧹 CLEANUP-TRIGGER: DYNAMIC FLEET EVAKUIERUNG ---
     // ======================================================================
-    const isDispatcherRunning = ns.isRunning(scripts.dispatcher, "home");
-
-    // Sobald die Flotte bereit ist ODER der Dispatcher bereits das Kommando hat,
-    // säubern wir die High-Performance-Zonen (home + P-Server) radikal von Basis-Workern.
     if (isFleetReady || isDispatcherRunning) {
-      // 1. Home-Server säubern (sowohl work.js als auch xp-grind.js)
-      if (
-        ns.isRunning(scripts.worker, "home") ||
-        ns.isRunning(scripts.xpfarm, "home")
-      ) {
-        ns.print(
-          "🧹 [Kernel] ENGINE-MODE: DYNAMIC FLEET zündet. Säubere 'home'...",
-        );
+      if (ns.isRunning(scripts.worker, "home") || ns.isRunning(scripts.xpfarm, "home")) {
+        ns.print("🧹 [Kernel] ENGINE-MODE: DYNAMIC FLEET aktiv. Säubere 'home'...");
         ns.scriptKill(scripts.worker, "home");
         ns.scriptKill(scripts.xpfarm, "home");
       }
 
-      // 2. Alle P-Server evakuieren, damit sie exklusiv dem Batcher gehören
       for (const pServer of pServers) {
-        if (
-          ns.isRunning(scripts.worker, pServer) ||
-          ns.isRunning(scripts.xpfarm, pServer)
-        ) {
-          ns.print(
-            `🧹 [Kernel] Befreie P-Server '${pServer}' von Early-Game-Altlasten...`,
-          );
+        if (ns.isRunning(scripts.worker, pServer) || ns.isRunning(scripts.xpfarm, pServer)) {
+          ns.print(`🧹 [Kernel] Befreie P-Server '${pServer}' von Early-Game-Altlasten...`);
           ns.scriptKill(scripts.worker, pServer);
           ns.scriptKill(scripts.xpfarm, pServer);
         }
       }
     }
-    // ======================================================================
 
+    // ======================================================================
+    // --- 📡 WORKER DEPLOYMENT (NUR WENN DISPATCHER NOCH NICHT ÜBERNOMMEN HAT) ---
+    // ======================================================================
     for (const node of allNodes) {
       if (ns.hasRootAccess(node)) {
-        // Wenn der Dispatcher läuft, zieht sich der Kernel komplett aus dem
-        // Flotten-Management zurück. Der Dispatcher kontrolliert ab jetzt alle Worker!
-        if (isDispatcherRunning) {
+        if (isDispatcherRunning) continue; // Dispatcher hat volle Kontrolle über RAM-Infrastruktur
+
+        // Verhindere Thread-Verschwendung auf Home, wenn der Spieler manuell trainiert/arbeitet
+        if (node === "home" && ["REP", "TRAIN", "CORP", "CRIME"].includes(activeStrategy)) {
           continue;
         }
 
-        if (
-          node === "home" &&
-          ["REP", "TRAIN", "CORP", "CRIME"].includes(activeStrategy)
-        ) {
-          continue;
-        }
+        let activeScript = activeStrategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
 
-        let activeScript =
-          activeStrategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
-
-        let ramBuffer = 0;
+        // --- 📊 DYNAMISCHER RAM-BUFFER (Abhängig von ServerWeakenRate & Strategie) ---
+        let ramBuffer = 8;
         if (node === "home") {
-          if (
-            ["CRIME", "REP", "TRAIN", "CORP", "XP_SPRINT"].includes(
-              activeStrategy,
-            )
-          ) {
-            ramBuffer = 24;
+          // Wenn das Abschwächen der Server extrem träge ist (WeakenRate niedrig), 
+          // halten wir mehr RAM auf Home frei, um System-Deadlocks zu blockieren.
+          const weakenPenalty = bnMults.ServerWeakenRate < 0.5 ? 16 : 0;
+          
+          if (["CRIME", "REP", "TRAIN", "CORP", "XP_SPRINT"].includes(activeStrategy)) {
+            ramBuffer = 24 + weakenPenalty;
           } else {
-            ramBuffer = 8;
+            ramBuffer = 8 + weakenPenalty;
           }
           ramBuffer = Math.min(ramBuffer, homeMax * 0.5);
         }
@@ -227,7 +197,6 @@ export async function main(ns: NS): Promise<void> {
         deployWorker(ns, node, activeScript, bestTarget, ramBuffer);
       }
     }
-    // ======================================================================
 
     const freshStateForDashboard = loadState(ns);
     drawSysKernelDashboard(
@@ -236,28 +205,28 @@ export async function main(ns: NS): Promise<void> {
       bestTarget,
       allNodes,
       isFleetReady,
-      bnMults.ServerMaxMoney,
+      bnMults,
     );
     await ns.sleep(2000);
   }
 }
+
+// ======================================================================
+// --- 🛠️ SUBSYSTEM MANAGER (DYNAMIC FREISCHALTUNG) ---
+// ======================================================================
 function manageSuites(
   ns: NS,
   scripts: ScriptList,
   state: BotState,
   triggerBackdoor: boolean,
-  bnMults: Record<string, number>,
+  bnMults: any,
 ): void {
   const homeMaxRam = ns.getServerMaxRam("home");
   const playerMoney = ns.getPlayer().money;
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  const targetHacknetScript = hasFormulas
-    ? "tasks/hacknet.js"
-    : "tasks/hacknet-early.js";
-  const obsoleteHacknetScript = hasFormulas
-    ? "tasks/hacknet-early.js"
-    : "tasks/hacknet.js";
+  const targetHacknetScript = hasFormulas ? "tasks/hacknet.js" : "tasks/hacknet-early.js";
+  const obsoleteHacknetScript = hasFormulas ? "tasks/hacknet-early.js" : "tasks/hacknet.js";
 
   if (ns.isRunning(obsoleteHacknetScript, "home")) {
     ns.scriptKill(obsoleteHacknetScript, "home");
@@ -267,28 +236,18 @@ function manageSuites(
 
   if (homeMaxRam < 128) {
     if (ns.isRunning(targetHacknetScript, "home")) {
-      ns.print(
-        "⏳ [KERNEL] Blockiere Hacknet: Fokus liegt auf 128GB RAM Upgrade.",
-      );
       ns.scriptKill(targetHacknetScript, "home");
     }
   } else if (!hasBrute) {
     if (ns.isRunning(targetHacknetScript, "home")) {
-      ns.print(
-        "⏳ [KERNEL] Blockiere Hacknet: Spare Geld für TOR / BruteSSH.exe.",
-      );
       ns.scriptKill(targetHacknetScript, "home");
     }
   } else {
-    if (
-      ns.fileExists(targetHacknetScript, "home") &&
-      !ns.isRunning(targetHacknetScript, "home")
-    ) {
+    if (ns.fileExists(targetHacknetScript, "home") && !ns.isRunning(targetHacknetScript, "home")) {
+      // Reagiere auf Hacknet-Mutilplier: Bei starkem Nerf (< 40% Ertrag) drosseln wir das Budget im Startaufruf
       if (bnMults.HacknetNodeMoney < 0.4) {
-        ns.print(
-          "⚠️ [KERNEL] Hacknet-Produktion stark eingeschränkt! Starte im Netburners-Failsafe-Modus.",
-        );
-        ns.exec(targetHacknetScript, "home", 1, 4, 100, 8, 4);
+        ns.print("⚠️ [KERNEL] Hacknet-Produktion generft! Starte im limitierten Failsafe-Modus.");
+        ns.exec(targetHacknetScript, "home", 1, 4, 100, 8, 4); // Begrenzte Nodes/Upgrades
       } else {
         ns.print(`⚡ [KERNEL] Starte unlimitiertes Hacknet-Subsystem...`);
         ns.exec(targetHacknetScript, "home", 1);
@@ -296,61 +255,46 @@ function manageSuites(
     }
   }
 
-  if (
-    triggerBackdoor &&
-    ns.fileExists(scripts.backdoor, "home") &&
-    !ns.isRunning(scripts.backdoor, "home")
-  ) {
+  if (triggerBackdoor && ns.fileExists(scripts.backdoor, "home") && !ns.isRunning(scripts.backdoor, "home")) {
     ns.exec(scripts.backdoor, "home", 1);
   }
 
-  if (
-    ns.fileExists(scripts.trade, "home") &&
-    !ns.isRunning(scripts.trade, "home")
-  ) {
+  // --- 📈 STOCK MARKET ENTRY (Skaliert mit API/Data Kosten) ---
+  if (ns.fileExists(scripts.trade, "home") && !ns.isRunning(scripts.trade, "home")) {
     const hasTix = ns.stock.hasTixApiAccess();
+    
+    // Berechne dynamische finanzielle Einstiegsschwellen basierend auf den BN-Multiplikatoren
+    const baseEntryCapital = 25_000_000_000 * bnMults.FourSigmaMarketDataCost;
+    const tixApiThreshold = 100_000_000 * bnMults.FourSigmaMarketDataApiCost;
+
     if (
-      (homeMaxRam >= 128 && playerMoney >= 25_000_000_000) ||
-      (hasTix &&
-        ns.stock.purchase4SMarketDataTixApi() &&
-        playerMoney >= 100_000_000)
-    )
+      (homeMaxRam >= 128 && playerMoney >= baseEntryCapital) ||
+      (hasTix && ns.stock.purchase4SMarketDataTixApi() && playerMoney >= tixApiThreshold)
+    ) {
       ns.exec(scripts.trade, "home", 1);
+    }
   }
 
   if (ns.fileExists("DarkscapeNavigator.exe", "home")) {
     if (!ns.isRunning(scripts.replicator, "home")) {
-      ns.tprint("🌐 DarkscapeNavigator erkannt. Starte Darknet-Master...");
       ns.exec(scripts.replicator, "home", 1);
     }
-
-    if (
-      ns.fileExists(scripts.crawler, "home") &&
-      !ns.isRunning(scripts.crawler, "home")
-    ) {
-      ns.print("📡 [KERNEL] Starte initialen Darknet-Crawler auf home...");
+    if (ns.fileExists(scripts.crawler, "home") && !ns.isRunning(scripts.crawler, "home")) {
       ns.exec(scripts.crawler, "home", 1);
     }
   }
 }
 
-function findBestTarget(
-  ns: NS,
-  nodes: string[],
-  player: Player,
-  serverMaxMoneyMult: number,
-): string {
+// ======================================================================
+// --- 🎯 MATHEMATISCHES RE-WEIGHTING (TARGET FINDER) ---
+// ======================================================================
+function findBestTarget(ns: NS, nodes: string[], player: Player, serverMaxMoneyMult: number): string {
   let best = "n00dles";
   let maxWeight = 0;
   const isNoMoneyNode = serverMaxMoneyMult === 0;
 
   for (const node of nodes) {
-    if (
-      node === "home" ||
-      node === "darkweb" ||
-      node.startsWith("hacknet-node")
-    )
-      continue;
+    if (node === "home" || node === "darkweb" || node.startsWith("hacknet-node")) continue;
     if (!ns.hasRootAccess(node)) continue;
 
     const srv = ns.getServer(node);
@@ -361,8 +305,10 @@ function findBestTarget(
     const reqSkill = srv.requiredHackingSkill || 0;
     if (reqSkill > player.skills.hacking) continue;
 
+    // XP_SPRINT Modus (z.B. BN8 oder Hacking-Insolvenz)
     if (isNoMoneyNode) {
       const cycleTime = ns.getWeakenTime(node);
+      // Reines Gewichten nach Hacking-Skill-Anforderung pro Zeiteinheit
       const weight = reqSkill / (Math.max(1, cycleTime) / 1000);
       if (weight > maxWeight) {
         maxWeight = weight;
@@ -372,8 +318,9 @@ function findBestTarget(
     }
 
     const cycleTime = ns.getWeakenTime(node);
-    if (cycleTime > 5 * 60 * 1000) continue;
+    if (cycleTime > 5 * 60 * 1000) continue; // Filter Server mit mehr als 5 Min Laufzeit aus
 
+    // Standard Profit-Gewichtung
     const weight = (maxMoney / (cycleTime / 1000)) * (reqSkill / 100);
     if (weight > maxWeight) {
       maxWeight = weight;
@@ -383,17 +330,7 @@ function findBestTarget(
   return best;
 }
 
-function isBatchReady(ns: NS, node: string): boolean {
-  return ns.getServerMaxRam(node) >= 64;
-}
-
-function deployWorker(
-  ns: NS,
-  targetNode: string,
-  scriptFilename: string,
-  hackTarget: string,
-  ramBuffer: number,
-): void {
+function deployWorker(ns: NS, targetNode: string, scriptFilename: string, hackTarget: string, ramBuffer: number): void {
   if (!ns.fileExists(scriptFilename, "home")) return;
 
   const scriptCost = ns.getScriptRam(scriptFilename);
@@ -402,19 +339,10 @@ function deployWorker(
   let freedRam = 0;
   const procs = ns.ps(targetNode);
 
-  const allWorkerScripts = [
-    "tasks/work.js",
-    "tasks/xp-grind.js",
-    "tasks/hack.js",
-    "tasks/grow.js",
-    "tasks/weaken.js",
-  ];
+  const allWorkerScripts = ["tasks/work.js", "tasks/xp-grind.js", "tasks/hack.js", "tasks/grow.js", "tasks/weaken.js"];
 
   for (const p of procs) {
-    if (
-      allWorkerScripts.includes(p.filename) &&
-      (p.filename !== scriptFilename || p.args[0] !== hackTarget)
-    ) {
+    if (allWorkerScripts.includes(p.filename) && (p.filename !== scriptFilename || p.args[0] !== hackTarget)) {
       ns.kill(p.pid);
       freedRam += ns.getScriptRam(p.filename, targetNode) * p.threads;
     }
@@ -428,41 +356,41 @@ function deployWorker(
   }
 }
 
+// ======================================================================
+// --- 📊 OPERATIONAL OS DASHBOARD ---
+// ======================================================================
 function drawSysKernelDashboard(
   ns: NS,
   state: BotState,
   bestTarget: string,
   allNodes: string[],
   isFleetMode: boolean,
-  serverMaxMoneyMult: number,
+  bnMults: any,
 ): void {
   ns.clearLog();
   const rootCount = allNodes.filter((n) => ns.hasRootAccess(n)).length;
-  ns.print(`========================================`);
-  ns.print(`👑 BIT-OS SYS-KERNEL - Units: ${rootCount}/${allNodes.length}`);
-  ns.print(`========================================`);
-  ns.print(
-    `ENGINE-MODE: ${isFleetMode ? "DYNAMIC FLEET (>= 256GB)" : "BASIC LOOP (< 256GB)"}`,
-  );
-  ns.print(`STRATEGIE:  ${state.strategy}`);
+  
+  ns.print(`================================================`);
+  ns.print(`👑 BIT-OS SYS-KERNEL v2.0 - Units: ${rootCount}/${allNodes.length}`);
+  ns.print(`================================================`);
+  ns.print(`ENGINE-MODE : ${isFleetMode ? "DYNAMIC FLEET (>= 256GB)" : "BASIC LOOP (< 256GB)"}`);
+  ns.print(`STRATEGIE   : ${state.strategy}`);
 
-  // 🔥 NEU: Intelligente Primär- und Sekundärziel-Anzeige im Fleet-Modus
   if (isFleetMode && state.batcherTarget) {
-    ns.print(`PRIMÄRZIEL (BATCH): ${state.batcherTarget}`);
-    ns.print(`SEKUNDÄRZIEL (FLEET): ${bestTarget}`);
+    ns.print(`PRIMÄRZIEL  : ${state.batcherTarget} (BATCH)`);
+    ns.print(`SEKUNDÄRZIEL: ${bestTarget} (FLEET)`);
   } else {
-    ns.print(`ZIEL:       ${bestTarget}`);
+    ns.print(`ZIEL-SERVER : ${bestTarget}`);
   }
 
-  if (serverMaxMoneyMult !== 1.0) {
-    ns.print(`BN-MONEY:   ${(serverMaxMoneyMult * 100).toFixed(0)}% Effizienz`);
-  }
-  if (state.targetFaction) {
-    ns.print(`FRAKTION:   ${state.targetFaction}`);
-  }
+  ns.print("------------------------------------------------");
+  ns.print(`HACK-YIELD  : ${(bnMults.ServerMaxMoney * bnMults.ScriptHackMoneyGain * 100).toFixed(0)}% Effizienz`);
+  ns.print(`WEAKEN-RATE : ${(bnMults.ServerWeakenRate * 100).toFixed(0)}% Geschwindigkeit`);
+  
+  if (state.targetFaction) ns.print(`FRAKTION    : ${state.targetFaction}`);
   if (state.progressBar) {
-    ns.print("----------------------------------------");
-    ns.print(`PROGRESS:   ${state.progressBar}`);
+    ns.print("------------------------------------------------");
+    ns.print(`PROGRESS    : ${state.progressBar}`);
   }
-  ns.print(`========================================`);
+  ns.print(`================================================`);
 }
