@@ -1,13 +1,12 @@
 import { NS, FactionName, CompanyName, JobField } from "@ns";
 
-// Strikte Definition aller erlaubten System-Strategien zur Vermeidung von Tippfehlern
+// Strikte Definition aller erlaubten System-Strategien – PURE_HACK entfernt!
 export type BotStrategy =
   | "MONEY"
   | "XP_SPRINT"
   | "REP"
   | "CORP"
   | "TRAIN"
-  | "PURE_HACK"
   | "KILLS"
   | "CRIME";
 
@@ -17,13 +16,12 @@ export interface BotState {
   targetCompany?: CompanyName;
   targetStat?: number;
   progressBar: string;
-  lastUpdate: number; // Zeitstempel zur Desync-Erkennung
-  playerHacking: number; // Verhindert das Laden von Endgame-States nach einem Reset
+  lastUpdate: number;      // Zeitstempel zur Desync-Erkennung
+  playerHacking: number;   // Verhindert das Laden von Endgame-States nach einem Reset
   jobField?: JobField;
   targetKills?: number;
-
   
-  // 🚀 NEU: RAM-Bedarf des aktuellen Batcher-Ziels (Verhindert Deadlocks mit fill-ram)
+  // RAM-Bedarf des aktuellen Batcher-Ziels (Verhindert Deadlocks mit fill-ram)
   batcherRamNeeded?: number;
   batcherTarget?: string;
 
@@ -64,7 +62,6 @@ export function patchState(
 ): void {
   const currentState = loadState(ns);
 
-  // Standard-Fallback, falls kein State existiert oder gelöscht wurde
   const baseState: Omit<BotState, "lastUpdate" | "playerHacking"> =
     currentState || {
       strategy: "MONEY",
@@ -94,23 +91,18 @@ export function loadState(ns: NS): BotState | null {
 
     // --- CONTEXT ACCURACY CHECK ---
     if (state.playerHacking > ns.getHackingLevel()) {
-      ns.print(
-        "⚠️ [State-Manager] Veralteten Zustand nach Augmentation Reset erkannt. Bereinige...",
-      );
+      ns.print("⚠️ [State-Manager] Veralteten Zustand nach Augmentation Reset erkannt. Bereinige...");
       clearState(ns);
       return null;
     }
 
-    // Warnung im Log, falls der Dispatcher abgestürzt ist oder blockiert
     if (Date.now() - state.lastUpdate > 60_000) {
       ns.print("ℹ️ [State-Manager] Zustand ist älter als 60s (inkonsistent).");
     }
 
     return state;
   } catch (error) {
-    ns.print(
-      `[ERROR] State-Manager konnte Zustand nicht lesen/parsen: ${error}`,
-    );
+    ns.print(`[ERROR] State-Manager konnte Zustand nicht lesen/parsen: ${error}`);
     return null;
   }
 }
