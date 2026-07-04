@@ -358,7 +358,7 @@ function drawBatcherDashboard(ns: NS, data: DashboardData): void {
   ns.print(`============================================================`);
 }
 
-function dispatchBatchScript(
+function dispatchBatchScript( // 🔙 ZURÜCK ZU VOID (Kein async!)
   ns: NS,
   allServers: string[],
   script: string,
@@ -382,10 +382,11 @@ function dispatchBatchScript(
 
     if (possibleThreads > 0) {
       const threadsToRun = Math.min(possibleThreads, threadsRemaining);
-      if (server !== "home" && !ns.fileExists(script, server)) {
-        ns.scp(script, server, "home");
-      }
+      
+      // 🚫 Datei-Checks und asynchrone SCPs komplett gelöscht!
+      // Wir vertrauen blind darauf, dass das OS die Server längst vorbereitet hat.
       ns.exec(script, server, threadsToRun, target, delay, id);
+      
       threadsRemaining -= threadsToRun;
       if (threadsRemaining <= 0) break;
     }

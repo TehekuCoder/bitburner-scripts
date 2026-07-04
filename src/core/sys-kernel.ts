@@ -191,15 +191,6 @@ export async function main(ns: NS): Promise<void> {
         continue;
       }
 
-      // 2. WENN DISPATCHER OFFLINE IST (EARLY GAME):
-      // Verhindere Thread-Verschwendung auf Home, wenn der Spieler manuell agiert
-      if (
-        node === "home" &&
-        ["REP", "TRAIN", "CORP", "CRIME"].includes(activeStrategy)
-      ) {
-        continue;
-      }
-
       let activeScript =
         activeStrategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
 
@@ -389,6 +380,7 @@ function deployWorker(
   hackTarget: string,
   ramBuffer: number,
 ): void {
+  // Prüft nur kurz lokal auf 'home', ob das Skript überhaupt existiert
   if (!ns.fileExists(scriptFilename, "home")) return;
 
   const scriptCost = ns.getScriptRam(scriptFilename);
@@ -417,12 +409,12 @@ function deployWorker(
 
   const actualFreeRam = maxRam - usedRam + freedRam - ramBuffer;
   const threads = Math.floor(actualFreeRam / scriptCost);
+  
   if (threads > 0) {
-    if (targetNode !== "home") ns.scp(scriptFilename, targetNode, "home");
+    // 🔥 Kein ns.scp mehr! Blinder, synchroner Start.
     ns.exec(scriptFilename, targetNode, threads, hackTarget);
   }
 }
-
 // ======================================================================
 // --- 📊 OPERATIONAL OS DASHBOARD ---
 // ======================================================================

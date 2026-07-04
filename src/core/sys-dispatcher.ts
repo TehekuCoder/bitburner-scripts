@@ -39,10 +39,10 @@ const HACKING_FACTIONS: FactionConfig[] = [
   { name: "CyberSec" as FactionName, minStat: 0, priority: 1 },
   { name: "Tian Di Hui" as FactionName, minStat: 0, priority: 2 },
   { name: "NiteSec" as FactionName, minStat: 0, priority: 3 },
-  { name: "Netburners" as FactionName, minStat: 0, priority: 4 }, 
+  { name: "Netburners" as FactionName, minStat: 0, priority: 4 },
   { name: "The Black Hand" as FactionName, minStat: 0, priority: 5 },
   { name: "BitRunners" as FactionName, minStat: 0, priority: 6 },
-  { name: "Volhaven" as FactionName, minStat: 0, priority: 7 }, 
+  { name: "Volhaven" as FactionName, minStat: 0, priority: 7 },
   { name: "Aevum" as FactionName, minStat: 0, priority: 8 },
   { name: "Sector-12" as FactionName, minStat: 0, priority: 9 },
   { name: "New Tokyo" as FactionName, minStat: 0, priority: 10 },
@@ -50,7 +50,7 @@ const HACKING_FACTIONS: FactionConfig[] = [
   { name: "Chongqing" as FactionName, minStat: 0, priority: 12 },
   { name: "Slum Snakes" as FactionName, minStat: 30, priority: 13 },
   { name: "Tetrads" as FactionName, minStat: 75, priority: 14 },
-  { name: "Silhouette" as FactionName, minStat: 0, priority: 15 }, 
+  { name: "Silhouette" as FactionName, minStat: 0, priority: 15 },
   { name: "The Syndicate" as FactionName, minStat: 200, priority: 16 },
   { name: "The Dark Army" as FactionName, minStat: 300, priority: 17 },
   { name: "Speakers for the Dead" as FactionName, minStat: 300, priority: 18 },
@@ -150,8 +150,7 @@ export async function main(ns: NS): Promise<void> {
 
     if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
-    }
-    else if (homeMaxRam < 256 || (crimeMoneyMult > 5 && !canRunBatcher)) {
+    } else if (homeMaxRam < 256 || (crimeMoneyMult > 5 && !canRunBatcher)) {
       mode = "CRIME";
     } else if (factionToWorkFor) {
       mode = "REP";
@@ -396,7 +395,6 @@ export async function main(ns: NS): Promise<void> {
       activeStrategy === "XP_SPRINT" ? "tasks/xp-grind.js" : "tasks/work.js";
     const obsoleteScript =
       activeStrategy === "XP_SPRINT" ? "tasks/work.js" : "tasks/xp-grind.js";
-    const workerRam = ns.getScriptRam(workerScript, "home");
 
     const fallbackTarget = findBestFallbackTarget(
       ns,
@@ -404,7 +402,7 @@ export async function main(ns: NS): Promise<void> {
       batcherTarget,
     );
 
-    // KLASSE A: Grinding-Flotte
+    // 1. Welche Server stehen dem Dispatcher zur Verfügung?
     const infectedServers = allNetworkServers.filter(
       (s: string) =>
         s !== "home" &&
@@ -412,141 +410,63 @@ export async function main(ns: NS): Promise<void> {
         ns.hasRootAccess(s) &&
         ns.getServerMaxRam(s) > 0,
     );
+    const workerFleet = [...infectedServers];
 
-    for (const server of infectedServers) {
-      if (ns.isRunning(obsoleteScript, server))
-        ns.scriptKill(obsoleteScript, server);
-
-      ns.scp(workerScript, server, "home");
-      const processes = ns.ps(server);
-      const runningWorker = processes.find(
-        (proc) => proc.filename === workerScript,
-      );
-
-      const maxRam = ns.getServerMaxRam(server);
-      if (maxRam < workerRam) continue;
-
-      let threadsToRun = 0;
-      let shouldStart = false;
-
-      if (runningWorker) {
-        // Zählt den RAM so, als wäre der laufende Worker bereits gekillt
-        const ramWithoutWorker = maxRam - ns.getServerUsedRam(server) + (runningWorker.threads * workerRam);
-        const maxPossibleThreadsNow = Math.floor(ramWithoutWorker / workerRam);
-
-        if (runningWorker.args[0] !== fallbackTarget || runningWorker.threads < maxPossibleThreadsNow) {
-          ns.scriptKill(workerScript, server);
-          threadsToRun = maxPossibleThreadsNow;
-          shouldStart = true;
-        }
-      } else {
-        const currentFreeRam = maxRam - ns.getServerUsedRam(server);
-        threadsToRun = Math.floor(currentFreeRam / workerRam);
-        shouldStart = true;
-      }
-
-      if (shouldStart && threadsToRun > 0) {
-        ns.exec(workerScript, server, threadsToRun, fallbackTarget);
-      }
-    }
-
-    // KLASSE B: Heavy-Lifter (Home & Gekaufte Server)
-    if (ns.isRunning(obsoleteScript, "home"))
-      ns.scriptKill(obsoleteScript, "home");
-    for (const server of pServers) {
-      if (ns.isRunning(obsoleteScript, server))
-        ns.scriptKill(obsoleteScript, server);
-    }
-
+    // P-Server nur zur Fleet hinzufügen, wenn der Batcher (noch) nicht läuft
     if (canRunBatcher) {
-      if (ns.isRunning(workerScript, "home"))
-        ns.scriptKill(workerScript, "home");
-      for (const server of pServers) {
-        if (ns.isRunning(workerScript, server))
-          ns.scriptKill(workerScript, server);
+      if (
+        !ns.scriptRunning("core/sys-batcher.js", "home") &&
+        getFreeRam() > 15
+      ) {
+        ns.run("core/sys-batcher.js", 1);
       }
-
-      if (!ns.isRunning("core/sys-batcher.js", "home")) {
-        if (ns.isRunning("utils/fill-ram.js", "home"))
-          ns.scriptKill("utils/fill-ram.js", "home");
-        if (getFreeRam() > 15) ns.run("core/sys-batcher.js", 1);
+      // P-Server von einfachen Workern säubern, da der Batcher sie braucht
+      for (const server of pServers) {
+        ns.scriptKill(workerScript, server);
+        ns.scriptKill(obsoleteScript, server);
       }
     } else {
-      if (ns.isRunning("core/sys-batcher.js", "home"))
-        ns.scriptKill("core/sys-batcher.js", "home");
+      workerFleet.push(...pServers);
+    }
 
-      for (const server of pServers) {
-        ns.scp(workerScript, server, "home");
-        const processes = ns.ps(server);
-        const runningWorker = processes.find(
-          (proc) => proc.filename === workerScript,
-        );
+    // 2. Altlasten und falsche Ziele auf der Flotte bereinigen (Synchron!)
+    for (const server of workerFleet) {
+      if (ns.scriptRunning(obsoleteScript, server))
+        ns.scriptKill(obsoleteScript, server);
 
-        const maxRam = ns.getServerMaxRam(server);
-        if (maxRam < workerRam) continue;
-
-        let threadsToRun = 0;
-        let shouldStart = false;
-
-        if (runningWorker) {
-          const ramWithoutWorker = maxRam - ns.getServerUsedRam(server) + (runningWorker.threads * workerRam);
-          const maxPossibleThreadsNow = Math.floor(ramWithoutWorker / workerRam);
-
-          if (runningWorker.args[0] !== fallbackTarget || runningWorker.threads < maxPossibleThreadsNow) {
-            ns.scriptKill(workerScript, server);
-            threadsToRun = maxPossibleThreadsNow;
-            shouldStart = true;
-          }
-        } else {
-          const currentFreeRam = maxRam - ns.getServerUsedRam(server);
-          threadsToRun = Math.floor(currentFreeRam / workerRam);
-          shouldStart = true;
-        }
-
-        if (shouldStart && threadsToRun > 0) {
-          ns.exec(workerScript, server, threadsToRun, fallbackTarget);
-        }
+      const runningProc = ns
+        .ps(server)
+        .find((p) => p.filename === workerScript);
+      // Wenn das Skript läuft, aber das falsche Ziel hat -> killen, damit RAM für Punkt 3 frei wird
+      if (runningProc && runningProc.args[0] !== fallbackTarget) {
+        ns.scriptKill(workerScript, server);
       }
+    }
 
-      const homeShouldRunWorker = !["REP", "TRAIN", "CORP", "CRIME"].includes(
-        activeStrategy,
-      );
+    // 3. BLINDER DISPATCH 🚀 (Ersetzt die ganzen manuellen Berechnungen und SCPs)
+    // Wir übergeben Infinity als Threads, damit er einfach allen verfügbaren Flotten-RAM füllt.
+    dispatchSimpleTask(ns, workerFleet, workerScript, fallbackTarget, Infinity);
 
-      if (!homeShouldRunWorker) {
-        if (ns.isRunning(workerScript, "home")) {
-          ns.print(
-            `🛑 [Dispatcher] Strategie ${activeStrategy} aktiv. Rufe Worker von 'home' zurück!`,
-          );
-          ns.scriptKill(workerScript, "home");
-        }
-      } else {
-        const homeProcesses = ns.ps("home");
-        const runningWorkerOnHome = homeProcesses.find(
-          (proc) => proc.filename === workerScript,
-        );
+    // 4. Sonderbehandlung für 'home' (RAM-Puffer respektieren)
+    const homeShouldRunWorker = !["REP", "TRAIN", "CORP", "CRIME"].includes(
+      activeStrategy,
+    );
+    if (!homeShouldRunWorker) {
+      ns.scriptKill(workerScript, "home");
+    } else {
+      const homeProc = ns.ps("home").find((p) => p.filename === workerScript);
+      if (homeProc && homeProc.args[0] !== fallbackTarget)
+        ns.scriptKill(workerScript, "home");
 
-        if (
-          runningWorkerOnHome &&
-          runningWorkerOnHome.args[0] !== fallbackTarget
-        ) {
-          ns.scriptKill(workerScript, "home");
-        }
+      const homeFreeRam = getFreeRam();
+      const reservedRam = 20; // Puffer für System-Skripte
+      const workerRam = ns.getScriptRam(workerScript);
 
-        const isWorkerRunningOnHome = homeProcesses.some(
-          (proc) =>
-            proc.filename === workerScript && proc.args[0] === fallbackTarget,
-        );
-
-        if (!isWorkerRunningOnHome) {
-          const homeFreeRam = getFreeRam();
-          const reservedRam = 20;
-          if (homeFreeRam > reservedRam + workerRam) {
-            const homeThreads = Math.floor(
-              (homeFreeRam - reservedRam) / workerRam,
-            );
-            if (homeThreads > 0)
-              ns.run(workerScript, homeThreads, fallbackTarget);
-          }
+      if (homeFreeRam > reservedRam + workerRam) {
+        const homeThreads = Math.floor((homeFreeRam - reservedRam) / workerRam);
+        // Da home nicht in der workerFleet war, starten wir es hier separat
+        if (homeThreads > 0 && !ns.scriptRunning(workerScript, "home")) {
+          ns.run(workerScript, homeThreads, fallbackTarget);
         }
       }
     }
@@ -591,15 +511,16 @@ function buildReputationCache(ns: NS): void {
 }
 
 function findNextFaction(ns: NS, p: Player): FactionName | null {
-  const activeFactionJobs = HACKING_FACTIONS
-    .filter((f) => p.factions.includes(f.name))
+  const activeFactionJobs = HACKING_FACTIONS.filter((f) =>
+    p.factions.includes(f.name),
+  )
     .map((f) => {
       const repNeeded = repCache[f.name] || 0;
       const currentRep = ns.singularity.getFactionRep(f.name);
-      return { 
-        name: f.name, 
+      return {
+        name: f.name,
         priority: f.priority,
-        missingRep: Math.max(0, repNeeded - currentRep) 
+        missingRep: Math.max(0, repNeeded - currentRep),
       };
     })
     .filter((f) => f.missingRep > 0)
@@ -692,6 +613,43 @@ function applyToAllMegacorps(ns: NS, p: Player): void {
   for (const corpName of Object.values(MEGACORPS)) {
     if (!p.jobs[corpName]) {
       ns.singularity.applyToCompany(corpName, "Software");
+    }
+  }
+}
+
+// sys-dispatcher.ts - (Ausschnitt der Verteilungslogik)
+
+function dispatchSimpleTask(
+  ns: NS,
+  servers: string[],
+  script: string,
+  target: string,
+  threads: number,
+): void {
+  // <-- Wichtig: synchron (void)
+
+  let threadsRemaining = threads;
+
+  for (const server of servers) {
+    if (!ns.hasRootAccess(server)) continue;
+
+    const maxRam =
+      server === "home"
+        ? ns.getServerMaxRam("home") - 64
+        : ns.getServerMaxRam(server);
+    const freeRam = maxRam - ns.getServerUsedRam(server);
+    const scriptRam = ns.getScriptRam(script);
+
+    const possibleThreads = Math.floor(freeRam / scriptRam);
+
+    if (possibleThreads > 0) {
+      const threadsToRun = Math.min(possibleThreads, threadsRemaining);
+
+      // 🔥 Keine Checks, kein SCP, kein Await! Blindes Vertrauen in die Infrastruktur.
+      ns.exec(script, server, threadsToRun, target);
+
+      threadsRemaining -= threadsToRun;
+      if (threadsRemaining <= 0) break;
     }
   }
 }

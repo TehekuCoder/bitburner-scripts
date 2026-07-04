@@ -1,4 +1,5 @@
 import { NS, ProgramName } from "@ns";
+import { provisionServer } from "/utils/provision";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -72,15 +73,13 @@ function handleProgramPurchases(ns: NS): void {
   }
 }
 
-function handleServerPurchases(ns: NS): void {
+async function handleServerPurchases(ns: NS): Promise<void> {
   const maxServers = ns.cloud.getServerLimit();
   const maxRam = ns.cloud.getRamLimit();
 
-  // Wir bleiben strikt innerhalb des 90%-Budgets, um das Firmenkonto/andere Skripte zu schützen
   let currentBudget = ns.getPlayer().money * 0.9;
   if (currentBudget < 50_000) return;
 
-  // --- DYNAMISCHES STUFENMODELL ---
   const hasHTTPWorm = ns.fileExists("HTTPWorm.exe", "home");
   const hasSQLInject = ns.fileExists("SQLInject.exe", "home");
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
@@ -93,12 +92,10 @@ function handleServerPurchases(ns: NS): void {
 
   let actionOccurred = true;
 
-  // UNIFIZIERTER KAUFRAUSCH-LOOP
   while (actionOccurred) {
     actionOccurred = false;
     const currentServers = ns.cloud.getServerNames();
 
-    // 1. Den aktuell schwächsten Server ermitteln
     let minRam = maxRam;
     let worstServer = "";
     for (const server of currentServers) {
@@ -109,7 +106,6 @@ function handleServerPurchases(ns: NS): void {
       }
     }
 
-    // 2. Maximal leistbares RAM für einen potenziellen NEUEN Server berechnen
     let affordableNewRam = 8;
     while (
       affordableNewRam * 2 <= allowedMaxRam &&
@@ -118,22 +114,16 @@ function handleServerPurchases(ns: NS): void {
       affordableNewRam *= 2;
     }
     if (ns.cloud.getServerCost(affordableNewRam) > currentBudget) {
-      affordableNewRam = 0; // Zu pleite für einen neuen 8GB Server
+      affordableNewRam = 0;
     }
 
-    // 3. ENTSCHEIDUNGSMATRIX (Kauf vs. Upgrade)
-    
-    // FALL A: Keine Server vorhanden? -> Basis-Infrastruktur schaffen
     if (currentServers.length === 0 && affordableNewRam >= 8) {
-      if (buyNewServer(ns, affordableNewRam, maxServers)) {
+      if (await buyNewServer(ns, affordableNewRam, maxServers)) { // ⚠️ AWAIT
         currentBudget -= ns.cloud.getServerCost(affordableNewRam);
         actionOccurred = true;
       }
     }
-    // FALL B: Wir haben Server, sind aber unter dem Limit von 25
     else if (currentServers.length < maxServers) {
-      // QUALITÄTSKONTROLLE: Ist unser schwächster Server schlechter als das, was wir uns 
-      // bar leisten könnten? Dann ziehen wir den alten Krüppel-Server ERST hoch (Konsolidierung)!
       if (worstServer !== "" && minRam < affordableNewRam) {
         const nextRam = minRam * 2;
         const upgradeCost = ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
@@ -146,15 +136,13 @@ function handleServerPurchases(ns: NS): void {
           }
         }
       } 
-      // Der schwächste Server hält bereits mit unserem Kontostand Schritt? Dann expandieren wir!
       else if (affordableNewRam >= 8) {
-        if (buyNewServer(ns, affordableNewRam, maxServers)) {
+        if (await buyNewServer(ns, affordableNewRam, maxServers)) { // ⚠️ AWAIT
           currentBudget -= ns.cloud.getServerCost(affordableNewRam);
           actionOccurred = true;
         }
       }
     }
-    // FALL C: Server-Limit (25/25) erreicht -> Reiner Upgrade-Modus für das Endgame
     else if (worstServer !== "") {
       const nextRam = minRam * 2;
       if (nextRam <= allowedMaxRam) {
@@ -170,9 +158,7 @@ function handleServerPurchases(ns: NS): void {
     }
   }
 }
-
-// Hilfsfunktion zur sauberen Namensermittlung und Kaufausführung
-function buyNewServer(ns: NS, ram: number, maxServers: number): boolean {
+async function buyNewServer(ns: NS, ram: number, maxServers: number): Promise<boolean> {
   const currentServers = ns.cloud.getServerNames();
   let nextFreeNumber = 1;
   let name = "";
@@ -192,6 +178,10 @@ function buyNewServer(ns: NS, ram: number, maxServers: number): boolean {
 
   if (ns.cloud.purchaseServer(name, ram)) {
     ns.print(`[CLOUD] 🖥️ Neuen Server gekauft: ${name} (${ns.format.ram(ram)})`);
+    
+    // 🔥 DIREKT NACH DEM KAUF: Worker-Skripte rüberschieben
+    await provisionServer(ns, name);
+    
     return true;
   }
   return false;

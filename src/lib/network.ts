@@ -99,6 +99,27 @@ export function breakAndInfectNetwork(ns: NS): void {
         portsOpened++;
       }
 
+      // lib/network.ts (in breakAndInfectNetwork)
+
+      if (
+        !ns.hasRootAccess(server) &&
+        portsOpened >= ns.getServerNumPortsRequired(server)
+      ) {
+        ns.nuke(server);
+        // Server wurde soeben gerootet -> Einmalig alles rüberschieben, was das System jemals braucht!
+        ns.scp(
+          [
+            "tasks/work.js",
+            "tasks/xp-grind.js",
+            "tasks/weaken.js",
+            "tasks/grow.js",
+            "tasks/hack.js",
+          ],
+          server,
+          "home",
+        );
+      }
+      
       // Admin-Rechte zünden
       ns.nuke(server);
       ns.print(`🔓 Server erfolgreich gehackt: ${server}`);
