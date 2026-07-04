@@ -99,8 +99,6 @@ export function breakAndInfectNetwork(ns: NS): void {
         portsOpened++;
       }
 
-      // lib/network.ts (in breakAndInfectNetwork)
-
       if (
         !ns.hasRootAccess(server) &&
         portsOpened >= ns.getServerNumPortsRequired(server)
@@ -119,7 +117,7 @@ export function breakAndInfectNetwork(ns: NS): void {
           "home",
         );
       }
-      
+
       // Admin-Rechte zünden
       ns.nuke(server);
       ns.print(`🔓 Server erfolgreich gehackt: ${server}`);

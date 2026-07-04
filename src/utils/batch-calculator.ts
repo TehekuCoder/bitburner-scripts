@@ -1,4 +1,5 @@
 import { NS, Server, Player } from "@ns";
+import { DEFAULT_MULTIPLIERS } from "../lib/state.js";
 
 export interface BatchPlan {
   target: string;
@@ -17,6 +18,7 @@ export interface BatchPlan {
 export function calculateBatch(
   ns: NS,
   targetName: string,
+  bnMults: any = DEFAULT_MULTIPLIERS, // 🔄 Multiplikatoren als optionaler Parameter hinzugefügt
   hackPercent = 0.04,
   spacer = 40
 ): BatchPlan | null {
@@ -37,20 +39,27 @@ export function calculateBatch(
   let hackThreads = Math.floor(hackPercent / pctPerThread);
   if (hackThreads < 1) return null; 
 
-  // KORREKTUR: Veraltete Signatur entfernt. hackAnalyzeSecurity nutzt nur noch Threads.
-  const hackSecIncrease = ns.hackAnalyzeSecurity(hackThreads);
-  const weaken1Threads = Math.ceil(hackSecIncrease / 0.05);
+  // 📊 Dynamische Weaken-Effektivität berechnen
+  const weakenPotency = 0.05 * (bnMults.ServerWeakenRate ?? 1.0);
 
+  // Weaken 1 Threads berechnen (für den Hack-Anteil)
+  const hackSecIncrease = ns.hackAnalyzeSecurity(hackThreads);
+  const weaken1Threads = Math.ceil(hackSecIncrease / weakenPotency); // 🔄 Nutzt jetzt weakenPotency
+
+  // Server-Zustand nach Hack für die Grow-Berechnung simulieren
   server.moneyAvailable = server.moneyMax * (1 - hackThreads * pctPerThread);
 
+  // Weaken 2 Threads berechnen (für den Grow-Anteil)
   const growThreads = ns.formulas.hacking.growThreads(server, player, server.moneyMax);
   const growSecIncrease = ns.growthAnalyzeSecurity(growThreads, targetName);
-  const weaken2Threads = Math.ceil(growSecIncrease / 0.05);
+  const weaken2Threads = Math.ceil(growSecIncrease / weakenPotency); // 🔄 Nutzt jetzt weakenPotency
 
+  // Laufzeiten ermitteln
   const tW = ns.formulas.hacking.weakenTime(server, player);
   const tG = ns.formulas.hacking.growTime(server, player);
   const tH = ns.formulas.hacking.hackTime(server, player);
 
+  // Delays für das präzise H-W-G-W Timing berechnen
   const hackDelay = tW - spacer - tH;
   const weaken1Delay = 0;
   const growDelay = tW + spacer - tG;
@@ -58,9 +67,10 @@ export function calculateBatch(
 
   if (hackDelay < 0 || growDelay < 0) return null;
 
-  const ramHack = ns.getScriptRam("/tasks/hack.js");
-  const ramGrow = ns.getScriptRam("/tasks/grow.js");
-  const ramWeaken = ns.getScriptRam("/tasks/weaken.js");
+  // RAM-Kosten ermitteln (Pfade angepasst an deine standardmäßige Ordnerstruktur)
+  const ramHack = ns.getScriptRam("tasks/hack.js");
+  const ramGrow = ns.getScriptRam("tasks/grow.js");
+  const ramWeaken = ns.getScriptRam("tasks/weaken.js");
 
   const totalRam =
     hackThreads * ramHack +

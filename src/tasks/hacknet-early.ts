@@ -1,4 +1,5 @@
 import { NS } from "@ns";
+import { loadBnMults } from "../lib/state.js"; // 🔄 Importiert deine zentrale Library
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -9,6 +10,15 @@ export async function main(ns: NS): Promise<void> {
   const maxLevels = (ns.args[1] as number) || Infinity;
   const maxRam = (ns.args[2] as number) || Infinity;
   const maxCores = (ns.args[3] as number) || Infinity;
+
+  // 📊 Multiplikatoren sauber über deine Library laden
+  const bnMults = loadBnMults(ns);
+
+  // 🛑 Failsafe: Wenn Hacknet kein Geld bringt, sofort beenden
+  if (bnMults.HacknetNodeMoney === 0) {
+    ns.print("🛑 [Hacknet-Early] Hacknet-Produktion in diesem BitNode deaktiviert. Exit.");
+    return;
+  }
 
   ns.print(
     `⚡ Micro-Hacknet Subsystem aktiv (${isCappedMode ? "CAPPED MODE" : "LOW-RAM NO-FORMULAS"})`,
@@ -32,15 +42,15 @@ export async function main(ns: NS): Promise<void> {
     }
 
     if (isCappedMode && allNodesMaxed) {
-      ns.tprint(
-        "🛑 [Hacknet-Early] Netburners-Minimum erreicht. Schalte System ab.",
-      );
+      ns.tprint("🛑 [Hacknet-Early] Netburners-Minimum erreicht. Schalte System ab.");
       return;
     }
 
     const currentMoney = ns.getServerMoneyAvailable("home");
-    let budget =
-      currentMoney > 20_000_000 ? currentMoney * 0.1 : currentMoney * 0.35;
+    
+    // 💸 Dynamisches Budget: Basis-Budget berechnen und mit dem BN-Multiplikator gewichten
+    let baseBudget = currentMoney > 20_000_000 ? currentMoney * 0.1 : currentMoney * 0.35;
+    const budget = baseBudget * bnMults.HacknetNodeMoney;
 
     let bestCost = Infinity;
     let purchaseType: "Level" | "RAM" | "Core" | "NewNode" | null = null;
@@ -89,16 +99,12 @@ export async function main(ns: NS): Promise<void> {
     if (purchaseType !== null) {
       if (purchaseType === "NewNode") {
         h.purchaseNode();
-        ns.print(
-          `[Hacknet] Neuer Node gekauft für $${ns.format.number(bestCost)}`,
-        );
+        ns.print(`[Hacknet] Neuer Node gekauft für $${ns.format.number(bestCost)}`);
       } else {
         if (purchaseType === "Level") h.upgradeLevel(targetIndex, 1);
         if (purchaseType === "RAM") h.upgradeRam(targetIndex, 1);
         if (purchaseType === "Core") h.upgradeCore(targetIndex, 1);
-        ns.print(
-          `[Hacknet] Node ${targetIndex}: ${purchaseType}-Upgrade für $${ns.format.number(bestCost)}`,
-        );
+        ns.print(`[Hacknet] Node ${targetIndex}: ${purchaseType}-Upgrade für $${ns.format.number(bestCost)}`);
       }
       await ns.sleep(100);
     } else {

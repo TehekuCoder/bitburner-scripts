@@ -1,4 +1,5 @@
 import { NS, NodeStats } from "@ns";
+import { loadBnMults } from "../lib/state.js";
 
 interface HacknetUpgrade {
   type: "Level" | "RAM" | "Core" | "Neuer Node";
@@ -16,22 +17,11 @@ export async function main(ns: NS): Promise<void> {
   const maxRam = (ns.args[2] as number) || Infinity;
   const maxCores = (ns.args[3] as number) || Infinity;
 
-  let bnMults = { HacknetNodeMoney: 1.0 };
-  if (ns.fileExists("bn-multipliers.txt", "home")) {
-    try {
-      const fileContent = ns.read("bn-multipliers.txt");
-      if (fileContent) bnMults = { ...bnMults, ...JSON.parse(fileContent) };
-    } catch {
-      ns.print(
-        "⚠️ [HACKNET] Fehler beim Parsen der bn-multipliers.txt. Failsafe aktiv.",
-      );
-    }
-  }
+  // In der main-Funktion:
+  const bnMults = loadBnMults(ns);
 
   if (bnMults.HacknetNodeMoney === 0) {
-    ns.print(
-      "🛑 [HACKNET] Hacknet-Produktion in diesem BitNode deaktiviert. Exit.",
-    );
+    ns.print("🛑 [HACKNET] Hacknet-Produktion deaktiviert. Exit.");
     return;
   }
 
