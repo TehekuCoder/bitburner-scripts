@@ -1,5 +1,11 @@
 import { NS, Player, FactionName, CompanyName } from "@ns";
-import { loadState, saveState, BotState, BotStrategy, patchState } from "./state-manager.js";
+import {
+  loadState,
+  saveState,
+  BotState,
+  BotStrategy,
+  patchState,
+} from "./state-manager.js";
 import { breakAndInfectNetwork, getAllServers } from "../lib/network.js";
 import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
 
@@ -9,7 +15,12 @@ interface FactionConfig {
   priority: number;
 }
 
-const COMBAT_STATS: (keyof Player["skills"])[] = ["strength", "defense", "dexterity", "agility"];
+const COMBAT_STATS: (keyof Player["skills"])[] = [
+  "strength",
+  "defense",
+  "dexterity",
+  "agility",
+];
 
 const MEGACORPS: Record<string, CompanyName> = {
   ECorp: "ECorp",
@@ -29,16 +40,16 @@ const HACKING_FACTIONS: FactionConfig[] = [
   { name: "Tian Di Hui" as FactionName, minStat: 0, priority: 2 },
   { name: "NiteSec" as FactionName, minStat: 0, priority: 3 },
   { name: "Netburners" as FactionName, minStat: 0, priority: 4 },
-  { name: "The Black Hand" as FactionName, minStat: 0, priority: 5 },
-  { name: "BitRunners" as FactionName, minStat: 0, priority: 6 },
-  { name: "Volhaven" as FactionName, minStat: 0, priority: 7 },
-  { name: "Aevum" as FactionName, minStat: 0, priority: 8 },
-  { name: "Sector-12" as FactionName, minStat: 0, priority: 9 },
-  { name: "New Tokyo" as FactionName, minStat: 0, priority: 10 },
-  { name: "Ishima" as FactionName, minStat: 0, priority: 11 },
-  { name: "Chongqing" as FactionName, minStat: 0, priority: 12 },
-  { name: "Slum Snakes" as FactionName, minStat: 30, priority: 13 },
-  { name: "Tetrads" as FactionName, minStat: 75, priority: 14 },
+  { name: "Slum Snakes" as FactionName, minStat: 30, priority: 5 },
+  { name: "Sector-12" as FactionName, minStat: 0, priority: 6 },
+  { name: "Chongqing" as FactionName, minStat: 0, priority: 7 },
+  { name: "Ishima" as FactionName, minStat: 0, priority: 8 },
+  { name: "New Tokyo" as FactionName, minStat: 0, priority: 9 },
+  { name: "The Black Hand" as FactionName, minStat: 0, priority: 10 },
+  { name: "Aevum" as FactionName, minStat: 0, priority: 11 },
+  { name: "Volhaven" as FactionName, minStat: 0, priority: 12 },
+  { name: "Tetrads" as FactionName, minStat: 75, priority: 13 },
+  { name: "BitRunners" as FactionName, minStat: 0, priority: 14 },
   { name: "Silhouette" as FactionName, minStat: 0, priority: 15 },
   { name: "The Syndicate" as FactionName, minStat: 200, priority: 16 },
   { name: "The Dark Army" as FactionName, minStat: 300, priority: 17 },
@@ -53,11 +64,14 @@ const repCache: Record<string, number> = {};
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
-  const getFreeRam = () => ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+  const getFreeRam = () =>
+    ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
   const hasSingularity = ns.singularity !== undefined;
 
   if (!hasSingularity) {
-    ns.tprint("🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!");
+    ns.tprint(
+      "🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!",
+    );
     return;
   }
 
@@ -102,10 +116,15 @@ export async function main(ns: NS): Promise<void> {
 
     // --- 0. INFRASTRUKTUR VORABBERECHNUNG ---
     const pServers = ns.cloud.getServerNames();
-    const eligiblePServers = pServers.filter((s) => ns.getServerMaxRam(s) >= BATCHER_MIN_PSERV_RAM);
-    
+    const eligiblePServers = pServers.filter(
+      (s) => ns.getServerMaxRam(s) >= BATCHER_MIN_PSERV_RAM,
+    );
+
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
-    const canRunBatcher = hasFormulas && homeMaxRam >= BATCHER_MIN_RAM && eligiblePServers.length > 0;
+    const canRunBatcher =
+      hasFormulas &&
+      homeMaxRam >= BATCHER_MIN_RAM &&
+      eligiblePServers.length > 0;
 
     // --- 1. DYNAMISCHE STRATEGIE-MATRIX (INTELLIGENT ERWEITERT) ---
     const playerMoney = p.money;
@@ -114,13 +133,19 @@ export async function main(ns: NS): Promise<void> {
     const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
 
     // Rep-Schwellenwert skaliert dynamisch mit dem BN-Nerf
-    const MONEY_THRESHOLD_FOR_REP = factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
+    const MONEY_THRESHOLD_FOR_REP =
+      factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
 
-    const hasEssentialTools = ns.fileExists("BruteSSH.exe", "home") && ns.fileExists("FTPCrack.exe", "home");
+    const hasEssentialTools =
+      ns.fileExists("BruteSSH.exe", "home") &&
+      ns.fileExists("FTPCrack.exe", "home");
     const isReadyForFactionGrind = playerMoney > MONEY_THRESHOLD_FOR_REP;
 
     // Fraktionsarbeit blockieren, wenn der Ruf-Gewinn im BN komplett tot-generft wurde (< 10%)
-    const factionToWorkFor = (hasEssentialTools || isReadyForFactionGrind) && eligiblePServers.length > 0 && factionRepMult > 0.1
+    const factionToWorkFor =
+      (hasEssentialTools || isReadyForFactionGrind) &&
+      eligiblePServers.length > 0 &&
+      factionRepMult > 0.1
         ? findNextFaction(ns, p)
         : null;
 
@@ -134,10 +159,16 @@ export async function main(ns: NS): Promise<void> {
     } else {
       // Megacorp-Logik: Nur ausführen, wenn Company-Rep nicht völlig nutzlos ist
       if (p.skills.hacking >= 250 && companyRepMult > 0.1) {
-        const needsSilhouette = !p.factions.includes("Silhouette" as FactionName) && (repCache["Silhouette"] ?? 0) > 0;
+        const needsSilhouette =
+          !p.factions.includes("Silhouette" as FactionName) &&
+          (repCache["Silhouette"] ?? 0) > 0;
 
         const isExecutive = Object.values(p.jobs).some((title) =>
-          ["Chief Technology Officer", "Chief Financial Officer", "Chief Executive Officer"].includes(title)
+          [
+            "Chief Technology Officer",
+            "Chief Financial Officer",
+            "Chief Executive Officer",
+          ].includes(title),
         );
 
         const hasEnoughKarma = ns.heart.break() <= -22;
@@ -147,8 +178,12 @@ export async function main(ns: NS): Promise<void> {
             mode = "CRIME";
           } else {
             mode = "CORP";
-            const currentCorpJob = Object.keys(p.jobs).find((corp) => MEGACORPS[corp] !== undefined);
-            targetCompany = currentCorpJob ? MEGACORPS[currentCorpJob] : Object.values(MEGACORPS)[0];
+            const currentCorpJob = Object.keys(p.jobs).find(
+              (corp) => MEGACORPS[corp] !== undefined,
+            );
+            targetCompany = currentCorpJob
+              ? MEGACORPS[currentCorpJob]
+              : Object.values(MEGACORPS)[0];
           }
         } else {
           const missingCorpFaction = HACKING_FACTIONS.find(
@@ -156,7 +191,7 @@ export async function main(ns: NS): Promise<void> {
               !p.factions.includes(f.name) &&
               MEGACORPS[f.name] !== undefined &&
               ns.singularity.getCompanyRep(MEGACORPS[f.name]) < 400_000 &&
-              (repCache[f.name] ?? 0) > 0
+              (repCache[f.name] ?? 0) > 0,
           );
 
           if (missingCorpFaction) {
@@ -170,20 +205,28 @@ export async function main(ns: NS): Promise<void> {
         if (eligiblePServers.length === 0) {
           mode = "MONEY";
         } else {
-          const nextLockedCombatFaction = HACKING_FACTIONS.find((f) => !p.factions.includes(f.name) && f.minStat > 0);
+          const nextLockedCombatFaction = HACKING_FACTIONS.find(
+            (f) => !p.factions.includes(f.name) && f.minStat > 0,
+          );
 
           if (nextLockedCombatFaction) {
             let requiredKills = 0;
-            if (nextLockedCombatFaction.name === "The Dark Army") requiredKills = 5;
-            if (nextLockedCombatFaction.name === "Speakers for the Dead") requiredKills = 30;
+            if (nextLockedCombatFaction.name === "The Dark Army")
+              requiredKills = 5;
+            if (nextLockedCombatFaction.name === "Speakers for the Dead")
+              requiredKills = 30;
 
-            const currentLowestCombatStat = Math.min(...COMBAT_STATS.map((s) => p.skills[s]));
+            const currentLowestCombatStat = Math.min(
+              ...COMBAT_STATS.map((s) => p.skills[s]),
+            );
 
             if (p.numPeopleKilled < requiredKills) {
               mode = "KILLS";
               targetStat = requiredKills;
               targetFaction = nextLockedCombatFaction.name;
-            } else if (currentLowestCombatStat < nextLockedCombatFaction.minStat) {
+            } else if (
+              currentLowestCombatStat < nextLockedCombatFaction.minStat
+            ) {
               mode = "TRAIN";
               targetStat = nextLockedCombatFaction.minStat;
               targetFaction = nextLockedCombatFaction.name;
@@ -195,7 +238,12 @@ export async function main(ns: NS): Promise<void> {
 
     // 🔄 Cache-Aktualisierung des Fallback-Targets unter Berücksichtigung von bnMults
     if (Date.now() - lastFallbackUpdate > 300_000 || mode === "MONEY") {
-      cachedFallbackTarget = findBestFallbackTarget(ns, p.skills.hacking, bnMults, canRunBatcher ? currentState?.batcherTarget : null);
+      cachedFallbackTarget = findBestFallbackTarget(
+        ns,
+        p.skills.hacking,
+        bnMults,
+        canRunBatcher ? currentState?.batcherTarget : null,
+      );
       lastFallbackUpdate = Date.now();
     }
 
@@ -234,7 +282,8 @@ export async function main(ns: NS): Promise<void> {
         const valDiff = currentVal - lastValue;
         if (valDiff > 0) {
           const instantRate = valDiff / (timeDiff / 1000);
-          emaRate = emaRate === 0 ? instantRate : emaRate * 0.7 + instantRate * 0.3;
+          emaRate =
+            emaRate === 0 ? instantRate : emaRate * 0.7 + instantRate * 0.3;
         }
         lastValue = currentVal;
         lastTime = now;
@@ -270,7 +319,8 @@ export async function main(ns: NS): Promise<void> {
     } else if (mode === "XP_SPRINT") {
       generatedBar = "👶 Early Game: XP SPRINT (Hacking < 50)";
     } else if (mode === "CRIME") {
-      generatedBar = crimeMoneyMult > 5
+      generatedBar =
+        crimeMoneyMult > 5
           ? "🥷 BN-Synergie: Dauerhafter Crime Loop aktiv (Mörderischer Profit)"
           : "🥷 Mid-Game-Crime Loop für stabiles Einkommen";
     } else if (mode === "KILLS") {
@@ -283,7 +333,10 @@ export async function main(ns: NS): Promise<void> {
 
     let finalBar = generatedBar;
 
-    if ((mode === "CRIME" || mode === "XP_SPRINT") && ns.isRunning("tasks/crime.js", "home")) {
+    if (
+      (mode === "CRIME" || mode === "XP_SPRINT") &&
+      ns.isRunning("tasks/crime.js", "home")
+    ) {
       if (currentState?.progressBar?.startsWith("🥷")) {
         finalBar = currentState.progressBar;
       }
@@ -318,16 +371,23 @@ export async function main(ns: NS): Promise<void> {
       },
     });
 
-    const isEarlyGameCrime = homeMaxRam < 128 && (mode === "CRIME" || mode === "XP_SPRINT" || mode === "KILLS");
+    const isEarlyGameCrime =
+      homeMaxRam < 128 &&
+      (mode === "CRIME" || mode === "XP_SPRINT" || mode === "KILLS");
 
     if (isEarlyGameCrime) {
-      if (ns.isRunning("tasks/faction-shopping.js", "home")) ns.scriptKill("tasks/faction-shopping.js", "home");
+      if (ns.isRunning("tasks/faction-shopping.js", "home"))
+        ns.scriptKill("tasks/faction-shopping.js", "home");
       const rogueScripts = ["tasks/hacknet.js", "tasks/hacknet-early.js"];
       for (const script of rogueScripts) {
-        if (ns.fileExists(script, "home") && ns.isRunning(script, "home")) ns.scriptKill(script, "home");
+        if (ns.fileExists(script, "home") && ns.isRunning(script, "home"))
+          ns.scriptKill(script, "home");
       }
     } else {
-      if (getFreeRam() > 12 && !ns.isRunning("tasks/faction-shopping.js", "home")) {
+      if (
+        getFreeRam() > 12 &&
+        !ns.isRunning("tasks/faction-shopping.js", "home")
+      ) {
         ns.run("tasks/faction-shopping.js", 1);
       }
     }
@@ -336,16 +396,25 @@ export async function main(ns: NS): Promise<void> {
     const allNetworkServers: string[] = getAllServers(ns);
     const activeStrategy = currentState?.strategy || "MONEY";
 
-    const workerScript = activeStrategy === "XP_SPRINT" ? "tasks/xp-grind.js" : "tasks/work.js";
-    const obsoleteScript = activeStrategy === "XP_SPRINT" ? "tasks/work.js" : "tasks/xp-grind.js";
+    const workerScript =
+      activeStrategy === "XP_SPRINT" ? "tasks/xp-grind.js" : "tasks/work.js";
+    const obsoleteScript =
+      activeStrategy === "XP_SPRINT" ? "tasks/work.js" : "tasks/xp-grind.js";
 
     const infectedServers = allNetworkServers.filter(
-      (s: string) => s !== "home" && !pServers.includes(s) && ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0
+      (s: string) =>
+        s !== "home" &&
+        !pServers.includes(s) &&
+        ns.hasRootAccess(s) &&
+        ns.getServerMaxRam(s) > 0,
     );
     const workerFleet = [...infectedServers];
 
     if (canRunBatcher) {
-      if (!ns.scriptRunning("core/sys-batcher.js", "home") && getFreeRam() > 15) {
+      if (
+        !ns.scriptRunning("core/sys-batcher.js", "home") &&
+        getFreeRam() > 15
+      ) {
         ns.run("core/sys-batcher.js", 1);
       }
       for (const server of pServers) {
@@ -357,28 +426,46 @@ export async function main(ns: NS): Promise<void> {
     }
 
     for (const server of workerFleet) {
-      if (ns.scriptRunning(obsoleteScript, server)) ns.scriptKill(obsoleteScript, server);
+      if (ns.scriptRunning(obsoleteScript, server))
+        ns.scriptKill(obsoleteScript, server);
 
-      const runningProc = ns.ps(server).find((proc) => proc.filename === workerScript);
+      const runningProc = ns
+        .ps(server)
+        .find((proc) => proc.filename === workerScript);
       if (runningProc && runningProc.args[0] !== cachedFallbackTarget) {
         ns.scriptKill(workerScript, server);
       }
     }
 
     // Flotten-Dispatch zünden 🚀
-    dispatchSimpleTask(ns, workerFleet, workerScript, cachedFallbackTarget, Infinity, bnMults);
+    dispatchSimpleTask(
+      ns,
+      workerFleet,
+      workerScript,
+      cachedFallbackTarget,
+      Infinity,
+      bnMults,
+    );
 
     // Sonderbehandlung für 'home' (Dynamischer Puffer basierend auf BitNode-Zähigkeit)
-    const homeShouldRunWorker = !["REP", "TRAIN", "CORP", "CRIME"].includes(activeStrategy);
+    const homeShouldRunWorker = !["REP", "TRAIN", "CORP", "CRIME"].includes(
+      activeStrategy,
+    );
     if (!homeShouldRunWorker) {
       ns.scriptKill(workerScript, "home");
     } else {
-      const homeProc = ns.ps("home").find((proc) => proc.filename === workerScript);
-      if (homeProc && homeProc.args[0] !== cachedFallbackTarget) ns.scriptKill(workerScript, "home");
+      const homeProc = ns
+        .ps("home")
+        .find((proc) => proc.filename === workerScript);
+      if (homeProc && homeProc.args[0] !== cachedFallbackTarget)
+        ns.scriptKill(workerScript, "home");
 
       const homeFreeRam = getFreeRam();
       // Bei schwerem Weaken-Nerf halten wir mehr RAM für Formeln/UI frei
-      const reservedRam = bnMults.ServerWeakenRate < 1.0 ? Math.ceil(20 / bnMults.ServerWeakenRate) : 20;
+      const reservedRam =
+        bnMults.ServerWeakenRate < 1.0
+          ? Math.ceil(20 / bnMults.ServerWeakenRate)
+          : 20;
       const workerRam = ns.getScriptRam(workerScript);
 
       if (homeFreeRam > reservedRam + workerRam) {
@@ -389,10 +476,20 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    const isRamReady = homeMaxRam >= 256 || (pServers.length > 0 && Math.max(...pServers.map(s => ns.getServerMaxRam(s))) >= 64);
-    const executionAllowed = !hasFormulas || ns.isRunning("core/sys-batcher.js", "home");
+    const isRamReady =
+      homeMaxRam >= 256 ||
+      (pServers.length > 0 &&
+        Math.max(...pServers.map((s) => ns.getServerMaxRam(s))) >= 64);
+    const executionAllowed =
+      !hasFormulas || ns.isRunning("core/sys-batcher.js", "home");
 
-    if (isRamReady && !isEarlyGameCrime && executionAllowed && !ns.isRunning("utils/fill-ram.js", "home") && getFreeRam() > 15) {
+    if (
+      isRamReady &&
+      !isEarlyGameCrime &&
+      executionAllowed &&
+      !ns.isRunning("utils/fill-ram.js", "home") &&
+      getFreeRam() > 15
+    ) {
       ns.run("utils/fill-ram.js", 1);
     }
 
@@ -422,7 +519,9 @@ function buildReputationCache(ns: NS): void {
 }
 
 function findNextFaction(ns: NS, p: Player): FactionName | null {
-  const activeFactionJobs = HACKING_FACTIONS.filter((f) => p.factions.includes(f.name))
+  const activeFactionJobs = HACKING_FACTIONS.filter((f) =>
+    p.factions.includes(f.name),
+  )
     .map((f) => {
       const repNeeded = repCache[f.name] || 0;
       const currentRep = ns.singularity.getFactionRep(f.name);
@@ -459,20 +558,31 @@ function manageMicroservices(ns: NS, currentMode: string): void {
     }
   }
 
-  if (targetScript && !ns.isRunning(targetScript, "home") && ns.fileExists(targetScript, "home")) {
+  if (
+    targetScript &&
+    !ns.isRunning(targetScript, "home") &&
+    ns.fileExists(targetScript, "home")
+  ) {
     const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
     const requiredRam = ns.getScriptRam(targetScript, "home");
 
     if (freeRam >= requiredRam) {
       ns.run(targetScript, 1);
     } else {
-      ns.print(`⚠️ [Dispatcher] RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB.`);
+      ns.print(
+        `⚠️ [Dispatcher] RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB.`,
+      );
     }
   }
 }
 
 // 🎯 DYNAMISCHES RE-WEIGHTING FÜR DEN FALLBACK-TARGET FINDER
-export function findBestFallbackTarget(ns: NS, hackingLevel: number, bnMults: any, blacklistTarget: string | null = null): string {
+export function findBestFallbackTarget(
+  ns: NS,
+  hackingLevel: number,
+  bnMults: any,
+  blacklistTarget: string | null = null,
+): string {
   let bestTarget = "n00dles";
   let maxWeight = 0;
 
@@ -493,7 +603,12 @@ export function findBestFallbackTarget(ns: NS, hackingLevel: number, bnMults: an
       if (!visited.has(neighbor)) queue.push(neighbor);
     }
 
-    if (current === "home" || !ns.hasRootAccess(current) || current === blacklistTarget) continue;
+    if (
+      current === "home" ||
+      !ns.hasRootAccess(current) ||
+      current === blacklistTarget
+    )
+      continue;
 
     const serverMaxMoney = ns.getServerMaxMoney(current);
     const reqHacking = ns.getServerRequiredHackingLevel(current);
@@ -517,7 +632,8 @@ export function findBestFallbackTarget(ns: NS, hackingLevel: number, bnMults: an
     if (cycleTime > 5 * 60 * 1000) continue; // Langsame Server aussortieren
 
     // Gewichtung kombiniert Geld, Zykluszeit, benötigten Skill und Wachstumsrate des Nodes
-    const weight = (serverMaxMoney / (cycleTime / 1000)) * (reqHacking / 100) * growthMult;
+    const weight =
+      (serverMaxMoney / (cycleTime / 1000)) * (reqHacking / 100) * growthMult;
 
     if (weight > maxWeight) {
       maxWeight = weight;
@@ -536,15 +652,28 @@ function applyToAllMegacorps(ns: NS, p: Player): void {
 }
 
 // 🚀 DER DYNAMISCHE FLOTTEN-DISPATCHER
-function dispatchSimpleTask(ns: NS, servers: string[], script: string, target: string, threads: number, bnMults: any): void {
+function dispatchSimpleTask(
+  ns: NS,
+  servers: string[],
+  script: string,
+  target: string,
+  threads: number,
+  bnMults: any,
+): void {
   let threadsRemaining = threads;
 
   for (const server of servers) {
     if (!ns.hasRootAccess(server)) continue;
 
     // Dynamischer Home-Buffer statt starrer 64 GB
-    const homeBuffer = bnMults.ServerWeakenRate < 1.0 ? Math.ceil(48 / bnMults.ServerWeakenRate) : 48;
-    const maxRam = server === "home" ? ns.getServerMaxRam("home") - homeBuffer : ns.getServerMaxRam(server);
+    const homeBuffer =
+      bnMults.ServerWeakenRate < 1.0
+        ? Math.ceil(48 / bnMults.ServerWeakenRate)
+        : 48;
+    const maxRam =
+      server === "home"
+        ? ns.getServerMaxRam("home") - homeBuffer
+        : ns.getServerMaxRam(server);
     const freeRam = maxRam - ns.getServerUsedRam(server);
     const scriptRam = ns.getScriptRam(script);
 
