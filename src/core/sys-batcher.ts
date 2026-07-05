@@ -2,7 +2,7 @@ import { NS } from "@ns";
 import { calculateBatch } from "../utils/batch-calculator.js";
 import { getAllServers } from "../lib/network.js";
 import { patchState } from "./state-manager.js";
-import { loadBnMults } from "../lib/state.js"; // 🔄 Importiert deine zentrale Library
+import { loadBnMults } from "../lib/state.js";
 
 interface DashboardData {
   status: string;
@@ -48,18 +48,13 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
 
-  // 📊 Multiplikatoren beim Booten einlesen
   const bnMults = loadBnMults(ns);
 
-  // 🛑 MACRO-KILL-SWITCH: Wenn Hacking in diesem BN kein Geld bringt, RAM schonen und beenden!
   if (
     (bnMults.ScriptHackMoneyGain ?? 1) === 0 ||
     (bnMults.ServerMaxMoney ?? 1) === 0
   ) {
     logEvent("🛑 Hacking wirft hier kein Geld ab. Batcher deaktiviert.");
-    ns.print(
-      "🛑 [BATCHER] Hacking wirft in diesem BitNode kein Geld ab. Script beendet.",
-    );
     return;
   }
 
@@ -67,7 +62,9 @@ export async function main(ns: NS): Promise<void> {
   const SPACER = 80;
   let target: string | null = null;
   let batchesSentForTarget = 0;
-  const BATCHES_PER_TARGET = 500;
+
+  // 💡 ANPASSUNG 1: Aus der Konstante wird eine dynamische Obergrenze
+  let dynamicMaxBatchesForTarget = 500;
 
   let lastLogStatus = "";
   let stallSettleTicks = 0;
@@ -99,9 +96,8 @@ export async function main(ns: NS): Promise<void> {
         Math.floor(freeRam / SCRIPT_RAM_BASE) * SCRIPT_RAM_BASE;
     }
 
-    // 🎯 TARGETING & IMMUTABLE PLAN LOCK
-    if (!target || batchesSentForTarget >= BATCHES_PER_TARGET) {
-      // 🔄 bnMults an das Targeting weiterreichen
+    // 🎯 TARGETING & PIPELINE-AWARE PLAN LOCK
+    if (!target || batchesSentForTarget >= dynamicMaxBatchesForTarget) {
       const newTarget = findBestBatchTargetForNetwork(
         ns,
         cachedServers,
@@ -113,11 +109,29 @@ export async function main(ns: NS): Promise<void> {
       if (newTarget) {
         target = newTarget;
         batchesSentForTarget = 0;
-        currentGreedFactor = 0.4;
 
-        logEvent(`🎯 Ziel gewechselt auf: ${target}`);
+        // 💡 ANPASSUNG 2: Berechne die Pipeline-Kapazität im Zeitfenster
+        const serverMock = ns.getServer(target);
+        serverMock.hackDifficulty = serverMock.minDifficulty;
+        const weakenTime = ns.formulas!.hacking.weakenTime(
+          serverMock,
+          ns.getPlayer(),
+        );
 
-        // 🔄 Signatur an neuen Calculator angepasst (bnMults an 3. Stelle)
+        // Wie viele Wellen fliegen gleichzeitig?
+        const maxConcurrentBatches = Math.max(
+          1,
+          Math.floor(weakenTime / SPACER),
+        );
+
+        // Der ideale RAM-Verbrauch pro Welle, um den PB-Pool exakt linear zu füllen
+        const idealBatchRam = totalUsableMaxRam / maxConcurrentBatches;
+
+        // Rotation dynamisch anpassen: Wir wollen mindestens 2 volle Pipeline-Durchläufe auf dem Ziel bleiben
+        dynamicMaxBatchesForTarget = Math.max(500, maxConcurrentBatches * 2);
+
+        // Starte die Gier-Suche hoch (90%), um den Slot perfekt auszureizen
+        currentGreedFactor = 0.9;
         let lockPlan = calculateBatch(
           ns,
           target,
@@ -126,8 +140,9 @@ export async function main(ns: NS): Promise<void> {
           SPACER,
         );
 
+        // 💡 ANPASSUNG 3: Gier herunterstufen, bis der Batch in seinen ZEIT-SLOT passt, nicht in den Gesamt-RAM!
         while (
-          (lockPlan === null || lockPlan.totalRam > totalUsableMaxRam) &&
+          (lockPlan === null || lockPlan.totalRam > idealBatchRam) &&
           currentGreedFactor > 0.01
         ) {
           currentGreedFactor -= 0.01;
@@ -140,10 +155,36 @@ export async function main(ns: NS): Promise<void> {
           );
         }
 
+        // Failsafe: Falls der Slot kleiner ist als ein 1%-Batch (z.B. im Early-Game),
+        // nutze das Maximum, was physisch in den Gesamt-RAM passt.
+        if (!lockPlan || lockPlan.totalRam > totalUsableMaxRam) {
+          currentGreedFactor = 0.4;
+          lockPlan = calculateBatch(
+            ns,
+            target,
+            bnMults,
+            currentGreedFactor,
+            SPACER,
+          );
+          while (
+            (lockPlan === null || lockPlan.totalRam > totalUsableMaxRam) &&
+            currentGreedFactor > 0.01
+          ) {
+            currentGreedFactor -= 0.01;
+            lockPlan = calculateBatch(
+              ns,
+              target,
+              bnMults,
+              currentGreedFactor,
+              SPACER,
+            );
+          }
+        }
+
         if (lockPlan) {
           lockedPlan = lockPlan;
           logEvent(
-            `🔒 Plan fixiert: Greed ${(currentGreedFactor * 100).toFixed(1)}%`,
+            `🔒 Pipeline-Plan fixiert: Greed ${(currentGreedFactor * 100).toFixed(1)}% | Erhoffte Gleichzeitigkeit: ${maxConcurrentBatches} Wellen`,
           );
         } else {
           logEvent(`⚠️ Ziel ${target} zu komplex. Suche neues Ziel...`);
@@ -169,7 +210,7 @@ export async function main(ns: NS): Promise<void> {
           ramFree: totalUsableFreeRam,
           ramTotal: totalUsableMaxRam,
           batchesSent: 0,
-          batchesMax: BATCHES_PER_TARGET,
+          batchesMax: dynamicMaxBatchesForTarget,
           eventLog,
           lastWaveProfit,
         });
@@ -188,7 +229,7 @@ export async function main(ns: NS): Promise<void> {
     const needsInitialPrep =
       batchesSentForTarget === 0 && (curSec > minSec || curMoney < maxMoney);
 
-    // --- 🔧 DYNAMISCHE PREP-PHASE MIT LIVE-HUD TIMEOUT ---
+    // --- 🔧 PREP-PHASE ---
     if (needsInitialPrep || isMassiveDesync) {
       const currentWeakenTime = ns.getWeakenTime(target);
       lockedPlan = null;
@@ -196,11 +237,11 @@ export async function main(ns: NS): Promise<void> {
 
       if (batchesSentForTarget === 0) {
         logEvent(`🔧 Kalibrierte Prep-Welle abgefeuert.`);
-        executePrepPhase(ns, cachedServers, target, bnMults); // 🔄 Übergabe bnMults
+        executePrepPhase(ns, cachedServers, target, bnMults);
       } else {
         logEvent(`🛑 Desync! Pipeline geflusht & Recovery eingeleitet.`);
         await ns.sleep(SPACER * 10);
-        executePrepPhase(ns, cachedServers, target, bnMults); // 🔄 Übergabe bnMults
+        executePrepPhase(ns, cachedServers, target, bnMults);
       }
 
       const prepDuration = currentWeakenTime + SPACER * 2;
@@ -233,7 +274,7 @@ export async function main(ns: NS): Promise<void> {
           ramFree: tFree,
           ramTotal: tRam,
           batchesSent: 0,
-          batchesMax: BATCHES_PER_TARGET,
+          batchesMax: dynamicMaxBatchesForTarget,
           eventLog,
           lastWaveProfit,
         });
@@ -246,17 +287,8 @@ export async function main(ns: NS): Promise<void> {
     }
 
     if (!lockedPlan) {
-      lockedPlan = calculateBatch(
-        ns,
-        target,
-        bnMults,
-        currentGreedFactor,
-        SPACER,
-      ); // 🔄
-      if (!lockedPlan) {
-        target = null;
-        continue;
-      }
+      target = null;
+      continue;
     }
 
     let plan = lockedPlan;
@@ -269,22 +301,22 @@ export async function main(ns: NS): Promise<void> {
       lastWaveProfit = maxMoney * currentGreedFactor;
     }
 
-    // --- ⏳ INFRASTRUKTUR AUSGELASTET STATUS ---
-    if (!plan || totalUsableFreeRam < plan.totalRam) {
-      const requiredRam = plan ? plan.totalRam : 0;
+    // --- ⏳ RAM-STALL SCHUTZ ---
+    if (totalUsableFreeRam < plan.totalRam) {
+      const requiredRam = plan.totalRam;
 
       if (Date.now() - lastUiUpdate > 250) {
         drawBatcherDashboard(ns, {
           status: "STALLED (RAM)",
           target,
           progress: totalUsableFreeRam / Math.max(1, requiredRam),
-          progressText: `Warte auf RAM: ${ns.format.ram(totalUsableFreeRam)} / ${ns.format.ram(requiredRam)} frei`,
+          progressText: `Warte auf RAM-Slot: ${ns.format.ram(totalUsableFreeRam)} / ${ns.format.ram(requiredRam)}`,
           greed: currentGreedFactor,
           ramNeeded: requiredRam,
           ramFree: totalUsableFreeRam,
           ramTotal: totalUsableMaxRam,
           batchesSent: batchesSentForTarget,
-          batchesMax: BATCHES_PER_TARGET,
+          batchesMax: dynamicMaxBatchesForTarget,
           eventLog,
           lastWaveProfit,
         });
@@ -295,7 +327,7 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // 🛡️ GATEKEEPER (SETTLING OLD WAVES)
+    // 🛡️ GATEKEEPER
     if (lastLogStatus.startsWith("WAIT_")) {
       const freshSec = ns.getServerSecurityLevel(target);
       const freshMoney = ns.getServerMoneyAvailable(target);
@@ -304,7 +336,7 @@ export async function main(ns: NS): Promise<void> {
         stallSettleTicks++;
 
         if (stallSettleTicks > 25) {
-          logEvent("⚠️ Ziel instabil! Erzwinge Notfall-Prep.");
+          logEvent("⚠️ Ziel instabil! Notfall-Prep.");
           batchesSentForTarget = 0;
           stallSettleTicks = 0;
           lockedPlan = null;
@@ -365,14 +397,14 @@ export async function main(ns: NS): Promise<void> {
       drawBatcherDashboard(ns, {
         status: "RUNNING",
         target,
-        progress: batchesSentForTarget / BATCHES_PER_TARGET,
-        progressText: `Welle #${batchId} (${batchesSentForTarget}/${BATCHES_PER_TARGET} bis Rotation)`,
+        progress: batchesSentForTarget / dynamicMaxBatchesForTarget,
+        progressText: `Welle #${batchId} (${batchesSentForTarget}/${dynamicMaxBatchesForTarget} bis Rotation)`,
         greed: currentGreedFactor,
         ramNeeded: plan.totalRam,
         ramFree: totalUsableFreeRam,
         ramTotal: totalUsableMaxRam,
         batchesSent: batchesSentForTarget,
-        batchesMax: BATCHES_PER_TARGET,
+        batchesMax: dynamicMaxBatchesForTarget,
         eventLog,
         lastWaveProfit,
       });
@@ -382,6 +414,8 @@ export async function main(ns: NS): Promise<void> {
     await ns.sleep(SPACER);
   }
 }
+
+// [Die restlichen Hilfsfunktionen bleiben identisch wie in deinem Skript]
 
 function makeProgressBar(progress: number, width = 20): string {
   const filledLength = Math.round(Math.max(0, Math.min(1, progress)) * width);
