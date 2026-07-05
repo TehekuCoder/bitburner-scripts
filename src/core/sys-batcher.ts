@@ -127,10 +127,24 @@ export async function main(ns: NS): Promise<void> {
         // Der ideale RAM-Verbrauch pro Welle, um den PB-Pool exakt linear zu füllen
         const idealBatchRam = totalUsableMaxRam / maxConcurrentBatches;
 
-        // Rotation dynamisch anpassen: Wir wollen mindestens 2 volle Pipeline-Durchläufe auf dem Ziel bleiben
+        // 💡 NEU: Harte Grenze für atomares Batching
+        let largestSingleServerRam = 0;
+        if (cachedServers.length > 0) {
+          largestSingleServerRam = ns.getServerMaxRam(cachedServers[0]);
+          if (cachedServers[0] === "home") {
+            largestSingleServerRam = Math.max(0, largestSingleServerRam - 64);
+          }
+        }
+
+        // Der Batch darf weder die Pipeline sprengen, noch zu groß für ein Mainboard sein
+        const maxAllowedBatchRam = Math.min(
+          idealBatchRam,
+          largestSingleServerRam,
+        );
+
+        // Rotation dynamisch anpassen
         dynamicMaxBatchesForTarget = Math.max(500, maxConcurrentBatches * 2);
 
-        // Starte die Gier-Suche hoch (90%), um den Slot perfekt auszureizen
         currentGreedFactor = 0.9;
         let lockPlan = calculateBatch(
           ns,
@@ -140,9 +154,9 @@ export async function main(ns: NS): Promise<void> {
           SPACER,
         );
 
-        // 💡 ANPASSUNG 3: Gier herunterstufen, bis der Batch in seinen ZEIT-SLOT passt, nicht in den Gesamt-RAM!
+        // 💡 ANPASSUNG 3: Prüfe gegen maxAllowedBatchRam, NICHT gegen idealBatchRam
         while (
-          (lockPlan === null || lockPlan.totalRam > idealBatchRam) &&
+          (lockPlan === null || lockPlan.totalRam > maxAllowedBatchRam) &&
           currentGreedFactor > 0.01
         ) {
           currentGreedFactor -= 0.01;
@@ -352,43 +366,38 @@ export async function main(ns: NS): Promise<void> {
     stallSettleTicks = 0;
     lastLogStatus = "RUNNING";
 
-    // 🚀 EXECUTE BATCH
-    dispatchBatchScript(
+    // 🚀 ATOMARER BATCH-ABSCHUSS
+    const dispatchSuccess = dispatchAtomicBatch(
       ns,
       cachedServers,
-      "tasks/hack.js",
-      plan.hackThreads,
+      plan,
       target,
-      plan.hackDelay,
       batchId,
     );
-    dispatchBatchScript(
-      ns,
-      cachedServers,
-      "tasks/weaken.js",
-      plan.weaken1Threads,
-      target,
-      plan.weaken1Delay,
-      batchId,
-    );
-    dispatchBatchScript(
-      ns,
-      cachedServers,
-      "tasks/grow.js",
-      plan.growThreads,
-      target,
-      plan.growDelay,
-      batchId,
-    );
-    dispatchBatchScript(
-      ns,
-      cachedServers,
-      "tasks/weaken.js",
-      plan.weaken2Threads,
-      target,
-      plan.weaken2Delay,
-      batchId,
-    );
+
+    if (!dispatchSuccess) {
+      // Falls der RAM zwar theoretisch da ist, aber so ungünstig fragmentiert,
+      // dass kein Server ein ganzes Paket nehmen kann -> Kurz warten (Stall)
+      if (Date.now() - lastUiUpdate > 250) {
+        drawBatcherDashboard(ns, {
+          status: "STALLED (FRAG)",
+          target,
+          progress: totalUsableFreeRam / plan.totalRam,
+          progressText: `RAM fragmentiert. Warte auf atomaren Slot...`,
+          greed: currentGreedFactor,
+          ramNeeded: plan.totalRam,
+          ramFree: totalUsableFreeRam,
+          ramTotal: totalUsableMaxRam,
+          batchesSent: batchesSentForTarget,
+          batchesMax: dynamicMaxBatchesForTarget,
+          eventLog,
+          lastWaveProfit,
+        });
+        lastUiUpdate = Date.now();
+      }
+      await ns.sleep(SPACER);
+      continue;
+    }
 
     batchId++;
     batchesSentForTarget++;
@@ -603,4 +612,75 @@ function findBestBatchTargetForNetwork(
     }
   }
   return bestTarget;
+}
+
+function dispatchAtomicBatch(
+  ns: NS,
+  allServers: string[],
+  plan: any,
+  target: string,
+  batchId: number,
+): boolean {
+  const ramHack = ns.getScriptRam("tasks/hack.js");
+  const ramGrow = ns.getScriptRam("tasks/grow.js");
+  const ramWeaken = ns.getScriptRam("tasks/weaken.js");
+
+  // Berechne den exakten Gesamt-RAM-Bedarf für diese EINE Welle
+  const totalRequiredRam =
+    plan.hackThreads * ramHack +
+    plan.weaken1Threads * ramWeaken +
+    plan.growThreads * ramGrow +
+    plan.weaken2Threads * ramWeaken;
+
+  // Suche EINEN Server, der die Welle komplett und am Stück aufnehmen kann
+  for (const server of allServers) {
+    if (!ns.hasRootAccess(server)) continue;
+    let maxRam = ns.getServerMaxRam(server);
+    if (server === "home") maxRam = Math.max(0, maxRam - 64);
+
+    const freeRam = maxRam - ns.getServerUsedRam(server);
+
+    if (freeRam >= totalRequiredRam) {
+      // Gefunden! Feuere alle 4 Komponenten blitzschnell auf demselben Server ab
+      if (plan.hackThreads > 0)
+        ns.exec(
+          "tasks/hack.js",
+          server,
+          plan.hackThreads,
+          target,
+          plan.hackDelay,
+          batchId,
+        );
+      if (plan.weaken1Threads > 0)
+        ns.exec(
+          "tasks/weaken.js",
+          server,
+          plan.weaken1Threads,
+          target,
+          plan.weaken1Delay,
+          batchId,
+        );
+      if (plan.growThreads > 0)
+        ns.exec(
+          "tasks/grow.js",
+          server,
+          plan.growThreads,
+          target,
+          plan.growDelay,
+          batchId,
+        );
+      if (plan.weaken2Threads > 0)
+        ns.exec(
+          "tasks/weaken.js",
+          server,
+          plan.weaken2Threads,
+          target,
+          plan.weaken2Delay,
+          batchId,
+        );
+      return true; // Erfolgreich atomar platziert
+    }
+  }
+
+  return false; // Kein einzelner Server hatte genug zusammenhängenden Platz
 }

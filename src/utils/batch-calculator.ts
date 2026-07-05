@@ -46,11 +46,11 @@ export function calculateBatch(
   const hackSecIncrease = ns.hackAnalyzeSecurity(hackThreads);
   const weaken1Threads = Math.ceil(hackSecIncrease / weakenPotency); // 🔄 Nutzt jetzt weakenPotency
 
-  // Server-Zustand nach Hack für die Grow-Berechnung simulieren
-  server.moneyAvailable = server.moneyMax * (1 - hackThreads * pctPerThread);
+// Server-Zustand nach Hack absichern (niemals unter 1 Dollar fallen lassen)
+  server.moneyAvailable = Math.max(1, server.moneyMax * (1 - hackThreads * pctPerThread));
 
-  // Weaken 2 Threads berechnen (für den Grow-Anteil)
-  const growThreads = ns.formulas.hacking.growThreads(server, player, server.moneyMax);
+  // Weaken 2 Threads berechnen (für den Grow-Anteil) - HIER Math.ceil() ERGÄNZEN!
+  const growThreads = Math.ceil(ns.formulas.hacking.growThreads(server, player, server.moneyMax));
   const growSecIncrease = ns.growthAnalyzeSecurity(growThreads, targetName);
   const weaken2Threads = Math.ceil(growSecIncrease / weakenPotency); // 🔄 Nutzt jetzt weakenPotency
 
