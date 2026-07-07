@@ -6,34 +6,30 @@ import { provisionServer } from "./provision.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  ns.tprint("💤 [BitOS] Leite Schlafmodus ein. Fahre Core-Systeme herunter...");
+  ns.tprint("💤 [BitOS] Leite Schlafmodus ein. Erzwinge Core-Shutdown...");
 
-  // 1. Stoppe alle Core-Systeme auf 'home', um RAM freizumachen
-  const coreScripts = [
-    "core/sys-kernel.js",
-    "core/sys-dispatcher.js",
-    "core/sys-infra.js",
-    "utils/fill-ram.js",
-    "core/sys-batcher.js"
-  ];
+  // ====================================================================
+  // 🎯 SCHRITT 1: DER NUKLEARE SCHLAG GEGEN 'HOME' (mit SafetyGuard)
+  // ====================================================================
+  // Killt ALLES auf home, außer dieses Skript selbst. 
+  // Das stoppt sys-kernel garantiert, bevor er Skripte wiederbeleben kann.
+  ns.killall("home", true);
 
-  for (const script of coreScripts) {
-    if (ns.isRunning(script, "home")) {
-      ns.scriptKill(script, "home");
-      ns.print(`[SHUTDOWN] ${script} gestoppt.`);
-    }
-  }
-
+  // Kurz warten, damit das Spiel die RAM-Freigabe im Kernel registrieren kann
   await ns.sleep(500);
 
-  // 2. Bestimme das robusteste Ziel für die Offline-Phase
+  // ====================================================================
+  // SCHRITT 2: UMGEBUNG LADEN & TARGET BESTIMMEN
+  // ====================================================================
   const p = ns.getPlayer();
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
   const bestTarget = findBestFallbackTarget(ns, p.skills.hacking, bnMults, null);
 
   ns.tprint(`🎯 [BitOS] Offline-Target gewählt: ${bestTarget}`);
 
-  // 3. Selektives Filtern und Fluten des Netzwerks
+  // ====================================================================
+  // SCHRITT 3: NETZWERK-SÄUBERUNG & WORKER-START
+  // ====================================================================
   const allServers = getAllServers(ns);
   const pServers = ns.cloud.getServerNames();
   const workerScript = "tasks/work.js";
@@ -43,7 +39,7 @@ export async function main(ns: NS): Promise<void> {
     s => s === "home" || pServers.includes(s) || (ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0)
   );
 
-  // Liste der Skripte, die wir gezielt beenden wollen (alles außer Utility/Share)
+  // Diese Skripte werden auf externen Servern gejagt
   const scriptsToKill = [
     "tasks/hack.js",
     "tasks/grow.js",
@@ -55,18 +51,22 @@ export async function main(ns: NS): Promise<void> {
   let totalShareThreads = 0;
 
   for (const server of targetServers) {
-    // 💡 ÄNDERUNG 1: Kein killall mehr! Nur noch gezieltes Beenden alter Hacking-Sünden
-    for (const script of scriptsToKill) {
-      if (ns.isRunning(script, server)) {
-        ns.scriptKill(script, server);
+    if (server === "home") {
+      // Auf home wurde durch killall(..., true) bereits die perfekte Tabula Rasa geschaffen!
+    } else {
+      // Auf allen anderen Servern: Selektives Killen, um share.js zu schützen
+      for (const script of scriptsToKill) {
+        if (ns.isRunning(script, server)) {
+          ns.scriptKill(script, server);
+        }
       }
-    }
 
-    // 💡 ÄNDERUNG 2: Share-Skripte zählen, die auf den Servern aktiv sind
-    const activeProcesses = ns.ps(server);
-    for (const proc of activeProcesses) {
-      if (proc.filename.includes("share")) {
-        totalShareThreads += proc.threads;
+      // Share-Skripte zählen, die auf den externen Servern aktiv sind
+      const activeProcesses = ns.ps(server);
+      for (const proc of activeProcesses) {
+        if (proc.filename.includes("share")) {
+          totalShareThreads += proc.threads;
+        }
       }
     }
 
@@ -134,7 +134,6 @@ export async function main(ns: NS): Promise<void> {
       stableTicks = 0;
     }
 
-    // Abbruchbedingungen sauber trennen
     if (stableTicks >= 8) {
       break;
     }
@@ -151,8 +150,6 @@ export async function main(ns: NS): Promise<void> {
   // ====================================================================
   // 🔔 NOTIFICATION & INTELLIGENTE FAILSAFE-WARNUNG
   // ====================================================================
-  
-  // 💡 ÄNDERUNG 3: Abfang-Logik für fehlgeschlagenen Kaltstart ($0/s Ertrag)
   if (lastTotalIncome === 0) {
     ns.toast("BitOS: CRITICAL WARNING! Offline-Ertrag steht auf 0!", "error", 15000);
     
@@ -162,16 +159,11 @@ export async function main(ns: NS): Promise<void> {
       `============================================================\n\n` +
       `Der Failsafe-Timer ist abgelaufen, bevor Geld generiert wurde.\n` +
       `Wenn du das Spiel JETZT schließt, verdienst du über Nacht 0 $!\n\n` +
-      `Mögliche Ursache:\n` +
-      `Die Security von ${bestTarget} ist zu hoch oder das Geld auf 0.\n` +
-      `Die Worker müssen erst ungestört preppen.\n\n` +
       `EMPFEHLUNG: Lass das Spiel noch ein paar Minuten offen,\n` +
       `bis im Log-Fenster bei NETZWERK-PROD Dollar fließen!`
     );
-    
     ns.tprint("❌ [BitOS] WARNUNG: Offline-Skripte laufen, sind aber noch blockiert. Nicht ausschalten!");
   } else {
-    // Erfolgsfall
     ns.toast("BitOS: Offline-Skripte sind warmgelaufen!", "success", 10000);
     
     await ns.alert(
@@ -183,7 +175,6 @@ export async function main(ns: NS): Promise<void> {
       `Utility-Erhalt: ${totalShareThreads} Share-Threads laufen weiter.\n\n` +
       `Du kannst den PC jetzt beruhigt ausschalten!`
     );
-    
     ns.tprint("🚀 [BitOS] SYSTEMBEREIT FÜR OFFLINE-PHASE. Gute Nacht, Operator!");
   }
 }
