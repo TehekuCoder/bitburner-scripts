@@ -2,33 +2,94 @@ import { NS, ProgramName } from "@ns";
 import { provisionServer } from "/utils/provision";
 import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
 
+// 🎯 ZENTRALE SOFTWARE-MATRIX (Einfach zu erweitern, spart Duplikation)
+const TARGET_PROGRAMS = [
+  "BruteSSH.exe",
+  "FTPCrack.exe",
+  "relaySMTP.exe",
+  "HTTPWorm.exe",
+  "DarkscapeNavigator.exe", // BB 3.0 Modus
+  "SQLInject.exe",
+  "Formulas.exe",
+] as const;
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const hasSingularity = ns.singularity !== undefined;
-
-  // Umweltfaktoren laden
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
+
+  ns.ui.openTail();
 
   while (true) {
     if (hasSingularity) {
-      // Skaliert die Reserve leicht nach oben, falls die Home-Kosten im BN erhöht sind
       const homeCostMultiplier = bnMults.HomeComputerRamCost ?? 1.0;
       const baseReserve = homeCostMultiplier > 2 ? 2_000_000 : 500_000;
       const dynamicReserve = Math.max(baseReserve, ns.getPlayer().money * 0.05);
 
       handleHomeServerPurchases(ns, dynamicReserve);
       handleProgramPurchases(ns);
-    } else {
-      ns.print(
-        "ℹ️ [INFRA] Singularity-Upgrades inaktiv (SF4 nicht verfügbar).",
-      );
     }
 
-    // 💡 FIX: AWAIT hinzugefügt, da handleServerPurchases eine asynchrone Kette anstößt
     await handleServerPurchases(ns, bnMults);
+    printDashboard(ns);
 
     await ns.sleep(10000);
   }
+}
+
+function printDashboard(ns: NS): void {
+  ns.clearLog();
+  
+  // 1. Home-Server Status
+  const homeMaxRam = ns.getServerMaxRam("home");
+  const homeUsedRam = ns.getServerUsedRam("home");
+  const homeCores = ns.getServer("home").cpuCores;
+
+  ns.print(`============================================================`);
+  ns.print(` ⚙️  BIT-OS INFRASTRUCTURE MONITOR`);
+  ns.print(`============================================================`);
+  ns.print(`🏠 HOME COMPUTER`);
+  ns.print(`   RAM:   ${ns.format.ram(homeMaxRam).padEnd(9)} (Genutzt: ${ns.format.ram(homeUsedRam)})`);
+  ns.print(`   CORES: ${homeCores} Kerne`);
+  ns.print(`------------------------------------------------------------`);
+
+  // 2. Cloud-Netzwerk Tabelle
+  ns.print(`🖥️  CLOUD-NETZWERK (PURCHASED SERVERS)`);
+  const currentServers = ns.cloud.getServerNames();
+  const maxServers = ns.cloud.getServerLimit();
+
+  if (currentServers.length === 0) {
+    ns.print(`   [Keine kaufbaren Server im aktuellen BitNode registriert]`);
+  } else {
+    currentServers.sort().forEach(server => {
+      const ram = ns.getServerMaxRam(server);
+      const used = ns.getServerUsedRam(server);
+      const bar = "█".repeat(Math.round((used / ram) * 10)) + "░".repeat(10 - Math.round((used / ram) * 10));
+      ns.print(`   • ${server.padEnd(12)} : ${ns.format.ram(ram).padStart(9)}  [${bar}]`);
+    });
+  }
+  ns.print(`   Kapazität: ${currentServers.length} / ${maxServers} Server slots genutzt.`);
+  ns.print(`------------------------------------------------------------`);
+
+  // 3. Kompaktes Software-Inventar (2-Spalten-Grid)
+  ns.print(`💾 SOFTWARE-INVENTAR`);
+  
+  let gridLine = "   ";
+  for (let i = 0; i < TARGET_PROGRAMS.length; i++) {
+    const progName = TARGET_PROGRAMS[i];
+    const hasFile = ns.fileExists(progName, "home");
+    const status = hasFile ? "✅" : "❌";
+    
+    // Formatiert jeden Eintrag sauber auf 25 Zeichen Breite
+    gridLine += `[${status}] ${progName.padEnd(22)}`;
+    
+    // Nach jedem zweiten Element oder am Ende der Liste die Zeile drucken
+    if ((i + 1) % 2 === 0 || i === TARGET_PROGRAMS.length - 1) {
+      ns.print(gridLine);
+      gridLine = "   "; // Zeile zurücksetzen
+    }
+  }
+  ns.print(`============================================================`);
 }
 
 function handleHomeServerPurchases(ns: NS, reserveMoney: number): void {
@@ -47,9 +108,7 @@ function handleHomeServerPurchases(ns: NS, reserveMoney: number): void {
   const coreCost = sing.getUpgradeHomeCoresCost();
   if (availableMoney >= coreCost) {
     if (sing.upgradeHomeCores()) {
-      ns.print(
-        `[HOME] ✅ Cores erweitert! Cost: $${ns.format.number(coreCost)}`,
-      );
+      ns.print(`[HOME] ✅ Cores erweitert! Cost: $${ns.format.number(coreCost)}`);
     }
   }
 }
@@ -65,33 +124,20 @@ function handleProgramPurchases(ns: NS): void {
   }
 
   if (ns.hasTorRouter()) {
-    // 💡 RE-OPTIMIERT FÜR BB 3.0: DarkscapeNavigator wieder an seinem strategischen Platz
-    const programs: ProgramName[] = [
-      "BruteSSH.exe" as ProgramName,
-      "FTPCrack.exe" as ProgramName,
-      "relaySMTP.exe" as ProgramName,
-      "HTTPWorm.exe" as ProgramName,
-      "DarkscapeNavigator.exe" as ProgramName, // Schaltet den 3.0 Darknet-Modus frei
-      "SQLInject.exe" as ProgramName,
-      "Formulas.exe" as ProgramName,
-    ];
-
-    for (const prog of programs) {
+    // Nutzt das zentrale globale Array statt einer lokalen Kopie
+    for (const prog of TARGET_PROGRAMS) {
       if (!ns.fileExists(prog, "home")) {
-        if (sing.purchaseProgram(prog)) {
+        if (sing.purchaseProgram(prog as ProgramName)) {
           ns.print(`[INFRA] 📡 ${prog} erfolgreich gekauft.`);
         }
       }
     }
   }
 }
+
 async function handleServerPurchases(ns: NS, bnMults: any): Promise<void> {
   const maxServers = ns.cloud.getServerLimit();
-
-  // Failsafe für BitNodes ohne kaufbare Server (z.B. BN8)
-  if (maxServers === 0 || bnMults.PurchasedServerLimit === 0) {
-    return;
-  }
+  if (maxServers === 0 || bnMults.PurchasedServerLimit === 0) return;
 
   const maxRam = ns.cloud.getRamLimit();
   let currentBudget = ns.getPlayer().money * 0.9;
@@ -142,14 +188,10 @@ async function handleServerPurchases(ns: NS, bnMults: any): Promise<void> {
     } else if (currentServers.length < maxServers) {
       if (worstServer !== "" && minRam < affordableNewRam) {
         const nextRam = minRam * 2;
-        const upgradeCost =
-          ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
+        const upgradeCost = ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
 
         if (currentBudget >= upgradeCost && nextRam <= allowedMaxRam) {
           if (ns.cloud.upgradeServer(worstServer, nextRam)) {
-            ns.print(
-              `[CLOUD] 📈 Konsolidierung: ${worstServer} auf ${ns.format.ram(nextRam)} ($${ns.format.number(upgradeCost)})`,
-            );
             currentBudget -= upgradeCost;
             actionOccurred = true;
           }
@@ -163,13 +205,9 @@ async function handleServerPurchases(ns: NS, bnMults: any): Promise<void> {
     } else if (worstServer !== "") {
       const nextRam = minRam * 2;
       if (nextRam <= allowedMaxRam) {
-        const upgradeCost =
-          ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
+        const upgradeCost = ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
         if (currentBudget >= upgradeCost) {
           if (ns.cloud.upgradeServer(worstServer, nextRam)) {
-            ns.print(
-              `[CLOUD] 📈 Upgrade: ${worstServer} auf ${ns.format.ram(nextRam)} ($${ns.format.number(upgradeCost)})`,
-            );
             currentBudget -= upgradeCost;
             actionOccurred = true;
           }
@@ -179,11 +217,7 @@ async function handleServerPurchases(ns: NS, bnMults: any): Promise<void> {
   }
 }
 
-async function buyNewServer(
-  ns: NS,
-  ram: number,
-  maxServers: number,
-): Promise<boolean> {
+async function buyNewServer(ns: NS, ram: number, maxServers: number): Promise<boolean> {
   const currentServers = ns.cloud.getServerNames();
   let nextFreeNumber = 1;
   let name = "";
@@ -202,13 +236,7 @@ async function buyNewServer(
   if (name === "") name = `p-serv-${Date.now()}`;
 
   if (ns.cloud.purchaseServer(name, ram)) {
-    ns.print(
-      `[CLOUD] 🖥️ Neuen Server gekauft: ${name} (${ns.format.ram(ram)})`,
-    );
-
-    // Worker-Skripte rüberschieben (Wird jetzt dank sauberem Await-Kette korrekt synchronisiert)
     await provisionServer(ns, name);
-
     return true;
   }
   return false;
