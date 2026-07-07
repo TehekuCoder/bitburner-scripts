@@ -62,8 +62,7 @@ export async function main(ns: NS): Promise<void> {
   const SPACER = 80;
   let target: string | null = null;
   let batchesSentForTarget = 0;
-
-  let AnnapolisMaxBatchesForTarget = 500; // Dynamische Obergrenze
+  let dynamicMaxBatchesForTarget = 500;
 
   let lastLogStatus = "";
   let stallSettleTicks = 0;
@@ -95,7 +94,8 @@ export async function main(ns: NS): Promise<void> {
         Math.floor(freeRam / SCRIPT_RAM_BASE) * SCRIPT_RAM_BASE;
     }
 
-    if (!target || batchesSentForTarget >= AnnapolisMaxBatchesForTarget) {
+    // 🎯 TARGETING
+    if (!target || batchesSentForTarget >= dynamicMaxBatchesForTarget) {
       const newTarget = findBestBatchTargetForNetwork(
         ns,
         cachedServers,
@@ -135,7 +135,7 @@ export async function main(ns: NS): Promise<void> {
           largestSingleServerRam,
         );
 
-        AnnapolisMaxBatchesForTarget = Math.max(500, maxConcurrentBatches * 2);
+        dynamicMaxBatchesForTarget = Math.max(500, maxConcurrentBatches * 2);
 
         currentGreedFactor = 0.9;
         let lockPlan = calculateBatch(
@@ -187,7 +187,7 @@ export async function main(ns: NS): Promise<void> {
         if (lockPlan) {
           lockedPlan = lockPlan;
           logEvent(
-            `🔒 Pipeline-Plan fixiert: Greed ${(currentGreedFactor * 100).toFixed(1)}%`,
+            `🔒 Pipeline-Plan fixiert: ${target} @ Gier ${(currentGreedFactor * 100).toFixed(1)}%`,
           );
         } else {
           logEvent(`⚠️ Ziel ${target} zu komplex. Suche neues Ziel...`);
@@ -213,7 +213,7 @@ export async function main(ns: NS): Promise<void> {
           ramFree: totalUsableFreeRam,
           ramTotal: totalUsableMaxRam,
           batchesSent: 0,
-          batchesMax: AnnapolisMaxBatchesForTarget,
+          batchesMax: dynamicMaxBatchesForTarget,
           eventLog,
           lastWaveProfit,
         });
@@ -276,7 +276,7 @@ export async function main(ns: NS): Promise<void> {
           ramFree: tFree,
           ramTotal: tRam,
           batchesSent: 0,
-          batchesMax: AnnapolisMaxBatchesForTarget,
+          batchesMax: dynamicMaxBatchesForTarget,
           eventLog,
           lastWaveProfit,
         });
@@ -317,7 +317,7 @@ export async function main(ns: NS): Promise<void> {
           ramFree: totalUsableFreeRam,
           ramTotal: totalUsableMaxRam,
           batchesSent: batchesSentForTarget,
-          batchesMax: AnnapolisMaxBatchesForTarget,
+          batchesMax: dynamicMaxBatchesForTarget,
           eventLog,
           lastWaveProfit,
         });
@@ -372,7 +372,7 @@ export async function main(ns: NS): Promise<void> {
           ramFree: totalUsableFreeRam,
           ramTotal: totalUsableMaxRam,
           batchesSent: batchesSentForTarget,
-          batchesMax: AnnapolisMaxBatchesForTarget,
+          batchesMax: dynamicMaxBatchesForTarget,
           eventLog,
           lastWaveProfit,
         });
@@ -389,14 +389,14 @@ export async function main(ns: NS): Promise<void> {
       drawBatcherDashboard(ns, {
         status: "RUNNING",
         target,
-        progress: batchesSentForTarget / AnnapolisMaxBatchesForTarget,
-        progressText: `Welle #${batchId} (${batchesSentForTarget}/${AnnapolisMaxBatchesForTarget} bis Rotation)`,
+        progress: batchesSentForTarget / dynamicMaxBatchesForTarget,
+        progressText: `Welle #${batchId} (${batchesSentForTarget}/${dynamicMaxBatchesForTarget} bis Rotation)`,
         greed: currentGreedFactor,
         ramNeeded: plan.totalRam,
         ramFree: totalUsableFreeRam,
         ramTotal: totalUsableMaxRam,
         batchesSent: batchesSentForTarget,
-        batchesMax: AnnapolisMaxBatchesForTarget,
+        batchesMax: dynamicMaxBatchesForTarget,
         eventLog,
         lastWaveProfit,
       });
@@ -413,13 +413,11 @@ function makeProgressBar(progress: number, width = 20): string {
   return "█".repeat(filledLength) + "░".repeat(emptyLength);
 }
 
-// 🔧 FIX HIER: Sicherer Umgang mit dem "Keines"-Dummy-Target
 function drawBatcherDashboard(ns: NS, data: DashboardData): void {
   ns.clearLog();
 
   const hasValidTarget = data.target !== "Keines" && data.target !== "";
   
-  // Nur abfragen, wenn der Server wirklich existiert
   const curSec = hasValidTarget ? ns.getServerSecurityLevel(data.target) : 0;
   const minSec = hasValidTarget ? ns.getServerMinSecurityLevel(data.target) : 0;
   const curMoney = hasValidTarget ? ns.getServerMoneyAvailable(data.target) : 0;
@@ -560,6 +558,7 @@ function executePrepPhase(
   }
 }
 
+// 🔧 FIX: Optimierte Zielfindung für riesige Netzwerke (PB-Klasse)
 function findBestBatchTargetForNetwork(
   ns: NS,
   allServers: string[],
@@ -573,17 +572,25 @@ function findBestBatchTargetForNetwork(
   let bestTarget = null;
   let highestScore = 0;
   const playerHackLevel = ns.getHackingLevel();
-  const maxAllowedWeakenMinutes = 10 + (playerHackLevel / 100) * 2;
-  const DYNAMIC_MAX_WEAKEN_TIME = maxAllowedWeakenMinutes * 60 * 1000;
+  
+  // Gelockertes Failsafe auf 60 Minuten. Großer RAM erlaubt gewaltige Pipelines!
+  const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000; 
 
   for (const s of targets) {
     if (ns.getServerRequiredHackingLevel(s) > playerHackLevel) continue;
 
-    const testPlan = calculateBatch(ns, s, bnMults, 0.01, spacer);
+    // Erster Test mit 10% statt 1% Gier, um den 0-Thread-Fehler bei starkem Hacking zu umgehen
+    let testPlan = calculateBatch(ns, s, bnMults, 0.10, spacer);
+
+    // Zweiter Test-Fallback auf 40% Standardgier, falls 10% mathematisch unmöglich sind
+    if (!testPlan) {
+      testPlan = calculateBatch(ns, s, bnMults, 0.40, spacer);
+    }
 
     if (!testPlan || testPlan.totalRam > totalNetworkRam) continue;
     const idealExecutionTime = testPlan.executionTime;
     if (idealExecutionTime > DYNAMIC_MAX_WEAKEN_TIME) continue;
+    
     const money = ns.getServerMaxMoney(s);
     const score = money / idealExecutionTime;
     if (score > highestScore) {
