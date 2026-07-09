@@ -27,7 +27,6 @@ export async function main(ns: NS): Promise<void> {
       const dynamicReserve = Math.max(baseReserve, ns.getPlayer().money * 0.05);
 
       handleHomeServerPurchases(ns, dynamicReserve);
-      // 🔥 REPARATUR: bnMults wird jetzt mitgegeben
       handleProgramPurchases(ns, bnMults);
     }
 
@@ -43,8 +42,6 @@ function handleProgramPurchases(ns: NS, bnMults: any): void {
   const player = ns.getPlayer();
   const currentHacking = ns.getHackingLevel();
 
-  // 🛡️ EARLY-GAME PROTECTOR FOR TOR:
-  // Kauf den TOR-Router erst, wenn wir uns dem ersten sinnvollen Meilenstein (Level 40+) nähern.
   if (!ns.hasTorRouter() && player.money >= 200_000 && currentHacking >= 40) {
     if (sing.purchaseTor()) {
       ns.print("[INFRA] 📡 TOR-Router erfolgreich gekauft.");
@@ -52,29 +49,25 @@ function handleProgramPurchases(ns: NS, bnMults: any): void {
   }
 
   if (ns.hasTorRouter()) {
-    // 🧠 MATHEMATISCHE LEVEL-GATES
-    // Definiert das exakte Mindest-Hackinglevel, ab dem ein Kauf überhaupt Sinn ergibt
     const programGates: Record<(typeof TARGET_PROGRAMS)[number], number> = {
-      "BruteSSH.exe": 50, // Erster 1-Port-Server: neo-net (Lvl 50)
-      "FTPCrack.exe": 150, // Erster 2-Port-Server: silver-helix (Lvl 150)
-      "relaySMTP.exe": 250, // Erster 3-Port-Server: omega-net (Lvl 200-250)
-      "HTTPWorm.exe": 400, // Erster 4-Port-Server: univ-energy (Lvl 390)
-      "DarkscapeNavigator.exe": 0, // Utility (keine Sperre nötig)
-      "SQLInject.exe": 800, // Erster 5-Port-Server: Megacorps / ecorp (Lvl 900)
-      "Formulas.exe": 1000, // Macht erst Sinn, wenn wir genug RAM für hochentwickelte Batcher haben
+      "BruteSSH.exe": 50,
+      "FTPCrack.exe": 150,
+      "relaySMTP.exe": 250,
+      "HTTPWorm.exe": 400,
+      "DarkscapeNavigator.exe": 0,
+      "SQLInject.exe": 800,
+      "Formulas.exe": 1000,
     };
 
     for (const prog of TARGET_PROGRAMS) {
       if (!ns.fileExists(prog, "home")) {
         const requiredLevel = programGates[prog] ?? 0;
 
-        // 🔥 STRATEGISCHER FILTER: Nur kaufen, wenn das Hacking-Level reif dafür ist!
         if (currentHacking >= requiredLevel) {
           if (sing.purchaseProgram(prog as ProgramName)) {
             ns.print(`[INFRA] 📡 ${prog} erfolgreich gekauft.`);
           }
         } else {
-          // Optionaler Log-Eintrag zur Veranschaulichung im Early Game
           ns.print(
             `⏳ [Sperre] ${prog} blockiert bis Hacking-Level ${requiredLevel} (Aktuell: ${currentHacking}).`,
           );
@@ -84,9 +77,6 @@ function handleProgramPurchases(ns: NS, bnMults: any): void {
   }
 }
 
-// ======================================================================
-// [Restliche Funktionen handleHomeServerPurchases, handleServerPurchases, buyNewServer und printDashboard bleiben unverändert]
-// ======================================================================
 function handleHomeServerPurchases(ns: NS, reserveMoney: number): void {
   const sing = ns.singularity;
   let availableMoney = ns.getPlayer().money - reserveMoney;
@@ -113,6 +103,38 @@ function handleHomeServerPurchases(ns: NS, reserveMoney: number): void {
 async function handleServerPurchases(ns: NS, bnMults: any): Promise<void> {
   const maxServers = ns.cloud.getServerLimit();
   if (maxServers === 0 || bnMults.PurchasedServerLimit === 0) return;
+
+  // 🔥 SMARTER STRATEGISCHER FILTER
+  if (ns.singularity) {
+    const nextRamCost = ns.singularity.getUpgradeHomeRamCost();
+    const nextCoreCost = ns.singularity.getUpgradeHomeCoresCost();
+    const minHomeCost = Math.min(nextRamCost, nextCoreCost);
+    const currentMoney = ns.getPlayer().money;
+
+    // Wir berechnen, wie viel ein maximales Upgrade für EINEN p-Server aktuell kosten würde
+    const currentServers = ns.cloud.getServerNames();
+    const currentMinRam =
+      currentServers.length > 0
+        ? Math.min(...currentServers.map((s) => ns.getServerMaxRam(s)))
+        : 8;
+    const nextPservUpgradeCost =
+      ns.cloud.getServerCost(currentMinRam * 2) -
+      ns.cloud.getServerCost(currentMinRam);
+
+    // Der Schild triggert NUR, wenn:
+    // 1. Wir 50% des Geldes haben WENN das Home-Upgrade billiger ist als ein p-Server Upgrade
+    // 2. ODER wir im Mid-Game sind und das Home-Upgrade maximal das 5-fache eines p-Server-Upgrades kostet.
+    // Das verhindert, dass ein 100t Home-RAM-Upgrade im Late-Game das gesamte System einfriert!
+    if (
+      currentMoney >= minHomeCost * 0.5 &&
+      minHomeCost < nextPservUpgradeCost * 5
+    ) {
+      ns.print(
+        `[INFRA] 🛡️ Sparen für Home-Upgrade ($${ns.format.number(minHomeCost)}) hat Vorrang vor p-Servern.`,
+      );
+      return;
+    }
+  }
 
   const maxRam = ns.cloud.getRamLimit();
   let currentBudget = ns.getPlayer().money * 0.9;
@@ -238,6 +260,19 @@ function printDashboard(ns: NS): void {
     `   RAM:   ${ns.format.ram(homeMaxRam).padEnd(9)} (Genutzt: ${ns.format.ram(homeUsedRam)})`,
   );
   ns.print(`   CORES: ${homeCores} Kerne`);
+
+  // 📊 Live-Anzeige der Investitions-Strategie im Dashboard
+  if (ns.singularity) {
+    const nextRamCost = ns.singularity.getUpgradeHomeRamCost();
+    const nextCoreCost = ns.singularity.getUpgradeHomeCoresCost();
+    const minHomeCost = Math.min(nextRamCost, nextCoreCost);
+
+    if (ns.getPlayer().money >= minHomeCost * 0.5) {
+      ns.print(`   🚦 STRATEGIE: 👑 HOME-PRIORITÄT AKTIV (P-Serv eingefroren)`);
+    } else {
+      ns.print(`   🚦 STRATEGIE: 💸 Normalbetrieb (Netzwerk-Expansion)`);
+    }
+  }
   ns.print("------------------------------------------------------------");
 
   ns.print(`🖥️  CLOUD-NETZWERK (PURCHASED SERVERS)`);
