@@ -38,8 +38,8 @@ const MEGACORPS: Record<string, CompanyName> = {
 const HACKING_FACTIONS: FactionConfig[] = [
   { name: "CyberSec" as FactionName, minStat: 0, priority: 1 },
   { name: "Tian Di Hui" as FactionName, minStat: 0, priority: 2 },
-  { name: "NiteSec" as FactionName, minStat: 0, priority: 3 },
-  { name: "Netburners" as FactionName, minStat: 0, priority: 4 },
+  { name: "Netburners" as FactionName, minStat: 0, priority: 3 },
+  { name: "NiteSec" as FactionName, minStat: 0, priority: 4 },
   { name: "Slum Snakes" as FactionName, minStat: 30, priority: 5 },
   { name: "Sector-12" as FactionName, minStat: 0, priority: 6 },
   { name: "Chongqing" as FactionName, minStat: 0, priority: 7 },

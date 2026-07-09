@@ -24,7 +24,7 @@ export async function main(ns: NS): Promise<void> {
   ns.tprint(`🎯 [BitOS] Offline-Target gewählt: ${bestTarget}`);
 
   // ====================================================================
-  // SCHRITT 3: NETZWERK-SÄUBERUNG & WORKER-START
+  // SCHRITT 3: NETZWERK-SÄUBERUNG & SMART WORKER-START
   // ====================================================================
   const allServers = getAllServers(ns);
   const pServers = ns.cloud.getServerNames();
@@ -46,25 +46,44 @@ export async function main(ns: NS): Promise<void> {
   let totalShareThreads = 0;
 
   for (const server of targetServers) {
+    await provisionServer(ns, server);
+
+    const reserve = server === "home" ? 32 : 0; 
+    const maxRam = ns.getServerMaxRam(server) - reserve;
+    
+    // Aktuelle Prozesse analysieren
+    const activeProcesses = ns.ps(server);
+    const existingWorker = activeProcesses.find(p => p.filename === workerScript && p.args[0] === bestTarget);
+    
+    // Share-Threads zählen und deren RAM schützen
+    let shareRam = 0;
+    for (const proc of activeProcesses) {
+      if (proc.filename.includes("share")) {
+        totalShareThreads += proc.threads;
+        shareRam += ns.getScriptRam(proc.filename, server) * proc.threads;
+      }
+    }
+
+    // Berechnen, wie viele Threads maximal für den Worker übrig sind
+    const availableRamForWorker = maxRam - shareRam;
+    const maxPossibleThreads = Math.max(0, Math.floor(availableRamForWorker / workerRam));
+
+    // 🔥 SMART KEEP-ALIVE: Läuft der perfekte Worker schon? Dann bloß nicht stoppen!
+    if (existingWorker && existingWorker.threads === maxPossibleThreads && server !== "home") {
+      ns.print(`[Keep-Alive] 🛡️ ${server} läuft bereits optimal. Historie geschützt.`);
+      continue; 
+    }
+
+    // Falls nicht optimal: Alten Ballast abwerfen (Home wurde oben schon gewiped)
     if (server !== "home") {
       for (const script of scriptsToKill) {
         if (ns.isRunning(script, server)) {
           ns.scriptKill(script, server);
         }
       }
-
-      const activeProcesses = ns.ps(server);
-      for (const proc of activeProcesses) {
-        if (proc.filename.includes("share")) {
-          totalShareThreads += proc.threads;
-        }
-      }
     }
 
-    await provisionServer(ns, server);
-
-    const reserve = server === "home" ? 32 : 0; 
-    const maxRam = ns.getServerMaxRam(server) - reserve;
+    // Frisch gestarteter Worker (da geupgradet oder falsches Ziel)
     const freeRam = maxRam - ns.getServerUsedRam(server);
     const threads = Math.floor(freeRam / workerRam);
 
@@ -74,7 +93,7 @@ export async function main(ns: NS): Promise<void> {
   }
 
   // ====================================================================
-  // 📊 MONITORING & OFFLINE-WARMUP ENGINE (WITH OVERFLOW PATCH)
+  // 📊 MONITORING & OFFLINE-WARMUP ENGINE
   // ====================================================================
   ns.tprint("⏳ [BitOS] Skripte gestartet. Überwache Kalibrierung im Tail-Window...");
   ns.ui.openTail();
@@ -82,7 +101,9 @@ export async function main(ns: NS): Promise<void> {
   let stableTicks = 0;
   let lastTotalIncome = 0;
   const startTime = Date.now();
-  const maxWaitTime = ns.getWeakenTime(bestTarget) + 5000; 
+  
+  // 🔧 MATHE-FIX: Failsafe muss Weaken + Hack-Laufzeit abdecken!
+  const maxWaitTime = ns.getWeakenTime(bestTarget) + ns.getHackTime(bestTarget) + 10000; 
 
   while (true) {
     let currentTotalIncome = 0;
@@ -101,7 +122,6 @@ export async function main(ns: NS): Promise<void> {
     ns.print(`ZIELSERVER:      ${bestTarget}`);
     ns.print(`LAUFZEIT:        ${elapsedSecs}s / Failsafe: ${Math.floor(maxWaitTime / 1000)}s`);
     
-    // 🔧 UI-FIX: Negativen Überlauf sauber abfangen und verständlich anzeigen
     if (currentTotalIncome < 0) {
       ns.print(`NETZWERK-PROD:    🚀 Hyper-Produktion (Engine-Überlauf durch $10q+)`);
     } else {
@@ -123,7 +143,6 @@ export async function main(ns: NS): Promise<void> {
     }
     ns.print(`============================================================`);
 
-    // 🔧 LOGIK-FIX: Wenn der Wert negativ wird, interpretieren wir das als erfolgreichen Aktivitäts-Indikator
     if (currentTotalIncome < 0) {
       stableTicks++;
     } else if (currentTotalIncome > 0 && Math.abs(currentTotalIncome - lastTotalIncome) < (currentTotalIncome * 0.05)) {
@@ -148,7 +167,7 @@ export async function main(ns: NS): Promise<void> {
   }
 
   // ====================================================================
-  // 🔔 NOTIFICATION & ENHANCED ALERT INTERFACE
+  // 🔔 NOTIFICATION INTERFACE
   // ====================================================================
   if (lastTotalIncome === 0) {
     ns.toast("BitOS: CRITICAL WARNING! Offline-Ertrag steht auf 0!", "error", 15000);
@@ -156,7 +175,8 @@ export async function main(ns: NS): Promise<void> {
       `============================================================\n` +
       `⚠️ WARNUNG: OFFLINE-START FEHLGESCHLAGEN ($0/s)\n` +
       `============================================================\n\n` +
-      `Der Failsafe-Timer ist abgelaufen, bevor Geld generiert wurde.`
+      `Der Failsafe-Timer ist abgelaufen, bevor Geld generiert wurde.\n` +
+      `Deine Offline-Erträge könnten in dieser Phase stark beeinträchtigt sein.`
     );
   } else {
     ns.toast("BitOS: Offline-Skripte sind warmgelaufen!", "success", 10000);

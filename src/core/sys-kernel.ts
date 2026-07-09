@@ -310,7 +310,7 @@ function manageSuites(
     }
   }
 
-  if (ns.fileExists("DarkscapeNavigator.exe", "home")) {
+  if (ns.fileExists("DarkscapeNavigator.exe", "home") && homeMaxRam >= 256) {
     if (!ns.isRunning(scripts.replicator, "home"))
       ns.exec(scripts.replicator, "home", 1);
     if (

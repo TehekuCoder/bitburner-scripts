@@ -43,7 +43,7 @@ function handleProgramPurchases(ns: NS, bnMults: any): void {
   const player = ns.getPlayer();
   const currentHacking = ns.getHackingLevel();
 
-  // 🛡️ EARLY-GAME PROTECTOR FOR TOR: 
+  // 🛡️ EARLY-GAME PROTECTOR FOR TOR:
   // Kauf den TOR-Router erst, wenn wir uns dem ersten sinnvollen Meilenstein (Level 40+) nähern.
   if (!ns.hasTorRouter() && player.money >= 200_000 && currentHacking >= 40) {
     if (sing.purchaseTor()) {
@@ -54,14 +54,14 @@ function handleProgramPurchases(ns: NS, bnMults: any): void {
   if (ns.hasTorRouter()) {
     // 🧠 MATHEMATISCHE LEVEL-GATES
     // Definiert das exakte Mindest-Hackinglevel, ab dem ein Kauf überhaupt Sinn ergibt
-    const programGates: Record<typeof TARGET_PROGRAMS[number], number> = {
-      "BruteSSH.exe": 50,         // Erster 1-Port-Server: neo-net (Lvl 50)
-      "FTPCrack.exe": 150,        // Erster 2-Port-Server: silver-helix (Lvl 150)
-      "relaySMTP.exe": 250,       // Erster 3-Port-Server: omega-net (Lvl 200-250)
-      "HTTPWorm.exe": 400,        // Erster 4-Port-Server: univ-energy (Lvl 390)
-      "DarkscapeNavigator.exe": 0,// Utility (keine Sperre nötig)
-      "SQLInject.exe": 800,       // Erster 5-Port-Server: Megacorps / ecorp (Lvl 900)
-      "Formulas.exe": 1000,       // Macht erst Sinn, wenn wir genug RAM für hochentwickelte Batcher haben
+    const programGates: Record<(typeof TARGET_PROGRAMS)[number], number> = {
+      "BruteSSH.exe": 50, // Erster 1-Port-Server: neo-net (Lvl 50)
+      "FTPCrack.exe": 150, // Erster 2-Port-Server: silver-helix (Lvl 150)
+      "relaySMTP.exe": 250, // Erster 3-Port-Server: omega-net (Lvl 200-250)
+      "HTTPWorm.exe": 400, // Erster 4-Port-Server: univ-energy (Lvl 390)
+      "DarkscapeNavigator.exe": 0, // Utility (keine Sperre nötig)
+      "SQLInject.exe": 800, // Erster 5-Port-Server: Megacorps / ecorp (Lvl 900)
+      "Formulas.exe": 1000, // Macht erst Sinn, wenn wir genug RAM für hochentwickelte Batcher haben
     };
 
     for (const prog of TARGET_PROGRAMS) {
@@ -75,7 +75,9 @@ function handleProgramPurchases(ns: NS, bnMults: any): void {
           }
         } else {
           // Optionaler Log-Eintrag zur Veranschaulichung im Early Game
-          ns.print(`⏳ [Sperre] ${prog} blockiert bis Hacking-Level ${requiredLevel} (Aktuell: ${currentHacking}).`);
+          ns.print(
+            `⏳ [Sperre] ${prog} blockiert bis Hacking-Level ${requiredLevel} (Aktuell: ${currentHacking}).`,
+          );
         }
       }
     }
@@ -101,7 +103,9 @@ function handleHomeServerPurchases(ns: NS, reserveMoney: number): void {
   const coreCost = sing.getUpgradeHomeCoresCost();
   if (availableMoney >= coreCost) {
     if (sing.upgradeHomeCores()) {
-      ns.print(`[HOME] ✅ Cores erweitert! Cost: $${ns.format.number(coreCost)}`);
+      ns.print(
+        `[HOME] ✅ Cores erweitert! Cost: $${ns.format.number(coreCost)}`,
+      );
     }
   }
 }
@@ -159,7 +163,8 @@ async function handleServerPurchases(ns: NS, bnMults: any): Promise<void> {
     } else if (currentServers.length < maxServers) {
       if (worstServer !== "" && minRam < affordableNewRam) {
         const nextRam = minRam * 2;
-        const upgradeCost = ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
+        const upgradeCost =
+          ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
 
         if (currentBudget >= upgradeCost && nextRam <= allowedMaxRam) {
           if (ns.cloud.upgradeServer(worstServer, nextRam)) {
@@ -176,7 +181,8 @@ async function handleServerPurchases(ns: NS, bnMults: any): Promise<void> {
     } else if (worstServer !== "") {
       const nextRam = minRam * 2;
       if (nextRam <= allowedMaxRam) {
-        const upgradeCost = ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
+        const upgradeCost =
+          ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
         if (currentBudget >= upgradeCost) {
           if (ns.cloud.upgradeServer(worstServer, nextRam)) {
             currentBudget -= upgradeCost;
@@ -188,7 +194,11 @@ async function handleServerPurchases(ns: NS, bnMults: any): Promise<void> {
   }
 }
 
-async function buyNewServer(ns: NS, ram: number, maxServers: number): Promise<boolean> {
+async function buyNewServer(
+  ns: NS,
+  ram: number,
+  maxServers: number,
+): Promise<boolean> {
   const currentServers = ns.cloud.getServerNames();
   let nextFreeNumber = 1;
   let name = "";
@@ -215,7 +225,7 @@ async function buyNewServer(ns: NS, ram: number, maxServers: number): Promise<bo
 
 function printDashboard(ns: NS): void {
   ns.clearLog();
-  
+
   const homeMaxRam = ns.getServerMaxRam("home");
   const homeUsedRam = ns.getServerUsedRam("home");
   const homeCores = ns.getServer("home").cpuCores;
@@ -224,7 +234,9 @@ function printDashboard(ns: NS): void {
   ns.print(` ⚙️  BIT-OS INFRASTRUCTURE MONITOR`);
   ns.print(`============================================================`);
   ns.print(`🏠 HOME COMPUTER`);
-  ns.print(`   RAM:   ${ns.format.ram(homeMaxRam).padEnd(9)} (Genutzt: ${ns.format.ram(homeUsedRam)})`);
+  ns.print(
+    `   RAM:   ${ns.format.ram(homeMaxRam).padEnd(9)} (Genutzt: ${ns.format.ram(homeUsedRam)})`,
+  );
   ns.print(`   CORES: ${homeCores} Kerne`);
   ns.print("------------------------------------------------------------");
 
@@ -235,26 +247,32 @@ function printDashboard(ns: NS): void {
   if (currentServers.length === 0) {
     ns.print(`   [Keine kaufbaren Server im aktuellen BitNode registriert]`);
   } else {
-    currentServers.sort().forEach(server => {
+    currentServers.sort().forEach((server) => {
       const ram = ns.getServerMaxRam(server);
       const used = ns.getServerUsedRam(server);
-      const bar = "█".repeat(Math.round((used / ram) * 10)) + "░".repeat(10 - Math.round((used / ram) * 10));
-      ns.print(`   • ${server.padEnd(12)} : ${ns.format.ram(ram).padStart(9)}  [${bar}]`);
+      const bar =
+        "█".repeat(Math.round((used / ram) * 10)) +
+        "░".repeat(10 - Math.round((used / ram) * 10));
+      ns.print(
+        `   • ${server.padEnd(12)} : ${ns.format.ram(ram).padStart(9)}  [${bar}]`,
+      );
     });
   }
-  ns.print(`   Kapazität: ${currentServers.length} / ${maxServers} Server slots genutzt.`);
+  ns.print(
+    `   Kapazität: ${currentServers.length} / ${maxServers} Server slots genutzt.`,
+  );
   ns.print("------------------------------------------------------------");
 
   ns.print(`💾 SOFTWARE-INVENTAR`);
-  
+
   let gridLine = "   ";
   for (let i = 0; i < TARGET_PROGRAMS.length; i++) {
     const progName = TARGET_PROGRAMS[i];
     const hasFile = ns.fileExists(progName, "home");
     const status = hasFile ? "✅" : "❌";
-    
+
     gridLine += `[${status}] ${progName.padEnd(22)}`;
-    
+
     if ((i + 1) % 2 === 0 || i === TARGET_PROGRAMS.length - 1) {
       ns.print(gridLine);
       gridLine = "   ";
