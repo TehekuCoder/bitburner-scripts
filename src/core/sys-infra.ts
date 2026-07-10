@@ -143,14 +143,27 @@ async function handleServerPurchases(ns: NS, bnMults: any, freezePservers: boole
   while (actionOccurred) {
     actionOccurred = false;
     const currentServers = ns.cloud.getServerNames();
+    const homeMaxRam = ns.getServerMaxRam("home");
 
+    // 🚀 BATCHER-RUSH-BEDINGUNG: Home hat 256GB+, aber kein einziger p-serv hat die kritischen 64GB
+    const hasEligiblePserv = currentServers.some((s) => ns.getServerMaxRam(s) >= 64);
+    const rushSinglePserv = homeMaxRam >= 256 && !hasEligiblePserv && currentServers.length > 0;
+
+    // Wir ermitteln sowohl den schlechtesten als auch den besten Server
     let minRam = maxRam;
     let worstServer = "";
+    let maxPservRam = 0;
+    let bestServer = "";
+
     for (const server of currentServers) {
       const ram = ns.getServerMaxRam(server);
       if (ram < minRam) {
         minRam = ram;
         worstServer = server;
+      }
+      if (ram > maxPservRam) {
+        maxPservRam = ram;
+        bestServer = server;
       }
     }
 
@@ -160,12 +173,32 @@ async function handleServerPurchases(ns: NS, bnMults: any, freezePservers: boole
     }
     if (ns.cloud.getServerCost(affordableNewRam) > currentBudget) affordableNewRam = 0;
 
+    // FALL 1: Noch überhaupt kein Server vorhanden -> Kaufe den ersten
     if (currentServers.length === 0 && affordableNewRam >= 8) {
-      if (await buyNewServer(ns, affordableNewRam, maxServers)) {
-        currentBudget -= ns.cloud.getServerCost(affordableNewRam);
+      // Direkt mit maximal bezahlbarem RAM (gedeckelt auf 64GB für den Start) initialisieren
+      const initialRam = Math.min(affordableNewRam, 64);
+      if (await buyNewServer(ns, initialRam, maxServers)) {
+        currentBudget -= ns.cloud.getServerCost(initialRam);
         actionOccurred = true;
       }
-    } else if (currentServers.length < maxServers) {
+    } 
+    // FALL 2: 🔥 RUSH MODUS AKTIV -> Fokussiere das Upgrade des BESTEN vorhandenen Servers auf 64GB
+    else if (rushSinglePserv && bestServer !== "") {
+      const nextRam = maxPservRam * 2;
+      if (nextRam <= allowedMaxRam) {
+        const upgradeCost = ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(maxPservRam);
+        if (currentBudget >= upgradeCost) {
+          if (ns.cloud.upgradeServer(bestServer, nextRam)) {
+            currentBudget -= upgradeCost;
+            actionOccurred = true;
+          }
+        }
+      }
+      // Wichtig: Im Rush-Modus brechen wir hier ab und kaufen KEINE neuen Server,
+      // um das Budget komplett für das 64GB-Upgrade zu sichern!
+    } 
+    // FALL 3: Normalbetrieb & Server-Slots frei -> Gleichmäßiger Ausbau oder Neukauf
+    else if (currentServers.length < maxServers) {
       if (worstServer !== "" && minRam < affordableNewRam) {
         const nextRam = minRam * 2;
         const upgradeCost = ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
@@ -182,7 +215,9 @@ async function handleServerPurchases(ns: NS, bnMults: any, freezePservers: boole
           actionOccurred = true;
         }
       }
-    } else if (worstServer !== "") {
+    } 
+    // FALL 4: Alle Slots voll -> Upgrade den schwächsten Server (Normalbetrieb)
+    else if (worstServer !== "") {
       const nextRam = minRam * 2;
       if (nextRam <= allowedMaxRam) {
         const upgradeCost = ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
@@ -196,7 +231,6 @@ async function handleServerPurchases(ns: NS, bnMults: any, freezePservers: boole
     }
   }
 }
-
 async function buyNewServer(ns: NS, ram: number, maxServers: number): Promise<boolean> {
   const currentServers = ns.cloud.getServerNames();
   let nextFreeNumber = 1;
@@ -236,9 +270,15 @@ function printDashboard(ns: NS, isHomePrioritized: boolean): void {
   ns.print(`   RAM:   ${ns.format.ram(homeMaxRam).padEnd(9)} (Genutzt: ${ns.format.ram(homeUsedRam)})`);
   ns.print(`   CORES: ${homeCores} Kerne`);
 
-  if (ns.singularity) {
+if (ns.singularity) {
+    const pServers = ns.cloud.getServerNames();
+    const has64gbPserv = pServers.some((s) => ns.getServerMaxRam(s) >= 64);
+    const isRushMode = homeMaxRam >= 256 && !has64gbPserv && pServers.length > 0;
+
     if (isHomePrioritized) {
       ns.print(`   🚦 STRATEGIE: 👑 HOME-PRIORITÄT AKTIV (P-Serv eingefroren)`);
+    } else if (isRushMode) {
+      ns.print(`   🚦 STRATEGIE: 🚀 BATCHER-RUSH (Fokus auf ein einzelnes 64GB P-Serv)`);
     } else {
       ns.print(`   🚦 STRATEGIE: 💸 Normalbetrieb (Netzwerk-Expansion)`);
     }

@@ -1,9 +1,5 @@
 import { NS, Player, FactionName, CompanyName } from "@ns";
-import {
-  loadState,
-  saveState,
-  BotStrategy,
-} from "./state-manager.js";
+import { loadState, saveState, BotStrategy } from "./state-manager.js";
 import { breakAndInfectNetwork, getAllServers } from "../lib/network.js";
 import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
 
@@ -120,10 +116,6 @@ export async function main(ns: NS): Promise<void> {
     const p = ns.getPlayer();
     const homeMaxRam = ns.getServerMaxRam("home");
 
-    let targetFaction: FactionName | null = null;
-    let targetCompany: CompanyName | undefined = undefined;
-    let targetStat = 0;
-
     let lastCorpApplication = 0; // Global oben im Skript definieren
 
     // In der Schleife:
@@ -161,10 +153,6 @@ export async function main(ns: NS): Promise<void> {
         ? BASE_MONEY_THRESHOLD * 0.7 // Bleibt im Modus ab 7 Mio. (bzw. 35 Mio.)
         : BASE_MONEY_THRESHOLD; // Braucht 10 Mio. (bzw. 50 Mio.) zum Starten
 
-    const hasEssentialTools =
-      ns.fileExists("BruteSSH.exe", "home") &&
-      ns.fileExists("FTPCrack.exe", "home");
-
     // Nutzen des effektiven Schwellenwerts mit Hysterese
     const isReadyForFactionGrind = playerMoney > effectiveThreshold;
 
@@ -173,6 +161,11 @@ export async function main(ns: NS): Promise<void> {
         ? findNextFaction(ns, p)
         : null;
 
+    // 🔥 FIX 1: Das Fraktionsziel permanent halten, auch wenn wir dafür gerade erst sparen!
+    let targetFaction: FactionName | null = factionToWorkFor;
+    let targetCompany: CompanyName | undefined = undefined;
+    let targetStat = 0;
+
     if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
     } else if (homeMaxRam < 256 || (crimeMoneyMult > 5 && !canRunBatcher)) {
@@ -180,7 +173,6 @@ export async function main(ns: NS): Promise<void> {
     } else if (factionToWorkFor && isReadyForFactionGrind) {
       // Hier greift das Geld-Gate, damit wir nicht zu früh Rep grinden, ohne Augments kaufen zu können
       mode = "REP";
-      targetFaction = factionToWorkFor;
     } else {
       // Megacorp-Logik: Nur ausführen, wenn Company-Rep nicht völlig nutzlos ist
       if (p.skills.hacking >= 250 && companyRepMult > 0.1) {
@@ -230,10 +222,6 @@ export async function main(ns: NS): Promise<void> {
         if (eligiblePServers.length === 0) {
           mode = "MONEY";
         } else {
-          // 🔥 REPARATUR 2: Nur in Kampf-Training investieren, wenn wir AKTIV
-          // die Freischaltung von Combat-Factions erzwingen wollen.
-          // Für einen Hacking-fokussierten Run belassen wir den Modus hier auf MONEY,
-          // damit deine Flotten-Skripte und der Batcher profitabel weiterlaufen!
           const FOCUS_ON_COMBAT_FACTIONS = false; // Schalter für spätere BitNodes
 
           if (FOCUS_ON_COMBAT_FACTIONS) {
@@ -265,7 +253,7 @@ export async function main(ns: NS): Promise<void> {
               }
             }
           } else {
-            mode = "MONEY"; // Standard-Fall: Hacken und Geld verdienen!
+            mode = "MONEY"; // Standard-Fall: Hacken und Geld verdient!
           }
         }
       }
@@ -363,9 +351,16 @@ export async function main(ns: NS): Promise<void> {
     } else if (mode === "MONEY" && !canRunBatcher) {
       generatedBar = `🏗️ Aufbau-Phase: Generiere Basis-Geld auf ${cachedFallbackTarget} (Warte auf P-Server)`;
     } else {
-      generatedBar = "💰 Maximiere Profit (Batcher)";
+      // 🔥 FIX 2: Wenn wir Geld sammeln, aber ein Fraktionsziel existiert, zeigen wir das im Progress an!
+      if (factionToWorkFor) {
+        const progressPct = ((playerMoney / effectiveThreshold) * 100).toFixed(
+          1,
+        );
+        generatedBar = `💰 Spare für ${factionToWorkFor}: ${ns.format.number(playerMoney, 1)} / ${ns.format.number(effectiveThreshold, 0)} $ (${progressPct}%)`;
+      } else {
+        generatedBar = "💰 Maximiere Profit (Batcher)";
+      }
     }
-
     let finalBar = generatedBar;
 
     if (
