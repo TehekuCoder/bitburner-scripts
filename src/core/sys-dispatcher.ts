@@ -35,6 +35,9 @@ const MEGACORPS: Record<string, CompanyName> = {
   "Fulcrum Secret Technologies": "Fulcrum Technologies",
 };
 
+// ======================================================================
+// 🎯 BEREINIGTE SOFTWARE- UND FRAKTIONSMATRIX (Doppelte Einträge entfernt)
+// ======================================================================
 const HACKING_FACTIONS: FactionConfig[] = [
   { name: "CyberSec" as FactionName, minStat: 0, priority: 1 },
   { name: "Tian Di Hui" as FactionName, minStat: 0, priority: 2 },
@@ -59,21 +62,19 @@ const HACKING_FACTIONS: FactionConfig[] = [
   { name: "Blade Industries" as FactionName, minStat: 0, priority: 21 },
   { name: "OmniTek Incorporated" as FactionName, minStat: 0, priority: 22 },
   { name: "Bachman & Associates" as FactionName, minStat: 0, priority: 23 },
-  { name: "ECorp" as FactionName, minStat: 0, priority: 24 },
-  { name: "Clarke Incorporated" as FactionName, minStat: 0, priority: 25 },
+  { name: "Clarke Incorporated" as FactionName, minStat: 0, priority: 24 },
   {
     name: "Fulcrum Secret Technologies" as FactionName,
     minStat: 0,
-    priority: 26,
+    priority: 25,
   },
-  { name: "Silhouette" as FactionName, minStat: 0, priority: 27 },
-  { name: "The Dark Army" as FactionName, minStat: 300, priority: 28 },
-  { name: "Speakers for the Dead" as FactionName, minStat: 300, priority: 29 },
-  { name: "The Covenant" as FactionName, minStat: 850, priority: 30 },
-  { name: "Illuminati" as FactionName, minStat: 1200, priority: 31 },
-  { name: "Daedalus" as FactionName, minStat: 1500, priority: 32 },
+  { name: "Silhouette" as FactionName, minStat: 0, priority: 26 },
+  { name: "The Dark Army" as FactionName, minStat: 300, priority: 27 },
+  { name: "Speakers for the Dead" as FactionName, minStat: 300, priority: 28 },
+  { name: "The Covenant" as FactionName, minStat: 850, priority: 29 },
+  { name: "Illuminati" as FactionName, minStat: 1200, priority: 30 },
+  { name: "Daedalus" as FactionName, minStat: 1500, priority: 31 },
 ];
-
 const repCache: Record<string, number> = {};
 
 export async function main(ns: NS): Promise<void> {
@@ -156,11 +157,10 @@ export async function main(ns: NS): Promise<void> {
       ns.fileExists("FTPCrack.exe", "home");
     const isReadyForFactionGrind = playerMoney > MONEY_THRESHOLD_FOR_REP;
 
-    // Fraktionsarbeit blockieren, wenn der Ruf-Gewinn im BN komplett tot-generft wurde (< 10%)
+    // 🔥 REPARATUR 1: Wenn wir bereits in einer Fraktion sind, können wir IMMER für sie arbeiten.
+    // Ein Mangel an Tools darf uns nicht daran hindern, Ruf aufzubauen!
     const factionToWorkFor =
-      (hasEssentialTools || isReadyForFactionGrind) &&
-      eligiblePServers.length > 0 &&
-      factionRepMult > 0.1
+      eligiblePServers.length > 0 && factionRepMult > 0.1
         ? findNextFaction(ns, p)
         : null;
 
@@ -168,7 +168,8 @@ export async function main(ns: NS): Promise<void> {
       mode = "XP_SPRINT";
     } else if (homeMaxRam < 256 || (crimeMoneyMult > 5 && !canRunBatcher)) {
       mode = "CRIME";
-    } else if (factionToWorkFor) {
+    } else if (factionToWorkFor && isReadyForFactionGrind) {
+      // Hier greift das Geld-Gate, damit wir nicht zu früh Rep grinden, ohne Augments kaufen zu können
       mode = "REP";
       targetFaction = factionToWorkFor;
     } else {
@@ -220,32 +221,42 @@ export async function main(ns: NS): Promise<void> {
         if (eligiblePServers.length === 0) {
           mode = "MONEY";
         } else {
-          const nextLockedCombatFaction = HACKING_FACTIONS.find(
-            (f) => !p.factions.includes(f.name) && f.minStat > 0,
-          );
+          // 🔥 REPARATUR 2: Nur in Kampf-Training investieren, wenn wir AKTIV
+          // die Freischaltung von Combat-Factions erzwingen wollen.
+          // Für einen Hacking-fokussierten Run belassen wir den Modus hier auf MONEY,
+          // damit deine Flotten-Skripte und der Batcher profitabel weiterlaufen!
+          const FOCUS_ON_COMBAT_FACTIONS = false; // Schalter für spätere BitNodes
 
-          if (nextLockedCombatFaction) {
-            let requiredKills = 0;
-            if (nextLockedCombatFaction.name === "The Dark Army")
-              requiredKills = 5;
-            if (nextLockedCombatFaction.name === "Speakers for the Dead")
-              requiredKills = 30;
-
-            const currentLowestCombatStat = Math.min(
-              ...COMBAT_STATS.map((s) => p.skills[s]),
+          if (FOCUS_ON_COMBAT_FACTIONS) {
+            const nextLockedCombatFaction = HACKING_FACTIONS.find(
+              (f) => !p.factions.includes(f.name) && f.minStat > 0,
             );
 
-            if (p.numPeopleKilled < requiredKills) {
-              mode = "KILLS";
-              targetStat = requiredKills;
-              targetFaction = nextLockedCombatFaction.name;
-            } else if (
-              currentLowestCombatStat < nextLockedCombatFaction.minStat
-            ) {
-              mode = "TRAIN";
-              targetStat = nextLockedCombatFaction.minStat;
-              targetFaction = nextLockedCombatFaction.name;
+            if (nextLockedCombatFaction) {
+              let requiredKills = 0;
+              if (nextLockedCombatFaction.name === "The Dark Army")
+                requiredKills = 5;
+              if (nextLockedCombatFaction.name === "Speakers for the Dead")
+                requiredKills = 30;
+
+              const currentLowestCombatStat = Math.min(
+                ...COMBAT_STATS.map((s) => p.skills[s]),
+              );
+
+              if (p.numPeopleKilled < requiredKills) {
+                mode = "KILLS";
+                targetStat = requiredKills;
+                targetFaction = nextLockedCombatFaction.name;
+              } else if (
+                currentLowestCombatStat < nextLockedCombatFaction.minStat
+              ) {
+                mode = "TRAIN";
+                targetStat = nextLockedCombatFaction.minStat;
+                targetFaction = nextLockedCombatFaction.name;
+              }
             }
+          } else {
+            mode = "MONEY"; // Standard-Fall: Hacken und Geld verdienen!
           }
         }
       }

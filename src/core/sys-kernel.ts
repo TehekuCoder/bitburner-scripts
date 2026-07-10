@@ -82,58 +82,61 @@ export async function main(ns: NS): Promise<void> {
     let activeProgressBar = currentState?.progressBar || "";
 
     // ======================================================================
-    // --- 🧠 DYNAMISCHE EFFIZIENZ-MATRIX (ERWEITERT) ---
+    // --- 🧠 DYNAMISCHE EFFIZIENZ-MATRIX (GEWALTENTEILUNG) ---
     // ======================================================================
-    const hackingEfficiency =
-      bnMults.ServerMaxMoney * bnMults.ScriptHackMoneyGain;
-    const hackingExpMult = bnMults.HackingLevelMultiplier ?? 1.0;
+    const isDispatcherReady =
+      homeMax >= 256 && ns.fileExists(scripts.dispatcher, "home");
 
-    if (hackingEfficiency === 0) {
-      activeStrategy = "XP_SPRINT";
-      activeProgressBar =
-        "📉 BN-Sonderregel: Hacking wirft kein Geld ab! Fokus auf XP-Sprint.";
-    } else if (
-      activeStrategy === "MONEY" &&
-      hackingEfficiency < 0.2 &&
-      player.money < 50_000_000
-    ) {
-      if (bnMults.CrimeMoney > 0.5) {
+    if (!isDispatcherReady) {
+      // 🛡️ FALLBACK-LOGIK: Nur aktiv, wenn kein Dispatcher das Kommando hat (Early-Game)
+      const hackingEfficiency =
+        bnMults.ServerMaxMoney * bnMults.ScriptHackMoneyGain;
+      const hackingExpMult = bnMults.HackingLevelMultiplier ?? 1.0;
+
+      if (hackingEfficiency === 0) {
+        activeStrategy = "XP_SPRINT";
+        activeProgressBar =
+          "📉 BN-Sonderregel: Hacking wirft kein Geld ab! Fokus auf XP-Sprint.";
+      } else if (
+        hackingEfficiency < 0.2 &&
+        player.money < 50_000_000 &&
+        bnMults.CrimeMoney > 0.5
+      ) {
+        // Bleibt stabil im Crime-Modus, kein Oszillieren mehr!
         activeStrategy = "CRIME";
         activeProgressBar = `🥷 Hacking ineffizient (${(hackingEfficiency * 100).toFixed(0)}%). Starte Verbrechen-Grind.`;
-      }
-    } else if (activeStrategy === "MONEY" || activeStrategy === "CRIME") {
-      const combatAvg =
-        (player.skills.strength +
-          player.skills.defense +
-          player.skills.dexterity +
-          player.skills.agility) /
-        4;
+      } else {
+        const combatAvg =
+          (player.skills.strength +
+            player.skills.defense +
+            player.skills.dexterity +
+            player.skills.agility) /
+          4;
 
-      if (bnMults.CompanyWorkMoney > 1.2 && combatAvg >= 30) {
-        activeStrategy = "CORP";
-        activeProgressBar = `🏢 BN-Spezial: Firmen-Arbeit stark skaliert (${(bnMults.CompanyWorkMoney * 100).toFixed(0)}%).`;
-      } else if (
-        !activeProgressBar ||
-        activeProgressBar.startsWith("🥷") ||
-        activeProgressBar.startsWith("📉") ||
-        activeProgressBar.startsWith("⚠️")
-      ) {
-        activeStrategy = "MONEY";
-        activeProgressBar = `💻 Hacking-Fleet aktiv (Netzwerk-Ressourcen optimal genutzt)`;
+        if (bnMults.CompanyWorkMoney > 1.2 && combatAvg >= 30) {
+          activeStrategy = "CORP";
+          activeProgressBar = `🏢 BN-Spezial: Firmen-Arbeit stark skaliert (${(bnMults.CompanyWorkMoney * 100).toFixed(0)}%).`;
+        } else {
+          activeStrategy = "MONEY";
+          activeProgressBar = `💻 Hacking-Fleet aktiv (Netzwerk-Ressourcen optimal genutzt)`;
+        }
       }
+
+      if (activeStrategy === "XP_SPRINT" && hackingExpMult < 0.2) {
+        activeProgressBar = `⚠️ XP-Sprint aktiv, aber BN-Hacking-XP ist stark gedrosselt (${(hackingExpMult * 100).toFixed(0)}%)!`;
+      }
+
+      // State nur im Early-Game selbst patchen
+      patchState(ns, {
+        strategy: activeStrategy,
+        progressBar: activeProgressBar,
+      });
+    } else {
+      // 👑 DISPATCHER-MODUS: Der Dispatcher regiert. Der Kernel liest nur die Befehle.
+      activeStrategy = currentState?.strategy || "MONEY";
+      activeProgressBar = currentState?.progressBar || "";
     }
 
-    // 🛑 Failsafe-Warnung für den XP-Sprint bei extremen Nerfs
-    if (activeStrategy === "XP_SPRINT" && hackingExpMult < 0.2) {
-      activeProgressBar = `⚠️ XP-Sprint aktiv, aber BN-Hacking-XP ist stark gedrosselt (${(hackingExpMult * 100).toFixed(0)}%)!`;
-    }
-
-    patchState(ns, {
-      strategy: activeStrategy,
-      progressBar: activeProgressBar,
-    });
-
-    // 🔄 RE-WEIGHTING: Jetzt mit dem kompletten bnMults-Objekt für präzises Targeting
     const bestTarget: string = findBestTarget(ns, allNodes, player, bnMults);
 
     const localStateSnapshot: BotState = {
@@ -176,7 +179,7 @@ export async function main(ns: NS): Promise<void> {
     // ======================================================================
     for (const node of allNodes) {
       if (!ns.hasRootAccess(node)) continue;
-      if (isDispatcherRunning) continue; // Dispatcher übernimmt die RAM-Kontrolle
+      if (isDispatcherRunning) continue;
 
       if (
         node === "home" &&
@@ -188,8 +191,7 @@ export async function main(ns: NS): Promise<void> {
       let activeScript =
         activeStrategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
 
-      // --- 📊 DYNAMISCHER RAM-BUFFER (MODIFIZIERT DURCH WEAKEN-EFFIZIENZ) ---
-      let ramBuffer = 0; // Fix von vorhin für p-servs im Early Game
+      let ramBuffer = 0;
       if (node === "home") {
         const weakenModifier =
           bnMults.ServerWeakenRate < 1.0
@@ -204,21 +206,20 @@ export async function main(ns: NS): Promise<void> {
         ].includes(activeStrategy)
           ? 24
           : 8;
-
         ramBuffer = Math.min(baseBuffer + weakenModifier, homeMax * 0.4);
       }
 
-      // 🔥 FIX: Jetzt mit await aufgerufen!
       await deployWorker(ns, node, activeScript, bestTarget, ramBuffer);
-    } 
+    }
 
-    const hasFormulas = ns.fileExists("Formulas.exe", "home");
+    // 🔥 KERNEL-UPGRADE: Formulas ist im Mid-Game kein Hard-Requirement mehr für die Fleet!
     const pServers = ns.cloud.getServerNames();
     const eligiblePServers = pServers.filter(
       (s) => ns.getServerMaxRam(s) >= 64,
     );
-    const isFleetReady =
-      hasFormulas && homeMax >= 256 && eligiblePServers.length > 0;
+
+    // Fleet ist bereit, wenn Home genug RAM hat UND die p-Server groß genug sind
+    const isFleetReady = homeMax >= 256 && eligiblePServers.length > 0;
 
     const freshStateForDashboard = loadState(ns);
     drawSysKernelDashboard(
@@ -323,7 +324,7 @@ function manageSuites(
 }
 
 // ======================================================================
-// --- 🎯 TACKTICAL MATHEMATISCHES RE-WEIGHTING ---
+// --- 🎯 TACTICAL MATHEMATISCHES RE-WEIGHTING ---
 // ======================================================================
 function findBestTarget(
   ns: NS,
@@ -355,7 +356,6 @@ function findBestTarget(
     const reqSkill = srv.requiredHackingSkill || 0;
     if (reqSkill > player.skills.hacking) continue;
 
-    // Sonderfall: BitNode erlaubt kein Geld durch Hacking (Fokus rein auf XP/Hacking-Speed)
     if (isNoMoneyNode) {
       const cycleTime = ns.getWeakenTime(node);
       const weight = reqSkill / (Math.max(1, cycleTime) / 1000);
@@ -367,12 +367,8 @@ function findBestTarget(
     }
 
     const cycleTime = ns.getWeakenTime(node);
-    if (cycleTime > 5 * 60 * 1000) continue; // Ältere Server mit >5 Min Laufzeit ignorieren
+    if (cycleTime > 5 * 60 * 1000) continue;
 
-    // 🔄 RE-WEIGHTING FORMEL:
-    // Wir multiplizieren das Score-Ergebnis mit der Wachstumsrate des BitNodes.
-    // Wenn die Wachstumsrate niedrig ist, sinkt die Bewertung schwerer Server,
-    // da die einfachen Worker-Skripte dort in eine "Grow-Hölle" geraten würden.
     const weight =
       (maxMoney / (cycleTime / 1000)) * (reqSkill / 100) * growthMult;
 
@@ -391,9 +387,7 @@ async function deployWorker(
   hackTarget: string,
   ramBuffer: number,
 ): Promise<void> {
-  // Verhindert unnötige Ausführung auf Home
   if (targetNode !== "home") {
-    // 🔥 NUTZT DEINE UTILS-FUNKTION: Lädt alle Worker sauber hoch, falls sie fehlen
     await provisionServer(ns, targetNode);
   }
 
@@ -430,8 +424,9 @@ async function deployWorker(
     ns.exec(scriptFilename, targetNode, threads, hackTarget);
   }
 }
+
 // ======================================================================
-// --- 📊 OPERATIONAL OS DASHBOARD ---
+// --- 📊 OPERATIONAL OS DASHBOARD (UPGRADED) ---
 // ======================================================================
 function drawSysKernelDashboard(
   ns: NS,
@@ -446,12 +441,32 @@ function drawSysKernelDashboard(
 
   ns.print(`================================================`);
   ns.print(
-    `👑 BIT-OS SYS-KERNEL v2.0 - Units: ${rootCount}/${allNodes.length}`,
+    `👑 BIT-OS SYS-KERNEL v2.1 - Units: ${rootCount}/${allNodes.length}`,
   );
   ns.print(`================================================`);
-  ns.print(
-    `ENGINE-MODE : ${isFleetMode ? "DYNAMIC FLEET (>= 256GB)" : "BASIC LOOP (< 256GB)"}`,
-  );
+
+  // 🏎️ Cleaner Engine-Mode Output
+  ns.print(`ENGINE-MODE : ${isFleetMode ? "DYNAMIC FLEET" : "BASIC LOOP"}`);
+
+  // 📋 Dynamische Anforderungs-Checkliste im BASIC-LOOP-Modus
+  if (!isFleetMode) {
+    const hasFormulas = ns.fileExists("Formulas.exe", "home");
+    const homeMaxRam = ns.getServerMaxRam("home");
+    const pServers = ns.cloud.getServerNames();
+    const hasEligiblePServer = pServers.some(
+      (s) => ns.getServerMaxRam(s) >= 64,
+    );
+
+    ns.print(` 📋 UNLOCK REQS FOR DYNAMIC FLEET:`);
+    ns.print(`   [${hasFormulas ? "✅" : "❌"}] Formulas.exe`);
+    ns.print(
+      `   [${homeMaxRam >= 256 ? "✅" : "❌"}] Home RAM >= 256GB (Aktuell: ${ns.format.ram(homeMaxRam)})`,
+    );
+    ns.print(
+      `   [${hasEligiblePServer ? "✅" : "❌"}] Mind. 1x p-serv >= 64GB`,
+    );
+  }
+
   ns.print(`STRATEGIE   : ${state.strategy}`);
 
   if (isFleetMode && state.batcherTarget) {

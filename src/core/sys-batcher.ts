@@ -293,6 +293,41 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
+    // 📈 LEVEL-UP & TIMING-ANTIZIPATION (ANTI-CLIPPING)
+    const serverMock = ns.getServer(target);
+    serverMock.hackDifficulty = serverMock.minDifficulty;
+    const trueWeakenTime = ns.formulas!.hacking.weakenTime(
+      serverMock,
+      ns.getPlayer(),
+    );
+    const planWeakenTime = lockedPlan.executionTime - SPACER * 2; // Basis-Weaken-Zeit des aktuellen Plans
+
+    // Wenn die echte Laufzeit kürzer ist als die geplante, gab es ein Level-Up!
+    if (trueWeakenTime < planWeakenTime) {
+      const timeDelta = planWeakenTime - trueWeakenTime;
+      logEvent(
+        `📈 Level-Up erkannt! Justiere Zeitachse... (-${(timeDelta / 1000).toFixed(2)}s)`,
+      );
+
+      // 1. Berechne den Plan sofort neu, damit die Delays IM Batch wieder absolut synchron sind
+      const newPlan = calculateBatch(
+        ns,
+        target,
+        bnMults,
+        currentGreedFactor,
+        SPACER,
+      );
+
+      if (newPlan) {
+        lockedPlan = newPlan;
+
+        // 2. MATHEMATISCHER PUFFER: Wir verzögern die Main-Loop um exakt die geschrumpfte Zeit.
+        // Dadurch schlagen die neuen, schnelleren Batches exakt im korrekten Abstand NACH den alten,
+        // langsameren Batches auf, ohne sie im Äther zu überholen.
+        await ns.sleep(timeDelta);
+      }
+    }
+
     let plan = lockedPlan;
 
     if (plan) {
@@ -350,16 +385,17 @@ export async function main(ns: NS): Promise<void> {
     }
 
     stallSettleTicks = 0;
-    lastLogStatus = "RUNNING";
+    // FIX: Setzt den Status dynamisch, damit die Settle-Ticks oben greifen können!
+    lastLogStatus =
+      curSec > minSec || curMoney < maxMoney ? "WAIT_SETTLE" : "RUNNING";
 
-    const dispatchSuccess = dispatchAtomicBatch(
+    const dispatchSuccess = dispatchSplitBatch(
       ns,
       cachedServers,
       plan,
       target,
       batchId,
     );
-
     if (!dispatchSuccess) {
       if (Date.now() - lastUiUpdate > 250) {
         drawBatcherDashboard(ns, {
@@ -417,12 +453,12 @@ function drawBatcherDashboard(ns: NS, data: DashboardData): void {
   ns.clearLog();
 
   const hasValidTarget = data.target !== "Keines" && data.target !== "";
-  
+
   const curSec = hasValidTarget ? ns.getServerSecurityLevel(data.target) : 0;
   const minSec = hasValidTarget ? ns.getServerMinSecurityLevel(data.target) : 0;
   const curMoney = hasValidTarget ? ns.getServerMoneyAvailable(data.target) : 0;
   const maxMoney = hasValidTarget ? ns.getServerMaxMoney(data.target) : 0;
-  
+
   const moneyPercent = maxMoney > 0 ? (curMoney / maxMoney) * 100 : 0;
   const ramUsed = data.ramTotal - data.ramFree;
   const ramPercent = data.ramTotal > 0 ? (ramUsed / data.ramTotal) * 100 : 0;
@@ -572,25 +608,25 @@ function findBestBatchTargetForNetwork(
   let bestTarget = null;
   let highestScore = 0;
   const playerHackLevel = ns.getHackingLevel();
-  
+
   // Gelockertes Failsafe auf 60 Minuten. Großer RAM erlaubt gewaltige Pipelines!
-  const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000; 
+  const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000;
 
   for (const s of targets) {
     if (ns.getServerRequiredHackingLevel(s) > playerHackLevel) continue;
 
     // Erster Test mit 10% statt 1% Gier, um den 0-Thread-Fehler bei starkem Hacking zu umgehen
-    let testPlan = calculateBatch(ns, s, bnMults, 0.10, spacer);
+    let testPlan = calculateBatch(ns, s, bnMults, 0.1, spacer);
 
     // Zweiter Test-Fallback auf 40% Standardgier, falls 10% mathematisch unmöglich sind
     if (!testPlan) {
-      testPlan = calculateBatch(ns, s, bnMults, 0.40, spacer);
+      testPlan = calculateBatch(ns, s, bnMults, 0.4, spacer);
     }
 
     if (!testPlan || testPlan.totalRam > totalNetworkRam) continue;
     const idealExecutionTime = testPlan.executionTime;
     if (idealExecutionTime > DYNAMIC_MAX_WEAKEN_TIME) continue;
-    
+
     const money = ns.getServerMaxMoney(s);
     const score = money / idealExecutionTime;
     if (score > highestScore) {
@@ -601,69 +637,78 @@ function findBestBatchTargetForNetwork(
   return bestTarget;
 }
 
-function dispatchAtomicBatch(
+function dispatchSplitBatch(
   ns: NS,
   allServers: string[],
   plan: any,
   target: string,
   batchId: number,
 ): boolean {
-  const ramHack = ns.getScriptRam("tasks/hack.js");
-  const ramGrow = ns.getScriptRam("tasks/grow.js");
-  const ramWeaken = ns.getScriptRam("tasks/weaken.js");
+  // Liste aller Teil-Aufgaben eines vollständigen HWGW-Batches
+  const tasks = [
+    {
+      script: "tasks/hack.js",
+      threads: plan.hackThreads,
+      delay: plan.hackDelay,
+    },
+    {
+      script: "tasks/weaken.js",
+      threads: plan.weaken1Threads,
+      delay: plan.weaken1Delay,
+    },
+    {
+      script: "tasks/grow.js",
+      threads: plan.growThreads,
+      delay: plan.growDelay,
+    },
+    {
+      script: "tasks/weaken.js",
+      threads: plan.weaken2Threads,
+      delay: plan.weaken2Delay,
+    },
+  ];
 
-  const totalRequiredRam =
-    plan.hackThreads * ramHack +
-    plan.weaken1Threads * ramWeaken +
-    plan.growThreads * ramGrow +
-    plan.weaken2Threads * ramWeaken;
+  // Vorab-Sicherheitscheck: Haben wir im gesamten Netzwerk überhaupt genug RAM?
+  // (Wird zwar in der Main-Loop validiert, fängt aber Race-Conditions ab)
+  let totalFree = 0;
+  for (const s of allServers) {
+    if (!ns.hasRootAccess(s)) continue;
+    let maxRam = ns.getServerMaxRam(s);
+    if (s === "home") maxRam = Math.max(0, maxRam - 64);
+    totalFree += maxRam - ns.getServerUsedRam(s);
+  }
 
-  for (const server of allServers) {
-    if (!ns.hasRootAccess(server)) continue;
-    let maxRam = ns.getServerMaxRam(server);
-    if (server === "home") maxRam = Math.max(0, maxRam - 64);
+  if (totalFree < plan.totalRam) return false;
 
-    const freeRam = maxRam - ns.getServerUsedRam(server);
+  // Verteile jede Aufgabe Thread für Thread auf die verfügbaren Server
+  for (const task of tasks) {
+    let threadsLeft = task.threads;
+    if (threadsLeft <= 0) continue;
 
-    if (freeRam >= totalRequiredRam) {
-      if (plan.hackThreads > 0)
-        ns.exec(
-          "tasks/hack.js",
-          server,
-          plan.hackThreads,
-          target,
-          plan.hackDelay,
-          batchId,
-        );
-      if (plan.weaken1Threads > 0)
-        ns.exec(
-          "tasks/weaken.js",
-          server,
-          plan.weaken1Threads,
-          target,
-          plan.weaken1Delay,
-          batchId,
-        );
-      if (plan.growThreads > 0)
-        ns.exec(
-          "tasks/grow.js",
-          server,
-          plan.growThreads,
-          target,
-          plan.growDelay,
-          batchId,
-        );
-      if (plan.weaken2Threads > 0)
-        ns.exec(
-          "tasks/weaken.js",
-          server,
-          plan.weaken2Threads,
-          target,
-          plan.weaken2Delay,
-          batchId,
-        );
-      return true;
+    for (const server of allServers) {
+      if (!ns.hasRootAccess(server)) continue;
+
+      let maxRam = ns.getServerMaxRam(server);
+      if (server === "home") maxRam = Math.max(0, maxRam - 64);
+
+      const freeRam = maxRam - ns.getServerUsedRam(server);
+      const scriptRam = ns.getScriptRam(task.script);
+      const possibleThreads = Math.floor(freeRam / scriptRam);
+
+      if (possibleThreads > 0) {
+        const toDeploy = Math.min(possibleThreads, threadsLeft);
+
+        ns.exec(task.script, server, toDeploy, target, task.delay, batchId);
+        threadsLeft -= toDeploy;
+
+        if (threadsLeft <= 0) break; // Aufgabe für diesen Batch vollständig verteilt
+      }
+    }
+
+    // Falls die Threads trotz Vorab-Check nicht untergebracht wurden (z.B. wegen plötzlicher Skript-Kosten)
+    if (threadsLeft > 0) {
+      return false;
     }
   }
-  return false;
+  return true;
 }
