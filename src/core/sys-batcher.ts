@@ -1,7 +1,7 @@
 import { NS } from "@ns";
 import { calculateBatch } from "../utils/batch-calculator.js";
 import { getAllServers } from "../lib/network.js";
-import { patchState } from "./state-manager.js";
+import { patchState, loadState } from "./state-manager.js";
 import { loadBnMults } from "../lib/state.js";
 
 interface DashboardData {
@@ -80,10 +80,19 @@ export async function main(ns: NS): Promise<void> {
     let totalUsableMaxRam = 0;
     let totalUsableFreeRam = 0;
 
+    const currentState = loadState(ns);
+    const shareBufferPercent =
+      currentState?.fillerConfig?.shareMaxRamPercent || 0.0;
+
     for (const server of cachedServers) {
       if (!ns.hasRootAccess(server)) continue;
       let maxRam = ns.getServerMaxRam(server);
       if (server === "home") maxRam = Math.max(0, maxRam - 64);
+
+      // [NEU] Wenn wir im REP-Modus sind, halten wir den Share-Prozentsatz für den Batcher unsichtbar
+      if (currentState?.strategy === "REP" && server !== "home") {
+        maxRam = maxRam * (1 - shareBufferPercent);
+      }
 
       const usedRam = ns.getServerUsedRam(server);
       const freeRam = Math.max(0, maxRam - usedRam);
@@ -260,6 +269,10 @@ export async function main(ns: NS): Promise<void> {
           if (!ns.hasRootAccess(s)) continue;
           let mRam = ns.getServerMaxRam(s);
           if (s === "home") mRam = Math.max(0, mRam - 64);
+
+          if (currentState?.strategy === "REP" && s !== "home") {
+            mRam = mRam * (1 - shareBufferPercent);
+          }
           const uRam = ns.getServerUsedRam(s);
           tRam += Math.floor(mRam / SCRIPT_RAM_BASE) * SCRIPT_RAM_BASE;
           tFree +=

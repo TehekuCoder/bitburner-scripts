@@ -142,23 +142,30 @@ export async function main(ns: NS): Promise<void> {
       homeMaxRam >= BATCHER_MIN_RAM &&
       eligiblePServers.length > 0;
 
-    // --- 1. DYNAMISCHE STRATEGIE-MATRIX (INTELLIGENT ERWEITERT) ---
+    // --- 1. DYNAMISCHE STRATEGIE-MATRIX (MIT HYSTERESE-PUFFER) ---
     const playerMoney = p.money;
     const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
     const companyRepMult = bnMults.CompanyWorkRepGain ?? 1;
     const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
 
-    // Rep-Schwellenwert skaliert dynamisch mit dem BN-Nerf
-    const MONEY_THRESHOLD_FOR_REP =
-      factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
+    // Basis-Schwellenwert skaliert dynamisch mit dem BN-Nerf
+    const BASE_MONEY_THRESHOLD = factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
+
+    // 🧠 HYSTERESE: Wenn wir schon im REP-Modus sind, erlauben wir, dass das Geld
+    // durch Einkäufe um bis zu 30% unter den Schwellenwert fällt, ohne dass wir den Modus abbrechen.
+    const lastStrategy = currentState?.strategy || "MONEY";
+    const effectiveThreshold =
+      lastStrategy === "REP"
+        ? BASE_MONEY_THRESHOLD * 0.7 // Bleibt im Modus ab 7 Mio. (bzw. 35 Mio.)
+        : BASE_MONEY_THRESHOLD; // Braucht 10 Mio. (bzw. 50 Mio.) zum Starten
 
     const hasEssentialTools =
       ns.fileExists("BruteSSH.exe", "home") &&
       ns.fileExists("FTPCrack.exe", "home");
-    const isReadyForFactionGrind = playerMoney > MONEY_THRESHOLD_FOR_REP;
 
-    // 🔥 REPARATUR 1: Wenn wir bereits in einer Fraktion sind, können wir IMMER für sie arbeiten.
-    // Ein Mangel an Tools darf uns nicht daran hindern, Ruf aufzubauen!
+    // Nutzen des effektiven Schwellenwerts mit Hysterese
+    const isReadyForFactionGrind = playerMoney > effectiveThreshold;
+
     const factionToWorkFor =
       eligiblePServers.length > 0 && factionRepMult > 0.1
         ? findNextFaction(ns, p)
