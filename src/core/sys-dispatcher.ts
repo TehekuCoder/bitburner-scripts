@@ -2,9 +2,7 @@ import { NS, Player, FactionName, CompanyName } from "@ns";
 import {
   loadState,
   saveState,
-  BotState,
   BotStrategy,
-  patchState,
 } from "./state-manager.js";
 import { breakAndInfectNetwork, getAllServers } from "../lib/network.js";
 import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
@@ -126,8 +124,12 @@ export async function main(ns: NS): Promise<void> {
     let targetCompany: CompanyName | undefined = undefined;
     let targetStat = 0;
 
-    if (p.skills.hacking >= 250) {
+    let lastCorpApplication = 0; // Global oben im Skript definieren
+
+    // In der Schleife:
+    if (p.skills.hacking >= 250 && Date.now() - lastCorpApplication > 600_000) {
       applyToAllMegacorps(ns, p);
+      lastCorpApplication = Date.now();
     }
 
     // --- 0. INFRASTRUKTUR VORABBERECHNUNG ---
@@ -480,10 +482,10 @@ export async function main(ns: NS): Promise<void> {
       bnMults,
     );
 
-    // Sonderbehandlung für 'home' (Dynamischer Puffer basierend auf BitNode-Zähigkeit)
-    const homeShouldRunWorker = !["REP", "TRAIN", "CORP", "CRIME"].includes(
-      activeStrategy,
-    );
+    // 🔥 FIX: Wenn der Batcher läuft, darf kein normaler Worker RAM auf Home stehlen!
+    const homeShouldRunWorker =
+      !["REP", "TRAIN", "CORP", "CRIME"].includes(activeStrategy) &&
+      !canRunBatcher;
     if (!homeShouldRunWorker) {
       ns.scriptKill(workerScript, "home");
     } else {

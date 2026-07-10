@@ -16,7 +16,7 @@ interface ScriptList {
   crawler: string;
   hack: string;
   grow: string;
-  weak: string;
+  weaken: string;
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -32,7 +32,7 @@ export async function main(ns: NS): Promise<void> {
     crawler: "tasks/dnet/dnet-crawler.js",
     hack: "tasks/hack.js",
     grow: "tasks/grow.js",
-    weak: "tasks/weaken.js",
+    weaken: "tasks/weaken.js",
   };
 
   ns.disableLog("ALL");
@@ -144,6 +144,7 @@ export async function main(ns: NS): Promise<void> {
       targetFaction: currentState?.targetFaction,
       targetCompany: currentState?.targetCompany,
       targetStat: currentState?.targetStat,
+      batcherTarget: currentState?.batcherTarget, // 🌟 HIER HINZUFÜGEN: Sichert das Batcher-Ziel bei Kollisionen
       progressBar: activeProgressBar,
       lastUpdate: Date.now(),
       playerHacking: ns.getHackingLevel(),
@@ -209,7 +210,14 @@ export async function main(ns: NS): Promise<void> {
         ramBuffer = Math.min(baseBuffer + weakenModifier, homeMax * 0.4);
       }
 
-      await deployWorker(ns, node, activeScript, bestTarget, ramBuffer);
+      await deployWorker(
+        ns,
+        node,
+        activeScript,
+        bestTarget,
+        ramBuffer,
+        scripts,
+      );
     }
 
     // 🔥 KERNEL-UPGRADE: Formulas ist im Mid-Game kein Hard-Requirement mehr für die Fleet!
@@ -221,7 +229,13 @@ export async function main(ns: NS): Promise<void> {
     // Fleet ist bereit, wenn Home genug RAM hat UND die p-Server groß genug sind
     const isFleetReady = homeMax >= 256 && eligiblePServers.length > 0;
 
+    // ======================================================================
+    // --- 📊 OPERATIONAL OS DASHBOARD UNTERSTÜTZUNG ---
+    // ======================================================================
     const freshStateForDashboard = loadState(ns);
+
+    // 🌟 REFACTORING: Keine redundanten uiTarget-Abfragen oder String-Ersetzungen mehr.
+    // Das Dashboard bekommt immer die ungefilterte Wahrheit ('bestTarget') geliefert.
     drawSysKernelDashboard(
       ns,
       freshStateForDashboard || localStateSnapshot,
@@ -386,6 +400,7 @@ async function deployWorker(
   scriptFilename: string,
   hackTarget: string,
   ramBuffer: number,
+  scripts: ScriptList,
 ): Promise<void> {
   if (targetNode !== "home") {
     await provisionServer(ns, targetNode);
@@ -400,11 +415,11 @@ async function deployWorker(
   const procs = ns.ps(targetNode);
 
   const allWorkerScripts = [
-    "tasks/work.js",
-    "tasks/xp-grind.js",
-    "tasks/hack.js",
-    "tasks/grow.js",
-    "tasks/weaken.js",
+    scripts.worker,
+    scripts.xpfarm,
+    scripts.hack,
+    scripts.grow,
+    scripts.weaken,
   ];
 
   for (const p of procs) {
@@ -448,7 +463,7 @@ function drawSysKernelDashboard(
   // 🏎️ Cleaner Engine-Mode Output
   ns.print(`ENGINE-MODE : ${isFleetMode ? "DYNAMIC FLEET" : "BASIC LOOP"}`);
 
-  // 📋 Dynamische Anforderungs-Checkliste im BASIC-LOOP-Modus
+  // 📋 Anforderungs-Checkliste: Zeilenanzahl bleibt strukturell stabil
   if (!isFleetMode) {
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
     const homeMaxRam = ns.getServerMaxRam("home");
@@ -460,20 +475,24 @@ function drawSysKernelDashboard(
     ns.print(` 📋 UNLOCK REQS FOR DYNAMIC FLEET:`);
     ns.print(`   [${hasFormulas ? "✅" : "❌"}] Formulas.exe`);
     ns.print(
-      `   [${homeMaxRam >= 256 ? "✅" : "❌"}] Home RAM >= 256GB (Aktuell: ${ns.format.ram(homeMaxRam)})`,
+      `   [${homeMaxRam >= 256 ? "✅" : "❌"}] Home RAM >= 256GB (${ns.format.ram(homeMaxRam)})`,
     );
     ns.print(
       `   [${hasEligiblePServer ? "✅" : "❌"}] Mind. 1x p-serv >= 64GB`,
     );
   }
 
-  ns.print(`STRATEGIE   : ${state.strategy}`);
+  ns.print(`STRATEGIE   : ${state.strategy || "MONEY"}`);
 
-  if (isFleetMode && state.batcherTarget) {
-    ns.print(`PRIMÄRZIEL  : ${state.batcherTarget} (BATCH)`);
+  // 🎯 FIX: Statische Zeilenanzahl für die Ziele (verhindert das Springen!)
+  if (isFleetMode) {
+    ns.print(
+      `PRIMÄRZIEL  : ${state.batcherTarget || "Warte auf Dispatcher..."} (BATCH)`,
+    );
     ns.print(`SEKUNDÄRZIEL: ${bestTarget} (FLEET)`);
   } else {
     ns.print(`ZIEL-SERVER : ${bestTarget}`);
+    ns.print(`BATCH-MODUS : INAKTIV (Basic Loop läuft)`); // Platzhalter, damit die Zeilenanzahl identisch bleibt
   }
 
   ns.print("------------------------------------------------");
@@ -486,11 +505,10 @@ function drawSysKernelDashboard(
   ns.print(
     `GROWTH-RATE : ${((bnMults.ServerGrowthRate ?? 1.0) * 100).toFixed(0)}% Stärke`,
   );
+  ns.print(`FRAKTION    : ${state.targetFaction || "KEINE"}`);
 
-  if (state.targetFaction) ns.print(`FRAKTION    : ${state.targetFaction}`);
-  if (state.progressBar) {
-    ns.print("------------------------------------------------");
-    ns.print(`PROGRESS    : ${state.progressBar}`);
-  }
+  // 📊 PROGRESS-Zeile bleibt immer sichtbar
+  ns.print("------------------------------------------------");
+  ns.print(`PROGRESS    : ${state.progressBar || "Initialisiere..."}`);
   ns.print(`================================================`);
 }

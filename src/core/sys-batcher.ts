@@ -372,7 +372,7 @@ export async function main(ns: NS): Promise<void> {
         lastUiUpdate = Date.now();
       }
 
-      await ns.sleep(SPACER);
+      await ns.sleep(SPACER * 4);
       continue;
     }
 
@@ -409,6 +409,7 @@ export async function main(ns: NS): Promise<void> {
       target,
       batchId,
     );
+
     if (!dispatchSuccess) {
       if (Date.now() - lastUiUpdate > 250) {
         drawBatcherDashboard(ns, {
@@ -523,6 +524,10 @@ function dispatchBatchScript(
   delay: number,
   id: number,
 ): void {
+  const currentState = loadState(ns);
+  const shareBufferPercent =
+    currentState?.fillerConfig?.shareMaxRamPercent || 0.0;
+
   if (threads <= 0) return;
   const scriptRam = ns.getScriptRam(script);
   if (scriptRam === 0) return;
@@ -531,7 +536,12 @@ function dispatchBatchScript(
   for (const server of allServers) {
     if (!ns.hasRootAccess(server)) continue;
     let maxRam = ns.getServerMaxRam(server);
-    if (server === "home") maxRam = Math.max(0, maxRam - 64);
+    if (server === "home") {
+      maxRam = Math.max(0, maxRam - 64);
+    } else if (currentState?.strategy === "REP") {
+      // 🔥 FIX: Schütze den Share-Buffer vor der tatsächlichen Skript-Ausführung
+      maxRam = maxRam * (1 - shareBufferPercent);
+    }
 
     const freeRam = maxRam - ns.getServerUsedRam(server);
     const possibleThreads = Math.floor(freeRam / scriptRam);
@@ -657,6 +667,11 @@ function dispatchSplitBatch(
   target: string,
   batchId: number,
 ): boolean {
+  // Am Anfang der Funktionen dispatchSplitBatch und dispatchBatchScript einfügen:
+  const currentState = loadState(ns);
+  const shareBufferPercent =
+    currentState?.fillerConfig?.shareMaxRamPercent || 0.0;
+
   // Liste aller Teil-Aufgaben eines vollständigen HWGW-Batches
   const tasks = [
     {
@@ -682,12 +697,18 @@ function dispatchSplitBatch(
   ];
 
   // Vorab-Sicherheitscheck: Haben wir im gesamten Netzwerk überhaupt genug RAM?
-  // (Wird zwar in der Main-Loop validiert, fängt aber Race-Conditions ab)
   let totalFree = 0;
   for (const s of allServers) {
     if (!ns.hasRootAccess(s)) continue;
     let maxRam = ns.getServerMaxRam(s);
-    if (s === "home") maxRam = Math.max(0, maxRam - 64);
+
+    if (s === "home") {
+      maxRam = Math.max(0, maxRam - 64);
+    } else if (currentState?.strategy === "REP") {
+      // 🌟 FIX: Der Pre-Check muss die REP-Drosselung ebenfalls sehen!
+      maxRam = maxRam * (1 - shareBufferPercent);
+    }
+
     totalFree += maxRam - ns.getServerUsedRam(s);
   }
 
@@ -702,7 +723,12 @@ function dispatchSplitBatch(
       if (!ns.hasRootAccess(server)) continue;
 
       let maxRam = ns.getServerMaxRam(server);
-      if (server === "home") maxRam = Math.max(0, maxRam - 64);
+      if (server === "home") {
+        maxRam = Math.max(0, maxRam - 64);
+      } else if (currentState?.strategy === "REP") {
+        // 🔥 FIX: Schütze den Share-Buffer vor der tatsächlichen Skript-Ausführung
+        maxRam = maxRam * (1 - shareBufferPercent);
+      }
 
       const freeRam = maxRam - ns.getServerUsedRam(server);
       const scriptRam = ns.getScriptRam(task.script);
