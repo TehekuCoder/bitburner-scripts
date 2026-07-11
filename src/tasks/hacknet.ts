@@ -1,5 +1,6 @@
 import { NS, NodeStats } from "@ns";
 import { loadBnMults } from "../lib/state.js";
+import { loadState } from "../core/state-manager.js";
 
 interface HacknetUpgrade {
   type: "Level" | "RAM" | "Core" | "Neuer Node";
@@ -17,7 +18,6 @@ export async function main(ns: NS): Promise<void> {
   const maxRam = (ns.args[2] as number) || Infinity;
   const maxCores = (ns.args[3] as number) || Infinity;
 
-  // In der main-Funktion:
   const bnMults = loadBnMults(ns);
 
   if (bnMults.HacknetNodeMoney === 0) {
@@ -53,18 +53,23 @@ export async function main(ns: NS): Promise<void> {
     const hNetMults = ns.getHacknetMultipliers();
     const currentMoney = ns.getServerMoneyAvailable("home");
 
-    // Dynamisches Budget für Mid- bis Late-Game (Skaliert mit BN-Multiplikator)
+    // 🏦 Globale Reserve aus dem State-Manager laden
+    const state = loadState(ns);
+    const reserve = state?.moneyReserve ?? 0;
+
+    // Berechne dein dynamisches Budget wie gehabt
     let baseBudgetPercent = currentMoney > 10_000_000_000 ? 0.02 : 0.1;
     const budget = currentMoney * baseBudgetPercent * bnMults.HacknetNodeMoney;
 
     let bestUpgrade: HacknetUpgrade | null = null;
     let highestROI = -1;
 
-    // 🏆 1. ROI FÜR NEUEN KNOTEN (Vollständige Kosten-Kalkulation via Formulas)
+    // 🏆 1. ROI FÜR NEUEN KNOTEN
     if (numNodes < maxNodes) {
       const baseCost = h.getPurchaseNodeCost();
 
-      if (baseCost <= budget) {
+      // ERWEITERT: Darf das Budget UND die globale Reserve nicht verletzen
+      if (baseCost <= budget && currentMoney - baseCost >= reserve) {
         let targetLvl = 10,
           targetRam = 2,
           targetCores = 1;
@@ -133,6 +138,9 @@ export async function main(ns: NS): Promise<void> {
 
       const checkROI = (cost: number, newGain: number) => {
         if (cost === Infinity || cost > budget) return false;
+        // ERWEITERT: Wenn der Kauf uns unter die globale Spar-Reserve drückt -> ablehnen
+        if (currentMoney - cost < reserve) return false;
+
         const roi = hasFormulas ? (newGain - node.production) / cost : 1 / cost;
         if (roi > highestROI) {
           highestROI = roi;
@@ -204,6 +212,13 @@ export async function main(ns: NS): Promise<void> {
       );
       await ns.sleep(50);
     } else {
+      // Wenn kein Upgrade die Kriterien erfüllt (z.B. weil die Reserve blockiert),
+      // geben wir im Log Bescheid und schlafen ruhig.
+      if (reserve > 0 && currentMoney - budget < reserve) {
+        ns.print(
+          `[HACKNET] Sparmodus aktiv. Halte die Reserve von $${ns.format.number(reserve)} für die Infrastruktur.`,
+        );
+      }
       await ns.sleep(isCappedMode ? 5000 : 15000);
     }
   }

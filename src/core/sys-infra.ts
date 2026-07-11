@@ -1,6 +1,7 @@
 import { NS, ProgramName } from "@ns";
 import { provisionServer } from "/utils/provision";
-import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
+import { loadBnMults, DEFAULT_MULTIPLIERS} from "../lib/state.js";
+import { patchState } from "./state-manager.js";
 
 // 🎯 ZENTRALE SOFTWARE-MATRIX
 const TARGET_PROGRAMS = [
@@ -110,20 +111,40 @@ function checkHomeUpgradeShield(ns: NS): boolean {
 
   const currentMoney = ns.getPlayer().money;
   const minHomeCost = Math.min(nextRamCost, nextCoreCost);
-  
+
   const currentServers = ns.cloud.getServerNames();
-  const currentMinRam = currentServers.length > 0
-    ? Math.min(...currentServers.map((s) => ns.getServerMaxRam(s)))
-    : 8;
+  const currentMinRam =
+    currentServers.length > 0
+      ? Math.min(...currentServers.map((s) => ns.getServerMaxRam(s)))
+      : 8;
 
   const nextPservUpgradeCost =
-    ns.cloud.getServerCost(currentMinRam * 2) - ns.cloud.getServerCost(currentMinRam);
+    ns.cloud.getServerCost(currentMinRam * 2) -
+    ns.cloud.getServerCost(currentMinRam);
+
+  const shieldActive =
+    currentMoney >= minHomeCost * 0.5 && minHomeCost < nextPservUpgradeCost * 5;
+
+  if (shieldActive) {
+    // Das System spart aktiv auf das Home-Upgrade.
+    // Wir blockieren exakt die benötigten Kosten als globale Reserve.
+    patchState(ns, { moneyReserve: minHomeCost });
+  } else {
+    // Kein Schild aktiv? Dann gibt es keine infrastrukturbedingte Reserve.
+    patchState(ns, { moneyReserve: 0 });
+  }
 
   // Schild aktivieren, wenn wir die Hälfte des Geldes haben UND Home nicht 5x teurer ist als ein p-Server-Upgrade
-  return currentMoney >= minHomeCost * 0.5 && minHomeCost < nextPservUpgradeCost * 5;
+  return (
+    currentMoney >= minHomeCost * 0.5 && minHomeCost < nextPservUpgradeCost * 5
+  );
 }
 
-async function handleServerPurchases(ns: NS, bnMults: any, freezePservers: boolean): Promise<void> {
+async function handleServerPurchases(
+  ns: NS,
+  bnMults: any,
+  freezePservers: boolean,
+): Promise<void> {
   const maxServers = ns.cloud.getServerLimit();
   if (maxServers === 0 || bnMults.PurchasedServerLimit === 0) return;
   if (freezePservers) return; // p-Server weichen dem Home-Sparen
@@ -135,7 +156,8 @@ async function handleServerPurchases(ns: NS, bnMults: any, freezePservers: boole
   // Dynamische RAM-Obergrenze basierend auf vorhandener Software
   let allowedMaxRam = 64;
   if (ns.fileExists("Formulas.exe", "home")) allowedMaxRam = maxRam;
-  else if (ns.fileExists("SQLInject.exe", "home")) allowedMaxRam = Math.min(2048, maxRam);
+  else if (ns.fileExists("SQLInject.exe", "home"))
+    allowedMaxRam = Math.min(2048, maxRam);
   else if (ns.fileExists("HTTPWorm.exe", "home")) allowedMaxRam = 512;
 
   let actionOccurred = true;
@@ -146,8 +168,11 @@ async function handleServerPurchases(ns: NS, bnMults: any, freezePservers: boole
     const homeMaxRam = ns.getServerMaxRam("home");
 
     // 🚀 BATCHER-RUSH-BEDINGUNG: Home hat 256GB+, aber kein einziger p-serv hat die kritischen 64GB
-    const hasEligiblePserv = currentServers.some((s) => ns.getServerMaxRam(s) >= 64);
-    const rushSinglePserv = homeMaxRam >= 256 && !hasEligiblePserv && currentServers.length > 0;
+    const hasEligiblePserv = currentServers.some(
+      (s) => ns.getServerMaxRam(s) >= 64,
+    );
+    const rushSinglePserv =
+      homeMaxRam >= 256 && !hasEligiblePserv && currentServers.length > 0;
 
     // Wir ermitteln sowohl den schlechtesten als auch den besten Server
     let minRam = maxRam;
@@ -168,10 +193,14 @@ async function handleServerPurchases(ns: NS, bnMults: any, freezePservers: boole
     }
 
     let affordableNewRam = 8;
-    while (affordableNewRam * 2 <= allowedMaxRam && ns.cloud.getServerCost(affordableNewRam * 2) <= currentBudget) {
+    while (
+      affordableNewRam * 2 <= allowedMaxRam &&
+      ns.cloud.getServerCost(affordableNewRam * 2) <= currentBudget
+    ) {
       affordableNewRam *= 2;
     }
-    if (ns.cloud.getServerCost(affordableNewRam) > currentBudget) affordableNewRam = 0;
+    if (ns.cloud.getServerCost(affordableNewRam) > currentBudget)
+      affordableNewRam = 0;
 
     // FALL 1: Noch überhaupt kein Server vorhanden -> Kaufe den ersten
     if (currentServers.length === 0 && affordableNewRam >= 8) {
@@ -181,12 +210,13 @@ async function handleServerPurchases(ns: NS, bnMults: any, freezePservers: boole
         currentBudget -= ns.cloud.getServerCost(initialRam);
         actionOccurred = true;
       }
-    } 
+    }
     // FALL 2: 🔥 RUSH MODUS AKTIV -> Fokussiere das Upgrade des BESTEN vorhandenen Servers auf 64GB
     else if (rushSinglePserv && bestServer !== "") {
       const nextRam = maxPservRam * 2;
       if (nextRam <= allowedMaxRam) {
-        const upgradeCost = ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(maxPservRam);
+        const upgradeCost =
+          ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(maxPservRam);
         if (currentBudget >= upgradeCost) {
           if (ns.cloud.upgradeServer(bestServer, nextRam)) {
             currentBudget -= upgradeCost;
@@ -196,12 +226,13 @@ async function handleServerPurchases(ns: NS, bnMults: any, freezePservers: boole
       }
       // Wichtig: Im Rush-Modus brechen wir hier ab und kaufen KEINE neuen Server,
       // um das Budget komplett für das 64GB-Upgrade zu sichern!
-    } 
+    }
     // FALL 3: Normalbetrieb & Server-Slots frei -> Gleichmäßiger Ausbau oder Neukauf
     else if (currentServers.length < maxServers) {
       if (worstServer !== "" && minRam < affordableNewRam) {
         const nextRam = minRam * 2;
-        const upgradeCost = ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
+        const upgradeCost =
+          ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
 
         if (currentBudget >= upgradeCost && nextRam <= allowedMaxRam) {
           if (ns.cloud.upgradeServer(worstServer, nextRam)) {
@@ -215,12 +246,13 @@ async function handleServerPurchases(ns: NS, bnMults: any, freezePservers: boole
           actionOccurred = true;
         }
       }
-    } 
+    }
     // FALL 4: Alle Slots voll -> Upgrade den schwächsten Server (Normalbetrieb)
     else if (worstServer !== "") {
       const nextRam = minRam * 2;
       if (nextRam <= allowedMaxRam) {
-        const upgradeCost = ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
+        const upgradeCost =
+          ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
         if (currentBudget >= upgradeCost) {
           if (ns.cloud.upgradeServer(worstServer, nextRam)) {
             currentBudget -= upgradeCost;
@@ -231,7 +263,11 @@ async function handleServerPurchases(ns: NS, bnMults: any, freezePservers: boole
     }
   }
 }
-async function buyNewServer(ns: NS, ram: number, maxServers: number): Promise<boolean> {
+async function buyNewServer(
+  ns: NS,
+  ram: number,
+  maxServers: number,
+): Promise<boolean> {
   const currentServers = ns.cloud.getServerNames();
   let nextFreeNumber = 1;
   let name = "";
@@ -267,18 +303,23 @@ function printDashboard(ns: NS, isHomePrioritized: boolean): void {
   ns.print(` ⚙️  BIT-OS INFRASTRUCTURE MONITOR`);
   ns.print(`============================================================`);
   ns.print(`🏠 HOME COMPUTER`);
-  ns.print(`   RAM:   ${ns.format.ram(homeMaxRam).padEnd(9)} (Genutzt: ${ns.format.ram(homeUsedRam)})`);
+  ns.print(
+    `   RAM:   ${ns.format.ram(homeMaxRam).padEnd(9)} (Genutzt: ${ns.format.ram(homeUsedRam)})`,
+  );
   ns.print(`   CORES: ${homeCores} Kerne`);
 
-if (ns.singularity) {
+  if (ns.singularity) {
     const pServers = ns.cloud.getServerNames();
     const has64gbPserv = pServers.some((s) => ns.getServerMaxRam(s) >= 64);
-    const isRushMode = homeMaxRam >= 256 && !has64gbPserv && pServers.length > 0;
+    const isRushMode =
+      homeMaxRam >= 256 && !has64gbPserv && pServers.length > 0;
 
     if (isHomePrioritized) {
       ns.print(`   🚦 STRATEGIE: 👑 HOME-PRIORITÄT AKTIV (P-Serv eingefroren)`);
     } else if (isRushMode) {
-      ns.print(`   🚦 STRATEGIE: 🚀 BATCHER-RUSH (Fokus auf ein einzelnes 64GB P-Serv)`);
+      ns.print(
+        `   🚦 STRATEGIE: 🚀 BATCHER-RUSH (Fokus auf ein einzelnes 64GB P-Serv)`,
+      );
     } else {
       ns.print(`   🚦 STRATEGIE: 💸 Normalbetrieb (Netzwerk-Expansion)`);
     }
@@ -295,11 +336,17 @@ if (ns.singularity) {
     currentServers.sort().forEach((server) => {
       const ram = ns.getServerMaxRam(server);
       const used = ns.getServerUsedRam(server);
-      const bar = "█".repeat(Math.round((used / ram) * 10)) + "░".repeat(10 - Math.round((used / ram) * 10));
-      ns.print(`   • ${server.padEnd(12)} : ${ns.format.ram(ram).padStart(9)}  [${bar}]`);
+      const bar =
+        "█".repeat(Math.round((used / ram) * 10)) +
+        "░".repeat(10 - Math.round((used / ram) * 10));
+      ns.print(
+        `   • ${server.padEnd(12)} : ${ns.format.ram(ram).padStart(9)}  [${bar}]`,
+      );
     });
   }
-  ns.print(`   Kapazität: ${currentServers.length} / ${maxServers} Server slots genutzt.`);
+  ns.print(
+    `   Kapazität: ${currentServers.length} / ${maxServers} Server slots genutzt.`,
+  );
   ns.print("------------------------------------------------------------");
 
   ns.print(`💾 SOFTWARE-INVENTAR`);

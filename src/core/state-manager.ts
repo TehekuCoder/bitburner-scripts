@@ -30,6 +30,8 @@ export interface BotState {
     shareMaxRamPercent: number; // Wie viel % des Home-RAMs darf Share fressen (0.0 - 1.0)
     maxXpLevel: number;          // Bis zu welchem Hacking-Level macht XP-Grind Sinn
   };
+
+  moneyReserve?: number; // Betrag, der für wichtige Core-Upgrades unangetastet bleiben MUSS
 }
 
 const STATE_FILE = "bitos_state.txt";
