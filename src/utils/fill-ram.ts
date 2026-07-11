@@ -20,7 +20,6 @@ export async function main(ns: NS): Promise<void> {
   const MAX_USEFUL_HACK_LEVEL = 3000;
 
   while (true) {
-    // 💡 FIX 1: Typsicheres Laden des globalen OS-Status statt 'as any'
     const state: BotState | null = loadState(ns);
     const p = ns.getPlayer();
     const currentSharePower = ns.getSharePower();
@@ -54,45 +53,35 @@ export async function main(ns: NS): Promise<void> {
       state?.strategy === "MONEY" ||
       (state?.batcherRamNeeded && state.batcherRamNeeded > 0);
 
+    // --- EINHEITLICHE RAM-RESERVIERUNG ---
     let baseReserve = 0;
+    const currentRamUsedByOtherThings = ns.getServerUsedRam(target);
+    const batcherRamReservation = state?.batcherRamNeeded
+      ? state.batcherRamNeeded + 4
+      : 40;
+
     if (target === "home") {
-      baseReserve = 64;
+      // 1. Home-Server: Ein fester Basis-Schutzpuffer (32GB) + Batcher-Bedarf falls aktiv
+      baseReserve = 32;
       if (isBatcherActive) {
-        baseReserve += state?.batcherRamNeeded
-          ? state.batcherRamNeeded + 4
-          : 40;
+        baseReserve += batcherRamReservation;
       }
     } else {
-      // DYNAMISCH: Wenn der Batcher aktiv ist und RAM braucht, reservieren wir exakt diesen Wert global
-      // oder nutzen die prozentuale Freigabe.
-      if (isBatcherActive && state?.batcherRamNeeded) {
-        // Da batcherRamNeeded global fürs Netzwerk gilt, teilen wir es fair auf oder blockieren
-        // im MONEY-Modus einfach den komplementären Teil zum allowedSharePercent:
-        baseReserve = maxRam * (1 - allowedSharePercent);
-      } else {
-        baseReserve = 32; // Standard-Puffer für Worker im Idle
-      }
-    }
-
-    if (isBatcherActive) {
-      // Auf 'home' schützt 'batcherNeed' die präzise Batcher-Pipeline vor fill-ram
-      if (target === "home") {
-        const batcherNeed = state?.batcherRamNeeded
-          ? state.batcherRamNeeded + 4
-          : 40;
-        baseReserve = baseReserve + batcherNeed;
-      } else {
-        // 🔥 FIX: Auf p-servs blockieren wir fest 40% des RAMs für den Batcher,
-        // WENN dieser aktiv ist. Die restlichen 60% stehen für Shares/XP offen.
+      // 2. P-Server (Gekaufte Server):
+      if (isBatcherActive) {
+        // Festgelegter 40% Block für den Batcher, 60% stehen für Shares/XP offen
         baseReserve = Math.floor(maxRam * 0.4);
+      } else {
+        // Standard-Puffer für spontane Worker-Dispatches wenn kein Batcher läuft
+        baseReserve = 32;
       }
-    } else if (target !== "home") {
-      baseReserve = 32; // Standard-Puffer für spontane Worker-Dispatches
     }
+    // -------------------------------------
 
     // A: XP-Grind Logik
     if (
       p.skills.hacking < maxXpLevel &&
+      // ... hier geht dein Skript ganz normal weiter
       p.skills.hacking < MAX_USEFUL_HACK_LEVEL &&
       state?.strategy !== "MONEY" &&
       (state?.strategy === "XP_SPRINT" || p.skills.hacking < 250)

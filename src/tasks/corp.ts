@@ -45,7 +45,7 @@ export async function main(ns: NS): Promise<void> {
 
     if (!isAlreadyWorkingHere) {
       ns.print(`[WORK] Starte Arbeit bei ${targetCompany} als ${currentJobTitle}...`);
-      const success = sing.workForCompany(targetCompany, false); // false = Multitasking ohne Fokus-Malus
+      const success = sing.workForCompany(targetCompany);
 
       if (!success) {
         ns.print(`[WARN] Konnte Arbeit nicht starten. Fehlen Qualifikationen für ${jobField}?`);

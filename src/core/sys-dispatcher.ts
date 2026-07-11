@@ -402,7 +402,9 @@ export async function main(ns: NS): Promise<void> {
 
     let dynamicMaxXp = 1000;
     if (mode === "CRIME") {
-      dynamicMaxXp = p.skills.hacking;
+      // ✅ FIX: Setzt ein echtes Ziel-Limit statt des aktuellen Levels.
+      // Erlaubt fill-ram.ts den XP-Grind, solange Hacking < 100 ist.
+      dynamicMaxXp = 100;
     } else if (p.skills.hacking > 800) {
       dynamicMaxXp = 1500;
     }

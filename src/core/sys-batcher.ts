@@ -667,7 +667,6 @@ function dispatchSplitBatch(
   target: string,
   batchId: number,
 ): boolean {
-  // Am Anfang der Funktionen dispatchSplitBatch und dispatchBatchScript einfügen:
   const currentState = loadState(ns);
   const shareBufferPercent =
     currentState?.fillerConfig?.shareMaxRamPercent || 0.0;
@@ -714,6 +713,7 @@ function dispatchSplitBatch(
 
   if (totalFree < plan.totalRam) return false;
 
+  
   // Verteile jede Aufgabe Thread für Thread auf die verfügbaren Server
   for (const task of tasks) {
     let threadsLeft = task.threads;
