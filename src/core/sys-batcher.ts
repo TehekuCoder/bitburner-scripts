@@ -573,7 +573,7 @@ function executePrepPhase(
     dispatchBatchScript(
       ns,
       allServers,
-      "tasks/weaken.js",
+      "/tasks/weaken.js",
       weakenThreads,
       target,
       0,
@@ -599,7 +599,7 @@ function executePrepPhase(
     dispatchBatchScript(
       ns,
       allServers,
-      "tasks/grow.js",
+      "/tasks/grow.js",
       growThreads,
       target,
       0,
@@ -608,7 +608,7 @@ function executePrepPhase(
     dispatchBatchScript(
       ns,
       allServers,
-      "tasks/weaken.js",
+      "/tasks/weaken.js",
       weakenThreadsNeeded,
       target,
       50,
@@ -674,22 +674,22 @@ function dispatchSplitBatch(
   // Liste aller Teil-Aufgaben eines vollständigen HWGW-Batches
   const tasks = [
     {
-      script: "tasks/hack.js",
+      script: "/tasks/hack.js",
       threads: plan.hackThreads,
       delay: plan.hackDelay,
     },
     {
-      script: "tasks/weaken.js",
+      script: "/tasks/weaken.js",
       threads: plan.weaken1Threads,
       delay: plan.weaken1Delay,
     },
     {
-      script: "tasks/grow.js",
+      script: "/tasks/grow.js",
       threads: plan.growThreads,
       delay: plan.growDelay,
     },
     {
-      script: "tasks/weaken.js",
+      script: "/tasks/weaken.js",
       threads: plan.weaken2Threads,
       delay: plan.weaken2Delay,
     },
@@ -713,7 +713,6 @@ function dispatchSplitBatch(
 
   if (totalFree < plan.totalRam) return false;
 
-  
   // Verteile jede Aufgabe Thread für Thread auf die verfügbaren Server
   for (const task of tasks) {
     let threadsLeft = task.threads;
@@ -737,10 +736,25 @@ function dispatchSplitBatch(
       if (possibleThreads > 0) {
         const toDeploy = Math.min(possibleThreads, threadsLeft);
 
-        ns.exec(task.script, server, toDeploy, target, task.delay, batchId);
-        threadsLeft -= toDeploy;
+        // ✅ FIX 1: Skripte im Bedarfsfall automatisch auf den P-Server kopieren
+        if (server !== "home" && !ns.fileExists(task.script, server)) {
+          ns.scp(task.script, server, "home");
+        }
 
-        if (threadsLeft <= 0) break; // Aufgabe für diesen Batch vollständig verteilt
+        // ✅ FIX 2: Nur subtrahieren, wenn das Skript auch WIRKLICH gestartet ist!
+        const pid = ns.exec(
+          task.script,
+          server,
+          toDeploy,
+          target,
+          task.delay,
+          batchId,
+        );
+        if (pid > 0) {
+          threadsLeft -= toDeploy;
+        }
+
+        if (threadsLeft <= 0) break;
       }
     }
 

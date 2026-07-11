@@ -39,27 +39,40 @@ export async function main(ns: NS): Promise<void> {
   ns.tprint(`   - Tier 2 (Mid-Range/P-Serv) -> ${targetTier2} ($${ns.format.number(ns.getServerMaxMoney(targetTier2))})`);
   ns.tprint(`   - Tier 3 (Low-RAM Network)  -> ${targetTier3} ($${ns.format.number(ns.getServerMaxMoney(targetTier3))})`);
 
-  // ====================================================================
-  // SCHRITT 3: WORKER-VERTEILUNG NACH LEISTUNGSKLASSE
+// ====================================================================
+  // SCHRITT 3: WORKER-VERTEILUNG NACH LEISTUNGSKLASSE (REPAIRED)
   // ====================================================================
   const pServers = ns.cloud.getServerNames();
-  const workerScript = "tasks/work.js";
+  const workerScript = "/tasks/work.js"; // Einheitlich mit führendem Slash
   const workerRam = ns.getScriptRam(workerScript);
 
   const hostServers = allServers.filter(
     s => s === "home" || pServers.includes(s) || (ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0)
   );
 
-  const scriptsToKill = ["tasks/hack.js", "tasks/grow.js", "tasks/weaken.js", "tasks/work.js", "tasks/xp-grind.js"];
   let totalShareThreads = 0;
   const activeTargets = new Set<string>();
 
   for (const server of hostServers) {
-    // 1. Bereinigen
+    const activeProcesses = ns.ps(server);
+    
+    // Pfadunabhängiges Killen: Wir prüfen via .includes(), ob das Skript weg muss
     if (server !== "home") {
-      for (const script of scriptsToKill) {
-        if (ns.isRunning(script, server)) ns.scriptKill(script, server);
+      for (const proc of activeProcesses) {
+        if (proc.filename.includes("share")) {
+          totalShareThreads += proc.threads;
+        } else if (
+          proc.filename.includes("hack.js") || 
+          proc.filename.includes("grow.js") || 
+          proc.filename.includes("weaken.js") || 
+          proc.filename.includes("work.js") || 
+          proc.filename.includes("xp-grind.js")
+        ) {
+          ns.scriptKill(proc.filename, server);
+        }
       }
+      // Kurze Atempause, damit die Engine das RAM im selben Frame freigibt
+      await ns.sleep(20);
     }
 
     await provisionServer(ns, server);
@@ -67,34 +80,26 @@ export async function main(ns: NS): Promise<void> {
     const reserve = server === "home" ? 32 : 0; 
     const maxRam = ns.getServerMaxRam(server) - reserve;
     
-    // Share-Threads sichern
-    const activeProcesses = ns.ps(server);
-    let shareRam = 0;
-    for (const proc of activeProcesses) {
-      if (proc.filename.includes("share")) {
-        totalShareThreads += proc.threads;
-        shareRam += ns.getScriptRam(proc.filename, server) * proc.threads;
-      }
-    }
-
-    const freeRam = maxRam - shareRam;
+    // ✅ FIX: Nutze das echte, verbleibende physische RAM nach der Bereinigung
+    const freeRam = maxRam - ns.getServerUsedRam(server);
     const threads = Math.floor(freeRam / workerRam);
 
     if (threads > 0) {
-      // 🧠 INTELLIGENTE ZIELZUWEISUNG (Wer hackt was?)
-      let assignedTarget = targetTier3; // Standard für kleine gekaperte Server
+      let assignedTarget = targetTier3;
 
       if (server === "home") {
-        assignedTarget = targetTier1; // Home bekommt immer den dicksten Brocken
+        assignedTarget = targetTier1;
       } else if (pServers.includes(server)) {
-        // Deine gekauften Server teilen sich Tier 1 und Tier 2 auf
         const index = pServers.indexOf(server);
         assignedTarget = index % 2 === 0 ? targetTier1 : targetTier2;
       } else if (maxRam >= 64) {
-        assignedTarget = targetTier2; // Größere gekaperte Server helfen bei Tier 2
+        assignedTarget = targetTier2;
       }
 
       activeTargets.add(assignedTarget);
+      
+      // Skript kopieren falls nötig und ausführen
+      if (server !== "home") ns.scp(workerScript, server, "home");
       ns.exec(workerScript, server, threads, assignedTarget);
     }
   }
@@ -146,14 +151,17 @@ export async function main(ns: NS): Promise<void> {
     ns.print(`STABILITÄT:           [${bar}] (${stableTicks}/8 Ticks)`);
     ns.print(`============================================================`);
 
-    if (currentTotalIncome < 0) {
+if (currentTotalIncome < 0) {
       stableTicks++;
     } else if (currentTotalIncome > 0 && Math.abs(currentTotalIncome - lastTotalIncome) < (currentTotalIncome * 0.05)) {
       stableTicks++;
     } else if (currentTotalIncome > 0) {
       stableTicks = Math.max(1, stableTicks);
     } else {
-      stableTicks = 0;
+      // Wenn Einkommen 0 ist, warten wir einfach ruhig ab, ohne die Ticks zu bestrafen
+      if (lastTotalIncome > 0) {
+        stableTicks = 0; // Nur resetten, wenn wir schon mal Geld hatten und es eingebrochen ist
+      }
     }
 
     if (stableTicks >= 8 || (Date.now() - startTime) > maxWaitTime) {
