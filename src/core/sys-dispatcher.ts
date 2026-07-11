@@ -102,6 +102,10 @@ export async function main(ns: NS): Promise<void> {
   let lastFallbackUpdate = 0;
   let lastCacheRefresh = Date.now();
 
+  // ⏱️ NEU: Zeitliche Schonfrist gegen den Ping-Pong-Effekt
+  let modeLockTime = Date.now();
+  const STRATEGY_COOLDOWN = 60_000; // 60 Sekunden Sperrzeit
+
   while (true) {
     if (Date.now() - lastCacheRefresh > 900_000) {
       buildReputationCache(ns);
@@ -270,6 +274,27 @@ export async function main(ns: NS): Promise<void> {
       lastFallbackUpdate = Date.now();
     }
 
+    // ======================================================================
+    // ⏱️ NEU: COOLDOWN ENGINE (SCHONFRIST)
+    // ======================================================================
+    const previousStrategy = currentState?.strategy || "MONEY";
+    const now = Date.now();
+
+    if (mode !== previousStrategy) {
+      // Wir schützen primär den oszillierenden Übergang zwischen Geld- und Ruf-Phase
+      const isOscillating =
+        ["MONEY", "CRIME", "REP"].includes(mode) &&
+        ["MONEY", "CRIME", "REP"].includes(previousStrategy);
+
+      if (isOscillating && now - modeLockTime < STRATEGY_COOLDOWN) {
+        // Die Schonfrist läuft noch! Wir erzwingen den alten Modus.
+        mode = previousStrategy as BotStrategy;
+      } else {
+        // Schonfrist ist abgelaufen oder es ist ein kritischer Moduswechsel -> Erlauben!
+        modeLockTime = now;
+      }
+    }
+
     // --- 2. METRIK-ERFASSUNG & EMA ETA ENGINE ---
     let currentVal = 0;
     let targetVal = 0;
@@ -293,7 +318,6 @@ export async function main(ns: NS): Promise<void> {
       label = `💀 Mordaufträge`;
     }
 
-    const now = Date.now();
     if (mode !== lastMode) {
       lastValue = currentVal;
       lastTime = now;
@@ -347,7 +371,7 @@ export async function main(ns: NS): Promise<void> {
           ? "🥷 BN-Synergie: Dauerhafter Crime Loop aktiv (Mörderischer Profit)"
           : "🥷 Mid-Game-Crime Loop für stabiles Einkommen";
     } else if (mode === "KILLS") {
-      generatedBar = `💀 Eliminierungs-Aufträge aktiv (${currentVal}/${targetVal} Kills)`;
+      generatedBar = `💀 Eliminierungs-Aufträge active (${currentVal}/${targetVal} Kills)`;
     } else if (mode === "MONEY" && !canRunBatcher) {
       generatedBar = `🏗️ Aufbau-Phase: Generiere Basis-Geld auf ${cachedFallbackTarget} (Warte auf P-Server)`;
     } else {
@@ -523,7 +547,19 @@ export async function main(ns: NS): Promise<void> {
       ns.run("utils/fill-ram.js", 1);
     }
 
-    manageMicroservices(ns, mode);
+    // --- ÜBERGABE AN MICROSERVICES ---
+    // Wir übergeben true, wenn factionToWorkFor existiert (wir also sparen)
+    manageMicroservices(ns, mode, factionToWorkFor !== null);
+
+    // 🛑 STICKY-ACTION-STOPP:
+    // Wenn wir im puren MONEY-Modus sind (Batcher druckt Geld) und KEIN Sparziel haben,
+    // beenden wir jede alte Fraktionsarbeit sofort, damit wir kein Geld liegen lassen.
+    if (mode === "MONEY" && !factionToWorkFor && canRunBatcher) {
+      if (ns.singularity.getCurrentWork()) {
+        ns.singularity.stopAction();
+      }
+    }
+
     await ns.sleep(2000);
   }
 }
@@ -570,7 +606,11 @@ function findNextFaction(ns: NS, p: Player): FactionName | null {
   return activeFactionJobs.length > 0 ? activeFactionJobs[0].name : null;
 }
 
-function manageMicroservices(ns: NS, currentMode: string): void {
+function manageMicroservices(
+  ns: NS,
+  currentMode: string,
+  hasSavingTarget: boolean,
+): void {
   const modeToScript: Record<string, string> = {
     REP: "tasks/faction-grind.js",
     CORP: "tasks/corp.js",
@@ -580,7 +620,13 @@ function manageMicroservices(ns: NS, currentMode: string): void {
     KILLS: "tasks/crime.js",
   };
 
-  const targetScript = modeToScript[currentMode];
+  let targetScript = modeToScript[currentMode];
+
+  // 🔥 ARCHITEKTUR-LINK: Wenn wir im MONEY-Modus aktiv sparen,
+  // nutzen wir deinen mathematisch optimierten Crime-Worker!
+  if (currentMode === "MONEY" && hasSavingTarget) {
+    targetScript = "tasks/crime.js";
+  }
 
   for (const [mode, script] of Object.entries(modeToScript)) {
     if (script !== targetScript && ns.isRunning(script, "home")) {

@@ -17,6 +17,7 @@ interface ScriptList {
   hack: string;
   grow: string;
   weaken: string;
+  sleeve: string;
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -33,6 +34,7 @@ export async function main(ns: NS): Promise<void> {
     hack: "tasks/hack.js",
     grow: "tasks/grow.js",
     weaken: "tasks/weaken.js",
+    sleeve: "core/sys-sleeve.js"
   };
 
   ns.disableLog("ALL");
@@ -333,6 +335,16 @@ function manageSuites(
       !ns.isRunning(scripts.crawler, "home")
     ) {
       ns.exec(scripts.crawler, "home", 1);
+    }
+  }
+
+  // ======================================================================
+  // 📯 SLEEVE-SUBSYSTEM START
+  // ======================================================================
+  if (ns.sleeve !== undefined && ns.fileExists(scripts.sleeve, "home")) {
+    if (!ns.isRunning(scripts.sleeve, "home")) {
+      ns.print("🦾 Overlord: Initialisiere Sleeve-Automatisierung...");
+      ns.exec(scripts.sleeve, "home", 1);
     }
   }
 }
