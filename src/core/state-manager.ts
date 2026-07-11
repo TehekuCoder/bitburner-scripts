@@ -32,6 +32,9 @@ export interface BotState {
   };
 
   moneyReserve?: number; // Betrag, der für wichtige Core-Upgrades unangetastet bleiben MUSS
+
+  sleeveGlobalMode?: "RECOVERY" | "CRIME" | "COMPANY" | "FACTION";
+  targetSleeveCompany?: CompanyName;
 }
 
 const STATE_FILE = "bitos_state.txt";

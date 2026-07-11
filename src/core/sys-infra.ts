@@ -19,7 +19,7 @@ export async function main(ns: NS): Promise<void> {
   const hasSingularity = ns.singularity !== undefined;
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
 
-  ns.ui.openTail();
+  // ns.ui.openTail();
 
   while (true) {
     let freezePservers = false;

@@ -38,7 +38,7 @@ export async function main(ns: NS): Promise<void> {
   };
 
   ns.disableLog("ALL");
-  ns.ui.openTail();
+  // ns.ui.openTail();
 
   // ======================================================================
   // --- 🔄 BOOT-SEQUENCE: ENVIRONMENT ANALYSIS ---

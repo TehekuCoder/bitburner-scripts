@@ -46,7 +46,7 @@ function logEvent(msg: string): void {
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  ns.ui.openTail();
+  // ns.ui.openTail();
 
   const bnMults = loadBnMults(ns);
 

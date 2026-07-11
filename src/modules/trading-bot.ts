@@ -3,7 +3,7 @@ import { loadState, saveState } from "../core/state-manager.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  ns.ui.openTail();
+  // ns.ui.openTail();
   ns.print("⚡ Finanz-Subsystem v3.4 [DYNAMIC-FLEX] initialisiert.");
 
   let fullyUnlocked = false;
