@@ -49,14 +49,29 @@ export async function main(ns: NS): Promise<void> {
     let activeScript = "";
     let targetThreads = 0;
 
+    // IN DER WHILE-LOOP VON FILL-RAM.TS
     const isBatcherActive =
       state?.strategy === "MONEY" ||
       (state?.batcherRamNeeded && state.batcherRamNeeded > 0);
 
-    // 💡 FIX 2: Zentrale, dynamische Reserve-Berechnung zur Vermeidung von Double-Dipping auf 'home'
     let baseReserve = 0;
     if (target === "home") {
-      baseReserve = 64; // Der absolute Kernel-Schutzpuffer für Scripte auf Home
+      baseReserve = 64;
+      if (isBatcherActive) {
+        baseReserve += state?.batcherRamNeeded
+          ? state.batcherRamNeeded + 4
+          : 40;
+      }
+    } else {
+      // DYNAMISCH: Wenn der Batcher aktiv ist und RAM braucht, reservieren wir exakt diesen Wert global
+      // oder nutzen die prozentuale Freigabe.
+      if (isBatcherActive && state?.batcherRamNeeded) {
+        // Da batcherRamNeeded global fürs Netzwerk gilt, teilen wir es fair auf oder blockieren
+        // im MONEY-Modus einfach den komplementären Teil zum allowedSharePercent:
+        baseReserve = maxRam * (1 - allowedSharePercent);
+      } else {
+        baseReserve = 32; // Standard-Puffer für Worker im Idle
+      }
     }
 
     if (isBatcherActive) {

@@ -89,8 +89,8 @@ export async function main(ns: NS): Promise<void> {
       let maxRam = ns.getServerMaxRam(server);
       if (server === "home") maxRam = Math.max(0, maxRam - 64);
 
-      // [NEU] Wenn wir im REP-Modus sind, halten wir den Share-Prozentsatz für den Batcher unsichtbar
-      if (currentState?.strategy === "REP" && server !== "home") {
+      // VEREINHEITLICHT: Wenn ein Share-Puffer definiert ist, halten wir ihn IMMER vom Batcher fern
+      if (server !== "home" && shareBufferPercent > 0) {
         maxRam = maxRam * (1 - shareBufferPercent);
       }
 
