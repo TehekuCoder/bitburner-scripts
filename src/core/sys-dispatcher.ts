@@ -40,10 +40,10 @@ const HACKING_FACTIONS: FactionConfig[] = [
   { name: "Chongqing" as FactionName, minStat: 0, priority: 7 },
   { name: "Ishima" as FactionName, minStat: 0, priority: 8 },
   { name: "New Tokyo" as FactionName, minStat: 0, priority: 9 },
-  { name: "The Black Hand" as FactionName, minStat: 0, priority: 10 },
-  { name: "Aevum" as FactionName, minStat: 0, priority: 11 },
-  { name: "Volhaven" as FactionName, minStat: 0, priority: 12 },
-  { name: "Tetrads" as FactionName, minStat: 75, priority: 13 },
+  { name: "Tetrads" as FactionName, minStat: 75, priority: 10 },
+  { name: "The Black Hand" as FactionName, minStat: 0, priority: 11 },
+  { name: "Aevum" as FactionName, minStat: 0, priority: 13 },
+  { name: "Volhaven" as FactionName, minStat: 0, priority: 13 },
   { name: "The Syndicate" as FactionName, minStat: 200, priority: 14 },
   { name: "BitRunners" as FactionName, minStat: 0, priority: 15 },
   { name: "ECorp" as FactionName, minStat: 0, priority: 16 },
@@ -158,26 +158,98 @@ export async function main(ns: NS): Promise<void> {
     const isReadyForFactionGrind = playerMoney > effectiveThreshold;
     const factionToWorkFor =
       eligiblePServers.length > 0 && factionRepMult > 0.1
-        ? findNextFaction(ns, p)
+        ? findNextRoadmapFaction(ns, p)
         : null;
 
-    let targetFaction: FactionName | null = factionToWorkFor;
+    let targetFaction: FactionName | null = null;
     let targetCompany: CompanyName | undefined = undefined;
     let targetStat = 0;
 
     // --- 1. DYNAMISCHE STRATEGIE-MATRIX ---
+    // --- STRATEGIE-EVALUIERUNG ---
     const isRushActive =
       hasFormulas && homeMaxRam >= 256 && eligiblePServers.length === 0;
 
+    // 1. Hole das komplette Konfigurations-Objekt
+    const nextRoadmapFaction = findNextRoadmapFaction(ns, p);
+
+    // 2. Extrahierte String-Variablen für die Zuweisung vorbereiten
+    const roadmapFactionName = nextRoadmapFaction
+      ? (nextRoadmapFaction.name as FactionName)
+      : null;
+
+    // 3. Zuweisung an die bestehenden System-Variablen (Typkonform als String!)
+    targetFaction =
+      roadmapFactionName && p.factions.includes(roadmapFactionName)
+        ? roadmapFactionName
+        : null;
+    targetCompany = undefined;
+    targetStat = 0;
+
+    // --- 1. DYNAMISCHE STRATEGIE-MATRIX ---
     if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
     } else if (homeMaxRam < 256 || (crimeMoneyMult > 5 && !canRunBatcher)) {
       mode = "CRIME";
     } else if (isRushActive) {
-      mode = "PSERV_RUSH"; // 🚀 VETO: Stoppt Corps & Uni, fokussiert Cash für den Batcher!
-    } else if (factionToWorkFor && isReadyForFactionGrind) {
-      mode = "REP";
+      mode = "PSERV_RUSH";
+    } else if (nextRoadmapFaction && roadmapFactionName) {
+      // HIER nutzen wir das Objekt für Bedingungen...
+      const isMember = p.factions.includes(roadmapFactionName);
+      const karma = ns.heart.break();
+      const isCombatFaction =
+        nextRoadmapFaction.minStat > 0 ||
+        [
+          "Slum Snakes",
+          "Tetrads",
+          "The Syndicate",
+          "The Dark Army",
+          "Speakers for the Dead",
+        ].includes(roadmapFactionName);
+
+      if (!isMember) {
+        // ...und weisen hier targetFaction den sauberen String zu!
+        targetFaction = roadmapFactionName;
+
+        if (roadmapFactionName === "Slum Snakes" && karma > -9) {
+          mode = "CRIME";
+        } else if (roadmapFactionName === "Tetrads" && karma > -18) {
+          mode = "CRIME";
+        } else if (roadmapFactionName === "The Syndicate" && karma > -90) {
+          mode = "CRIME";
+        } else if (
+          roadmapFactionName === "The Dark Army" &&
+          p.numPeopleKilled < 5
+        ) {
+          mode = "KILLS";
+          targetStat = 5;
+        } else if (
+          roadmapFactionName === "Speakers for the Dead" &&
+          p.numPeopleKilled < 30
+        ) {
+          mode = "KILLS";
+          targetStat = 30;
+        } else if (
+          nextRoadmapFaction.minStat > 0 &&
+          Math.min(...COMBAT_STATS.map((s) => p.skills[s])) <
+            nextRoadmapFaction.minStat
+        ) {
+          mode = "TRAIN";
+          targetStat = nextRoadmapFaction.minStat;
+        } else {
+          mode = "MONEY";
+        }
+      } else {
+        if (isReadyForFactionGrind || isCombatFaction) {
+          mode = "REP";
+          targetFaction = roadmapFactionName;
+          targetStat = nextRoadmapFaction.minStat;
+        } else {
+          mode = "MONEY";
+        }
+      }
     } else {
+      // --- ENDGAME / NO MORE ROADMAP FACTIONS ---
       if (p.skills.hacking >= 250 && companyRepMult > 0.1) {
         const needsSilhouette =
           !p.factions.includes("Silhouette" as FactionName) &&
@@ -202,8 +274,8 @@ export async function main(ns: NS): Promise<void> {
               (corp) => MEGACORPS[corp] !== undefined,
             );
             targetCompany = currentCorpJob
-              ? MEGACORPS[currentCorpJob]
-              : Object.values(MEGACORPS)[0];
+              ? (MEGACORPS[currentCorpJob] as CompanyName)
+              : (Object.values(MEGACORPS)[0] as CompanyName);
           }
         } else {
           const missingCorpFaction = HACKING_FACTIONS.find(
@@ -216,7 +288,7 @@ export async function main(ns: NS): Promise<void> {
 
           if (missingCorpFaction) {
             mode = "CORP";
-            targetCompany = MEGACORPS[missingCorpFaction.name];
+            targetCompany = MEGACORPS[missingCorpFaction.name] as CompanyName;
           }
         }
       }
@@ -598,26 +670,19 @@ function buildReputationCache(ns: NS): void {
   }
 }
 
-function findNextFaction(ns: NS, p: Player): FactionName | null {
-  const activeFactionJobs = HACKING_FACTIONS.filter((f) =>
-    p.factions.includes(f.name),
-  )
-    .map((f) => {
-      const repNeeded = repCache[f.name] || 0;
-      const currentRep = ns.singularity.getFactionRep(f.name);
-      return {
-        name: f.name,
-        priority: f.priority,
-        missingRep: Math.max(0, repNeeded - currentRep),
-      };
-    })
-    .filter((f) => f.missingRep > 0)
-    .sort((a, b) => {
-      if (a.priority !== b.priority) return a.priority - b.priority;
-      return a.missingRep - b.missingRep;
-    });
-
-  return activeFactionJobs.length > 0 ? activeFactionJobs[0].name : null;
+function findNextRoadmapFaction(ns: NS, p: Player): FactionConfig | null {
+  for (const faction of HACKING_FACTIONS) {
+    const repNeeded = repCache[faction.name] || 0;
+    if (repNeeded > 0) {
+      const currentRep = p.factions.includes(faction.name)
+        ? ns.singularity.getFactionRep(faction.name)
+        : 0;
+      if (currentRep < repNeeded) {
+        return faction; // Gibt das komplette Objekt zurück (Zeile 658 Fix)
+      }
+    }
+  }
+  return null;
 }
 
 function manageMicroservices(

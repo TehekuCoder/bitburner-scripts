@@ -1,4 +1,4 @@
-import { NS, FactionName, FactionWorkType, CompanyName } from "@ns";
+import { NS, FactionName, FactionWorkType, CompanyName, GymType } from "@ns";
 import { loadState } from "./state-manager.js";
 import { Logger } from "./logger.js";
 
@@ -125,6 +125,69 @@ export async function main(ns: NS): Promise<void> {
 
       // --- PHASE 4: STRATEGISCHE ARBEITSZUTEILUNG ---
       if (factionsNeedingRep.length > 0) {
+        // 🛑 GLOBAL OVERRIDE: Karma-, Kill- oder Vorab-Trainings-Push vom Dispatcher erzwungen
+        if (
+          currentState?.strategy === "CRIME" ||
+          currentState?.strategy === "KILLS"
+        ) {
+          const targetCrime = "Homicide";
+          if (
+            currentTask?.type !== "CRIME" ||
+            currentTask.crimeType !== targetCrime
+          ) {
+            ns.sleeve.setToCommitCrime(i, targetCrime);
+            logger.warn(
+              `🔫 Klon #${i}: Globaler Roadmap-Push aktiv -> ${targetCrime}.`,
+            );
+          }
+          continue;
+        }
+
+        const minRequiredStat = currentState?.targetStat || 0;
+        const lowestSleeveCombatStat = Math.min(
+          stats.skills.strength,
+          stats.skills.defense,
+          stats.skills.dexterity,
+          stats.skills.agility,
+        );
+
+        if (
+          currentState?.strategy === "TRAIN" &&
+          minRequiredStat > 0 &&
+          lowestSleeveCombatStat < minRequiredStat
+        ) {
+          const combatKeys: (keyof typeof stats.skills)[] = [
+            "strength",
+            "defense",
+            "dexterity",
+            "agility",
+          ];
+          const lowestStatName = combatKeys.reduce((a, b) =>
+            stats.skills[a] < stats.skills[b] ? a : b,
+          );
+
+          const gymStatMap: Record<string, string> = {
+            strength: "Strength",
+            defense: "Defense",
+            dexterity: "Dexterity",
+            agility: "Agility",
+          };
+          const gymName =
+            stats.city === "Volhaven" ? "Powerhouse Gym" : "Iron Gym";
+          const targetGymStat = gymStatMap[lowestStatName];
+
+          if (
+            currentTask?.type !== "CLASS" ||
+            currentTask.classType !== targetGymStat ||
+            currentTask.location !== gymName
+          ) {
+            ns.sleeve.setToGymWorkout(i, gymName, targetGymStat as GymType); // <--- HIER MIT CAST
+            logger.info(
+              `🏋️ Klon #${i}: Vorab-Bootcamp aktiv! Trainiert ${targetGymStat} im ${gymName}.`,
+            );
+          }
+          continue;
+        }
         let targetFaction: FactionName | null = null;
 
         if (currentTask?.type === "FACTION") {
@@ -162,12 +225,42 @@ export async function main(ns: NS): Promise<void> {
             continue;
           }
 
+          // 🏋️ INTERN-BOOTCAMP: Klon ist in der Faction, aber persönlich zu schwach für effizienten Ruf-Grind
+          if (minRequiredStat > 0 && lowestSleeveCombatStat < minRequiredStat) {
+            const combatKeys: (keyof typeof stats.skills)[] = [
+              "strength",
+              "defense",
+              "dexterity",
+              "agility",
+            ];
+            const lowestStatName = combatKeys.reduce((a, b) =>
+              stats.skills[a] < stats.skills[b] ? a : b,
+            );
+
+            const gymStatMap: Record<string, string> = {
+              strength: "Strength",
+              defense: "Defense",
+              dexterity: "Dexterity",
+              agility: "Agility",
+            };
+            const gymName =
+              stats.city === "Volhaven" ? "Powerhouse Gym" : "Iron Gym";
+            const targetGymStat = gymStatMap[lowestStatName];
+
+            if (
+              currentTask?.type === "CLASS" &&
+              currentTask.classType !== targetGymStat
+            ) {
+              ns.sleeve.setToGymWorkout(i, gymName, targetGymStat as GymType); // <--- HIER MIT CAST
+              logger.info(
+                `🏋️ Klon #${i}: Live-Bootcamp für ${targetFaction} aktiv -> Trainiert ${targetGymStat} (Ziel: ${minRequiredStat}).`,
+              );
+            }
+            continue;
+          }
+
           // 🛠️ FIX: Bitburner-konforme Bezeichnungen für FactionWorkType
-          const workTypes: FactionWorkType[] = [
-            "hacking",
-            "field",
-            "security",
-          ];
+          const workTypes: FactionWorkType[] = ["hacking", "field", "security"];
 
           let assigned = false;
           for (const work of workTypes) {
