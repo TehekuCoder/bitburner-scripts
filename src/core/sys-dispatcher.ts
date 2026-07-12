@@ -2,7 +2,7 @@ import { NS, Player, FactionName, CompanyName } from "@ns";
 import { loadState, saveState, BotStrategy } from "./state-manager.js";
 import { breakAndInfectNetwork, getAllServers } from "../lib/network.js";
 import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
-import { Logger } from "./logger.js"; // 🌟 Logger importiert
+import { Logger } from "./logger.js";
 
 interface FactionConfig {
   name: FactionName;
@@ -72,7 +72,6 @@ const repCache: Record<string, number> = {};
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
-  // 🌟 Logger für das Core-Subsystem initialisieren
   const logger = new Logger(ns, "Dispatcher", "INFO");
 
   const getFreeRam = () =>
@@ -126,7 +125,7 @@ export async function main(ns: NS): Promise<void> {
     const homeMaxRam = ns.getServerMaxRam("home");
 
     if (p.skills.hacking >= 250 && Date.now() - lastCorpApplication > 600_000) {
-      applyToAllMegacorps(ns, p, logger); // 🌟 Logger übergeben
+      applyToAllMegacorps(ns, p, logger);
       lastCorpApplication = Date.now();
     }
 
@@ -165,36 +164,22 @@ export async function main(ns: NS): Promise<void> {
     let targetCompany: CompanyName | undefined = undefined;
     let targetStat = 0;
 
-    // --- 1. DYNAMISCHE STRATEGIE-MATRIX ---
-    // --- STRATEGIE-EVALUIERUNG ---
     const isRushActive =
       hasFormulas && homeMaxRam >= 256 && eligiblePServers.length === 0;
-
-    // 1. Hole das komplette Konfigurations-Objekt
     const nextRoadmapFaction = findNextRoadmapFaction(ns, p);
-
-    // 2. Extrahierte String-Variablen für die Zuweisung vorbereiten
     const roadmapFactionName = nextRoadmapFaction
       ? (nextRoadmapFaction.name as FactionName)
       : null;
 
-    // 3. Zuweisung an die bestehenden System-Variablen (Typkonform als String!)
     targetFaction =
       roadmapFactionName && p.factions.includes(roadmapFactionName)
         ? roadmapFactionName
         : null;
-    targetCompany = undefined;
-    targetStat = 0;
 
-    // --- 1. DYNAMISCHE STRATEGIE-MATRIX ---
+    // --- STRATEGIE-ENTSCHEIDUNGSBAUM ---
     if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
-    } else if (homeMaxRam < 256 || (crimeMoneyMult > 5 && !canRunBatcher)) {
-      mode = "CRIME";
-    } else if (isRushActive) {
-      mode = "PSERV_RUSH";
     } else if (nextRoadmapFaction && roadmapFactionName) {
-      // HIER nutzen wir das Objekt für Bedingungen...
       const isMember = p.factions.includes(roadmapFactionName);
       const karma = ns.heart.break();
       const isCombatFaction =
@@ -208,7 +193,6 @@ export async function main(ns: NS): Promise<void> {
         ].includes(roadmapFactionName);
 
       if (!isMember) {
-        // ...und weisen hier targetFaction den sauberen String zu!
         targetFaction = roadmapFactionName;
 
         if (roadmapFactionName === "Slum Snakes" && karma > -9) {
@@ -248,87 +232,87 @@ export async function main(ns: NS): Promise<void> {
           mode = "MONEY";
         }
       }
-    } else {
-      // --- ENDGAME / NO MORE ROADMAP FACTIONS ---
-      if (p.skills.hacking >= 250 && companyRepMult > 0.1) {
-        const needsSilhouette =
-          !p.factions.includes("Silhouette" as FactionName) &&
-          (repCache["Silhouette"] ?? 0) > 0;
+    } else if (p.skills.hacking >= 250 && companyRepMult > 0.1) {
+      const needsSilhouette =
+        !p.factions.includes("Silhouette" as FactionName) &&
+        (repCache["Silhouette"] ?? 0) > 0;
 
-        const isExecutive = Object.values(p.jobs).some((title) =>
-          [
-            "Chief Technology Officer",
-            "Chief Financial Officer",
-            "Chief Executive Officer",
-          ].includes(title),
+      const isExecutive = Object.values(p.jobs).some((title) =>
+        [
+          "Chief Technology Officer",
+          "Chief Financial Officer",
+          "Chief Executive Officer",
+        ].includes(title),
+      );
+
+      const hasEnoughKarma = ns.heart.break() <= -22;
+
+      if (needsSilhouette && (!isExecutive || !hasEnoughKarma)) {
+        if (!hasEnoughKarma) {
+          mode = "CRIME";
+        } else {
+          mode = "CORP";
+          const currentCorpJob = Object.keys(p.jobs).find(
+            (corp) => MEGACORPS[corp] !== undefined,
+          );
+          targetCompany = currentCorpJob
+            ? (MEGACORPS[currentCorpJob] as CompanyName)
+            : (Object.values(MEGACORPS)[0] as CompanyName);
+        }
+      } else {
+        const missingCorpFaction = HACKING_FACTIONS.find(
+          (f) =>
+            !p.factions.includes(f.name) &&
+            MEGACORPS[f.name] !== undefined &&
+            ns.singularity.getCompanyRep(MEGACORPS[f.name]) < 400_000 &&
+            (repCache[f.name] ?? 0) > 0,
         );
 
-        const hasEnoughKarma = ns.heart.break() <= -22;
-
-        if (needsSilhouette && (!isExecutive || !hasEnoughKarma)) {
-          if (!hasEnoughKarma) {
-            mode = "CRIME";
-          } else {
-            mode = "CORP";
-            const currentCorpJob = Object.keys(p.jobs).find(
-              (corp) => MEGACORPS[corp] !== undefined,
-            );
-            targetCompany = currentCorpJob
-              ? (MEGACORPS[currentCorpJob] as CompanyName)
-              : (Object.values(MEGACORPS)[0] as CompanyName);
-          }
+        if (missingCorpFaction) {
+          mode = "CORP";
+          targetCompany = MEGACORPS[missingCorpFaction.name] as CompanyName;
         } else {
-          const missingCorpFaction = HACKING_FACTIONS.find(
-            (f) =>
-              !p.factions.includes(f.name) &&
-              MEGACORPS[f.name] !== undefined &&
-              ns.singularity.getCompanyRep(MEGACORPS[f.name]) < 400_000 &&
-              (repCache[f.name] ?? 0) > 0,
-          );
-
-          if (missingCorpFaction) {
-            mode = "CORP";
-            targetCompany = MEGACORPS[missingCorpFaction.name] as CompanyName;
-          }
+          mode = "MONEY";
         }
       }
+    } else if (homeMaxRam < 256 || (crimeMoneyMult > 5 && !canRunBatcher)) {
+      mode = "CRIME";
+    } else if (isRushActive) {
+      mode = "PSERV_RUSH";
+    } else {
+      mode = "MONEY";
+    }
 
-      if (mode === "MONEY") {
-        if (eligiblePServers.length === 0) {
-          mode = "MONEY";
-        } else {
-          const FOCUS_ON_COMBAT_FACTIONS = false;
+    // Optionaler Combat-Faction-Fokus, wenn Basis-Modus MONEY ist
+    if (mode === "MONEY" && eligiblePServers.length > 0) {
+      const FOCUS_ON_COMBAT_FACTIONS = false; // Kann bei Bedarf auf true gesetzt werden
 
-          if (FOCUS_ON_COMBAT_FACTIONS) {
-            const nextLockedCombatFaction = HACKING_FACTIONS.find(
-              (f) => !p.factions.includes(f.name) && f.minStat > 0,
-            );
+      if (FOCUS_ON_COMBAT_FACTIONS) {
+        const nextLockedCombatFaction = HACKING_FACTIONS.find(
+          (f) => !p.factions.includes(f.name) && f.minStat > 0,
+        );
 
-            if (nextLockedCombatFaction) {
-              let requiredKills = 0;
-              if (nextLockedCombatFaction.name === "The Dark Army")
-                requiredKills = 5;
-              if (nextLockedCombatFaction.name === "Speakers for the Dead")
-                requiredKills = 30;
+        if (nextLockedCombatFaction) {
+          let requiredKills = 0;
+          if (nextLockedCombatFaction.name === "The Dark Army")
+            requiredKills = 5;
+          if (nextLockedCombatFaction.name === "Speakers for the Dead")
+            requiredKills = 30;
 
-              const currentLowestCombatStat = Math.min(
-                ...COMBAT_STATS.map((s) => p.skills[s]),
-              );
+          const currentLowestCombatStat = Math.min(
+            ...COMBAT_STATS.map((s) => p.skills[s]),
+          );
 
-              if (p.numPeopleKilled < requiredKills) {
-                mode = "KILLS";
-                targetStat = requiredKills;
-                targetFaction = nextLockedCombatFaction.name;
-              } else if (
-                currentLowestCombatStat < nextLockedCombatFaction.minStat
-              ) {
-                mode = "TRAIN";
-                targetStat = nextLockedCombatFaction.minStat;
-                targetFaction = nextLockedCombatFaction.name;
-              }
-            }
-          } else {
-            mode = "MONEY";
+          if (p.numPeopleKilled < requiredKills) {
+            mode = "KILLS";
+            targetStat = requiredKills;
+            targetFaction = nextLockedCombatFaction.name;
+          } else if (
+            currentLowestCombatStat < nextLockedCombatFaction.minStat
+          ) {
+            mode = "TRAIN";
+            targetStat = nextLockedCombatFaction.minStat;
+            targetFaction = nextLockedCombatFaction.name;
           }
         }
       }
@@ -349,7 +333,6 @@ export async function main(ns: NS): Promise<void> {
     const now = Date.now();
 
     if (mode !== previousStrategy) {
-      // Im COOLDOWN ENGINE Block:
       const isOscillating =
         ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(
           mode,
@@ -359,10 +342,8 @@ export async function main(ns: NS): Promise<void> {
         );
 
       if (isOscillating && now - modeLockTime < STRATEGY_COOLDOWN) {
-        // Halt stop! Die Schonfrist läuft noch. Strategiewechsel blockieren.
         mode = previousStrategy as BotStrategy;
 
-        // Da wir die alte Strategie erzwingen, müssen wir auch die Ziel-Variablen restaurieren
         if (mode === "REP") targetFaction = currentState?.targetFaction || null;
         if (mode === "CORP") targetCompany = currentState?.targetCompany;
         if (mode === "TRAIN") targetStat = currentState?.targetStat || 0;
@@ -394,7 +375,6 @@ export async function main(ns: NS): Promise<void> {
       label = `💀 Mordaufträge`;
     }
 
-    // 🌟 STRATEGIE-WECHSEL PROTOKOLLIEREN
     if (mode !== lastMode) {
       logger.info(
         `🔄 Strategiewechsel initiiert: ${lastMode || "START"} ➔ ${mode} ${label ? `(${label})` : ""}`,
@@ -463,7 +443,7 @@ export async function main(ns: NS): Promise<void> {
         const progressPct = ((playerMoney / effectiveThreshold) * 100).toFixed(
           1,
         );
-        generatedBar = `💰 Spare für ${factionToWorkFor}: ${ns.format.number(playerMoney, 1)} / ${ns.format.number(effectiveThreshold, 0)} $ (${progressPct}%)`;
+        generatedBar = `💰 Spare für ${factionToWorkFor.name}: ${ns.format.number(playerMoney, 1)} / ${ns.format.number(effectiveThreshold, 0)} $ (${progressPct}%)`;
       } else {
         generatedBar = "💰 Maximiere Profit (Batcher)";
       }
@@ -633,10 +613,8 @@ export async function main(ns: NS): Promise<void> {
       ns.run("utils/fill-ram.js", 1);
     }
 
-    // --- ÜBERGABE AN MICROSERVICES ---
-    manageMicroservices(ns, mode, factionToWorkFor !== null, logger); // 🌟 Logger übergeben
+    manageMicroservices(ns, mode, factionToWorkFor !== null, logger);
 
-    // 🛑 STICKY-ACTION-STOPP:
     if (mode === "MONEY" && !factionToWorkFor && canRunBatcher) {
       if (ns.singularity.getCurrentWork()) {
         logger.info(
@@ -678,7 +656,7 @@ function findNextRoadmapFaction(ns: NS, p: Player): FactionConfig | null {
         ? ns.singularity.getFactionRep(faction.name)
         : 0;
       if (currentRep < repNeeded) {
-        return faction; // Gibt das komplette Objekt zurück (Zeile 658 Fix)
+        return faction;
       }
     }
   }
@@ -689,7 +667,7 @@ function manageMicroservices(
   ns: NS,
   currentMode: string,
   hasSavingTarget: boolean,
-  logger: Logger, // 🌟 Parameter hinzugefügt
+  logger: Logger,
 ): void {
   const modeToScript: Record<string, string> = {
     REP: "tasks/faction-grind.js",
@@ -698,7 +676,7 @@ function manageMicroservices(
     CRIME: "tasks/crime.js",
     XP_SPRINT: "tasks/crime.js",
     KILLS: "tasks/crime.js",
-    PSERV_RUSH: "tasks/crime.js", // 🚀 Nutzt kostenlose Kriminalität für schnelles Cash
+    PSERV_RUSH: "tasks/crime.js",
   };
 
   let targetScript = modeToScript[currentMode];
@@ -824,6 +802,10 @@ function dispatchSimpleTask(
   for (const server of servers) {
     if (!ns.hasRootAccess(server)) continue;
 
+    // 🌟 EFFIZIENZ-FIX: Wenn das exakte Skript mit diesem Ziel bereits läuft, überspringen.
+    // Verhindert fortlaufende ns.exec Fehlermeldungen im Log.
+    if (ns.isRunning(script, server, target)) continue;
+
     const homeBuffer =
       bnMults.ServerWeakenRate < 1.0
         ? Math.ceil(48 / bnMults.ServerWeakenRate)
@@ -841,8 +823,10 @@ function dispatchSimpleTask(
       const threadsToRun = Math.min(possibleThreads, threadsRemaining);
       ns.exec(script, server, threadsToRun, target);
 
-      threadsRemaining -= threadsToRun;
-      if (threadsRemaining <= 0) break;
+      if (threadsRemaining !== Infinity) {
+        threadsRemaining -= threadsToRun;
+        if (threadsRemaining <= 0) break;
+      }
     }
   }
 }

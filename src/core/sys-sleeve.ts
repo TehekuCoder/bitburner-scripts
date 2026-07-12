@@ -68,7 +68,6 @@ export async function main(ns: NS): Promise<void> {
       const task = ns.sleeve.getTask(i);
       const stats = ns.sleeve.getSleeve(i);
       if (stats.shock === 0 && stats.sync === 100 && task?.type === "FACTION") {
-        // Typsicher dank Type-Narrowing
         const fName = task.factionName as FactionName;
         if (
           factionsNeedingRep.includes(fName) &&
@@ -125,15 +124,16 @@ export async function main(ns: NS): Promise<void> {
 
       // --- PHASE 4: STRATEGISCHE ARBEITSZUTEILUNG ---
       if (factionsNeedingRep.length > 0) {
-        // 🛑 GLOBAL OVERRIDE: Karma-, Kill- oder Vorab-Trainings-Push vom Dispatcher erzwungen
+        // 🛑 GLOBAL OVERRIDE: Kriminalität erzwungen
         if (
           currentState?.strategy === "CRIME" ||
           currentState?.strategy === "KILLS"
         ) {
           const targetCrime = "Homicide";
+          // 🛠️ FIX: Optional Chaining (?.) verhindert Compiler-Fehler
           if (
             currentTask?.type !== "CRIME" ||
-            currentTask.crimeType !== targetCrime
+            currentTask?.crimeType !== targetCrime
           ) {
             ns.sleeve.setToCommitCrime(i, targetCrime);
             logger.warn(
@@ -156,7 +156,7 @@ export async function main(ns: NS): Promise<void> {
           minRequiredStat > 0 &&
           lowestSleeveCombatStat < minRequiredStat
         ) {
-          const combatKeys: (keyof typeof stats.skills)[] = [
+          const combatKeys: (keyof typeof stats.skills)[ ] = [
             "strength",
             "defense",
             "dexterity",
@@ -176,12 +176,13 @@ export async function main(ns: NS): Promise<void> {
             stats.city === "Volhaven" ? "Powerhouse Gym" : "Iron Gym";
           const targetGymStat = gymStatMap[lowestStatName];
 
+          // 🛠️ FIX: Optional Chaining (?.) verhindert Compiler-Fehler
           if (
             currentTask?.type !== "CLASS" ||
-            currentTask.classType !== targetGymStat ||
-            currentTask.location !== gymName
+            currentTask?.classType !== targetGymStat ||
+            currentTask?.location !== gymName
           ) {
-            ns.sleeve.setToGymWorkout(i, gymName, targetGymStat as GymType); // <--- HIER MIT CAST
+            ns.sleeve.setToGymWorkout(i, gymName, targetGymStat as GymType);
             logger.info(
               `🏋️ Klon #${i}: Vorab-Bootcamp aktiv! Trainiert ${targetGymStat} im ${gymName}.`,
             );
@@ -218,16 +219,17 @@ export async function main(ns: NS): Promise<void> {
         }
 
         if (targetFaction) {
+          // 🛠️ FIX: Optional Chaining (?.) verhindert Compiler-Fehler
           if (
             currentTask?.type === "FACTION" &&
-            currentTask.factionName === targetFaction
+            currentTask?.factionName === targetFaction
           ) {
-            continue;
+            // Wenn er schon für die korrekte Fraktion arbeitet, prüfen wir JETZT, ob er ins Bootcamp muss
           }
 
-          // 🏋️ INTERN-BOOTCAMP: Klon ist in der Faction, aber persönlich zu schwach für effizienten Ruf-Grind
+          // 🏋️ INTERN-BOOTCAMP: Klon braucht Training für effizienten Grind
           if (minRequiredStat > 0 && lowestSleeveCombatStat < minRequiredStat) {
-            const combatKeys: (keyof typeof stats.skills)[] = [
+            const combatKeys: (keyof typeof stats.skills)[ ] = [
               "strength",
               "defense",
               "dexterity",
@@ -242,26 +244,27 @@ export async function main(ns: NS): Promise<void> {
               defense: "Defense",
               dexterity: "Dexterity",
               agility: "Agility",
-            };
+          };
             const gymName =
               stats.city === "Volhaven" ? "Powerhouse Gym" : "Iron Gym";
             const targetGymStat = gymStatMap[lowestStatName];
 
+            // 🛠️ CRITICAL FIX: Bedingung umgekehrt (!== "CLASS" || ...), um Deadlock zu verhindern!
             if (
-              currentTask?.type === "CLASS" &&
-              currentTask.classType !== targetGymStat
+              currentTask?.type !== "CLASS" ||
+              currentTask?.classType !== targetGymStat ||
+              currentTask?.location !== gymName
             ) {
-              ns.sleeve.setToGymWorkout(i, gymName, targetGymStat as GymType); // <--- HIER MIT CAST
+              ns.sleeve.setToGymWorkout(i, gymName, targetGymStat as GymType);
               logger.info(
                 `🏋️ Klon #${i}: Live-Bootcamp für ${targetFaction} aktiv -> Trainiert ${targetGymStat} (Ziel: ${minRequiredStat}).`,
               );
             }
-            continue;
+            continue; // Verhindert das Weiterlaufen zur Faction-Arbeit während des Trainings
           }
 
-          // 🛠️ FIX: Bitburner-konforme Bezeichnungen für FactionWorkType
+          // Wenn er stark genug ist -> Ab zur eigentlichen Fraktionsarbeit
           const workTypes: FactionWorkType[] = ["hacking", "field", "security"];
-
           let assigned = false;
           for (const work of workTypes) {
             if (ns.sleeve.setToFactionWork(i, targetFaction, work)) {
@@ -325,11 +328,11 @@ export async function main(ns: NS): Promise<void> {
             // A) HACKING-Defizit ausgleichen
             if (p.skills.hacking < targetStatThreshold) {
               if (stats.city === targetCity) {
-                // 🛠️ FIX: native v3.0 Properties (classType & location) ohne Casts
+                // 🛠️ FIX: Optional Chaining (?.)
                 if (
                   currentTask?.type === "CLASS" &&
-                  currentTask.classType === "Algorithms" &&
-                  currentTask.location === bestUniversity
+                  currentTask?.classType === "Algorithms" &&
+                  currentTask?.location === bestUniversity
                 ) {
                   continue;
                 }
@@ -348,11 +351,11 @@ export async function main(ns: NS): Promise<void> {
             // B) CHARISMA-Defizit ausgleichen
             else if (p.skills.charisma < targetStatThreshold) {
               if (stats.city === targetCity) {
-                // 🛠️ FIX: native v3.0 Properties (classType & location) ohne Casts
+                // 🛠️ FIX: Optional Chaining (?.)
                 if (
                   currentTask?.type === "CLASS" &&
-                  currentTask.classType === "Leadership" &&
-                  currentTask.location === bestUniversity
+                  currentTask?.classType === "Leadership" &&
+                  currentTask?.location === bestUniversity
                 ) {
                   continue;
                 }
@@ -370,9 +373,10 @@ export async function main(ns: NS): Promise<void> {
 
             // C) Charakter-Stats sind bereit -> Sleeve farmt Firmen-Ruf
             else {
+              // 🛠️ FIX: Optional Chaining (?.)
               if (
                 currentTask?.type === "COMPANY" &&
-                currentTask.companyName === targetCorp
+                currentTask?.companyName === targetCorp
               ) {
                 continue;
               }
@@ -389,10 +393,10 @@ export async function main(ns: NS): Promise<void> {
       const targetCrime =
         ns.heart.break() > -22 || p.numPeopleKilled < 30 ? "Homicide" : "Mug";
 
-      // 🛠️ FIX: native v3.0 Property (crimeType) ohne Cast
+      // 🛠️ FIX: Optional Chaining (?.)
       if (
         currentTask?.type === "CRIME" &&
-        currentTask.crimeType === targetCrime
+        currentTask?.crimeType === targetCrime
       ) {
         continue;
       }
@@ -427,7 +431,6 @@ export async function main(ns: NS): Promise<void> {
 
       let taskDesc = "IDLE";
       if (task) {
-        // Komplett clean ohne 'as any' gecastet dank TypeScript Type Guard Switch
         switch (task.type) {
           case "RECOVERY":
             taskDesc = "💔 Recovery (Schock abbauen)";
