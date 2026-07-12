@@ -1,42 +1,49 @@
 import { NS } from "@ns";
+import { Logger } from "../../core/logger.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const currentHost = ns.getHostname();
-
   if (currentHost === "home") return;
 
-  // 🌪️ PHASE 1: DER BEUTE-STAUBSAUGER (Sauge Nachbarsatelliten leer)
+  const logger = new Logger(
+    ns,
+    `LOOT-${currentHost}`,
+    "INFO",
+    "/logs/dnet_system.txt",
+  );
+  let totalSuckedCaches = 0;
+
   const nearbyServers = ns.dnet.probe();
   for (const host of nearbyServers) {
     if (host === "home" || host === currentHost) continue;
 
     try {
       const details = ns.dnet.getServerDetails(host) as any;
-      // Nur absaugen, wenn wir eine aktive Session auf dem Target haben
       if (details && details.hasSession) {
         const remoteCaches = ns.ls(host, ".cache");
         if (remoteCaches.length > 0) {
-          ns.print(`🌪️ Sauge ${remoteCaches.length} Caches von ${host} ab...`);
-          
-          // 1. Caches auf unseren aktuellen, starken Server evakuieren
+          totalSuckedCaches += remoteCaches.length;
           ns.scp(remoteCaches, currentHost, host);
-          
-          // 2. Auf dem fernen Server sofort löschen, damit nichts doppelt geholt wird
           for (const file of remoteCaches) {
             ns.rm(file, host);
           }
         }
       }
     } catch (e) {
-      ns.print(`⚠️ Fehler beim Absaugen von ${host}: ${e}`);
+      /* Failsafe */
     }
   }
 
-  // 💰 PHASE 2: LOKALE VERARBEITUNG (Eigene + eingesaugte Caches)
+  if (totalSuckedCaches > 0) {
+    logger.info(`🌪️ ${totalSuckedCaches} Caches von Satelliten abgesaugt.`);
+  }
+
   const files = ns.ls(currentHost, ".cache");
   if (files.length > 0) {
-    ns.print(`💰 Verarbeite insgesamt ${files.length} Cache-Dateien...`);
+    logger.success(
+      `💰 Verarbeite ${files.length} lokale Caches auf ${currentHost}.`,
+    );
   }
 
   for (const file of files) {
@@ -48,7 +55,6 @@ export async function main(ns: NS): Promise<void> {
           const cleanPw = potentialPw.includes(":")
             ? potentialPw.split(":").pop()?.trim()
             : potentialPw.trim();
-
           if (cleanPw) {
             ns.write("/passwords.txt", `\n${cleanPw}`, "a");
             ns.writePort(5, `${currentHost}:${cleanPw}`);
@@ -57,7 +63,7 @@ export async function main(ns: NS): Promise<void> {
         ns.rm(file, currentHost);
       }
     } catch (e) {
-      ns.print(`⚠️ Fehler beim Öffnen von Cache ${file}: ${e}`);
+      /* Failsafe */
     }
   }
 }

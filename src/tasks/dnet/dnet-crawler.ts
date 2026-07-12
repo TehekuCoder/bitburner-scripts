@@ -1,4 +1,5 @@
 import { NS } from "@ns";
+import { Logger } from "../../core/logger.js"; // Pfad anpassen falls nötig
 
 const processedServers = new Set<string>();
 const COOLDOWN_FILE = "/dnet-cooldowns.txt";
@@ -39,6 +40,14 @@ export async function main(ns: NS): Promise<void> {
   const currentHost = ns.getHostname();
   ns.disableLog("ALL");
 
+  // 🏁 Logger instanziieren (schreibt zentral nach /logs/dnet_system.txt)
+  const logger = new Logger(
+    ns,
+    `CRAWLER-${currentHost}`,
+    "INFO",
+    "/logs/dnet_system.txt",
+  );
+
   if (currentHost !== "home") {
     await ns.dnet.memoryReallocation();
   }
@@ -48,7 +57,6 @@ export async function main(ns: NS): Promise<void> {
     const solverScript = "/tasks/dnet/dnet-solver.js";
     const lootScript = "/tasks/dnet/dnet-loot.js";
 
-    // 📊 ZENTRALE RAM- UND PROZESS-METRIKEN (Jetzt dynamisch veränderbar!)
     const maxRam = ns.getServerMaxRam(currentHost);
     let freeRam = maxRam - ns.getServerUsedRam(currentHost);
     let requiredSolverRam = ns.getScriptRam(solverScript, currentHost);
@@ -59,7 +67,6 @@ export async function main(ns: NS): Promise<void> {
     const isLootDue =
       now - lastLootTime > LOOT_INTERVAL_MS && currentHost !== "home";
 
-    // 1. NETZWERK-SCAN & REGISTRY-CHECK
     const nearbyServers = ns.dnet.probe();
     let targetToCrack: string | null = null;
     let targetDetails: any = null;
@@ -71,32 +78,30 @@ export async function main(ns: NS): Promise<void> {
       let details = ns.dnet.getServerDetails(hostname) as any;
       if (!details.isConnectedToCurrentServer || !details.isOnline) continue;
 
-      // 🔑 Wenn keine Session aktiv ist, erst in der DB suchen!
       if (!details.hasSession) {
         const storedPassword = getPasswordFromRegistry(ns, hostname);
         if (storedPassword !== null) {
-          ns.print(
-            `🔑 Passwort für ${hostname} in Master-DB gefunden. Versuche Direkt-Login...`,
+          logger.info(
+            `🔍 Bekanntes Passwort für ${hostname} in Registry gefunden. Versuche Direkt-Login...`,
           );
           try {
             await ns.dnet.connectToSession(hostname, storedPassword);
             details = ns.dnet.getServerDetails(hostname) as any;
 
-            // Wenn der Login TROTZDEM fehlschlug (falsches PW in DB):
             if (!details.hasSession) {
-              ns.print(
-                `⚠️ Direkt-Login für ${hostname} fehlgeschlagen (Passwort ungültig?). Weiche auf Solver aus.`,
+              logger.warn(
+                `⚠️ Direkt-Login für ${hostname} fehlgeschlagen (PW veraltet?). Weiche auf Solver aus.`,
               );
             }
           } catch (e) {
-            ns.print(
-              `❌ Gespeichertes Passwort für ${hostname} schlug fehl: ${e}`,
+            logger.error(
+              `❌ Fehler bei Direkt-Login auf ${hostname}: ${e}`,
+              false,
             );
           }
         }
       }
 
-      // Auswertung NACH dem eventuellen DB-Login-Versuch
       if (!details.hasSession) {
         if (!targetToCrack) {
           targetToCrack = hostname;
@@ -107,56 +112,44 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 🚨 PRIO-WEICHE FÜR RAM-FREISETZUNG (EVICTION)
     if (isLootDue && !isLootRunning && maxRam >= requiredLootRam) {
       if (isSolverRunning) {
-        ns.print(
-          `🚨 Loot-Intervall fällig! Erzwinge RAM-Freisetzung für Looter (${requiredLootRam.toFixed(2)} GB)...`,
+        logger.warn(
+          `🚨 Loot-Intervall fällig! Erzwinge RAM-Eviction von Solver auf ${currentHost}.`,
         );
         ns.scriptKill(solverScript, currentHost);
         await ns.sleep(200);
-
-        // 🔥 JETZT NEU: Variablen sofort künstlich updaten!
         isSolverRunning = false;
         freeRam = maxRam - ns.getServerUsedRam(currentHost);
       }
-      // Targets nullen, um den Durchlauf sauber in den Loot-Fallback zu zwingen
       targetToCrack = null;
       targetDetails = null;
     }
 
-    // 2. ENTKOPPELTE WEICHE: DYNAMISCHER ORDNER-SYNC & SOLVER
     let solverStarted = false;
 
     if (targetToCrack && targetDetails) {
-      // 🔥 RE-SYNC TRIGGER
       if (requiredSolverRam === 0) {
-        ns.print(
-          `📦 Solver-Abhängigkeiten fehlen auf ${currentHost}. Starte automatischen Datei-Sync von home...`,
+        logger.info(
+          `📦 Solver-Abhängigkeiten fehlen auf ${currentHost}. Repliziere Krypto-Module von home...`,
         );
         ns.scp(solverScript, currentHost, "home");
-
         const solverModules = ns.ls("home", "/modules/solvers/");
         if (solverModules.length > 0) {
           ns.scp(solverModules, currentHost, "home");
-          ns.print(
-            `✅ ${solverModules.length} Krypto-Module erfolgreich nach ${currentHost} repliziert.`,
-          );
         }
         requiredSolverRam = ns.getScriptRam(solverScript, currentHost);
       }
 
-      // Wenn der Solver nun sauber aufgelöst ist und der RAM reicht:
       if (requiredSolverRam > 0 && freeRam >= requiredSolverRam) {
         if (isLootRunning) {
-          ns.print(`🛑 Solver wird benötigt. Beende dnet-loot.js...`);
           ns.scriptKill(lootScript, currentHost);
           await ns.sleep(200);
         }
 
         if (!ns.scriptRunning(solverScript, currentHost)) {
-          ns.print(
-            `📡 Target gesichtet: ${targetToCrack}. Starte Krypto-Solver (${requiredSolverRam.toFixed(2)} GB)...`,
+          logger.info(
+            `📡 Target gesichtet: ${targetToCrack} [${targetDetails.modelId}]. Starte Krypto-Solver.`,
           );
           ns.exec(
             solverScript,
@@ -171,13 +164,13 @@ export async function main(ns: NS): Promise<void> {
         }
         solverStarted = true;
       } else {
-        ns.print(
-          `ℹ️ ${targetToCrack} benötigt Solver. Lokaler RAM knapp (${freeRam.toFixed(1)} GB / benötigt: ${requiredSolverRam.toFixed(1)} GB). Überlasse Knacken dem restlichen Botnetz.`,
+        logger.debug(
+          `ℹ️ RAM knapp auf ${currentHost}. Überlasse ${targetToCrack} dem restlichen Botnetz.`,
         );
       }
     }
 
-    // FALLBACK: Wenn kein Solver läuft, darf dieser Server TROTZDEM looten!
+    // Fallback Loot-Management
     if (
       currentHost !== "home" &&
       !isSolverRunning &&
@@ -187,61 +180,43 @@ export async function main(ns: NS): Promise<void> {
     ) {
       const phishScript = "/tasks/dnet/dnet-phish.js";
 
-      // Safety-Sync für beide Worker-Dateien
       if (
         !ns.fileExists(phishScript, currentHost) ||
         !ns.fileExists(lootScript, currentHost)
       ) {
-        ns.print(
-          `📦 Loot-Infrastruktur unvollständig auf ${currentHost}. Synchronisiere von home...`,
-        );
         ns.scp([phishScript, lootScript], currentHost, "home");
       }
 
-      // Da wir nacheinander (sequentiell) starten, prüfen wir, ob genug RAM für das schwerere Skript da ist
       const phishRam = ns.getScriptRam(phishScript, currentHost);
       const lootRam = ns.getScriptRam(lootScript, currentHost);
       const requiredMaxWorkerRam = Math.max(phishRam, lootRam);
 
       if (freeRam >= requiredMaxWorkerRam) {
-        ns.print("🔄 Starte periodischen Wartungs- und Beutezyklus...");
-
-        // 🎰 PHASE 1: RAM freischalten & Phishing generieren
-        ns.print("🎣 Phase 1: Starte Phishing & Reallocation...");
+        logger.info("🔄 Starte periodischen Phishing- und Beutezyklus...");
         const phishPid = ns.exec(phishScript, currentHost, 1);
         if (phishPid > 0) {
           while (ns.scriptRunning(phishScript, currentHost)) {
-            await ns.sleep(500); // Warten, bis Phishing beendet ist
+            await ns.sleep(500);
           }
         }
 
-        // 🎰 PHASE 2: Caches auslesen und ernten
-        ns.print("💰 Phase 2: Knacke generierte Caches...");
         const lootPid = ns.exec(lootScript, currentHost, 1);
         if (lootPid > 0) {
           while (ns.scriptRunning(lootScript, currentHost)) {
-            await ns.sleep(500); // Warten, bis Looten vorbei ist
+            await ns.sleep(500);
           }
         }
 
         lastLootTime = now;
-        ns.print("✅ Wartungszyklus erfolgreich abgeschlossen.");
-      } else {
-        ns.print(
-          `ℹ️ Looten verschoben: RAM knapp (Frei: ${freeRam.toFixed(1)} GB / Benötigt: ${requiredMaxWorkerRam} GB)`,
-        );
+        logger.success("✅ Phishing-Wartungszyklus abgeschlossen.");
       }
     }
 
-    // 3. REPLIKATION / AUSBREITUNG
+    // Ausbreitung
     for (const hostname of processedServers) {
-      // 🛡️ AIRBAG: Wenn der Server im aktuellen Universum (noch) nicht existiert, überspringen!
-      if (!ns.serverExists(hostname)) {
-        continue;
-      }
+      if (!ns.serverExists(hostname)) continue;
       if (!ns.scriptRunning(scriptName, hostname)) {
-        const targetMaxRam = ns.getServerMaxRam(hostname);
-        if (targetMaxRam >= 8) {
+        if (ns.getServerMaxRam(hostname) >= 8) {
           const details = ns.dnet.getServerDetails(hostname) as any;
           let sessionReady = details.hasSession;
 
@@ -254,7 +229,9 @@ export async function main(ns: NS): Promise<void> {
           }
 
           if (sessionReady) {
-            ns.print(`📦 Kopiere Infrastruktur auf ${hostname}...`);
+            logger.info(
+              `🚀 Wurm-Ausbreitung: Infiziere ${hostname} und starte Crawler.`,
+            );
             const filesToCopy = [
               scriptName,
               solverScript,

@@ -1,4 +1,5 @@
 import { NS } from "@ns";
+import { Logger } from "../../core/logger.js";
 
 // 🔄 Absolute Entwarnung: Diese Imports bleiben hier, da dein Solver damit trotzdem nur 3,85 GB verbraucht!
 import { solveRoman } from "/modules/solvers/solveRoman";
@@ -36,7 +37,6 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
   if (ns.args.length < 5) {
-    ns.print("❌ Fehler: Zu wenige Argumente vom Crawler übergeben.");
     return;
   }
 
@@ -46,8 +46,14 @@ export async function main(ns: NS): Promise<void> {
   const pwHint = String(ns.args[3]);
   const data = String(ns.args[4]);
 
+  const logger = new Logger(
+    ns,
+    `SOLVER-${host}`,
+    "INFO",
+    "/logs/dnet_system.txt",
+  );
+
   if (isServerInCooldown(ns, host)) {
-    ns.print(`⏳ ${host} ist noch im Cooldown. Breche ab.`);
     return;
   }
 
@@ -62,29 +68,25 @@ export async function main(ns: NS): Promise<void> {
     passwordFormat: "numeric",
   };
 
-  // 🔍 Erreichbarkeit prüfen
   const connectedServers = ns.dnet.probe();
   if (!connectedServers.includes(host)) {
-    ns.print(
-      `⚠️ [dnet-solver] Host '${host}' ist nach Reload nicht direkt verbunden. Breche ab...`,
+    logger.warn(
+      `⚠️ Host '${host}' nach Thread-Reload verloren gegangen. Abbruch.`,
     );
-    return; // 🔥 Dein FIX 1: Sauberer Abbruch
+    return;
   }
 
-  // --- PHASE 1: HEURISTISCHE SCHNELLSCHÜSSE ---
+  // Heuristik
   const smartGuesses = getHeuristicCandidates(details);
   for (const guess of smartGuesses) {
     if ((await ns.dnet.authenticate(host, guess)).success) {
-      ns.print(
-        `🚀 [SOLVER] Blitz-Erfolg bei ${host} via Heuristik: "${guess}"`,
-      );
+      logger.success(`🚀 Blitz-Erfolg via Heuristik auf ${host}: "${guess}"`);
       ns.writePort(5, `${host}:${guess}`);
       return;
     }
   }
 
-  // --- PHASE 2: MODULARE MODELL-WEICHE (Ruft deine Module wieder auf!) ---
-  ns.print(`🔨 Krypto-Angriff auf ${host} [${modelId}] gestartet...`);
+  logger.info(`🔨 Krypto-Angriff auf Modell [${modelId}] gestartet...`);
   let correctPassword: string | null = null;
 
   switch (details.modelId) {
@@ -125,31 +127,32 @@ export async function main(ns: NS): Promise<void> {
       correctPassword = await solveFactoriOs(ns, host, details);
       break;
     default:
-      ns.print(
-        `⚠️ Unbekanntes Modell: ${details.modelId}. Starte Dictionary-Fallback...`,
+      logger.warn(
+        `⚠️ Unbekanntes Modell: ${details.modelId}. Starte Dictionary-Fallback.`,
       );
       if (await dictionaryAttack(ns, host, details)) return;
       if (await fileLootAttack(ns, host, details)) return;
       break;
   }
 
-  // --- PHASE 3: FINALE AUSWERTUNG ---
   if (correctPassword !== null) {
     const authResult = await ns.dnet.authenticate(host, correctPassword);
     if (authResult.success) {
       ns.writePort(5, `${host}:${correctPassword}`);
       updateJsonDatabase(ns, host, correctPassword);
-      ns.print(
-        `🎉 [SUCCESS] ${host} erfolgreich gehackt! PW: "${correctPassword}"`,
+      logger.success(
+        `🎉 [SUCCESS] Server gebrochen! ${host} -> "${correctPassword}"`,
       );
       return;
     }
   }
 
-  ns.print(`❌ [FAILED] Konnte ${host} nicht brechen. Setze Cooldown.`);
+  logger.error(
+    `❌ Krypto-Angriff auf ${host} fehlgeschlagen. Cooldown aktiviert.`,
+    false,
+  );
   setServerCooldown(ns, host);
 }
-
 // --- HILFSFUNKTIONEN ---
 function isServerInCooldown(ns: NS, host: string): boolean {
   if (!ns.fileExists(COOLDOWN_FILE)) return false;

@@ -1,17 +1,19 @@
 import { NS } from "@ns";
+import { Logger } from "./logger.js"; // 📝 Logger importieren
 
 export async function main(ns: NS): Promise<void> {
-    ns.disableLog("ALL");
+  ns.disableLog("ALL");
   const PORT_ID = 5;
 
-  // Pfade absolut im VFS anlegen, um Verwirrung zu vermeiden
-  const jsonDbFile = "/dnet-master-db.json"; // Deine strukturierte Übersicht
-  const textDbFile = "/passwords.txt"; // Die reine Payload-Liste für die Würmer
+  const jsonDbFile = "/dnet-master-db.json";
+  const textDbFile = "/passwords.txt";
 
-  // Zentrale Passwort-Datenbank im RAM
+  // 🏁 Darknet-Logger mit separater Logdatei initialisieren
+  const logger = new Logger(ns, "DNET-MASTER", "INFO", "/logs/dnet_system.txt");
+  logger.info("🖥️ Darknet-Master gestartet. Lausche auf Port " + PORT_ID);
+
   let passwordDb: Record<string, string> = {};
 
-  // Falls vorhanden, alte JSON-Datenbank laden
   if (ns.fileExists(jsonDbFile, "home")) {
     try {
       passwordDb = JSON.parse(ns.read(jsonDbFile));
@@ -20,37 +22,32 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
-  ns.tprint("🖥️ Darknet-Master gestartet. Lausche auf Port " + PORT_ID);
-
   while (true) {
     const port = ns.getPortHandle(PORT_ID);
 
-    // 🔥 FIX: 'while' statt 'if' verarbeitet die gesamte Queue sofort,
-    // falls mehrere Würmer im selben Moment Erfolge melden!
     while (!port.empty()) {
-      const dataString = port.read() as string; // Format: "hostname:passwort"
+      const dataString = port.read() as string;
       const [host, password] = dataString.split(":");
 
-      // Wenn wir den Host oder das Passwort noch nicht kennen, eintragen
       if (host && password !== undefined && passwordDb[host] !== password) {
         passwordDb[host] = password;
-        ns.print(`💾 Neues Passwort registriert: ${host} -> "${password}"`);
 
-        // 🔥 FIX: ns.clear() entfernt!
-        // Das "w"-Argument überschreibt die Datei komplett oder erstellt sie, falls sie fehlt.
-        // ... (im while-Loop des Masters, beim Schreiben der txt-Datei)
+        // 📝 Zentralen Erfolg verbuchen
+        logger.success(
+          `🔑 Neues Passwort registriert: ${host} -> "${password}"`,
+        );
+
         const uniquePasswords = [...new Set(Object.values(passwordDb))].filter(
           (pw) =>
             pw &&
             !pw.includes("You have discovered") &&
             !pw.includes("shares of") &&
-            pw.length < 30, // Echte Passwörter sind selten so lang
+            pw.length < 30,
         );
 
         await ns.write(textDbFile, uniquePasswords.join("\n"), "w");
       }
     }
-    // Kurze Pause, um die CPU auf 'home' zu schonen
     await ns.asleep(100);
   }
 }
