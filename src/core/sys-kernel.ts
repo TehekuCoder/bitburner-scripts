@@ -31,8 +31,8 @@ export async function main(ns: NS): Promise<void> {
     infra: "core/sys-infra.js",
     backdoor: "tasks/backdoor.js",
     xpfarm: "tasks/xp-grind.js",
-    trade: "modules/trading-bot.js",
-    hacknet: "tasks/hacknet-early.js",
+    trade: "systems/finance.js",
+    hacknet: "systems/hacknet-early.js",
     replicator: "core/dnet-master.js",
     crawler: "tasks/dnet/dnet-crawler.js",
     hack: "tasks/hack.js",
@@ -263,11 +263,11 @@ function manageSuites(
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
   const targetHacknetScript = hasFormulas
-    ? "tasks/hacknet.js"
-    : "tasks/hacknet-early.js";
+    ? "systems/hacknet.js"
+    : "systems/hacknet-early.js";
   const obsoleteHacknetScript = hasFormulas
-    ? "tasks/hacknet-early.js"
-    : "tasks/hacknet.js";
+    ? "systems/hacknet-early.js"
+    : "systems/hacknet.js";
 
   if (ns.isRunning(obsoleteHacknetScript, "home")) {
     logger.info(`Beende veraltetes Hacknet-Skript (${obsoleteHacknetScript}).`);

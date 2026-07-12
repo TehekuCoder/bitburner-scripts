@@ -1,9 +1,11 @@
 import { NS } from "@ns";
-import { loadBnMults } from "../lib/state.js"; // 🔄 Importiert deine zentrale Library
+import { loadBnMults } from "../lib/state.js"; 
+import { Logger } from "../core/logger.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const h = ns.hacknet;
+  const logger = new Logger(ns, "HACKNET-EARLY", "INFO");
 
   const isCappedMode = ns.args.length > 0;
   const maxNodes = (ns.args[0] as number) || 15;
@@ -11,44 +13,34 @@ export async function main(ns: NS): Promise<void> {
   const maxRam = (ns.args[2] as number) || Infinity;
   const maxCores = (ns.args[3] as number) || Infinity;
 
-  // 📊 Multiplikatoren sauber über deine Library laden
   const bnMults = loadBnMults(ns);
 
-  // 🛑 Failsafe: Wenn Hacknet kein Geld bringt, sofort beenden
   if (bnMults.HacknetNodeMoney === 0) {
-    ns.print("🛑 [Hacknet-Early] Hacknet-Produktion in diesem BitNode deaktiviert. Exit.");
+    logger.warn("🛑 Hacknet-Produktion deaktiviert. Exit.");
     return;
   }
 
-  ns.print(
-    `⚡ Micro-Hacknet Subsystem aktiv (${isCappedMode ? "CAPPED MODE" : "LOW-RAM NO-FORMULAS"})`,
-  );
+  logger.info(`⚡ Micro-Hacknet Subsystem aktiv (${isCappedMode ? "CAPPED MODE" : "LOW-RAM NO-FORMULAS"})`);
 
   while (true) {
     const numNodes = h.numNodes();
 
-    // 📊 Validierung pro Node
     let allNodesMaxed = numNodes >= maxNodes;
     for (let i = 0; i < numNodes; i++) {
       const stats = h.getNodeStats(i);
-      if (
-        stats.level < maxLevels ||
-        stats.ram < maxRam ||
-        stats.cores < maxCores
-      ) {
+      if (stats.level < maxLevels || stats.ram < maxRam || stats.cores < maxCores) {
         allNodesMaxed = false;
         break;
       }
     }
 
     if (isCappedMode && allNodesMaxed) {
-      ns.tprint("🛑 [Hacknet-Early] Netburners-Minimum erreicht. Schalte System ab.");
+      logger.success("🏁 Netburners-Minimum erreicht. Schalte System ab.");
       return;
     }
 
     const currentMoney = ns.getServerMoneyAvailable("home");
     
-    // 💸 Dynamisches Budget: Basis-Budget berechnen und mit dem BN-Multiplikator gewichten
     let baseBudget = currentMoney > 20_000_000 ? currentMoney * 0.1 : currentMoney * 0.35;
     const budget = baseBudget * bnMults.HacknetNodeMoney;
 
@@ -56,7 +48,6 @@ export async function main(ns: NS): Promise<void> {
     let purchaseType: "Level" | "RAM" | "Core" | "NewNode" | null = null;
     let targetIndex = -1;
 
-    // 1. Kosten für neuen Knoten prüfen
     if (numNodes < maxNodes) {
       const nodeCost = h.getPurchaseNodeCost();
       if (nodeCost <= budget && nodeCost < bestCost) {
@@ -65,7 +56,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 2. Günstigstes Upgrade suchen (Mit striktem, individuellem Cap-Filter)
     for (let i = 0; i < numNodes; i++) {
       const stats = h.getNodeStats(i);
 
@@ -95,16 +85,15 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 🚀 3. KAUF AUSFÜHREN
     if (purchaseType !== null) {
       if (purchaseType === "NewNode") {
         h.purchaseNode();
-        ns.print(`[Hacknet] Neuer Node gekauft für $${ns.format.number(bestCost)}`);
+        logger.success(`Neuer Node gekauft für $${ns.format.number(bestCost)}`);
       } else {
         if (purchaseType === "Level") h.upgradeLevel(targetIndex, 1);
         if (purchaseType === "RAM") h.upgradeRam(targetIndex, 1);
         if (purchaseType === "Core") h.upgradeCore(targetIndex, 1);
-        ns.print(`[Hacknet] Node ${targetIndex}: ${purchaseType}-Upgrade für $${ns.format.number(bestCost)}`);
+        logger.success(`Node ${targetIndex}: ${purchaseType}-Upgrade für $${ns.format.number(bestCost)}`);
       }
       await ns.sleep(100);
     } else {

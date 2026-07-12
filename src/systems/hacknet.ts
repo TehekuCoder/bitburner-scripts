@@ -1,6 +1,7 @@
 import { NS, NodeStats } from "@ns";
 import { loadBnMults } from "../lib/state.js";
 import { loadState } from "../core/state-manager.js";
+import { Logger } from "../core/logger.js";
 
 interface HacknetUpgrade {
   type: "Level" | "RAM" | "Core" | "Neuer Node";
@@ -11,6 +12,7 @@ interface HacknetUpgrade {
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const h = ns.hacknet;
+  const logger = new Logger(ns, "HACKNET", "INFO");
 
   const isCappedMode = ns.args.length > 0;
   const maxNodes = (ns.args[0] as number) || 30;
@@ -21,31 +23,24 @@ export async function main(ns: NS): Promise<void> {
   const bnMults = loadBnMults(ns);
 
   if (bnMults.HacknetNodeMoney === 0) {
-    ns.print("🛑 [HACKNET] Hacknet-Produktion deaktiviert. Exit.");
+    logger.warn("🛑 Hacknet-Produktion in diesem BitNode deaktiviert. System schaltet ab.");
     return;
   }
 
   while (true) {
     const numNodes = h.numNodes();
 
-    // 📊 Präziser Cap-Check pro Node statt globaler Summe
     let allNodesMaxed = numNodes >= maxNodes;
     for (let i = 0; i < numNodes; i++) {
       const stats = h.getNodeStats(i);
-      if (
-        stats.level < maxLevels ||
-        stats.ram < maxRam ||
-        stats.cores < maxCores
-      ) {
+      if (stats.level < maxLevels || stats.ram < maxRam || stats.cores < maxCores) {
         allNodesMaxed = false;
         break;
       }
     }
 
     if (isCappedMode && allNodesMaxed) {
-      ns.print(
-        "🛑 [Hacknet-Advanced] Alle Nodes haben das Netburners-Limit erreicht. Schalte ab.",
-      );
+      logger.success("🏁 Alle Nodes haben das Netburners-Limit erreicht. Schalte ab.");
       return;
     }
 
@@ -53,11 +48,9 @@ export async function main(ns: NS): Promise<void> {
     const hNetMults = ns.getHacknetMultipliers();
     const currentMoney = ns.getServerMoneyAvailable("home");
 
-    // 🏦 Globale Reserve aus dem State-Manager laden
     const state = loadState(ns);
     const reserve = state?.moneyReserve ?? 0;
 
-    // Berechne dein dynamisches Budget wie gehabt
     let baseBudgetPercent = currentMoney > 10_000_000_000 ? 0.02 : 0.1;
     const budget = currentMoney * baseBudgetPercent * bnMults.HacknetNodeMoney;
 
@@ -68,11 +61,8 @@ export async function main(ns: NS): Promise<void> {
     if (numNodes < maxNodes) {
       const baseCost = h.getPurchaseNodeCost();
 
-      // ERWEITERT: Darf das Budget UND die globale Reserve nicht verletzen
       if (baseCost <= budget && currentMoney - baseCost >= reserve) {
-        let targetLvl = 10,
-          targetRam = 2,
-          targetCores = 1;
+        let targetLvl = 10, targetRam = 2, targetCores = 1;
         if (numNodes > 0) {
           const node0 = h.getNodeStats(0);
           targetLvl = node0.level;
@@ -81,24 +71,13 @@ export async function main(ns: NS): Promise<void> {
         }
 
         const targetGain = hasFormulas
-          ? ns.formulas.hacknetNodes.moneyGainRate(
-              targetLvl,
-              targetRam,
-              targetCores,
-              hNetMults.production,
-            )
+          ? ns.formulas.hacknetNodes.moneyGainRate(targetLvl, targetRam, targetCores, hNetMults.production)
           : targetLvl * 0.5;
 
         let estimatedTotalCost = baseCost;
         if (numNodes > 0 && hasFormulas) {
           try {
-            // Berechne Upgradewege mathematisch exakt
-            estimatedTotalCost += ns.formulas.hacknetNodes.levelUpgradeCost(
-              1,
-              targetLvl - 1,
-              hNetMults.levelCost,
-            );
-
+            estimatedTotalCost += ns.formulas.hacknetNodes.levelUpgradeCost(1, targetLvl - 1, hNetMults.levelCost);
             let currentRamLoop = 2;
             let ramUpgrades = 0;
             while (currentRamLoop < targetRam) {
@@ -106,21 +85,13 @@ export async function main(ns: NS): Promise<void> {
               currentRamLoop *= 2;
             }
             if (ramUpgrades > 0) {
-              estimatedTotalCost += ns.formulas.hacknetNodes.ramUpgradeCost(
-                2,
-                ramUpgrades,
-                hNetMults.ramCost,
-              );
+              estimatedTotalCost += ns.formulas.hacknetNodes.ramUpgradeCost(2, ramUpgrades, hNetMults.ramCost);
             }
             if (targetCores > 1) {
-              estimatedTotalCost += ns.formulas.hacknetNodes.coreUpgradeCost(
-                1,
-                targetCores - 1,
-                hNetMults.coreCost,
-              );
+              estimatedTotalCost += ns.formulas.hacknetNodes.coreUpgradeCost(1, targetCores - 1, hNetMults.coreCost);
             }
           } catch {
-            estimatedTotalCost += baseCost * 2; // Failsafe-Fallback
+            estimatedTotalCost += baseCost * 2; 
           }
         }
 
@@ -138,7 +109,6 @@ export async function main(ns: NS): Promise<void> {
 
       const checkROI = (cost: number, newGain: number) => {
         if (cost === Infinity || cost > budget) return false;
-        // ERWEITERT: Wenn der Kauf uns unter die globale Spar-Reserve drückt -> ablehnen
         if (currentMoney - cost < reserve) return false;
 
         const roi = hasFormulas ? (newGain - node.production) / cost : 1 / cost;
@@ -149,49 +119,22 @@ export async function main(ns: NS): Promise<void> {
         return false;
       };
 
-      // Level-Upgrade
       if (node.level < maxLevels) {
         const lvlCost = h.getLevelUpgradeCost(i, 1);
-        const nextLvlGain = hasFormulas
-          ? ns.formulas.hacknetNodes.moneyGainRate(
-              node.level + 1,
-              node.ram,
-              node.cores,
-              hNetMults.production,
-            )
-          : 0;
-        if (checkROI(lvlCost, nextLvlGain))
-          bestUpgrade = { type: "Level", index: i, cost: lvlCost };
+        const nextLvlGain = hasFormulas ? ns.formulas.hacknetNodes.moneyGainRate(node.level + 1, node.ram, node.cores, hNetMults.production) : 0;
+        if (checkROI(lvlCost, nextLvlGain)) bestUpgrade = { type: "Level", index: i, cost: lvlCost };
       }
 
-      // RAM-Upgrade
       if (node.ram < maxRam) {
         const ramCost = h.getRamUpgradeCost(i, 1);
-        const nextRamGain = hasFormulas
-          ? ns.formulas.hacknetNodes.moneyGainRate(
-              node.level,
-              node.ram * 2,
-              node.cores,
-              hNetMults.production,
-            )
-          : 0;
-        if (checkROI(ramCost, nextRamGain))
-          bestUpgrade = { type: "RAM", index: i, cost: ramCost };
+        const nextRamGain = hasFormulas ? ns.formulas.hacknetNodes.moneyGainRate(node.level, node.ram * 2, node.cores, hNetMults.production) : 0;
+        if (checkROI(ramCost, nextRamGain)) bestUpgrade = { type: "RAM", index: i, cost: ramCost };
       }
 
-      // Core-Upgrade
       if (node.cores < maxCores) {
         const coreCost = h.getCoreUpgradeCost(i, 1);
-        const nextCoreGain = hasFormulas
-          ? ns.formulas.hacknetNodes.moneyGainRate(
-              node.level,
-              node.ram,
-              node.cores + 1,
-              hNetMults.production,
-            )
-          : 0;
-        if (checkROI(coreCost, nextCoreGain))
-          bestUpgrade = { type: "Core", index: i, cost: coreCost };
+        const nextCoreGain = hasFormulas ? ns.formulas.hacknetNodes.moneyGainRate(node.level, node.ram, node.cores + 1, hNetMults.production) : 0;
+        if (checkROI(coreCost, nextCoreGain)) bestUpgrade = { type: "Core", index: i, cost: coreCost };
       }
     }
 
@@ -207,17 +150,11 @@ export async function main(ns: NS): Promise<void> {
       }
 
       const indexStr = index !== undefined ? ` (Node ${index})` : "";
-      ns.print(
-        `[HACKNET] Gekauft: ${type}${indexStr} für $${ns.format.number(cost, 2)}`,
-      );
+      logger.success(`Erfolgreicher Kauf: ${type}${indexStr} für $${ns.format.number(cost, 2)}`);
       await ns.sleep(50);
     } else {
-      // Wenn kein Upgrade die Kriterien erfüllt (z.B. weil die Reserve blockiert),
-      // geben wir im Log Bescheid und schlafen ruhig.
       if (reserve > 0 && currentMoney - budget < reserve) {
-        ns.print(
-          `[HACKNET] Sparmodus aktiv. Halte die Reserve von $${ns.format.number(reserve)} für die Infrastruktur.`,
-        );
+        logger.info(`Sparmodus aktiv. Halte Infrastruktur-Reserve von $${ns.format.number(reserve)} ein.`);
       }
       await ns.sleep(isCappedMode ? 5000 : 15000);
     }

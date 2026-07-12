@@ -257,17 +257,24 @@ export async function main(ns: NS): Promise<void> {
       lastFallbackUpdate = Date.now();
     }
 
-    // --- COOLDOWN ENGINE (SCHONFRIST) ---
+// --- COOLDOWN ENGINE (SCHONFRIST) ---
     const previousStrategy = currentState?.strategy || "MONEY";
     const now = Date.now();
 
     if (mode !== previousStrategy) {
+      // 🛠️ FIX: CORP und TRAIN in die Hysterese-Schutzgruppe aufgenommen!
       const isOscillating =
-        ["MONEY", "CRIME", "REP"].includes(mode) &&
-        ["MONEY", "CRIME", "REP"].includes(previousStrategy);
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(mode) &&
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(previousStrategy);
 
       if (isOscillating && now - modeLockTime < STRATEGY_COOLDOWN) {
+        // Halt stop! Die Schonfrist läuft noch. Strategiewechsel blockieren.
         mode = previousStrategy as BotStrategy;
+        
+        // Da wir die alte Strategie erzwingen, müssen wir auch die Ziel-Variablen restaurieren
+        if (mode === "REP") targetFaction = currentState?.targetFaction || null;
+        if (mode === "CORP") targetCompany = currentState?.targetCompany;
+        if (mode === "TRAIN") targetStat = currentState?.targetStat || 0;
       } else {
         modeLockTime = now;
       }
@@ -410,7 +417,7 @@ export async function main(ns: NS): Promise<void> {
     if (isEarlyGameCrime) {
       if (ns.isRunning("tasks/faction-shopping.js", "home"))
         ns.scriptKill("tasks/faction-shopping.js", "home");
-      const rogueScripts = ["tasks/hacknet.js", "tasks/hacknet-early.js"];
+      const rogueScripts = ["systems/hacknet.js", "systems/hacknet-early.js"];
       for (const script of rogueScripts) {
         if (ns.fileExists(script, "home") && ns.isRunning(script, "home"))
           ns.scriptKill(script, "home");

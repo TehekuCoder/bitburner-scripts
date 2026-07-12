@@ -1,5 +1,6 @@
 import { NS, FactionName, FactionWorkType, CompanyName } from "@ns";
 import { loadState } from "./state-manager.js";
+import { Logger } from "./logger.js"; // 📝 Euren Logger importieren
 
 const MEGACORPS = [
   "ECorp",
@@ -16,18 +17,20 @@ const MEGACORPS = [
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  //ns.ui.openTail(); // Optional: Aktivieren, wenn sich das Fenster beim Start direkt öffnen soll
-  ns.print("🦾 Sleeve-Subsystem aktiv. Kontrolliere Klone...");
+  
+  // 🏁 Logger-Instanz für dieses Subsystem initialisieren
+  const logger = new Logger(ns, "SLEEVE", "INFO");
+  logger.info("🦾 Sleeve-Subsystem aktiv. Kontrolliere Klone...");
 
   const BUDGET_MULTIPLIER = 10;
 
   while (true) {
     if (ns.sleeve === undefined) {
-      ns.print("🛑 [Sleeve] Keine Sleeve-API (SF10) in diesem Node verfügbar.");
+      logger.error("🛑 Keine Sleeve-API (SF10) in diesem Node verfügbar.");
       return;
     }
 
-    const numSleeves =  ns.sleeve.getNumSleeves();
+    const numSleeves = ns.sleeve.getNumSleeves();
     const p = ns.getPlayer();
     const currentState = loadState(ns);
     const ownedAugs = ns.singularity.getOwnedAugmentations(true);
@@ -86,6 +89,7 @@ export async function main(ns: NS): Promise<void> {
       if (stats.shock > 0) {
         if (currentTask?.type !== "RECOVERY") {
           ns.sleeve.setToShockRecovery(i);
+          logger.info(`💔 Klon #${i} geht in die Schock-Therapie.`);
         }
         continue;
       }
@@ -94,6 +98,7 @@ export async function main(ns: NS): Promise<void> {
       if (stats.sync < 100) {
         if (currentTask?.type !== "SYNCHRO") {
           ns.sleeve.setToSynchronize(i);
+          logger.info(`⚡ Klon #${i} startet Gehirn-Synchronisation.`);
         }
         continue;
       }
@@ -107,9 +112,7 @@ export async function main(ns: NS): Promise<void> {
           const cheapestAug = purchasableAugs[0];
           if (ns.getPlayer().money > cheapestAug.cost * BUDGET_MULTIPLIER) {
             if (ns.sleeve.purchaseSleeveAug(i, cheapestAug.name)) {
-              ns.print(
-                `🛒 [Sleeve ${i}] Augment erworben: ${cheapestAug.name}`,
-              );
+              logger.success(`🛒 Klon #${i}: Augment erworben -> ${cheapestAug.name}`);
             }
           }
         }
@@ -166,6 +169,7 @@ export async function main(ns: NS): Promise<void> {
           for (const work of workTypes) {
             if (ns.sleeve.setToFactionWork(i, targetFaction, work)) {
               assigned = true;
+              logger.info(`🤝 Klon #${i} arbeitet nun für Faction '${targetFaction}' (${work}).`);
               if (!occupiedFactions.includes(targetFaction)) {
                 occupiedFactions.push(targetFaction);
               }
@@ -184,133 +188,84 @@ export async function main(ns: NS): Promise<void> {
 
         if (employedCorps.length > 0) {
           const targetCorp = employedCorps[i % employedCorps.length];
-
           const currentCompanyRep = ns.singularity.getCompanyRep(targetCorp);
-          const requiredRep =
-            targetCorp === "Fulcrum Technologies" ? 400_000 : 200_000;
+          const requiredRep = targetCorp === "Fulcrum Technologies" ? 400_000 : 200_000;
 
           if (currentCompanyRep < requiredRep) {
             const targetStatThreshold = 300;
-
-            // 🎯 STANDORT-EVALUIERUNG
             const targetCity = p.city === "Volhaven" ? "Volhaven" : "Sector-12";
-            const bestUniversity =
-              targetCity === "Volhaven"
-                ? "ZB Institute of Technology"
-                : "Rothman University";
+            const bestUniversity = targetCity === "Volhaven" ? "ZB Institute of Technology" : "Rothman University";
 
             // ✈️ REISE-LOGIK HINZUGEFÜGT
-            // Falls der Charakter lernen muss, prüfen wir zuerst den Aufenthaltsort des Sleeves
-            if (
-              p.skills.hacking < targetStatThreshold ||
-              p.skills.charisma < targetStatThreshold
-            ) {
+            if (p.skills.hacking < targetStatThreshold || p.skills.charisma < targetStatThreshold) {
               if (stats.city !== targetCity) {
                 if (ns.getPlayer().money >= 200_000) {
                   if (ns.sleeve.travel(i, targetCity)) {
-                    ns.print(
-                      `✈️ [Sleeve ${i}] Reist von ${stats.city} nach ${targetCity} für die Universität.`,
-                    );
-                    stats.city = targetCity; // Lokale Variable updaten für das direkt folgende Skript-Segment
+                    logger.info(`✈️ Klon #${i} reist von ${stats.city} nach ${targetCity} für die Universität.`);
+                    stats.city = targetCity;
                   }
                 } else {
-                  ns.print(
-                    `⚠️ [Sleeve ${i}] Geldmangel ($200k benötigt). Kann nicht nach ${targetCity} reisen.`,
-                  );
+                  logger.warn(`⚠️ Klon #${i}: Geldmangel ($200k benötigt) für Reise nach ${targetCity}.`);
                 }
               }
             }
 
             // A) HACKING-Defizit des CHARAKTERS ausgleichen
             if (p.skills.hacking < targetStatThreshold) {
-              if (
-                currentTask?.type === "CLASS" &&
-                (currentTask as any).classType === "Algorithms"
-              ) {
+              if (currentTask?.type === "CLASS" && (currentTask as any).classType === "Algorithms") {
                 continue;
               }
               if (stats.city === targetCity) {
-                ns.sleeve.setToUniversityCourse(
-                  i,
-                  bestUniversity,
-                  "Algorithms",
-                );
-                ns.print(
-                  `🎓 [Sleeve ${i}] Pusht Hacking für Charakter an der ${bestUniversity}`,
-                );
+                ns.sleeve.setToUniversityCourse(i, bestUniversity, "Algorithms");
+                logger.info(`🎓 Klon #${i} lernt Algorithms an der ${bestUniversity}.`);
               }
               continue;
             }
 
             // B) CHARISMA-Defizit des CHARAKTERS ausgleichen
             else if (p.skills.charisma < targetStatThreshold) {
-              if (
-                currentTask?.type === "CLASS" &&
-                (currentTask as any).classType === "Leadership"
-              ) {
+              if (currentTask?.type === "CLASS" && (currentTask as any).classType === "Leadership") {
                 continue;
               }
               if (stats.city === targetCity) {
-                ns.sleeve.setToUniversityCourse(
-                  i,
-                  bestUniversity,
-                  "Leadership",
-                );
-                ns.print(
-                  `🎓 [Sleeve ${i}] Pusht Charisma für Charakter an der ${bestUniversity}`,
-                );
+                ns.sleeve.setToUniversityCourse(i, bestUniversity, "Leadership");
+                logger.info(`🎓 Klon #${i} lernt Leadership an der ${bestUniversity}.`);
               }
               continue;
             }
 
             // C) Charakter-Stats sind bereit -> Sleeve farmt Firmen-Ruf
             else {
-              if (
-                currentTask?.type === "COMPANY" &&
-                (currentTask as any).companyName === targetCorp
-              ) {
+              if (currentTask?.type === "COMPANY" && (currentTask as any).companyName === targetCorp) {
                 continue;
               }
               if (ns.sleeve.setToCompanyWork(i, targetCorp)) {
-                ns.print(
-                  `🏢 [Sleeve ${i}] Arbeitet bei ${targetCorp} (Ruf: ${ns.format.number(currentCompanyRep)}/${ns.format.number(requiredRep)})`,
-                );
+                logger.info(`🏢 Klon #${i} farmt jetzt Ruf bei ${targetCorp}.`);
                 continue;
               }
             }
-          } else {
-            ns.print(`✅ [Sleeve ${i}] Zielruf für ${targetCorp} erreicht.`);
           }
         }
       }
 
       // 🥉 PRIO 3: Fallback-Kriminalität
-      const targetCrime =
-        ns.heart.break() > -22 || p.numPeopleKilled < 30 ? "Homicide" : "Mug";
+      const targetCrime = ns.heart.break() > -22 || p.numPeopleKilled < 30 ? "Homicide" : "Mug";
 
-      if (
-        currentTask?.type === "CRIME" &&
-        (currentTask as any).crimeType === targetCrime
-      ) {
+      if (currentTask?.type === "CRIME" && (currentTask as any).crimeType === targetCrime) {
         continue;
       }
 
       ns.sleeve.setToCommitCrime(i, targetCrime);
+      logger.warn(`🔫 Klon #${i} wechselt auf Fallback-Kriminalität: ${targetCrime}`);
     }
 
     // ======================================================================
     // 4. 📊 MONITOR-DASHBOARD (LOG-AUSGABE)
     // ======================================================================
     ns.clearLog();
-    ns.print(
-      "╔════════╤═════════╤═════════╤════════════════════════════════════════════════╗",
-    );
-    ns.print(
-      "║ Sleeve │ Schock  │ Sync    │ Aktuelle Beschäftigung                         ║",
-    );
-    ns.print(
-      "╠════════╪═════════╪═════════╪════════════════════════════════════════════════╣",
-    );
+    ns.print("╔════════╤═════════╤═════════╤════════════════════════════════════════════════╗");
+    ns.print("║ Sleeve │ Schock  │ Sync    │ Aktuelle Beschäftigung                         ║");
+    ns.print("╠════════╪═════════╪═════════╪════════════════════════════════════════════════╣");
 
     for (let i = 0; i < numSleeves; i++) {
       const stats = ns.sleeve.getSleeve(i);
@@ -323,38 +278,40 @@ export async function main(ns: NS): Promise<void> {
       let taskDesc = "IDLE";
       if (task) {
         switch (task.type) {
-          case "RECOVERY":
-            taskDesc = "💔 Recovery (Schock abbauen)";
-            break;
-          case "SYNCHRO":
-            taskDesc = "⚡ Synchronize (Sync erhöhen)";
-            break;
-          case "FACTION":
-            taskDesc = `🤝 Faction: ${(task as any).factionName}`;
-            break;
-          case "COMPANY":
-            taskDesc = `🏢 Company: ${(task as any).companyName}`;
-            break;
-          case "CRIME":
-            taskDesc = ` 🔫 Crime: ${(task as any).crimeType}`;
-            break;
-          case "BLADEBURNER":
-            taskDesc = "⚔️ Bladeburner Operation";
-            break;
-          case "CLASS":
-            taskDesc = `🎓 Class: ${(task as any).classType}`;
-            break;
-          default:
-            taskDesc = `⚙️ ${task.type}`;
+          case "RECOVERY":     taskDesc = "💔 Recovery (Schock abbauen)"; break;
+          case "SYNCHRO":      taskDesc = "⚡ Synchronize (Sync erhöhen)"; break;
+          case "FACTION":      taskDesc = `🤝 Faction: ${(task as any).factionName}`; break;
+          case "COMPANY":      taskDesc = `🏢 Company: ${(task as any).companyName}`; break;
+          case "CRIME":        taskDesc = `🔫 Crime: ${(task as any).crimeType}`; break;
+          case "BLADEBURNER":  taskDesc = "⚔️ Bladeburner Operation"; break;
+          case "CLASS":        taskDesc = `🎓 Class: ${(task as any).classType}`; break;
+          default:             taskDesc = `⚙️ ${task.type}`;
         }
       }
 
       const taskStr = taskDesc.padEnd(46);
       ns.print(`║ ${idStr} │ ${shockStr} │ ${syncStr} │ ${taskStr} ║`);
     }
-    ns.print(
-      "╚════════╧═════════╧═════════╧════════════════════════════════════════════════╝",
-    );
+    ns.print("╚════════╧═════════╧═════════╧════════════════════════════════════════════════╝");
+
+    // 📜 Dynamischer Tail-View: Die letzten 6 Zeilen direkt aus der Logdatei lesen
+    try {
+      const logFileContent = ns.read("/logs/bitos_system.txt");
+      if (logFileContent) {
+        const lines = logFileContent.split("\n");
+        // Nur Einträge filtern, die von diesem Subsystem [SLEEVE] stammen
+        const sleeveLines = lines.filter(line => line.includes("[SLEEVE]")).slice(-6);
+        
+        if (sleeveLines.length > 0) {
+          ns.print("\n📜 Aktuelle System-Ereignisse (Log):");
+          for (const line of sleeveLines) {
+            ns.print(line);
+          }
+        }
+      }
+    } catch {
+      /* Failsafe falls Datei blockiert */
+    }
 
     await ns.sleep(2000);
   }
