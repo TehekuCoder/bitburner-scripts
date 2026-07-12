@@ -1,6 +1,6 @@
 import { NS, FactionName, FactionWorkType, CompanyName } from "@ns";
 import { loadState } from "./state-manager.js";
-import { Logger } from "./logger.js"; // 📝 Euren Logger importieren
+import { Logger } from "./logger.js";
 
 const MEGACORPS = [
   "ECorp",
@@ -68,8 +68,8 @@ export async function main(ns: NS): Promise<void> {
       const task = ns.sleeve.getTask(i);
       const stats = ns.sleeve.getSleeve(i);
       if (stats.shock === 0 && stats.sync === 100 && task?.type === "FACTION") {
-        // 🛠️ Zurück auf factionName (Korrekt für 3.0)
-        const fName = (task as any).factionName as FactionName;
+        // Typsicher dank Type-Narrowing
+        const fName = task.factionName as FactionName;
         if (
           factionsNeedingRep.includes(fName) &&
           !occupiedFactions.includes(fName)
@@ -128,7 +128,6 @@ export async function main(ns: NS): Promise<void> {
         let targetFaction: FactionName | null = null;
 
         if (currentTask?.type === "FACTION") {
-          // Typsicher: TypeScript weiß hier bereits, dass 'factionName' existiert
           const currentFaction = currentTask.factionName as FactionName;
           if (factionsNeedingRep.includes(currentFaction)) {
             targetFaction = currentFaction;
@@ -156,7 +155,6 @@ export async function main(ns: NS): Promise<void> {
         }
 
         if (targetFaction) {
-          // 🛠️ HIER WAR DER FEHLER (Zeile 163): 'factionName' statt 'location' nutzen
           if (
             currentTask?.type === "FACTION" &&
             currentTask.factionName === targetFaction
@@ -164,7 +162,12 @@ export async function main(ns: NS): Promise<void> {
             continue;
           }
 
-          const workTypes: FactionWorkType[] = ["hacking", "field", "security"];
+          // 🛠️ FIX: Bitburner-konforme Bezeichnungen für FactionWorkType
+          const workTypes: FactionWorkType[] = [
+            "hacking",
+            "field",
+            "security",
+          ];
 
           let assigned = false;
           for (const work of workTypes) {
@@ -186,7 +189,6 @@ export async function main(ns: NS): Promise<void> {
       // 🥈 PRIO 2: Unternehmens-Dienst & Uni-Push
       if (currentState?.strategy === "PSERV_RUSH") {
         // 🚀 RUSH-MODUS VETO: Überspringe Uni & Firma, um Geldkosten zu blockieren
-        // und Sleeves direkt in Prio 3 (Crime) für maximales Cash-Sponsoring zu jagen!
       } else if (p.skills.hacking >= 250) {
         const employedCorps = Object.keys(p.jobs).filter((job) =>
           MEGACORPS.includes(job),
@@ -206,7 +208,7 @@ export async function main(ns: NS): Promise<void> {
                 ? "ZB Institute of Technology"
                 : "Rothman University";
 
-            // ✈️ REISE-LOGIK HINZUGEFÜGT
+            // ✈️ REISE-LOGIK
             if (
               p.skills.hacking < targetStatThreshold ||
               p.skills.charisma < targetStatThreshold
@@ -230,10 +232,11 @@ export async function main(ns: NS): Promise<void> {
             // A) HACKING-Defizit ausgleichen
             if (p.skills.hacking < targetStatThreshold) {
               if (stats.city === targetCity) {
+                // 🛠️ FIX: native v3.0 Properties (classType & location) ohne Casts
                 if (
                   currentTask?.type === "CLASS" &&
-                  (currentTask as any).actionName === "Algorithms" && // 🛠️ actionName statt classType
-                  (currentTask as any).location === bestUniversity
+                  currentTask.classType === "Algorithms" &&
+                  currentTask.location === bestUniversity
                 ) {
                   continue;
                 }
@@ -252,10 +255,11 @@ export async function main(ns: NS): Promise<void> {
             // B) CHARISMA-Defizit ausgleichen
             else if (p.skills.charisma < targetStatThreshold) {
               if (stats.city === targetCity) {
+                // 🛠️ FIX: native v3.0 Properties (classType & location) ohne Casts
                 if (
                   currentTask?.type === "CLASS" &&
-                  (currentTask as any).actionName === "Leadership" && // 🛠️ actionName statt classType
-                  (currentTask as any).location === bestUniversity
+                  currentTask.classType === "Leadership" &&
+                  currentTask.location === bestUniversity
                 ) {
                   continue;
                 }
@@ -275,7 +279,7 @@ export async function main(ns: NS): Promise<void> {
             else {
               if (
                 currentTask?.type === "COMPANY" &&
-                (currentTask as any).companyName === targetCorp
+                currentTask.companyName === targetCorp
               ) {
                 continue;
               }
@@ -287,13 +291,15 @@ export async function main(ns: NS): Promise<void> {
           }
         }
       }
+
       // 🥉 PRIO 3: Fallback-Kriminalität
       const targetCrime =
         ns.heart.break() > -22 || p.numPeopleKilled < 30 ? "Homicide" : "Mug";
 
+      // 🛠️ FIX: native v3.0 Property (crimeType) ohne Cast
       if (
         currentTask?.type === "CRIME" &&
-        (currentTask as any).actionName === targetCrime // 🛠️ actionName statt crimeType
+        currentTask.crimeType === targetCrime
       ) {
         continue;
       }
@@ -328,6 +334,7 @@ export async function main(ns: NS): Promise<void> {
 
       let taskDesc = "IDLE";
       if (task) {
+        // Komplett clean ohne 'as any' gecastet dank TypeScript Type Guard Switch
         switch (task.type) {
           case "RECOVERY":
             taskDesc = "💔 Recovery (Schock abbauen)";
@@ -336,19 +343,19 @@ export async function main(ns: NS): Promise<void> {
             taskDesc = "⚡ Synchronize (Sync erhöhen)";
             break;
           case "FACTION":
-            taskDesc = `🤝 Faction: ${(task as any).factionName}`; // 🛠️ factionName
+            taskDesc = `🤝 Faction: ${task.factionName}`;
             break;
           case "COMPANY":
-            taskDesc = `🏢 Company: ${(task as any).companyName}`; // 🛠️ companyName
+            taskDesc = `🏢 Company: ${task.companyName}`;
             break;
           case "CRIME":
-            taskDesc = `🔫 Crime: ${(task as any).crimeType}`; // 🛠️ actionName
+            taskDesc = `🔫 Crime: ${task.crimeType}`;
             break;
           case "BLADEBURNER":
             taskDesc = "⚔️ Bladeburner Operation";
             break;
           case "CLASS":
-            taskDesc = `🎓 Class: ${(task as any).classType}`; // 🛠️ actionName
+            taskDesc = `🎓 Class: ${task.classType} ${task.location}`;
             break;
           default:
             taskDesc = `⚙️ ${task.type}`;
@@ -362,12 +369,11 @@ export async function main(ns: NS): Promise<void> {
       "╚════════╧═════════╧═════════╧════════════════════════════════════════════════╝",
     );
 
-    // 📜 Dynamischer Tail-View: Die letzten 6 Zeilen direkt aus der Logdatei lesen
+    // 📜 Dynamischer Tail-View
     try {
       const logFileContent = ns.read("/logs/bitos_system.txt");
       if (logFileContent) {
         const lines = logFileContent.split("\n");
-        // Nur Einträge filtern, die von diesem Subsystem [SLEEVE] stammen
         const sleeveLines = lines
           .filter((line) => line.includes("[SLEEVE]"))
           .slice(-6);

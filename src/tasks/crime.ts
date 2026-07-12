@@ -88,7 +88,7 @@ export async function main(ns: NS): Promise<void> {
         1,
       );
       ns.print(`[CRIME] Aktion: ${bestCrime} (${currentChanceStr}% Chance)`);
-      sing.commitCrime(bestCrime);
+      sing.commitCrime(bestCrime, false);
     }
 
     // --- 4. HUD INTERACTION & STATE UPDATE ---

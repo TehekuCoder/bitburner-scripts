@@ -26,12 +26,12 @@ export async function main(ns: NS): Promise<void> {
       ns.print("🚀 Wechsle Arbeit auf Fraktion: " + faction);
       
       // FIX: PascalCase für die Bitburner 3.0 Enums genutzt
-      let success = ns.singularity.workForFaction(faction, ns.enums.FactionWorkType.hacking);
+      let success = ns.singularity.workForFaction(faction, ns.enums.FactionWorkType.hacking, false);
       if (!success) {
-        success = ns.singularity.workForFaction(faction, ns.enums.FactionWorkType.field);
+        success = ns.singularity.workForFaction(faction, ns.enums.FactionWorkType.field, false);
       }
       if (!success) {
-        ns.singularity.workForFaction(faction, ns.enums.FactionWorkType.security);
+        ns.singularity.workForFaction(faction, ns.enums.FactionWorkType.security,false);
       }
     }
 
