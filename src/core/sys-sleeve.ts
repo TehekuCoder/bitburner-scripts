@@ -180,7 +180,7 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-      // 🥈 PRIO 2: Unternehmens-Dienst & Uni-Push
+// 🥈 PRIO 2: Unternehmens-Dienst & Uni-Push
       if (p.skills.hacking >= 250) {
         const employedCorps = Object.keys(p.jobs).filter((job) =>
           MEGACORPS.includes(job),
@@ -205,33 +205,45 @@ export async function main(ns: NS): Promise<void> {
                     stats.city = targetCity;
                   }
                 } else {
-                  logger.warn(`⚠️ Klon #${i}: Geldmangel ($200k benötigt) für Reise nach ${targetCity}.`);
+                  logger.warn(`⚠️ Klon #${i}: Geldmangel ($200k benötigt) für Reise nach ${targetCity}. Weiche auf Crime aus.`);
                 }
               }
             }
 
             // A) HACKING-Defizit des CHARAKTERS ausgleichen
             if (p.skills.hacking < targetStatThreshold) {
-              if (currentTask?.type === "CLASS" && (currentTask as any).classType === "Algorithms") {
-                continue;
-              }
               if (stats.city === targetCity) {
+                // Nur überspringen, wenn Kurs UND Universität exakt übereinstimmen
+                if (
+                  currentTask?.type === "CLASS" && 
+                  (currentTask as any).classType === "Algorithms" &&
+                  (currentTask as any).location === bestUniversity
+                ) {
+                  continue;
+                }
                 ns.sleeve.setToUniversityCourse(i, bestUniversity, "Algorithms");
                 logger.info(`🎓 Klon #${i} lernt Algorithms an der ${bestUniversity}.`);
+                continue;
               }
-              continue;
+              // KEIN unbedingtes continue hier! Wenn die Stadt nicht passt, fällt das Sleeve aus der if-else-Kette
             }
 
             // B) CHARISMA-Defizit des CHARAKTERS ausgleichen
             else if (p.skills.charisma < targetStatThreshold) {
-              if (currentTask?.type === "CLASS" && (currentTask as any).classType === "Leadership") {
-                continue;
-              }
               if (stats.city === targetCity) {
+                // Nur überspringen, wenn Kurs UND Universität exakt übereinstimmen
+                if (
+                  currentTask?.type === "CLASS" && 
+                  (currentTask as any).classType === "Leadership" &&
+                  (currentTask as any).location === bestUniversity
+                ) {
+                  continue;
+                }
                 ns.sleeve.setToUniversityCourse(i, bestUniversity, "Leadership");
                 logger.info(`🎓 Klon #${i} lernt Leadership an der ${bestUniversity}.`);
+                continue;
               }
-              continue;
+              // KEIN unbedingtes continue hier!
             }
 
             // C) Charakter-Stats sind bereit -> Sleeve farmt Firmen-Ruf
@@ -247,7 +259,6 @@ export async function main(ns: NS): Promise<void> {
           }
         }
       }
-
       // 🥉 PRIO 3: Fallback-Kriminalität
       const targetCrime = ns.heart.break() > -22 || p.numPeopleKilled < 30 ? "Homicide" : "Mug";
 
