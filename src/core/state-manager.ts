@@ -1,4 +1,5 @@
 import { NS, FactionName, CompanyName, JobField } from "@ns";
+import { Logger } from "./logger.js"; // 🌟 Zentrales Logging-System integriert
 
 // Strikte Definition aller erlaubten System-Strategien – PURE_HACK entfernt!
 export type BotStrategy =
@@ -46,6 +47,7 @@ export function saveState(
   ns: NS,
   state: Omit<BotState, "lastUpdate" | "playerHacking">,
 ): void {
+  const logger = new Logger(ns, "State", "INFO");
   try {
     const fullState: BotState = {
       ...state,
@@ -54,7 +56,7 @@ export function saveState(
     };
     ns.write(STATE_FILE, JSON.stringify(fullState, null, 2), "w");
   } catch (error) {
-    ns.print(`[ERROR] State-Manager konnte Zustand nicht schreiben: ${error}`);
+    logger.error(`Zustand konnte nicht geschrieben werden: ${error}`);
   }
 }
 
@@ -84,6 +86,8 @@ export function patchState(
  * Validiert, ob der Zustand noch zum aktuellen Spiel-Kontext passt.
  */
 export function loadState(ns: NS): BotState | null {
+  const logger = new Logger(ns, "State", "INFO");
+
   if (!ns.fileExists(STATE_FILE, "home")) {
     return null;
   }
@@ -95,19 +99,21 @@ export function loadState(ns: NS): BotState | null {
     const state = JSON.parse(content) as BotState;
 
     // --- CONTEXT ACCURACY CHECK ---
+    // Falls das Hacking-Level im State höher ist als das aktuelle des Spielers -> Augmentation Reset erfolgt!
     if (state.playerHacking > ns.getHackingLevel()) {
-      ns.print("⚠️ [State-Manager] Veralteten Zustand nach Augmentation Reset erkannt. Bereinige...");
+      logger.warn("Veralteten Zustand nach Augmentation-Reset erkannt. Bereinige Persistenz-Speicher...");
       clearState(ns);
       return null;
     }
 
+    // Sanfter Hinweis bei potenziellen asynchronen Hängern (Inkonsistenz-Warnung)
     if (Date.now() - state.lastUpdate > 60_000) {
-      ns.print("ℹ️ [State-Manager] Zustand ist älter als 60s (inkonsistent).");
+      logger.info("Zustand ist älter als 60s (potenziell inkonsistent).");
     }
 
     return state;
   } catch (error) {
-    ns.print(`[ERROR] State-Manager konnte Zustand nicht lesen/parsen: ${error}`);
+    logger.error(`Zustand konnte nicht gelesen oder geparst werden: ${error}`);
     return null;
   }
 }
@@ -116,7 +122,9 @@ export function loadState(ns: NS): BotState | null {
  * Löscht die Statusdatei (z.B. beim System-Reset oder Herunterfahren).
  */
 export function clearState(ns: NS): void {
+  const logger = new Logger(ns, "State", "INFO");
   if (ns.fileExists(STATE_FILE, "home")) {
     ns.rm(STATE_FILE, "home");
+    logger.info("Statusdatei erfolgreich gelöscht.");
   }
 }

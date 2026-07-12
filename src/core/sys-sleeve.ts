@@ -27,7 +27,7 @@ export async function main(ns: NS): Promise<void> {
       return;
     }
 
-    const numSleeves = ns.sleeve.getNumSleeves();
+    const numSleeves =  ns.sleeve.getNumSleeves();
     const p = ns.getPlayer();
     const currentState = loadState(ns);
     const ownedAugs = ns.singularity.getOwnedAugmentations(true);
@@ -176,7 +176,7 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-      // 🥈 PRIO 2: Unternehmens-Dienst (Optimiert mit Charakter-Stat-Check & EP-Sharing)
+      // 🥈 PRIO 2: Unternehmens-Dienst & Uni-Push
       if (p.skills.hacking >= 250) {
         const employedCorps = Object.keys(p.jobs).filter((job) =>
           MEGACORPS.includes(job),
@@ -185,21 +185,41 @@ export async function main(ns: NS): Promise<void> {
         if (employedCorps.length > 0) {
           const targetCorp = employedCorps[i % employedCorps.length];
 
-          // 1. Ruf evaluieren
           const currentCompanyRep = ns.singularity.getCompanyRep(targetCorp);
           const requiredRep =
             targetCorp === "Fulcrum Technologies" ? 400_000 : 200_000;
 
-          // Nur aktiv werden, wenn die Fraktion-Einladung noch aussteht
           if (currentCompanyRep < requiredRep) {
-            // Dein gewünschter Schwellenwert für die Charakter-Beförderung
             const targetStatThreshold = 300;
 
-            // "ZB Institute of Technology" löst den TypeScript-Fehler für Volhaven auf
+            // 🎯 STANDORT-EVALUIERUNG
+            const targetCity = p.city === "Volhaven" ? "Volhaven" : "Sector-12";
             const bestUniversity =
-              p.city === "Volhaven"
+              targetCity === "Volhaven"
                 ? "ZB Institute of Technology"
                 : "Rothman University";
+
+            // ✈️ REISE-LOGIK HINZUGEFÜGT
+            // Falls der Charakter lernen muss, prüfen wir zuerst den Aufenthaltsort des Sleeves
+            if (
+              p.skills.hacking < targetStatThreshold ||
+              p.skills.charisma < targetStatThreshold
+            ) {
+              if (stats.city !== targetCity) {
+                if (ns.getPlayer().money >= 200_000) {
+                  if (ns.sleeve.travel(i, targetCity)) {
+                    ns.print(
+                      `✈️ [Sleeve ${i}] Reist von ${stats.city} nach ${targetCity} für die Universität.`,
+                    );
+                    stats.city = targetCity; // Lokale Variable updaten für das direkt folgende Skript-Segment
+                  }
+                } else {
+                  ns.print(
+                    `⚠️ [Sleeve ${i}] Geldmangel ($200k benötigt). Kann nicht nach ${targetCity} reisen.`,
+                  );
+                }
+              }
+            }
 
             // A) HACKING-Defizit des CHARAKTERS ausgleichen
             if (p.skills.hacking < targetStatThreshold) {
@@ -209,10 +229,16 @@ export async function main(ns: NS): Promise<void> {
               ) {
                 continue;
               }
-              ns.sleeve.setToUniversityCourse(i, bestUniversity, "Algorithms");
-              ns.print(
-                `🎓 [Sleeve ${i}] Pusht Hacking für Charakter an der ${bestUniversity}`,
-              );
+              if (stats.city === targetCity) {
+                ns.sleeve.setToUniversityCourse(
+                  i,
+                  bestUniversity,
+                  "Algorithms",
+                );
+                ns.print(
+                  `🎓 [Sleeve ${i}] Pusht Hacking für Charakter an der ${bestUniversity}`,
+                );
+              }
               continue;
             }
 
@@ -224,10 +250,16 @@ export async function main(ns: NS): Promise<void> {
               ) {
                 continue;
               }
-              ns.sleeve.setToUniversityCourse(i, bestUniversity, "Leadership");
-              ns.print(
-                `🎓 [Sleeve ${i}] Pusht Charisma für Charakter an der ${bestUniversity}`,
-              );
+              if (stats.city === targetCity) {
+                ns.sleeve.setToUniversityCourse(
+                  i,
+                  bestUniversity,
+                  "Leadership",
+                );
+                ns.print(
+                  `🎓 [Sleeve ${i}] Pusht Charisma für Charakter an der ${bestUniversity}`,
+                );
+              }
               continue;
             }
 
@@ -324,6 +356,6 @@ export async function main(ns: NS): Promise<void> {
       "╚════════╧═════════╧═════════╧════════════════════════════════════════════════╝",
     );
 
-    await ns.sleep(2000); // Intervall auf 2 Sekunden verkürzt für flüssigere Updates
+    await ns.sleep(2000);
   }
 }

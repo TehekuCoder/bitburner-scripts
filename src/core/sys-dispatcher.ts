@@ -2,6 +2,7 @@ import { NS, Player, FactionName, CompanyName } from "@ns";
 import { loadState, saveState, BotStrategy } from "./state-manager.js";
 import { breakAndInfectNetwork, getAllServers } from "../lib/network.js";
 import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
+import { Logger } from "./logger.js"; // 🌟 Logger importiert
 
 interface FactionConfig {
   name: FactionName;
@@ -29,9 +30,6 @@ const MEGACORPS: Record<string, CompanyName> = {
   "Fulcrum Secret Technologies": "Fulcrum Technologies",
 };
 
-// ======================================================================
-// 🎯 BEREINIGTE SOFTWARE- UND FRAKTIONSMATRIX (Doppelte Einträge entfernt)
-// ======================================================================
 const HACKING_FACTIONS: FactionConfig[] = [
   { name: "CyberSec" as FactionName, minStat: 0, priority: 1 },
   { name: "Tian Di Hui" as FactionName, minStat: 0, priority: 2 },
@@ -57,11 +55,7 @@ const HACKING_FACTIONS: FactionConfig[] = [
   { name: "OmniTek Incorporated" as FactionName, minStat: 0, priority: 22 },
   { name: "Bachman & Associates" as FactionName, minStat: 0, priority: 23 },
   { name: "Clarke Incorporated" as FactionName, minStat: 0, priority: 24 },
-  {
-    name: "Fulcrum Secret Technologies" as FactionName,
-    minStat: 0,
-    priority: 25,
-  },
+  { name: "Fulcrum Secret Technologies" as FactionName, minStat: 0, priority: 25 },
   { name: "Silhouette" as FactionName, minStat: 0, priority: 26 },
   { name: "The Dark Army" as FactionName, minStat: 300, priority: 27 },
   { name: "Speakers for the Dead" as FactionName, minStat: 300, priority: 28 },
@@ -74,18 +68,19 @@ const repCache: Record<string, number> = {};
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
-  const getFreeRam = () =>
-    ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+  // 🌟 Logger für das Core-Subsystem initialisieren
+  const logger = new Logger(ns, "Dispatcher", "INFO");
+
+  const getFreeRam = () => ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
   const hasSingularity = ns.singularity !== undefined;
 
   if (!hasSingularity) {
-    ns.tprint(
-      "🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!",
-    );
+    logger.error("Kritischer Systemfehler: Singularity-API (SF4) fehlt!");
+    ns.tprint("🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!");
     return;
   }
 
-  ns.print("⚙️ [Dispatcher] Initialisiere Multiplikatoren und Cache...");
+  logger.info("Initialisiere Netzwerk-Multiplikatoren und Reputations-Cache...");
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
 
   buildReputationCache(ns);
@@ -102,29 +97,27 @@ export async function main(ns: NS): Promise<void> {
   let lastFallbackUpdate = 0;
   let lastCacheRefresh = Date.now();
 
-  // ⏱️ NEU: Zeitliche Schonfrist gegen den Ping-Pong-Effekt
   let modeLockTime = Date.now();
-  const STRATEGY_COOLDOWN = 60_000; // 60 Sekunden Sperrzeit
+  const STRATEGY_COOLDOWN = 60_000;
+
+  let lastCorpApplication = 0;
 
   while (true) {
     if (Date.now() - lastCacheRefresh > 900_000) {
       buildReputationCache(ns);
       lastCacheRefresh = Date.now();
+      logger.info("Reputations-Cache routinemäßig aktualisiert.");
     }
 
     breakAndInfectNetwork(ns);
 
     const currentState = loadState(ns);
-
     let mode: BotStrategy = "MONEY";
     const p = ns.getPlayer();
     const homeMaxRam = ns.getServerMaxRam("home");
 
-    let lastCorpApplication = 0; // Global oben im Skript definieren
-
-    // In der Schleife:
     if (p.skills.hacking >= 250 && Date.now() - lastCorpApplication > 600_000) {
-      applyToAllMegacorps(ns, p);
+      applyToAllMegacorps(ns, p, logger); // 🌟 Logger übergeben
       lastCorpApplication = Date.now();
     }
 
@@ -146,26 +139,19 @@ export async function main(ns: NS): Promise<void> {
     const companyRepMult = bnMults.CompanyWorkRepGain ?? 1;
     const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
 
-    // Basis-Schwellenwert skaliert dynamisch mit dem BN-Nerf
     const BASE_MONEY_THRESHOLD = factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
-
-    // 🧠 HYSTERESE: Wenn wir schon im REP-Modus sind, erlauben wir, dass das Geld
-    // durch Einkäufe um bis zu 30% unter den Schwellenwert fällt, ohne dass wir den Modus abbrechen.
     const lastStrategy = currentState?.strategy || "MONEY";
     const effectiveThreshold =
       lastStrategy === "REP"
-        ? BASE_MONEY_THRESHOLD * 0.7 // Bleibt im Modus ab 7 Mio. (bzw. 35 Mio.)
-        : BASE_MONEY_THRESHOLD; // Braucht 10 Mio. (bzw. 50 Mio.) zum Starten
+        ? BASE_MONEY_THRESHOLD * 0.7
+        : BASE_MONEY_THRESHOLD;
 
-    // Nutzen des effektiven Schwellenwerts mit Hysterese
     const isReadyForFactionGrind = playerMoney > effectiveThreshold;
-
     const factionToWorkFor =
       eligiblePServers.length > 0 && factionRepMult > 0.1
         ? findNextFaction(ns, p)
         : null;
 
-    // 🔥 FIX 1: Das Fraktionsziel permanent halten, auch wenn wir dafür gerade erst sparen!
     let targetFaction: FactionName | null = factionToWorkFor;
     let targetCompany: CompanyName | undefined = undefined;
     let targetStat = 0;
@@ -175,10 +161,8 @@ export async function main(ns: NS): Promise<void> {
     } else if (homeMaxRam < 256 || (crimeMoneyMult > 5 && !canRunBatcher)) {
       mode = "CRIME";
     } else if (factionToWorkFor && isReadyForFactionGrind) {
-      // Hier greift das Geld-Gate, damit wir nicht zu früh Rep grinden, ohne Augments kaufen zu können
       mode = "REP";
     } else {
-      // Megacorp-Logik: Nur ausführen, wenn Company-Rep nicht völlig nutzlos ist
       if (p.skills.hacking >= 250 && companyRepMult > 0.1) {
         const needsSilhouette =
           !p.factions.includes("Silhouette" as FactionName) &&
@@ -226,7 +210,7 @@ export async function main(ns: NS): Promise<void> {
         if (eligiblePServers.length === 0) {
           mode = "MONEY";
         } else {
-          const FOCUS_ON_COMBAT_FACTIONS = false; // Schalter für spätere BitNodes
+          const FOCUS_ON_COMBAT_FACTIONS = false;
 
           if (FOCUS_ON_COMBAT_FACTIONS) {
             const nextLockedCombatFaction = HACKING_FACTIONS.find(
@@ -257,13 +241,12 @@ export async function main(ns: NS): Promise<void> {
               }
             }
           } else {
-            mode = "MONEY"; // Standard-Fall: Hacken und Geld verdient!
+            mode = "MONEY";
           }
         }
       }
     }
 
-    // 🔄 Cache-Aktualisierung des Fallback-Targets unter Berücksichtigung von bnMults
     if (Date.now() - lastFallbackUpdate > 300_000 || mode === "MONEY") {
       cachedFallbackTarget = findBestFallbackTarget(
         ns,
@@ -274,23 +257,18 @@ export async function main(ns: NS): Promise<void> {
       lastFallbackUpdate = Date.now();
     }
 
-    // ======================================================================
-    // ⏱️ NEU: COOLDOWN ENGINE (SCHONFRIST)
-    // ======================================================================
+    // --- COOLDOWN ENGINE (SCHONFRIST) ---
     const previousStrategy = currentState?.strategy || "MONEY";
     const now = Date.now();
 
     if (mode !== previousStrategy) {
-      // Wir schützen primär den oszillierenden Übergang zwischen Geld- und Ruf-Phase
       const isOscillating =
         ["MONEY", "CRIME", "REP"].includes(mode) &&
         ["MONEY", "CRIME", "REP"].includes(previousStrategy);
 
       if (isOscillating && now - modeLockTime < STRATEGY_COOLDOWN) {
-        // Die Schonfrist läuft noch! Wir erzwingen den alten Modus.
         mode = previousStrategy as BotStrategy;
       } else {
-        // Schonfrist ist abgelaufen oder es ist ein kritischer Moduswechsel -> Erlauben!
         modeLockTime = now;
       }
     }
@@ -318,7 +296,9 @@ export async function main(ns: NS): Promise<void> {
       label = `💀 Mordaufträge`;
     }
 
+    // 🌟 STRATEGIE-WECHSEL PROTOKOLLIEREN
     if (mode !== lastMode) {
+      logger.info(`🔄 Strategiewechsel initiiert: ${lastMode || "START"} ➔ ${mode} ${label ? `(${label})` : ""}`);
       lastValue = currentVal;
       lastTime = now;
       emaRate = 0;
@@ -375,11 +355,8 @@ export async function main(ns: NS): Promise<void> {
     } else if (mode === "MONEY" && !canRunBatcher) {
       generatedBar = `🏗️ Aufbau-Phase: Generiere Basis-Geld auf ${cachedFallbackTarget} (Warte auf P-Server)`;
     } else {
-      // 🔥 FIX 2: Wenn wir Geld sammeln, aber ein Fraktionsziel existiert, zeigen wir das im Progress an!
       if (factionToWorkFor) {
-        const progressPct = ((playerMoney / effectiveThreshold) * 100).toFixed(
-          1,
-        );
+        const progressPct = ((playerMoney / effectiveThreshold) * 100).toFixed(1);
         generatedBar = `💰 Spare für ${factionToWorkFor}: ${ns.format.number(playerMoney, 1)} / ${ns.format.number(effectiveThreshold, 0)} $ (${progressPct}%)`;
       } else {
         generatedBar = "💰 Maximiere Profit (Batcher)";
@@ -402,8 +379,6 @@ export async function main(ns: NS): Promise<void> {
 
     let dynamicMaxXp = 1000;
     if (mode === "CRIME") {
-      // ✅ FIX: Setzt ein echtes Ziel-Limit statt des aktuellen Levels.
-      // Erlaubt fill-ram.ts den XP-Grind, solange Hacking < 100 ist.
       dynamicMaxXp = 100;
     } else if (p.skills.hacking > 800) {
       dynamicMaxXp = 1500;
@@ -411,6 +386,7 @@ export async function main(ns: NS): Promise<void> {
 
     if (!canRunBatcher && ns.isRunning("utils/fill-ram.js", "home")) {
       ns.scriptKill("utils/fill-ram.js", "home");
+      logger.info("Batcher nicht ausführbar. 'fill-ram.js' vorsorglich beendet.");
     }
 
     saveState(ns, {
@@ -472,6 +448,7 @@ export async function main(ns: NS): Promise<void> {
         getFreeRam() > 15
       ) {
         ns.run("core/sys-batcher.js", 1);
+        logger.success("🔥 System-Voraussetzungen erfüllt: 'sys-batcher.js' gestartet.");
       }
       for (const server of pServers) {
         ns.scriptKill(workerScript, server);
@@ -493,7 +470,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // Flotten-Dispatch zünden 🚀
     dispatchSimpleTask(
       ns,
       workerFleet,
@@ -503,7 +479,6 @@ export async function main(ns: NS): Promise<void> {
       bnMults,
     );
 
-    // 🔥 FIX: Wenn der Batcher läuft, darf kein normaler Worker RAM auf Home stehlen!
     const homeShouldRunWorker =
       !["REP", "TRAIN", "CORP", "CRIME"].includes(activeStrategy) &&
       !canRunBatcher;
@@ -517,7 +492,6 @@ export async function main(ns: NS): Promise<void> {
         ns.scriptKill(workerScript, "home");
 
       const homeFreeRam = getFreeRam();
-      // Bei schwerem Weaken-Nerf halten wir mehr RAM für Formeln/UI frei
       const reservedRam =
         bnMults.ServerWeakenRate < 1.0
           ? Math.ceil(20 / bnMults.ServerWeakenRate)
@@ -550,14 +524,12 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // --- ÜBERGABE AN MICROSERVICES ---
-    // Wir übergeben true, wenn factionToWorkFor existiert (wir also sparen)
-    manageMicroservices(ns, mode, factionToWorkFor !== null);
+    manageMicroservices(ns, mode, factionToWorkFor !== null, logger); // 🌟 Logger übergeben
 
     // 🛑 STICKY-ACTION-STOPP:
-    // Wenn wir im puren MONEY-Modus sind (Batcher druckt Geld) und KEIN Sparziel haben,
-    // beenden wir jede alte Fraktionsarbeit sofort, damit wir kein Geld liegen lassen.
     if (mode === "MONEY" && !factionToWorkFor && canRunBatcher) {
       if (ns.singularity.getCurrentWork()) {
+        logger.info("Batcher läuft ohne offene Sparziele. Manuelle Arbeit gestoppt.");
         ns.singularity.stopAction();
       }
     }
@@ -612,6 +584,7 @@ function manageMicroservices(
   ns: NS,
   currentMode: string,
   hasSavingTarget: boolean,
+  logger: Logger, // 🌟 Parameter hinzugefügt
 ): void {
   const modeToScript: Record<string, string> = {
     REP: "tasks/faction-grind.js",
@@ -624,8 +597,6 @@ function manageMicroservices(
 
   let targetScript = modeToScript[currentMode];
 
-  // 🔥 ARCHITEKTUR-LINK: Wenn wir im MONEY-Modus aktiv sparen,
-  // nutzen wir deinen mathematisch optimierten Crime-Worker!
   if (currentMode === "MONEY" && hasSavingTarget) {
     targetScript = "tasks/crime.js";
   }
@@ -633,6 +604,7 @@ function manageMicroservices(
   for (const [mode, script] of Object.entries(modeToScript)) {
     if (script !== targetScript && ns.isRunning(script, "home")) {
       ns.scriptKill(script, "home");
+      logger.info(`⏹️ Veralteten Microservice beendet: ${script}`);
     }
   }
 
@@ -646,15 +618,13 @@ function manageMicroservices(
 
     if (freeRam >= requiredRam) {
       ns.run(targetScript, 1);
+      logger.success(`▶️ Neuen Microservice gestartet: ${targetScript} für Modus [${currentMode}]`);
     } else {
-      ns.print(
-        `⚠️ [Dispatcher] RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB.`,
-      );
+      logger.warn(`RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB.`);
     }
   }
 }
 
-// 🎯 DYNAMISCHES RE-WEIGHTING FÜR DEN FALLBACK-TARGET FINDER
 export function findBestFallbackTarget(
   ns: NS,
   hackingLevel: number,
@@ -693,7 +663,6 @@ export function findBestFallbackTarget(
 
     if (reqHacking > hackingLevel) continue;
 
-    // Sonderfall: BitNode ohne Hacking-Geld (XP Scoring analog zum Kernel)
     if (isNoMoneyNode) {
       const cycleTime = ns.getWeakenTime(current);
       const weight = reqHacking / (Math.max(1, cycleTime) / 1000);
@@ -707,9 +676,8 @@ export function findBestFallbackTarget(
     if (serverMaxMoney <= 0) continue;
 
     const cycleTime = ns.getWeakenTime(current);
-    if (cycleTime > 5 * 60 * 1000) continue; // Langsame Server aussortieren
+    if (cycleTime > 5 * 60 * 1000) continue;
 
-    // Gewichtung kombiniert Geld, Zykluszeit, benötigten Skill und Wachstumsrate des Nodes
     const weight =
       (serverMaxMoney / (cycleTime / 1000)) * (reqHacking / 100) * growthMult;
 
@@ -721,15 +689,16 @@ export function findBestFallbackTarget(
   return bestTarget;
 }
 
-function applyToAllMegacorps(ns: NS, p: Player): void {
+function applyToAllMegacorps(ns: NS, p: Player, logger: Logger): void {
   for (const corpName of Object.values(MEGACORPS)) {
     if (!p.jobs[corpName]) {
-      ns.singularity.applyToCompany(corpName, "Software");
+      if (ns.singularity.applyToCompany(corpName, "Software")) {
+        logger.success(`💼 Bewerbung erfolgreich: Anstellung bei '${corpName}' erhalten.`);
+      }
     }
   }
 }
 
-// 🚀 DER DYNAMISCHE FLOTTEN-DISPATCHER
 function dispatchSimpleTask(
   ns: NS,
   servers: string[],
@@ -743,7 +712,6 @@ function dispatchSimpleTask(
   for (const server of servers) {
     if (!ns.hasRootAccess(server)) continue;
 
-    // Dynamischer Home-Buffer statt starrer 64 GB
     const homeBuffer =
       bnMults.ServerWeakenRate < 1.0
         ? Math.ceil(48 / bnMults.ServerWeakenRate)

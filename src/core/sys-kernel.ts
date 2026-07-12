@@ -3,6 +3,7 @@ import { loadState, patchState, BotState } from "./state-manager.js";
 import { getAllServers, breakAndInfectNetwork } from "../lib/network.js";
 import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
 import { provisionServer } from "../utils/provision.js";
+import { Logger } from "./logger.js"; // 🌟 Logger importiert
 
 interface ScriptList {
   worker: string;
@@ -21,6 +22,9 @@ interface ScriptList {
 }
 
 export async function main(ns: NS): Promise<void> {
+  // 🌟 Logger-Instanz für den Kernel initialisieren
+  const logger = new Logger(ns, "Kernel", "INFO");
+
   const scripts: ScriptList = {
     worker: "tasks/work.js",
     dispatcher: "core/sys-dispatcher.js",
@@ -44,14 +48,12 @@ export async function main(ns: NS): Promise<void> {
   // --- 🔄 BOOT-SEQUENCE: ENVIRONMENT ANALYSIS ---
   // ======================================================================
   try {
-    ns.print("🔄 [BOOT] Analysiere BitNode-Umgebung via Source-File 5...");
+    logger.info("Analysiere BitNode-Umgebung via Source-File 5...");
     const realMults = ns.getBitNodeMultipliers();
     ns.write("bn-multipliers.txt", JSON.stringify(realMults, null, 2), "w");
-    ns.print("✅ [BOOT] bn-multipliers.txt erfolgreich generiert.");
+    logger.success("bn-multipliers.txt erfolgreich generiert.");
   } catch {
-    ns.print(
-      "⚠️ [BOOT_WARN] Source-File 5 nicht aktiv. Nutze Failsafe-Matrix.",
-    );
+    logger.warn("Source-File 5 nicht aktiv. Nutze Failsafe-Matrix.");
     ns.write(
       "bn-multipliers.txt",
       JSON.stringify(DEFAULT_MULTIPLIERS, null, 2),
@@ -60,7 +62,7 @@ export async function main(ns: NS): Promise<void> {
   }
 
   const bnMults = loadBnMults(ns);
-  ns.print("🚀 [Kernel] Subsysteme werden initialisiert...");
+  logger.info("Subsysteme werden initialisiert...");
 
   if (!ns.scriptRunning("sys-hud.ts", "home")) {
     ns.exec("sys-hud.ts", "home", 1);
@@ -104,7 +106,6 @@ export async function main(ns: NS): Promise<void> {
         player.money < 50_000_000 &&
         bnMults.CrimeMoney > 0.5
       ) {
-        // Bleibt stabil im Crime-Modus, kein Oszillieren mehr!
         activeStrategy = "CRIME";
         activeProgressBar = `🥷 Hacking ineffizient (${(hackingEfficiency * 100).toFixed(0)}%). Starte Verbrechen-Grind.`;
       } else {
@@ -128,13 +129,11 @@ export async function main(ns: NS): Promise<void> {
         activeProgressBar = `⚠️ XP-Sprint aktiv, aber BN-Hacking-XP ist stark gedrosselt (${(hackingExpMult * 100).toFixed(0)}%)!`;
       }
 
-      // State nur im Early-Game selbst patchen
       patchState(ns, {
         strategy: activeStrategy,
         progressBar: activeProgressBar,
       });
     } else {
-      // 👑 DISPATCHER-MODUS: Der Dispatcher regiert. Der Kernel liest nur die Befehle.
       activeStrategy = currentState?.strategy || "MONEY";
       activeProgressBar = currentState?.progressBar || "";
     }
@@ -146,13 +145,14 @@ export async function main(ns: NS): Promise<void> {
       targetFaction: currentState?.targetFaction,
       targetCompany: currentState?.targetCompany,
       targetStat: currentState?.targetStat,
-      batcherTarget: currentState?.batcherTarget, // 🌟 HIER HINZUFÜGEN: Sichert das Batcher-Ziel bei Kollisionen
+      batcherTarget: currentState?.batcherTarget,
       progressBar: activeProgressBar,
       lastUpdate: Date.now(),
       playerHacking: ns.getHackingLevel(),
     };
 
-    manageSuites(ns, scripts, localStateSnapshot, triggerBackdoor, bnMults);
+    // 🌟 Logger an Suite-Manager übergeben
+    manageSuites(ns, scripts, localStateSnapshot, triggerBackdoor, bnMults, logger);
 
     // ======================================================================
     // --- 🚀 ORCHESTRIERUNG DER SUB-MANAGER ---
@@ -164,7 +164,7 @@ export async function main(ns: NS): Promise<void> {
       ns.fileExists(scripts.dispatcher, "home") &&
       !isDispatcherRunning
     ) {
-      ns.print("👑 Overlord: Starte zentralen System-Dispatcher...");
+      logger.info("Starte zentralen System-Dispatcher (Dispatcher-Modus aktiv)...");
       ns.exec(scripts.dispatcher, "home", 1);
       isDispatcherRunning = true;
     }
@@ -173,7 +173,7 @@ export async function main(ns: NS): Promise<void> {
       ns.fileExists(scripts.infra, "home") &&
       !ns.isRunning(scripts.infra, "home")
     ) {
-      ns.print("🛠️ Overlord: Starte Infrastruktur-Manager...");
+      logger.info("Starte Infrastruktur-Manager...");
       ns.exec(scripts.infra, "home", 1);
     }
 
@@ -222,22 +222,18 @@ export async function main(ns: NS): Promise<void> {
       );
     }
 
-    // 🔥 KERNEL-UPGRADE: Formulas ist im Mid-Game kein Hard-Requirement mehr für die Fleet!
     const pServers = ns.cloud.getServerNames();
     const eligiblePServers = pServers.filter(
       (s) => ns.getServerMaxRam(s) >= 64,
     );
 
-    // Fleet ist bereit, wenn Home genug RAM hat UND die p-Server groß genug sind
     const isFleetReady = homeMax >= 256 && eligiblePServers.length > 0;
 
     // ======================================================================
-    // --- 📊 OPERATIONAL OS DASHBOARD UNTERSTÜTZUNG ---
+    // --- 📊 OPERATIONAL OS DASHBOARD ---
     // ======================================================================
     const freshStateForDashboard = loadState(ns);
 
-    // 🌟 REFACTORING: Keine redundanten uiTarget-Abfragen oder String-Ersetzungen mehr.
-    // Das Dashboard bekommt immer die ungefilterte Wahrheit ('bestTarget') geliefert.
     drawSysKernelDashboard(
       ns,
       freshStateForDashboard || localStateSnapshot,
@@ -260,6 +256,7 @@ function manageSuites(
   state: BotState,
   triggerBackdoor: boolean,
   bnMults: any,
+  logger: Logger, // 🌟 Parameter hinzugefügt
 ): void {
   const homeMaxRam = ns.getServerMaxRam("home");
   const playerMoney = ns.getPlayer().money;
@@ -273,6 +270,7 @@ function manageSuites(
     : "tasks/hacknet.js";
 
   if (ns.isRunning(obsoleteHacknetScript, "home")) {
+    logger.info(`Beende veraltetes Hacknet-Skript (${obsoleteHacknetScript}).`);
     ns.scriptKill(obsoleteHacknetScript, "home");
   }
 
@@ -280,6 +278,7 @@ function manageSuites(
 
   if (homeMaxRam < 128 || !hasBrute) {
     if (ns.isRunning(targetHacknetScript, "home")) {
+      logger.warn("Ressourcen oder Port-Tools unzureichend. Deaktiviere Hacknet-Subsystem.");
       ns.scriptKill(targetHacknetScript, "home");
     }
   } else {
@@ -288,12 +287,10 @@ function manageSuites(
       !ns.isRunning(targetHacknetScript, "home")
     ) {
       if (bnMults.HacknetNodeMoney < 0.4) {
-        ns.print(
-          "⚠️ [KERNEL] Hacknet-Produktion generft! Starte im limitierten Failsafe-Modus.",
-        );
+        logger.warn("Hacknet-Produktion durch BitNode gedrosselt! Starte im Failsafe-Modus.");
         ns.exec(targetHacknetScript, "home", 1, 4, 100, 8, 4);
       } else {
-        ns.print(`⚡ [KERNEL] Starte unlimitiertes Hacknet-Subsystem...`);
+        logger.success("Starte unlimitiertes Hacknet-Subsystem...");
         ns.exec(targetHacknetScript, "home", 1);
       }
     }
@@ -304,6 +301,7 @@ function manageSuites(
     ns.fileExists(scripts.backdoor, "home") &&
     !ns.isRunning(scripts.backdoor, "home")
   ) {
+    logger.info("Neuer anfälliger Server gefunden. Starte Backdoor-Prozess...");
     ns.exec(scripts.backdoor, "home", 1);
   }
 
@@ -323,17 +321,21 @@ function manageSuites(
         ns.stock.purchase4SMarketDataTixApi() &&
         playerMoney >= tixApiThreshold)
     ) {
+      logger.success("Finanzielle Voraussetzungen erfüllt. Starte TIX-Trading-Bot...");
       ns.exec(scripts.trade, "home", 1);
     }
   }
 
   if (ns.fileExists("DarkscapeNavigator.exe", "home") && homeMaxRam >= 256) {
-    if (!ns.isRunning(scripts.replicator, "home"))
+    if (!ns.isRunning(scripts.replicator, "home")) {
+      logger.info("Darkscape-Netzwerk bereit. Starte DNet-Master Replicator...");
       ns.exec(scripts.replicator, "home", 1);
+    }
     if (
       ns.fileExists(scripts.crawler, "home") &&
       !ns.isRunning(scripts.crawler, "home")
     ) {
+      logger.info("Starte DNet-Crawler...");
       ns.exec(scripts.crawler, "home", 1);
     }
   }
@@ -343,7 +345,7 @@ function manageSuites(
   // ======================================================================
   if (ns.sleeve !== undefined && ns.fileExists(scripts.sleeve, "home")) {
     if (!ns.isRunning(scripts.sleeve, "home")) {
-      ns.print("🦾 Overlord: Initialisiere Sleeve-Automatisierung...");
+      logger.info("Sleeve-API detektiert. Initialisiere Klon-Automatisierung...");
       ns.exec(scripts.sleeve, "home", 1);
     }
   }
@@ -453,7 +455,7 @@ async function deployWorker(
 }
 
 // ======================================================================
-// --- 📊 OPERATIONAL OS DASHBOARD (UPGRADED) ---
+// --- 📊 OPERATIONAL OS DASHBOARD ---
 // ======================================================================
 function drawSysKernelDashboard(
   ns: NS,
@@ -467,15 +469,10 @@ function drawSysKernelDashboard(
   const rootCount = allNodes.filter((n) => ns.hasRootAccess(n)).length;
 
   ns.print(`================================================`);
-  ns.print(
-    `👑 BIT-OS SYS-KERNEL v2.1 - Units: ${rootCount}/${allNodes.length}`,
-  );
+  ns.print(`👑 BIT-OS SYS-KERNEL v2.1 - Units: ${rootCount}/${allNodes.length}`);
   ns.print(`================================================`);
-
-  // 🏎️ Cleaner Engine-Mode Output
   ns.print(`ENGINE-MODE : ${isFleetMode ? "DYNAMIC FLEET" : "BASIC LOOP"}`);
 
-  // 📋 Anforderungs-Checkliste: Zeilenanzahl bleibt strukturell stabil
   if (!isFleetMode) {
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
     const homeMaxRam = ns.getServerMaxRam("home");
@@ -486,40 +483,25 @@ function drawSysKernelDashboard(
 
     ns.print(` 📋 UNLOCK REQS FOR DYNAMIC FLEET:`);
     ns.print(`   [${hasFormulas ? "✅" : "❌"}] Formulas.exe`);
-    ns.print(
-      `   [${homeMaxRam >= 256 ? "✅" : "❌"}] Home RAM >= 256GB (${ns.format.ram(homeMaxRam)})`,
-    );
-    ns.print(
-      `   [${hasEligiblePServer ? "✅" : "❌"}] Mind. 1x p-serv >= 64GB`,
-    );
+    ns.print(`   [${homeMaxRam >= 256 ? "✅" : "❌"}] Home RAM >= 256GB (${ns.format.ram(homeMaxRam)})`);
+    ns.print(`   [${hasEligiblePServer ? "✅" : "❌"}] Mind. 1x p-serv >= 64GB`);
   }
 
   ns.print(`STRATEGIE   : ${state.strategy || "MONEY"}`);
 
-  // 🎯 FIX: Statische Zeilenanzahl für die Ziele (verhindert das Springen!)
   if (isFleetMode) {
-    ns.print(
-      `PRIMÄRZIEL  : ${state.batcherTarget || "Warte auf Dispatcher..."} (BATCH)`,
-    );
+    ns.print(`PRIMÄRZIEL  : ${state.batcherTarget || "Warte auf Dispatcher..."} (BATCH)`);
     ns.print(`SEKUNDÄRZIEL: ${bestTarget} (FLEET)`);
   } else {
     ns.print(`ZIEL-SERVER : ${bestTarget}`);
-    ns.print(`BATCH-MODUS : INAKTIV (Basic Loop läuft)`); // Platzhalter, damit die Zeilenanzahl identisch bleibt
+    ns.print(`BATCH-MODUS : INAKTIV (Basic Loop läuft)`);
   }
 
   ns.print("------------------------------------------------");
-  ns.print(
-    `HACK-YIELD  : ${(bnMults.ServerMaxMoney * bnMults.ScriptHackMoneyGain * 100).toFixed(0)}% Effizienz`,
-  );
-  ns.print(
-    `WEAKEN-RATE : ${(bnMults.ServerWeakenRate * 100).toFixed(0)}% Geschwindigkeit`,
-  );
-  ns.print(
-    `GROWTH-RATE : ${((bnMults.ServerGrowthRate ?? 1.0) * 100).toFixed(0)}% Stärke`,
-  );
+  ns.print(`HACK-YIELD  : ${(bnMults.ServerMaxMoney * bnMults.ScriptHackMoneyGain * 100).toFixed(0)}% Effizienz`);
+  ns.print(`WEAKEN-RATE : ${(bnMults.ServerWeakenRate * 100).toFixed(0)}% Geschwindigkeit`);
+  ns.print(`GROWTH-RATE : ${((bnMults.ServerGrowthRate ?? 1.0) * 100).toFixed(0)}% Stärke`);
   ns.print(`FRAKTION    : ${state.targetFaction || "KEINE"}`);
-
-  // 📊 PROGRESS-Zeile bleibt immer sichtbar
   ns.print("------------------------------------------------");
   ns.print(`PROGRESS    : ${state.progressBar || "Initialisiere..."}`);
   ns.print(`================================================`);

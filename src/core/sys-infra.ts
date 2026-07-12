@@ -2,6 +2,7 @@ import { NS, ProgramName } from "@ns";
 import { provisionServer } from "/utils/provision";
 import { loadBnMults, DEFAULT_MULTIPLIERS} from "../lib/state.js";
 import { patchState } from "./state-manager.js";
+import { Logger } from "./logger.js"; // 🌟 Logger importiert
 
 // 🎯 ZENTRALE SOFTWARE-MATRIX
 const TARGET_PROGRAMS = [
@@ -16,10 +17,13 @@ const TARGET_PROGRAMS = [
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
+  
+  // 🌟 Logger-Instanz für das Infrastruktur-Subsystem initialisieren
+  const logger = new Logger(ns, "Infra", "INFO");
+  logger.info("Infrastruktur-Manager erfolgreich gestartet.");
+
   const hasSingularity = ns.singularity !== undefined;
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
-
-  // ns.ui.openTail();
 
   while (true) {
     let freezePservers = false;
@@ -29,31 +33,31 @@ export async function main(ns: NS): Promise<void> {
       const baseReserve = homeCostMultiplier > 2 ? 2_000_000 : 500_000;
       const dynamicReserve = Math.max(baseReserve, ns.getPlayer().money * 0.05);
 
-      // 1. Home Upgrades verwalten
-      handleHomeServerPurchases(ns, dynamicReserve);
-      // 2. Programme kaufen
-      handleProgramPurchases(ns);
+      // 1. Home Upgrades verwalten (Logger übergeben)
+      handleHomeServerPurchases(ns, dynamicReserve, logger);
+      // 2. Programme kaufen (Logger übergeben)
+      handleProgramPurchases(ns, logger);
 
-      // 3. Prüfen, ob wir für das NÄCHSTE Home-Upgrade sparen müssen (Schild-Logik)
+      // 3. Prüfen, ob wir für das NÄCHSTE Home-Upgrade sparen müssen
       freezePservers = checkHomeUpgradeShield(ns);
     }
 
-    // Übergabe des Flags an die p-Server Verwaltung
-    await handleServerPurchases(ns, bnMults, freezePservers);
+    // Übergabe des Flags und Loggers an die p-Server Verwaltung
+    await handleServerPurchases(ns, bnMults, freezePservers, logger);
     printDashboard(ns, freezePservers);
 
     await ns.sleep(10000);
   }
 }
 
-function handleProgramPurchases(ns: NS): void {
+function handleProgramPurchases(ns: NS, logger: Logger): void {
   const sing = ns.singularity;
   const player = ns.getPlayer();
   const currentHacking = ns.getHackingLevel();
 
   if (!ns.hasTorRouter() && player.money >= 200_000 && currentHacking >= 40) {
     if (sing.purchaseTor()) {
-      ns.print("[INFRA] 📡 TOR-Router erfolgreich gekauft.");
+      logger.success("📡 TOR-Router erfolgreich erworben.");
     }
   }
 
@@ -73,16 +77,15 @@ function handleProgramPurchases(ns: NS): void {
         const requiredLevel = programGates[prog] ?? 0;
         if (currentHacking >= requiredLevel) {
           if (sing.purchaseProgram(prog as ProgramName)) {
-            ns.print(`[INFRA] 📡 ${prog} erfolgreich gekauft.`);
+            logger.success(`💾 Software erfolgreich lizenziert: ${prog}`);
           }
         }
-        // Log-Spam entfernt. Status wird stattdessen sauber im Dashboard visualisiert.
       }
     }
   }
 }
 
-function handleHomeServerPurchases(ns: NS, reserveMoney: number): void {
+function handleHomeServerPurchases(ns: NS, reserveMoney: number, logger: Logger): void {
   const sing = ns.singularity;
   let availableMoney = ns.getPlayer().money - reserveMoney;
   if (availableMoney <= 0) return;
@@ -90,7 +93,9 @@ function handleHomeServerPurchases(ns: NS, reserveMoney: number): void {
   const ramCost = sing.getUpgradeHomeRamCost();
   if (ramCost !== Infinity && availableMoney >= ramCost) {
     if (sing.upgradeHomeRam()) {
+      const newRam = ns.getServerMaxRam("home");
       ns.toast(`Home RAM erweitert!`, "success");
+      logger.success(`🏠 Home-RAM Upgrade durchgeführt. Neuer Wert: ${ns.format.ram(newRam)}`);
       availableMoney -= ramCost;
     }
   }
@@ -98,7 +103,9 @@ function handleHomeServerPurchases(ns: NS, reserveMoney: number): void {
   const coreCost = sing.getUpgradeHomeCoresCost();
   if (coreCost !== Infinity && availableMoney >= coreCost) {
     if (sing.upgradeHomeCores()) {
+      const newCores = ns.getServer("home").cpuCores;
       ns.toast(`Home Cores erweitert!`, "success");
+      logger.success(`🔥 Home-Cores Upgrade durchgeführt. Neue Anzahl: ${newCores} Kerne`);
     }
   }
 }
@@ -122,40 +129,56 @@ function checkHomeUpgradeShield(ns: NS): boolean {
     ns.cloud.getServerCost(currentMinRam * 2) -
     ns.cloud.getServerCost(currentMinRam);
 
+  // 🛠️ FIX 1: Überprüfen, ob die Rush-Bedingung erfüllt ist
+  const homeMaxRam = ns.getServerMaxRam("home");
+  const hasFormulas = ns.fileExists("Formulas.exe", "home");
+  const hasEligiblePserv = currentServers.some((s) => ns.getServerMaxRam(s) >= 64);
+  const isRushMode = hasFormulas && homeMaxRam >= 256 && !hasEligiblePserv && currentServers.length > 0;
+
+  if (isRushMode) {
+    patchState(ns, { moneyReserve: 0 });
+    return false;
+  }
+
   const shieldActive =
     currentMoney >= minHomeCost * 0.5 && minHomeCost < nextPservUpgradeCost * 5;
 
   if (shieldActive) {
-    // Das System spart aktiv auf das Home-Upgrade.
-    // Wir blockieren exakt die benötigten Kosten als globale Reserve.
     patchState(ns, { moneyReserve: minHomeCost });
   } else {
-    // Kein Schild aktiv? Dann gibt es keine infrastrukturbedingte Reserve.
     patchState(ns, { moneyReserve: 0 });
   }
 
-  // Schild aktivieren, wenn wir die Hälfte des Geldes haben UND Home nicht 5x teurer ist als ein p-Server-Upgrade
-  return (
-    currentMoney >= minHomeCost * 0.5 && minHomeCost < nextPservUpgradeCost * 5
-  );
+  return shieldActive;
 }
 
 async function handleServerPurchases(
   ns: NS,
   bnMults: any,
   freezePservers: boolean,
+  logger: Logger, // 🌟 Parameter hinzugefügt
 ): Promise<void> {
   const maxServers = ns.cloud.getServerLimit();
   if (maxServers === 0 || bnMults.PurchasedServerLimit === 0) return;
-  if (freezePservers) return; // p-Server weichen dem Home-Sparen
+
+  const currentServers = ns.cloud.getServerNames();
+  const homeMaxRam = ns.getServerMaxRam("home");
+  const hasFormulas = ns.fileExists("Formulas.exe", "home");
+
+  const hasEligiblePserv = currentServers.some(
+    (s) => ns.getServerMaxRam(s) >= 64,
+  );
+  const rushSinglePserv =
+    hasFormulas && homeMaxRam >= 256 && !hasEligiblePserv && currentServers.length > 0;
+
+  if (freezePservers && !rushSinglePserv) return; 
 
   const maxRam = ns.cloud.getRamLimit();
   let currentBudget = ns.getPlayer().money * 0.9;
   if (currentBudget < 50_000) return;
 
-  // Dynamische RAM-Obergrenze basierend auf vorhandener Software
   let allowedMaxRam = 64;
-  if (ns.fileExists("Formulas.exe", "home")) allowedMaxRam = maxRam;
+  if (hasFormulas) allowedMaxRam = maxRam;
   else if (ns.fileExists("SQLInject.exe", "home"))
     allowedMaxRam = Math.min(2048, maxRam);
   else if (ns.fileExists("HTTPWorm.exe", "home")) allowedMaxRam = 512;
@@ -164,17 +187,7 @@ async function handleServerPurchases(
 
   while (actionOccurred) {
     actionOccurred = false;
-    const currentServers = ns.cloud.getServerNames();
-    const homeMaxRam = ns.getServerMaxRam("home");
 
-    // 🚀 BATCHER-RUSH-BEDINGUNG: Home hat 256GB+, aber kein einziger p-serv hat die kritischen 64GB
-    const hasEligiblePserv = currentServers.some(
-      (s) => ns.getServerMaxRam(s) >= 64,
-    );
-    const rushSinglePserv =
-      homeMaxRam >= 256 && !hasEligiblePserv && currentServers.length > 0;
-
-    // Wir ermitteln sowohl den schlechtesten als auch den besten Server
     let minRam = maxRam;
     let worstServer = "";
     let maxPservRam = 0;
@@ -204,9 +217,8 @@ async function handleServerPurchases(
 
     // FALL 1: Noch überhaupt kein Server vorhanden -> Kaufe den ersten
     if (currentServers.length === 0 && affordableNewRam >= 8) {
-      // Direkt mit maximal bezahlbarem RAM (gedeckelt auf 64GB für den Start) initialisieren
       const initialRam = Math.min(affordableNewRam, 64);
-      if (await buyNewServer(ns, initialRam, maxServers)) {
+      if (await buyNewServer(ns, initialRam, maxServers, logger)) {
         currentBudget -= ns.cloud.getServerCost(initialRam);
         actionOccurred = true;
       }
@@ -219,13 +231,12 @@ async function handleServerPurchases(
           ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(maxPservRam);
         if (currentBudget >= upgradeCost) {
           if (ns.cloud.upgradeServer(bestServer, nextRam)) {
+            logger.success(`🚀 RUSH-MODUS: ${bestServer} gezielt auf ${ns.format.ram(nextRam)} aufgerüstet.`);
             currentBudget -= upgradeCost;
             actionOccurred = true;
           }
         }
       }
-      // Wichtig: Im Rush-Modus brechen wir hier ab und kaufen KEINE neuen Server,
-      // um das Budget komplett für das 64GB-Upgrade zu sichern!
     }
     // FALL 3: Normalbetrieb & Server-Slots frei -> Gleichmäßiger Ausbau oder Neukauf
     else if (currentServers.length < maxServers) {
@@ -236,12 +247,13 @@ async function handleServerPurchases(
 
         if (currentBudget >= upgradeCost && nextRam <= allowedMaxRam) {
           if (ns.cloud.upgradeServer(worstServer, nextRam)) {
+            logger.info(`⚡ Expansion: ${worstServer} auf ${ns.format.ram(nextRam)} hochgestuft.`);
             currentBudget -= upgradeCost;
             actionOccurred = true;
           }
         }
       } else if (affordableNewRam >= 8) {
-        if (await buyNewServer(ns, affordableNewRam, maxServers)) {
+        if (await buyNewServer(ns, affordableNewRam, maxServers, logger)) {
           currentBudget -= ns.cloud.getServerCost(affordableNewRam);
           actionOccurred = true;
         }
@@ -255,6 +267,7 @@ async function handleServerPurchases(
           ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(minRam);
         if (currentBudget >= upgradeCost) {
           if (ns.cloud.upgradeServer(worstServer, nextRam)) {
+            logger.info(`⚡ Flotten-Upgrade: Schwachpunkt ${worstServer} auf ${ns.format.ram(nextRam)} angehoben.`);
             currentBudget -= upgradeCost;
             actionOccurred = true;
           }
@@ -263,10 +276,12 @@ async function handleServerPurchases(
     }
   }
 }
+
 async function buyNewServer(
   ns: NS,
   ram: number,
   maxServers: number,
+  logger: Logger, // 🌟 Parameter hinzugefügt
 ): Promise<boolean> {
   const currentServers = ns.cloud.getServerNames();
   let nextFreeNumber = 1;
@@ -276,7 +291,7 @@ async function buyNewServer(
     const suffix = String(nextFreeNumber).padStart(2, "0");
     const potentialName = `p-serv-${suffix}`;
 
-    if (!currentServers.includes(potentialName)) {
+  if (!currentServers.includes(potentialName)) {
       name = potentialName;
       break;
     }
@@ -287,6 +302,7 @@ async function buyNewServer(
 
   if (ns.cloud.purchaseServer(name, ram)) {
     await provisionServer(ns, name);
+    logger.success(`🖥️ Neuen Server ins Cluster integriert: ${name} [RAM: ${ns.format.ram(ram)}]`);
     return true;
   }
   return false;
@@ -310,16 +326,17 @@ function printDashboard(ns: NS, isHomePrioritized: boolean): void {
 
   if (ns.singularity) {
     const pServers = ns.cloud.getServerNames();
+    const hasFormulas = ns.fileExists("Formulas.exe", "home");
     const has64gbPserv = pServers.some((s) => ns.getServerMaxRam(s) >= 64);
-    const isRushMode =
-      homeMaxRam >= 256 && !has64gbPserv && pServers.length > 0;
+    
+    const isRushMode = hasFormulas && homeMaxRam >= 256 && !has64gbPserv && pServers.length > 0;
 
-    if (isHomePrioritized) {
-      ns.print(`   🚦 STRATEGIE: 👑 HOME-PRIORITÄT AKTIV (P-Serv eingefroren)`);
-    } else if (isRushMode) {
+    if (isRushMode) {
       ns.print(
         `   🚦 STRATEGIE: 🚀 BATCHER-RUSH (Fokus auf ein einzelnes 64GB P-Serv)`,
       );
+    } else if (isHomePrioritized) {
+      ns.print(`   🚦 STRATEGIE: 👑 HOME-PRIORITÄT AKTIV (P-Serv eingefroren)`);
     } else {
       ns.print(`   🚦 STRATEGIE: 💸 Normalbetrieb (Netzwerk-Expansion)`);
     }
