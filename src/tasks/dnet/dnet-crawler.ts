@@ -212,11 +212,15 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // Ausbreitung
+ // Ausbreitung (Wurm-Logik)
     for (const hostname of processedServers) {
       if (!ns.serverExists(hostname)) continue;
+
       if (!ns.scriptRunning(scriptName, hostname)) {
-        if (ns.getServerMaxRam(hostname) >= 8) {
+        const isDarkweb = hostname === "darkweb";
+        const minRamRequired = isDarkweb ? 2 : 8; // Darkweb braucht niedrigere Hürde
+
+        if (ns.getServerMaxRam(hostname) >= minRamRequired) {
           const details = ns.dnet.getServerDetails(hostname) as any;
           let sessionReady = details.hasSession;
 
@@ -229,9 +233,9 @@ export async function main(ns: NS): Promise<void> {
           }
 
           if (sessionReady) {
-            logger.info(
-              `🚀 Wurm-Ausbreitung: Infiziere ${hostname} und starte Crawler.`,
-            );
+            logger.info(`🚀 Wurm-Ausbreitung: Infiziere ${hostname} und starte Crawler.`);
+            
+            // Vollständiges Paket inklusive des Loggers packen!
             const filesToCopy = [
               scriptName,
               solverScript,
@@ -239,10 +243,19 @@ export async function main(ns: NS): Promise<void> {
               "/tasks/dnet/dnet-phish.js",
               "/dnet-master-db.json",
               "/utils/progress.js",
+              "/core/logger.js" // Schützt vor dem lautlosen Kompilierungs-Crash
             ];
+
+            // Immer von 'home' oder dem aktuellen Host ziehen, falls vorhanden
             ns.scp(filesToCopy, hostname, currentHost);
+            
+            // Skript auf dem Remote-Server starten
             ns.exec(scriptName, hostname, 1);
           }
+        } else {
+          logger.warn(
+            `⚠️ ${hostname} hat zu wenig RAM (${ns.getServerMaxRam(hostname)}GB) für den Crawler.`,
+          );
         }
       }
     }
