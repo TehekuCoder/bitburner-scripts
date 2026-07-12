@@ -336,22 +336,19 @@ export async function main(ns: NS): Promise<void> {
             taskDesc = "⚡ Synchronize (Sync erhöhen)";
             break;
           case "FACTION":
-            taskDesc = `🤝 Faction: ${(task as any).factionName}`;
-            break;
-          case "FACTION":
             taskDesc = `🤝 Faction: ${(task as any).factionName}`; // 🛠️ factionName
             break;
           case "COMPANY":
             taskDesc = `🏢 Company: ${(task as any).companyName}`; // 🛠️ companyName
             break;
           case "CRIME":
-            taskDesc = `🔫 Crime: ${(task as any).actionName}`; // 🛠️ actionName
+            taskDesc = `🔫 Crime: ${(task as any).crimeType}`; // 🛠️ actionName
             break;
           case "BLADEBURNER":
             taskDesc = "⚔️ Bladeburner Operation";
             break;
           case "CLASS":
-            taskDesc = `🎓 Class: ${(task as any).actionName}`; // 🛠️ actionName
+            taskDesc = `🎓 Class: ${(task as any).classType}`; // 🛠️ actionName
             break;
           default:
             taskDesc = `⚙️ ${task.type}`;
