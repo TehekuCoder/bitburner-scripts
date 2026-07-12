@@ -17,7 +17,7 @@ const MEGACORPS = [
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  
+
   // 🏁 Logger-Instanz für dieses Subsystem initialisieren
   const logger = new Logger(ns, "SLEEVE", "INFO");
   logger.info("🦾 Sleeve-Subsystem aktiv. Kontrolliere Klone...");
@@ -68,6 +68,7 @@ export async function main(ns: NS): Promise<void> {
       const task = ns.sleeve.getTask(i);
       const stats = ns.sleeve.getSleeve(i);
       if (stats.shock === 0 && stats.sync === 100 && task?.type === "FACTION") {
+        // 🛠️ Zurück auf factionName (Korrekt für 3.0)
         const fName = (task as any).factionName as FactionName;
         if (
           factionsNeedingRep.includes(fName) &&
@@ -112,7 +113,9 @@ export async function main(ns: NS): Promise<void> {
           const cheapestAug = purchasableAugs[0];
           if (ns.getPlayer().money > cheapestAug.cost * BUDGET_MULTIPLIER) {
             if (ns.sleeve.purchaseSleeveAug(i, cheapestAug.name)) {
-              logger.success(`🛒 Klon #${i}: Augment erworben -> ${cheapestAug.name}`);
+              logger.success(
+                `🛒 Klon #${i}: Augment erworben -> ${cheapestAug.name}`,
+              );
             }
           }
         }
@@ -125,8 +128,8 @@ export async function main(ns: NS): Promise<void> {
         let targetFaction: FactionName | null = null;
 
         if (currentTask?.type === "FACTION") {
-          const currentFaction = (currentTask as any)
-            .factionName as FactionName;
+          // Typsicher: TypeScript weiß hier bereits, dass 'factionName' existiert
+          const currentFaction = currentTask.factionName as FactionName;
           if (factionsNeedingRep.includes(currentFaction)) {
             targetFaction = currentFaction;
           }
@@ -153,23 +156,23 @@ export async function main(ns: NS): Promise<void> {
         }
 
         if (targetFaction) {
+          // 🛠️ HIER WAR DER FEHLER (Zeile 163): 'factionName' statt 'location' nutzen
           if (
             currentTask?.type === "FACTION" &&
-            (currentTask as any).factionName === targetFaction
+            currentTask.factionName === targetFaction
           ) {
             continue;
           }
 
-          const workTypes = [
-            "hacking",
-            "field",
-            "security",
-          ] as unknown as FactionWorkType[];
+          const workTypes: FactionWorkType[] = ["hacking", "field", "security"];
+
           let assigned = false;
           for (const work of workTypes) {
             if (ns.sleeve.setToFactionWork(i, targetFaction, work)) {
               assigned = true;
-              logger.info(`🤝 Klon #${i} arbeitet nun für Faction '${targetFaction}' (${work}).`);
+              logger.info(
+                `🤝 Klon #${i} arbeitet nun für Faction '${targetFaction}' (${work}).`,
+              );
               if (!occupiedFactions.includes(targetFaction)) {
                 occupiedFactions.push(targetFaction);
               }
@@ -180,8 +183,11 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-// 🥈 PRIO 2: Unternehmens-Dienst & Uni-Push
-      if (p.skills.hacking >= 250) {
+      // 🥈 PRIO 2: Unternehmens-Dienst & Uni-Push
+      if (currentState?.strategy === "PSERV_RUSH") {
+        // 🚀 RUSH-MODUS VETO: Überspringe Uni & Firma, um Geldkosten zu blockieren
+        // und Sleeves direkt in Prio 3 (Crime) für maximales Cash-Sponsoring zu jagen!
+      } else if (p.skills.hacking >= 250) {
         const employedCorps = Object.keys(p.jobs).filter((job) =>
           MEGACORPS.includes(job),
         ) as CompanyName[];
@@ -189,66 +195,88 @@ export async function main(ns: NS): Promise<void> {
         if (employedCorps.length > 0) {
           const targetCorp = employedCorps[i % employedCorps.length];
           const currentCompanyRep = ns.singularity.getCompanyRep(targetCorp);
-          const requiredRep = targetCorp === "Fulcrum Technologies" ? 400_000 : 200_000;
+          const requiredRep =
+            targetCorp === "Fulcrum Technologies" ? 400_000 : 200_000;
 
           if (currentCompanyRep < requiredRep) {
             const targetStatThreshold = 300;
             const targetCity = p.city === "Volhaven" ? "Volhaven" : "Sector-12";
-            const bestUniversity = targetCity === "Volhaven" ? "ZB Institute of Technology" : "Rothman University";
+            const bestUniversity =
+              targetCity === "Volhaven"
+                ? "ZB Institute of Technology"
+                : "Rothman University";
 
             // ✈️ REISE-LOGIK HINZUGEFÜGT
-            if (p.skills.hacking < targetStatThreshold || p.skills.charisma < targetStatThreshold) {
+            if (
+              p.skills.hacking < targetStatThreshold ||
+              p.skills.charisma < targetStatThreshold
+            ) {
               if (stats.city !== targetCity) {
                 if (ns.getPlayer().money >= 200_000) {
                   if (ns.sleeve.travel(i, targetCity)) {
-                    logger.info(`✈️ Klon #${i} reist von ${stats.city} nach ${targetCity} für die Universität.`);
+                    logger.info(
+                      `✈️ Klon #${i} reist von ${stats.city} nach ${targetCity} für die Universität.`,
+                    );
                     stats.city = targetCity;
                   }
                 } else {
-                  logger.warn(`⚠️ Klon #${i}: Geldmangel ($200k benötigt) für Reise nach ${targetCity}. Weiche auf Crime aus.`);
+                  logger.warn(
+                    `⚠️ Klon #${i}: Geldmangel ($200k benötigt) für Reise nach ${targetCity}. Weiche auf Crime aus.`,
+                  );
                 }
               }
             }
 
-            // A) HACKING-Defizit des CHARAKTERS ausgleichen
+            // A) HACKING-Defizit ausgleichen
             if (p.skills.hacking < targetStatThreshold) {
               if (stats.city === targetCity) {
-                // Nur überspringen, wenn Kurs UND Universität exakt übereinstimmen
                 if (
-                  currentTask?.type === "CLASS" && 
-                  (currentTask as any).classType === "Algorithms" &&
+                  currentTask?.type === "CLASS" &&
+                  (currentTask as any).actionName === "Algorithms" && // 🛠️ actionName statt classType
                   (currentTask as any).location === bestUniversity
                 ) {
                   continue;
                 }
-                ns.sleeve.setToUniversityCourse(i, bestUniversity, "Algorithms");
-                logger.info(`🎓 Klon #${i} lernt Algorithms an der ${bestUniversity}.`);
+                ns.sleeve.setToUniversityCourse(
+                  i,
+                  bestUniversity,
+                  "Algorithms",
+                );
+                logger.info(
+                  `🎓 Klon #${i} lernt Algorithms an der ${bestUniversity}.`,
+                );
                 continue;
               }
-              // KEIN unbedingtes continue hier! Wenn die Stadt nicht passt, fällt das Sleeve aus der if-else-Kette
             }
 
-            // B) CHARISMA-Defizit des CHARAKTERS ausgleichen
+            // B) CHARISMA-Defizit ausgleichen
             else if (p.skills.charisma < targetStatThreshold) {
               if (stats.city === targetCity) {
-                // Nur überspringen, wenn Kurs UND Universität exakt übereinstimmen
                 if (
-                  currentTask?.type === "CLASS" && 
-                  (currentTask as any).classType === "Leadership" &&
+                  currentTask?.type === "CLASS" &&
+                  (currentTask as any).actionName === "Leadership" && // 🛠️ actionName statt classType
                   (currentTask as any).location === bestUniversity
                 ) {
                   continue;
                 }
-                ns.sleeve.setToUniversityCourse(i, bestUniversity, "Leadership");
-                logger.info(`🎓 Klon #${i} lernt Leadership an der ${bestUniversity}.`);
+                ns.sleeve.setToUniversityCourse(
+                  i,
+                  bestUniversity,
+                  "Leadership",
+                );
+                logger.info(
+                  `🎓 Klon #${i} lernt Leadership an der ${bestUniversity}.`,
+                );
                 continue;
               }
-              // KEIN unbedingtes continue hier!
             }
 
             // C) Charakter-Stats sind bereit -> Sleeve farmt Firmen-Ruf
             else {
-              if (currentTask?.type === "COMPANY" && (currentTask as any).companyName === targetCorp) {
+              if (
+                currentTask?.type === "COMPANY" &&
+                (currentTask as any).companyName === targetCorp
+              ) {
                 continue;
               }
               if (ns.sleeve.setToCompanyWork(i, targetCorp)) {
@@ -260,23 +288,35 @@ export async function main(ns: NS): Promise<void> {
         }
       }
       // 🥉 PRIO 3: Fallback-Kriminalität
-      const targetCrime = ns.heart.break() > -22 || p.numPeopleKilled < 30 ? "Homicide" : "Mug";
+      const targetCrime =
+        ns.heart.break() > -22 || p.numPeopleKilled < 30 ? "Homicide" : "Mug";
 
-      if (currentTask?.type === "CRIME" && (currentTask as any).crimeType === targetCrime) {
+      if (
+        currentTask?.type === "CRIME" &&
+        (currentTask as any).actionName === targetCrime // 🛠️ actionName statt crimeType
+      ) {
         continue;
       }
 
       ns.sleeve.setToCommitCrime(i, targetCrime);
-      logger.warn(`🔫 Klon #${i} wechselt auf Fallback-Kriminalität: ${targetCrime}`);
+      logger.warn(
+        `🔫 Klon #${i} wechselt auf Fallback-Kriminalität: ${targetCrime}`,
+      );
     }
 
     // ======================================================================
     // 4. 📊 MONITOR-DASHBOARD (LOG-AUSGABE)
     // ======================================================================
     ns.clearLog();
-    ns.print("╔════════╤═════════╤═════════╤════════════════════════════════════════════════╗");
-    ns.print("║ Sleeve │ Schock  │ Sync    │ Aktuelle Beschäftigung                         ║");
-    ns.print("╠════════╪═════════╪═════════╪════════════════════════════════════════════════╣");
+    ns.print(
+      "╔════════╤═════════╤═════════╤════════════════════════════════════════════════╗",
+    );
+    ns.print(
+      "║ Sleeve │ Schock  │ Sync    │ Aktuelle Beschäftigung                         ║",
+    );
+    ns.print(
+      "╠════════╪═════════╪═════════╪════════════════════════════════════════════════╣",
+    );
 
     for (let i = 0; i < numSleeves; i++) {
       const stats = ns.sleeve.getSleeve(i);
@@ -289,21 +329,41 @@ export async function main(ns: NS): Promise<void> {
       let taskDesc = "IDLE";
       if (task) {
         switch (task.type) {
-          case "RECOVERY":     taskDesc = "💔 Recovery (Schock abbauen)"; break;
-          case "SYNCHRO":      taskDesc = "⚡ Synchronize (Sync erhöhen)"; break;
-          case "FACTION":      taskDesc = `🤝 Faction: ${(task as any).factionName}`; break;
-          case "COMPANY":      taskDesc = `🏢 Company: ${(task as any).companyName}`; break;
-          case "CRIME":        taskDesc = `🔫 Crime: ${(task as any).crimeType}`; break;
-          case "BLADEBURNER":  taskDesc = "⚔️ Bladeburner Operation"; break;
-          case "CLASS":        taskDesc = `🎓 Class: ${(task as any).classType}`; break;
-          default:             taskDesc = `⚙️ ${task.type}`;
+          case "RECOVERY":
+            taskDesc = "💔 Recovery (Schock abbauen)";
+            break;
+          case "SYNCHRO":
+            taskDesc = "⚡ Synchronize (Sync erhöhen)";
+            break;
+          case "FACTION":
+            taskDesc = `🤝 Faction: ${(task as any).factionName}`;
+            break;
+          case "FACTION":
+            taskDesc = `🤝 Faction: ${(task as any).factionName}`; // 🛠️ factionName
+            break;
+          case "COMPANY":
+            taskDesc = `🏢 Company: ${(task as any).companyName}`; // 🛠️ companyName
+            break;
+          case "CRIME":
+            taskDesc = `🔫 Crime: ${(task as any).actionName}`; // 🛠️ actionName
+            break;
+          case "BLADEBURNER":
+            taskDesc = "⚔️ Bladeburner Operation";
+            break;
+          case "CLASS":
+            taskDesc = `🎓 Class: ${(task as any).actionName}`; // 🛠️ actionName
+            break;
+          default:
+            taskDesc = `⚙️ ${task.type}`;
         }
       }
 
       const taskStr = taskDesc.padEnd(46);
       ns.print(`║ ${idStr} │ ${shockStr} │ ${syncStr} │ ${taskStr} ║`);
     }
-    ns.print("╚════════╧═════════╧═════════╧════════════════════════════════════════════════╝");
+    ns.print(
+      "╚════════╧═════════╧═════════╧════════════════════════════════════════════════╝",
+    );
 
     // 📜 Dynamischer Tail-View: Die letzten 6 Zeilen direkt aus der Logdatei lesen
     try {
@@ -311,8 +371,10 @@ export async function main(ns: NS): Promise<void> {
       if (logFileContent) {
         const lines = logFileContent.split("\n");
         // Nur Einträge filtern, die von diesem Subsystem [SLEEVE] stammen
-        const sleeveLines = lines.filter(line => line.includes("[SLEEVE]")).slice(-6);
-        
+        const sleeveLines = lines
+          .filter((line) => line.includes("[SLEEVE]"))
+          .slice(-6);
+
         if (sleeveLines.length > 0) {
           ns.print("\n📜 Aktuelle System-Ereignisse (Log):");
           for (const line of sleeveLines) {

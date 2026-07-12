@@ -329,7 +329,7 @@ function printDashboard(ns: NS, isHomePrioritized: boolean): void {
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
     const has64gbPserv = pServers.some((s) => ns.getServerMaxRam(s) >= 64);
     
-    const isRushMode = hasFormulas && homeMaxRam >= 256 && !has64gbPserv && pServers.length > 0;
+    const isRushMode = hasFormulas && homeMaxRam >= 256 && !has64gbPserv;
 
     if (isRushMode) {
       ns.print(

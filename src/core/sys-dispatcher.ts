@@ -55,7 +55,11 @@ const HACKING_FACTIONS: FactionConfig[] = [
   { name: "OmniTek Incorporated" as FactionName, minStat: 0, priority: 22 },
   { name: "Bachman & Associates" as FactionName, minStat: 0, priority: 23 },
   { name: "Clarke Incorporated" as FactionName, minStat: 0, priority: 24 },
-  { name: "Fulcrum Secret Technologies" as FactionName, minStat: 0, priority: 25 },
+  {
+    name: "Fulcrum Secret Technologies" as FactionName,
+    minStat: 0,
+    priority: 25,
+  },
   { name: "Silhouette" as FactionName, minStat: 0, priority: 26 },
   { name: "The Dark Army" as FactionName, minStat: 300, priority: 27 },
   { name: "Speakers for the Dead" as FactionName, minStat: 300, priority: 28 },
@@ -71,16 +75,21 @@ export async function main(ns: NS): Promise<void> {
   // 🌟 Logger für das Core-Subsystem initialisieren
   const logger = new Logger(ns, "Dispatcher", "INFO");
 
-  const getFreeRam = () => ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+  const getFreeRam = () =>
+    ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
   const hasSingularity = ns.singularity !== undefined;
 
   if (!hasSingularity) {
     logger.error("Kritischer Systemfehler: Singularity-API (SF4) fehlt!");
-    ns.tprint("🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!");
+    ns.tprint(
+      "🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!",
+    );
     return;
   }
 
-  logger.info("Initialisiere Netzwerk-Multiplikatoren und Reputations-Cache...");
+  logger.info(
+    "Initialisiere Netzwerk-Multiplikatoren und Reputations-Cache...",
+  );
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
 
   buildReputationCache(ns);
@@ -156,10 +165,16 @@ export async function main(ns: NS): Promise<void> {
     let targetCompany: CompanyName | undefined = undefined;
     let targetStat = 0;
 
+    // --- 1. DYNAMISCHE STRATEGIE-MATRIX ---
+    const isRushActive =
+      hasFormulas && homeMaxRam >= 256 && eligiblePServers.length === 0;
+
     if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
     } else if (homeMaxRam < 256 || (crimeMoneyMult > 5 && !canRunBatcher)) {
       mode = "CRIME";
+    } else if (isRushActive) {
+      mode = "PSERV_RUSH"; // 🚀 VETO: Stoppt Corps & Uni, fokussiert Cash für den Batcher!
     } else if (factionToWorkFor && isReadyForFactionGrind) {
       mode = "REP";
     } else {
@@ -257,20 +272,24 @@ export async function main(ns: NS): Promise<void> {
       lastFallbackUpdate = Date.now();
     }
 
-// --- COOLDOWN ENGINE (SCHONFRIST) ---
+    // --- COOLDOWN ENGINE (SCHONFRIST) ---
     const previousStrategy = currentState?.strategy || "MONEY";
     const now = Date.now();
 
     if (mode !== previousStrategy) {
-      // 🛠️ FIX: CORP und TRAIN in die Hysterese-Schutzgruppe aufgenommen!
+      // Im COOLDOWN ENGINE Block:
       const isOscillating =
-        ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(mode) &&
-        ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(previousStrategy);
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(
+          mode,
+        ) &&
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(
+          previousStrategy,
+        );
 
       if (isOscillating && now - modeLockTime < STRATEGY_COOLDOWN) {
         // Halt stop! Die Schonfrist läuft noch. Strategiewechsel blockieren.
         mode = previousStrategy as BotStrategy;
-        
+
         // Da wir die alte Strategie erzwingen, müssen wir auch die Ziel-Variablen restaurieren
         if (mode === "REP") targetFaction = currentState?.targetFaction || null;
         if (mode === "CORP") targetCompany = currentState?.targetCompany;
@@ -305,7 +324,9 @@ export async function main(ns: NS): Promise<void> {
 
     // 🌟 STRATEGIE-WECHSEL PROTOKOLLIEREN
     if (mode !== lastMode) {
-      logger.info(`🔄 Strategiewechsel initiiert: ${lastMode || "START"} ➔ ${mode} ${label ? `(${label})` : ""}`);
+      logger.info(
+        `🔄 Strategiewechsel initiiert: ${lastMode || "START"} ➔ ${mode} ${label ? `(${label})` : ""}`,
+      );
       lastValue = currentVal;
       lastTime = now;
       emaRate = 0;
@@ -357,13 +378,19 @@ export async function main(ns: NS): Promise<void> {
         crimeMoneyMult > 5
           ? "🥷 BN-Synergie: Dauerhafter Crime Loop aktiv (Mörderischer Profit)"
           : "🥷 Mid-Game-Crime Loop für stabiles Einkommen";
+    } else if (mode === "PSERV_RUSH") {
+      const pservCost = ns.cloud.getServerCost(64);
+      const rushProgress = ((playerMoney / pservCost) * 100).toFixed(1);
+      generatedBar = `🚀 BATCHER RUSH active | Cash: ${ns.format.number(playerMoney, 1)} / ${ns.format.number(pservCost, 0)} $ (${rushProgress}%) | Warte auf ersten 64GB Server`;
     } else if (mode === "KILLS") {
       generatedBar = `💀 Eliminierungs-Aufträge active (${currentVal}/${targetVal} Kills)`;
     } else if (mode === "MONEY" && !canRunBatcher) {
       generatedBar = `🏗️ Aufbau-Phase: Generiere Basis-Geld auf ${cachedFallbackTarget} (Warte auf P-Server)`;
     } else {
       if (factionToWorkFor) {
-        const progressPct = ((playerMoney / effectiveThreshold) * 100).toFixed(1);
+        const progressPct = ((playerMoney / effectiveThreshold) * 100).toFixed(
+          1,
+        );
         generatedBar = `💰 Spare für ${factionToWorkFor}: ${ns.format.number(playerMoney, 1)} / ${ns.format.number(effectiveThreshold, 0)} $ (${progressPct}%)`;
       } else {
         generatedBar = "💰 Maximiere Profit (Batcher)";
@@ -393,7 +420,9 @@ export async function main(ns: NS): Promise<void> {
 
     if (!canRunBatcher && ns.isRunning("utils/fill-ram.js", "home")) {
       ns.scriptKill("utils/fill-ram.js", "home");
-      logger.info("Batcher nicht ausführbar. 'fill-ram.js' vorsorglich beendet.");
+      logger.info(
+        "Batcher nicht ausführbar. 'fill-ram.js' vorsorglich beendet.",
+      );
     }
 
     saveState(ns, {
@@ -455,7 +484,9 @@ export async function main(ns: NS): Promise<void> {
         getFreeRam() > 15
       ) {
         ns.run("core/sys-batcher.js", 1);
-        logger.success("🔥 System-Voraussetzungen erfüllt: 'sys-batcher.js' gestartet.");
+        logger.success(
+          "🔥 System-Voraussetzungen erfüllt: 'sys-batcher.js' gestartet.",
+        );
       }
       for (const server of pServers) {
         ns.scriptKill(workerScript, server);
@@ -536,7 +567,9 @@ export async function main(ns: NS): Promise<void> {
     // 🛑 STICKY-ACTION-STOPP:
     if (mode === "MONEY" && !factionToWorkFor && canRunBatcher) {
       if (ns.singularity.getCurrentWork()) {
-        logger.info("Batcher läuft ohne offene Sparziele. Manuelle Arbeit gestoppt.");
+        logger.info(
+          "Batcher läuft ohne offene Sparziele. Manuelle Arbeit gestoppt.",
+        );
         ns.singularity.stopAction();
       }
     }
@@ -600,6 +633,7 @@ function manageMicroservices(
     CRIME: "tasks/crime.js",
     XP_SPRINT: "tasks/crime.js",
     KILLS: "tasks/crime.js",
+    PSERV_RUSH: "tasks/crime.js", // 🚀 Nutzt kostenlose Kriminalität für schnelles Cash
   };
 
   let targetScript = modeToScript[currentMode];
@@ -625,9 +659,13 @@ function manageMicroservices(
 
     if (freeRam >= requiredRam) {
       ns.run(targetScript, 1);
-      logger.success(`▶️ Neuen Microservice gestartet: ${targetScript} für Modus [${currentMode}]`);
+      logger.success(
+        `▶️ Neuen Microservice gestartet: ${targetScript} für Modus [${currentMode}]`,
+      );
     } else {
-      logger.warn(`RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB.`);
+      logger.warn(
+        `RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB.`,
+      );
     }
   }
 }
@@ -700,7 +738,9 @@ function applyToAllMegacorps(ns: NS, p: Player, logger: Logger): void {
   for (const corpName of Object.values(MEGACORPS)) {
     if (!p.jobs[corpName]) {
       if (ns.singularity.applyToCompany(corpName, "Software")) {
-        logger.success(`💼 Bewerbung erfolgreich: Anstellung bei '${corpName}' erhalten.`);
+        logger.success(
+          `💼 Bewerbung erfolgreich: Anstellung bei '${corpName}' erhalten.`,
+        );
       }
     }
   }

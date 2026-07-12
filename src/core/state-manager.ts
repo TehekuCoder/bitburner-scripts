@@ -9,8 +9,9 @@ export type BotStrategy =
   | "CORP"
   | "TRAIN"
   | "KILLS"
-  | "CRIME";
-
+  | "CRIME"
+  | "PSERV_RUSH"; // 🚀 Strategischer Rush-Modus für den ersten Batcher-Server
+  
 export interface BotState {
   strategy: BotStrategy;
   targetFaction?: FactionName;
