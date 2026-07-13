@@ -4,7 +4,7 @@ export async function main(ns: NS): Promise<void> {
   const target = ns.args[0] as string;
 
   if (!target || !ns.serverExists(target)) {
-    ns.tprint(`ERROR: Ungültiges Ziel [${target}]. Nutzung: run work.ts [target]`);
+    ns.print(`ERROR: Ungültiges Ziel [${target}]. Nutzung: run work.ts [target]`);
     return;
   }
 
@@ -14,7 +14,7 @@ export async function main(ns: NS): Promise<void> {
   const minSecurity = ns.getServerMinSecurityLevel(target);
 
   if (maxMoney === 0) {
-    ns.tprint(`ABORT: ${target} hat kein Geld und kann nicht gehackt werden.`);
+    ns.print(`ABORT: ${target} hat kein Geld und kann nicht gehackt werden.`);
     return;
   }
 

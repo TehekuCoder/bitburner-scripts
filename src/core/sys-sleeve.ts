@@ -1,5 +1,5 @@
 import { NS, FactionName, FactionWorkType, CompanyName, GymType } from "@ns";
-import { loadState } from "./state-manager.js";
+import { loadState } from "./state-manager.js"; // 🛠️ Zurück auf reinen Lesezugriff
 import { Logger } from "./logger.js";
 
 const MEGACORPS = [
@@ -15,13 +15,13 @@ const MEGACORPS = [
   "Fulcrum Technologies",
 ];
 
-// 🛠️ Auslagerung globaler Mappings zur Vermeidung von Redundanz
+// 🛠️ Typen-Korrektur für v3.0: GymType erwartet großgeschriebene Werte!
 const COMBAT_KEYS = ["strength", "defense", "dexterity", "agility"] as const;
-const GYM_STAT_MAP: Record<string, string> = {
-  strength: "Strength",
-  defense: "Defense",
-  dexterity: "Dexterity",
-  agility: "Agility",
+const GYM_STAT_MAP: Record<string, GymType> = {
+  str: "str",
+  def: "def",
+  dex: "dex",
+  agi: "agi",
 };
 
 export async function main(ns: NS): Promise<void> {
@@ -65,8 +65,8 @@ export async function main(ns: NS): Promise<void> {
       for (const faction of p.factions) {
         let maxRepNeeded = 0;
         try {
-          const ownedAugs = ns.singularity.getAugmentationsFromFaction(faction);
-          for (const aug of ownedAugs) {
+          const factionAugs = ns.singularity.getAugmentationsFromFaction(faction);
+          for (const aug of factionAugs) {
             if (aug !== "NeuroFlux Governor" && !ownedAugs.includes(aug)) {
               const req = ns.singularity.getAugmentationRepReq(aug);
               if (req > maxRepNeeded) maxRepNeeded = req;
@@ -192,7 +192,7 @@ export async function main(ns: NS): Promise<void> {
             currentTask?.classType !== targetGymStat ||
             currentTask?.location !== gymName
           ) {
-            ns.sleeve.setToGymWorkout(i, gymName, targetGymStat as GymType);
+            ns.sleeve.setToGymWorkout(i, gymName, targetGymStat);
             const msg = `🏋️ Klon #${i}: Vorab-Bootcamp aktiv! Trainiert ${targetGymStat} im ${gymName}.`;
             logger.info(msg);
             addLocalLog(msg);
@@ -240,7 +240,7 @@ export async function main(ns: NS): Promise<void> {
               currentTask?.classType !== targetGymStat ||
               currentTask?.location !== gymName
             ) {
-              ns.sleeve.setToGymWorkout(i, gymName, targetGymStat as GymType);
+              ns.sleeve.setToGymWorkout(i, gymName, targetGymStat);
               const msg = `🏋️ Klon #${i}: Live-Bootcamp für ${targetFaction} aktiv -> Trainiert ${targetGymStat} (Ziel: ${minRequiredStat}).`;
               logger.info(msg);
               addLocalLog(msg);
@@ -249,10 +249,10 @@ export async function main(ns: NS): Promise<void> {
           }
 
           // Ab zur Fraktionsarbeit
+          // 🛠️ Typen-Korrektur für v3.0: FactionWorkType verlangt wieder die kleingeschriebenen Keys!
           const workTypes: FactionWorkType[] = ["hacking", "field", "security"];
           let assigned = false;
           for (const work of workTypes) {
-            // 💡 NEU: Hier prüfen wir, ob genau dieser Task bereits läuft, um Log-Spam zu verhindern!
             if (
               currentTask?.type === "FACTION" &&
               currentTask.factionName === targetFaction &&
@@ -278,9 +278,9 @@ export async function main(ns: NS): Promise<void> {
       }
 
       // 🥈 PRIO 2: Unternehmens-Dienst & Uni-Push
-      if (currentState?.strategy === "PSERV_RUSH") {
-        // Rush-Modus aktiv
-      } else if (p.skills.hacking >= 250) {
+      const isRushActive = currentState?.strategy === "PSERV_RUSH";
+
+      if (!isRushActive && p.skills.hacking >= 250) {
         const employedCorps = Object.keys(p.jobs).filter((job) =>
           MEGACORPS.includes(job),
         ) as CompanyName[];
@@ -293,7 +293,7 @@ export async function main(ns: NS): Promise<void> {
 
           if (currentCompanyRep < requiredRep) {
             const targetStatThreshold = 300;
-            const targetCity = p.city === "Volhaven" ? "Volhaven" : "Sector-12";
+            const targetCity = p.money >= 200_000 ? "Volhaven" : "Sector-12";
             const bestUniversity =
               targetCity === "Volhaven"
                 ? "ZB Institute of Technology"
@@ -387,7 +387,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // ======================================================================
-    // 4. 📊 MONITOR-DASHBOARD
+    // 4. 📊 SLEEVE-DIREKT-DASHBOARD (Lokales Terminal-Monitoring)
     // ======================================================================
     ns.clearLog();
     ns.print(
@@ -400,7 +400,6 @@ export async function main(ns: NS): Promise<void> {
       "╠════════╪═════════╪═════════╪════════════════════════════════════════════════╣",
     );
 
-    // 1. Zuerst alle Zeilen für die Klone in die Tabelle drucken
     for (let i = 0; i < numSleeves; i++) {
       const stats = ns.sleeve.getSleeve(i);
       const task = ns.sleeve.getTask(i);
@@ -431,7 +430,7 @@ export async function main(ns: NS): Promise<void> {
             taskDesc = "⚔️ Bladeburner Operation";
             break;
           case "CLASS":
-            taskDesc = `🎓 Class: ${task.classType} ${task.location}`;
+            taskDesc = `🎓 Class: ${task.classType} @ ${task.location}`;
             break;
           default:
             taskDesc = `⚙️ ${task.type}`;
@@ -442,12 +441,10 @@ export async function main(ns: NS): Promise<void> {
       ns.print(`║ ${idStr} │ ${shockStr} │ ${syncStr} │ ${taskStr} ║`);
     }
 
-    // 2. Dann die Tabelle sauber schließen
     ns.print(
       "╚════════╧═════════╧═════════╧════════════════════════════════════════════════╝",
     );
 
-    // 3. Jetzt die unschuldigen Log-Nachrichten darunter setzen
     if (localLogBuffer.length > 0) {
       ns.print("\n Letzte Aktionen:");
       for (const logLine of localLogBuffer) {
@@ -455,7 +452,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 4. Und nur EINMAL am Ende schlafen
     await ns.sleep(2000);
   }
 }

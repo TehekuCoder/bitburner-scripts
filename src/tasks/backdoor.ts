@@ -52,7 +52,7 @@ export async function main(ns: NS): Promise<void> {
 
       if (myHackLevel >= reqHackingSkill) {
         targetsFound++;
-        ns.tprint(`[AUTO-BACKDOOR] Starte Infiltration von: ${target}`);
+        ns.print(`[AUTO-BACKDOOR] Starte Infiltration von: ${target}`);
 
         const path: string[] | null = findPathTo(ns, target);
         if (path) {
@@ -64,9 +64,9 @@ export async function main(ns: NS): Promise<void> {
 
             ns.print(`Installiere Backdoor auf ${target}...`);
             await ns.singularity.installBackdoor();
-            ns.tprint(`[AUTO-BACKDOOR] ✅ ${target} erfolgreich infiltriert.`);
+            ns.print(`[AUTO-BACKDOOR] ✅ ${target} erfolgreich infiltriert.`);
           } catch (e: unknown) {
-            ns.tprint(`[AUTO-BACKDOOR] ❌ Fehler bei ${target}: ${String(e)}`);
+            ns.print(`[AUTO-BACKDOOR] ❌ Fehler bei ${target}: ${String(e)}`);
           } finally {
             // Absolute Sicherheit: Unter allen Umständen zurück nach Hause springen
             ns.singularity.connect("home");

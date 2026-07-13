@@ -19,6 +19,7 @@ interface ScriptList {
   grow: string;
   weaken: string;
   sleeve: string;
+  dashboard: string; // 🆕 Dashboard im Interface
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -37,7 +38,8 @@ export async function main(ns: NS): Promise<void> {
     hack: "tasks/hack.js",
     grow: "tasks/grow.js",
     weaken: "tasks/weaken.js",
-    sleeve: "core/sys-sleeve.js"
+    sleeve: "core/sys-sleeve.js",
+    dashboard: "core/sys-dashboard.js" // 🆕 Pfad anpassen falls nötig
   };
 
   ns.disableLog("ALL");
@@ -58,6 +60,12 @@ export async function main(ns: NS): Promise<void> {
 
   if (!ns.scriptRunning("sys-hud.js", "home")) {
     ns.exec("sys-hud.js", "home", 1);
+  }
+
+  // 🆕 Start des neuen UI-Dashboards falls nicht aktiv
+  if (!ns.scriptRunning(scripts.dashboard, "home")) {
+    logger.info("Starte zentrales System-Dashboard...");
+    ns.exec(scripts.dashboard, "home", 1);
   }
 
   // Caching-Variablen für Performance-Optimierung
@@ -159,7 +167,6 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // --- 🧹 CLEANUP & 📡 WORKER DEPLOYMENT ---
-    // PERFORMANCE-FIX: Worker-Zuweisung nur triggern, wenn es nötig ist!
     if (!isDispatcherRunning) {
       const targetChanged = bestTarget !== lastDeployedTarget;
       const strategyChanged = activeStrategy !== lastDeployedStrategy;
@@ -186,19 +193,17 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // --- 📊 OPERATIONAL OS DASHBOARD ---
+    // --- 📡 EXPORTIEREN DER KERNEL-DATEN AN DAS PORT-SYSTEM ---
     const pServers = ns.cloud.getServerNames();
-    const isFleetReady = homeMax >= 256 && pServers.some((s) => ns.getServerMaxRam(s) >= 64);
-    const freshStateForDashboard = loadState(ns);
+    const isFleetMode = homeMax >= 256 && pServers.some((s) => ns.getServerMaxRam(s) >= 64);
 
-    drawSysKernelDashboard(
-      ns,
-      freshStateForDashboard || localStateSnapshot,
-      bestTarget,
-      allNodes,
-      isFleetReady,
-      bnMults,
-    );
+    // Der Kernel schickt seine Daten atomar an den State. Das Dashboard liest sie dort aus.
+    patchState(ns, {
+      kernelTarget: bestTarget,
+      rootCount: currentRootCount,
+      totalNodes: allNodes.length,
+      isFleetMode: isFleetMode
+    });
 
     await ns.sleep(2000);
   }
@@ -251,7 +256,6 @@ function manageSuites(
     ns.exec(scripts.backdoor, "home", 1);
   }
 
-  // Überprüfung der Stock-API-Verfügbarkeit zur Vermeidung von Abstürzen in Nicht-Stock-BitNodes
   if (ns.fileExists(scripts.trade, "home") && !ns.isRunning(scripts.trade, "home")) {
     try {
       const hasTix = ns.stock.hasTixApiAccess();
@@ -264,7 +268,7 @@ function manageSuites(
         ns.exec(scripts.trade, "home", 1);
       }
     } catch {
-      // Stilles Abfangen, falls ns.stock im aktuellen BitNode komplett gesperrt ist
+      // Stilles Abfangen
     }
   }
 
@@ -287,9 +291,6 @@ function manageSuites(
   }
 }
 
-// ======================================================================
-// --- 🎯 TACTICAL MATHEMATISCHES RE-WEIGHTING ---
-// ======================================================================
 function findBestTarget(ns: NS, nodes: string[], player: Player, bnMults: any): string {
   let best = "n00dles";
   let maxWeight = 0;
@@ -321,7 +322,7 @@ function findBestTarget(ns: NS, nodes: string[], player: Player, bnMults: any): 
       continue;
     }
 
-    if (cycleTime > 5 * 60 * 1000) continue; // 5 Minuten Limit
+    if (cycleTime > 5 * 60 * 1000) continue;
 
     const weight = (maxMoney / (cycleTime / 1000)) * (reqSkill / 100) * growthMult;
 
@@ -368,55 +369,4 @@ async function deployWorker(
   if (threads > 0) {
     ns.exec(scriptFilename, targetNode, threads, hackTarget);
   }
-}
-
-// ======================================================================
-// --- 📊 OPERATIONAL OS DASHBOARD ---
-// ======================================================================
-function drawSysKernelDashboard(
-  ns: NS,
-  state: BotState,
-  bestTarget: string,
-  allNodes: string[],
-  isFleetMode: boolean,
-  bnMults: any,
-): void {
-  ns.clearLog();
-  const rootCount = allNodes.filter((n) => ns.hasRootAccess(n)).length;
-
-  ns.print(`================================================`);
-  ns.print(`👑 BIT-OS SYS-KERNEL v2.2 - Units: ${rootCount}/${allNodes.length}`);
-  ns.print(`================================================`);
-  ns.print(`ENGINE-MODE : ${isFleetMode ? "DYNAMIC FLEET" : "BASIC LOOP"}`);
-
-  if (!isFleetMode) {
-    const hasFormulas = ns.fileExists("Formulas.exe", "home");
-    const homeMaxRam = ns.getServerMaxRam("home");
-    const pServers = ns.cloud.getServerNames();
-    const hasEligiblePServer = pServers.some((s) => ns.getServerMaxRam(s) >= 64);
-
-    ns.print(` 📋 UNLOCK REQS FOR DYNAMIC FLEET:`);
-    ns.print(`   [${hasFormulas ? "✅" : "❌"}] Formulas.exe`);
-    ns.print(`   [${homeMaxRam >= 256 ? "✅" : "❌"}] Home RAM >= 256GB (${ns.format.ram(homeMaxRam)})`);
-    ns.print(`   [${hasEligiblePServer ? "✅" : "❌"}] Mind. 1x p-serv >= 64GB`);
-  }
-
-  ns.print(`STRATEGIE   : ${state.strategy || "MONEY"}`);
-
-  if (isFleetMode) {
-    ns.print(`PRIMÄRZIEL  : ${state.batcherTarget || "Warte auf Dispatcher..."} (BATCH)`);
-    ns.print(`SEKUNDÄRZIEL: ${bestTarget} (FLEET)`);
-  } else {
-    ns.print(`ZIEL-SERVER : ${bestTarget}`);
-    ns.print(`BATCH-MODUS : INAKTIV (Basic Loop läuft)`);
-  }
-
-  ns.print("------------------------------------------------");
-  ns.print(`HACK-YIELD  : ${(bnMults.ServerMaxMoney * bnMults.ScriptHackMoneyGain * 100).toFixed(0)}% Effizienz`);
-  ns.print(`WEAKEN-RATE : ${(bnMults.ServerWeakenRate * 100).toFixed(0)}% Geschwindigkeit`);
-  ns.print(`GROWTH-RATE : ${((bnMults.ServerGrowthRate ?? 1.0) * 100).toFixed(0)}% Stärke`);
-  ns.print(`FRAKTION    : ${state.targetFaction || "KEINE"}`);
-  ns.print("------------------------------------------------");
-  ns.print(`PROGRESS    : ${state.progressBar || "Initialisiere..."}`);
-  ns.print(`================================================`);
 }

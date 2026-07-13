@@ -4,7 +4,7 @@ export async function main(ns: NS): Promise<void> {
   const target = ns.args[0] as string || "joesguns";
 
   if (!target) {
-    ns.tprint("❌ Fehler: Kein Ziel-Server angegeben!");
+    ns.print("❌ Fehler: Kein Ziel-Server angegeben!");
     return;
   }
 

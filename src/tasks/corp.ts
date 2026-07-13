@@ -37,7 +37,7 @@ export async function main(ns: NS): Promise<void> {
     const currentJobTitle = playerJobs[targetCompany] || "Bewerber";
 
     if (isPromoted) {
-      ns.tprint(
+      ns.print(
         `🎉 [PROMOTION] Beförderung bei ${targetCompany}! Neuer Job: ${currentJobTitle}`,
       );
     }
