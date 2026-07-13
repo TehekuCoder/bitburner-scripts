@@ -65,8 +65,8 @@ export async function main(ns: NS): Promise<void> {
       for (const faction of p.factions) {
         let maxRepNeeded = 0;
         try {
-          const augs = ns.singularity.getAugmentationsFromFaction(faction);
-          for (const aug of augs) {
+          const ownedAugs = ns.singularity.getAugmentationsFromFaction(faction);
+          for (const aug of ownedAugs) {
             if (aug !== "NeuroFlux Governor" && !ownedAugs.includes(aug)) {
               const req = ns.singularity.getAugmentationRepReq(aug);
               if (req > maxRepNeeded) maxRepNeeded = req;
@@ -252,6 +252,16 @@ export async function main(ns: NS): Promise<void> {
           const workTypes: FactionWorkType[] = ["hacking", "field", "security"];
           let assigned = false;
           for (const work of workTypes) {
+            // 💡 NEU: Hier prüfen wir, ob genau dieser Task bereits läuft, um Log-Spam zu verhindern!
+            if (
+              currentTask?.type === "FACTION" &&
+              currentTask.factionName === targetFaction &&
+              (currentTask as any).factionWorkType === work
+            ) {
+              assigned = true;
+              break;
+            }
+
             if (ns.sleeve.setToFactionWork(i, targetFaction, work)) {
               assigned = true;
               const msg = `🤝 Klon #${i} arbeitet nun für Faction '${targetFaction}' (${work}).`;

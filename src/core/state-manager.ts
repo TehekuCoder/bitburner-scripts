@@ -1,7 +1,6 @@
 import { NS, FactionName, CompanyName, JobField } from "@ns";
-import { Logger } from "./logger.js"; // 🌟 Zentrales Logging-System integriert
+import { Logger } from "./logger.js";
 
-// Strikte Definition aller erlaubten System-Strategien – PURE_HACK entfernt!
 export type BotStrategy =
   | "MONEY"
   | "XP_SPRINT"
@@ -10,7 +9,7 @@ export type BotStrategy =
   | "TRAIN"
   | "KILLS"
   | "CRIME"
-  | "PSERV_RUSH"; // 🚀 Strategischer Rush-Modus für den ersten Batcher-Server
+  | "PSERV_RUSH";
   
 export interface BotState {
   strategy: BotStrategy;
@@ -18,114 +17,132 @@ export interface BotState {
   targetCompany?: CompanyName;
   targetStat?: number;
   progressBar: string;
-  lastUpdate: number;      // Zeitstempel zur Desync-Erkennung
-  playerHacking: number;   // Verhindert das Laden von Endgame-States nach einem Reset
+  lastUpdate: number;      
+  playerHacking: number;   
   jobField?: JobField;
   targetKills?: number;
-  
-  // RAM-Bedarf des aktuellen Batcher-Ziels (Verhindert Deadlocks mit fill-ram)
   batcherRamNeeded?: number;
   batcherTarget?: string;
-
-  // Zentrale Ressourcen-Kontrolle für fill-ram
   fillerConfig?: {
-    shareMaxRamPercent: number; // Wie viel % des Home-RAMs darf Share fressen (0.0 - 1.0)
-    maxXpLevel: number;          // Bis zu welchem Hacking-Level macht XP-Grind Sinn
+    shareMaxRamPercent: number;
+    maxXpLevel: number;        
   };
-
-  moneyReserve?: number; // Betrag, der für wichtige Core-Upgrades unangetastet bleiben MUSS
-
+  moneyReserve?: number;
   sleeveGlobalMode?: "RECOVERY" | "CRIME" | "COMPANY" | "FACTION";
   targetSleeveCompany?: CompanyName;
 }
 
-const STATE_FILE = "bitos_state.txt";
+// Wir reservieren Port 1 fest für den globalen Systemzustand
+const STATE_PORT = 1;
+
+let _logger: Logger | null = null;
+function getLogger(ns: NS): Logger {
+  if (!_logger) _logger = new Logger(ns, "State", "INFO");
+  return _logger;
+}
 
 /**
- * Schreibt den aktuellen Zustand des Bots typsicher in die Statusdatei.
+ * Schreibt den Zustand direkt als natives Objekt in den Port.
+ * Der Port fungiert hier als "State Cell", die immer genau 1 Element enthält.
  */
 export function saveState(
   ns: NS,
   state: Omit<BotState, "lastUpdate" | "playerHacking">,
 ): void {
-  const logger = new Logger(ns, "State", "INFO");
   try {
+    const port = ns.getPortHandle(STATE_PORT);
     const fullState: BotState = {
       ...state,
       lastUpdate: Date.now(),
       playerHacking: ns.getHackingLevel(),
     };
-    ns.write(STATE_FILE, JSON.stringify(fullState, null, 2), "w");
+
+    port.clear(); // Alten State verwerfen
+    port.write(fullState); // Neuen State als natives Objekt pushen
   } catch (error) {
-    logger.error(`Zustand konnte nicht geschrieben werden: ${error}`);
+    getLogger(ns).error(`Zustand konnte nicht in Port geschrieben werden: ${error}`);
   }
 }
 
 /**
- * Erlaubt es, nur einzelne Felder des Zustands zu aktualisieren.
+ * ATOMARES UPDATE: Liest, modifiziert und schreibt den State in einem einzigen,
+ * synchronen Rutsch. Da kein 'await' existiert, ist diese Operation blockierend
+ * und absolut sicher vor Race Conditions.
  */
 export function patchState(
   ns: NS,
   partialState: Partial<Omit<BotState, "lastUpdate" | "playerHacking">>,
 ): void {
-  const currentState = loadState(ns);
+  const port = ns.getPortHandle(STATE_PORT);
+  
+  // Nicht-destruktives Lesen des aktuellen Zustands
+  const data = port.peek();
+  let currentState: BotState | null = null;
+  
+  // Bitburner-Ports geben den String "NULL" zurück, wenn sie leer sind
+  if (data !== "NULL" && data !== undefined) {
+    currentState = data as BotState;
+  }
 
-  const baseState: Omit<BotState, "lastUpdate" | "playerHacking"> =
-    currentState || {
-      strategy: "MONEY",
-      progressBar: "Prüfe System...",
-    };
+  const { lastUpdate, playerHacking, ...cleanedCurrentState } = currentState || {};
 
-  saveState(ns, {
+  const baseState: Omit<BotState, "lastUpdate" | "playerHacking"> = {
+    strategy: "MONEY",
+    progressBar: "Prüfe System...",
+    ...cleanedCurrentState,
+  };
+
+  // Überschreibt den Port atomar
+  const fullState: BotState = {
     ...baseState,
     ...partialState,
-  });
+    lastUpdate: Date.now(),
+    playerHacking: ns.getHackingLevel(),
+  };
+
+  port.clear();
+  port.write(fullState);
 }
 
 /**
- * Liest den Zustand aus der Statusdatei und parst ihn als BotState.
- * Validiert, ob der Zustand noch zum aktuellen Spiel-Kontext passt.
+ * Liest den aktuellen Zustand, ohne ihn aus der Port-Queue zu entfernen (peek).
  */
 export function loadState(ns: NS): BotState | null {
-  const logger = new Logger(ns, "State", "INFO");
-
-  if (!ns.fileExists(STATE_FILE, "home")) {
-    return null;
-  }
-
   try {
-    const content = ns.read(STATE_FILE);
-    if (!content || content.trim() === "") return null;
+    const port = ns.getPortHandle(STATE_PORT);
+    const data = port.peek();
 
-    const state = JSON.parse(content) as BotState;
+    if (data === "NULL PORT DATA" || data === undefined) {
+      return null;
+    }
+
+    const state = data as BotState;
 
     // --- CONTEXT ACCURACY CHECK ---
-    // Falls das Hacking-Level im State höher ist als das aktuelle des Spielers -> Augmentation Reset erfolgt!
-    if (state.playerHacking > ns.getHackingLevel()) {
-      logger.warn("Veralteten Zustand nach Augmentation-Reset erkannt. Bereinige Persistenz-Speicher...");
+    const resetInfo = ns.getResetInfo();
+    const freshResetDetected = resetInfo.lastAugReset < 15000 && (Date.now() - state.lastUpdate) > resetInfo.lastAugReset;
+
+    if (state.playerHacking > ns.getHackingLevel() || freshResetDetected) {
+      getLogger(ns).warn("Veralteten Zustand im Port nach Reset erkannt. Bereinige Port...");
       clearState(ns);
       return null;
     }
 
-    // Sanfter Hinweis bei potenziellen asynchronen Hängern (Inkonsistenz-Warnung)
     if (Date.now() - state.lastUpdate > 60_000) {
-      logger.info("Zustand ist älter als 60s (potenziell inkonsistent).");
+      getLogger(ns).info("Port-Zustand ist älter als 60s.");
     }
 
     return state;
   } catch (error) {
-    logger.error(`Zustand konnte nicht gelesen oder geparst werden: ${error}`);
+    getLogger(ns).error(`Port ${STATE_PORT} konnte nicht gelesen werden: ${error}`);
     return null;
   }
 }
 
 /**
- * Löscht die Statusdatei (z.B. beim System-Reset oder Herunterfahren).
+ * Leert den zugewiesenen Port vollständig.
  */
 export function clearState(ns: NS): void {
-  const logger = new Logger(ns, "State", "INFO");
-  if (ns.fileExists(STATE_FILE, "home")) {
-    ns.rm(STATE_FILE, "home");
-    logger.info("Statusdatei erfolgreich gelöscht.");
-  }
+  ns.getPortHandle(STATE_PORT).clear();
+  getLogger(ns).info(`Port ${STATE_PORT} erfolgreich geleert.`);
 }

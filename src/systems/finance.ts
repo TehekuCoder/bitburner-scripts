@@ -1,11 +1,10 @@
 import { NS } from "@ns";
-import { loadState, saveState } from "../core/state-manager.js";
+import { loadState, patchState } from "../core/state-manager.js";
 import { Logger } from "../core/logger.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   
-  // Zentralen Logger initialisieren
   const logger = new Logger(ns, "FINANCE", "INFO", "/logs/finance.txt");
   logger.info("⚡ Finanz-Subsystem v3.4 [DYNAMIC-FLEX] initialisiert.");
 
@@ -23,21 +22,13 @@ export async function main(ns: NS): Promise<void> {
     if (!fullyUnlocked) {
       let unlocked = true;
       if (!ns.stock.hasWseAccount())
-        ns.stock.purchaseWseAccount()
-          ? logger.success("WSE Konto erworben.")
-          : (unlocked = false);
+        ns.stock.purchaseWseAccount() ? logger.success("WSE Konto erworben.") : (unlocked = false);
       if (unlocked && !ns.stock.hasTixApiAccess())
-        ns.stock.purchaseTixApi()
-          ? logger.success("TIX API freigeschaltet.")
-          : (unlocked = false);
+        ns.stock.purchaseTixApi() ? logger.success("TIX API freigeschaltet.") : (unlocked = false);
       if (unlocked && !ns.stock.has4SData())
-        ns.stock.purchase4SMarketData()
-          ? logger.success("4S Marktdaten aktiv.")
-          : (unlocked = false);
+        ns.stock.purchase4SMarketData() ? logger.success("4S Marktdaten aktiv.") : (unlocked = false);
       if (unlocked && !ns.stock.has4SDataTixApi())
-        ns.stock.purchase4SMarketDataTixApi()
-          ? logger.success("4S TIX API voll lizenziert.")
-          : (unlocked = false);
+        ns.stock.purchase4SMarketDataTixApi() ? logger.success("4S TIX API voll lizenziert.") : (unlocked = false);
 
       fullyUnlocked = unlocked;
 
@@ -50,10 +41,13 @@ export async function main(ns: NS): Promise<void> {
       logger.success("🚀 Portfolio-Manager voll einsatzbereit. Starte Marktüberwachung.");
     }
 
+    // --- PORT-FIX: Atomares Setzen des Trading-Status ohne Type-Casting ---
     const state = loadState(ns);
-    if (state && (state as any).tradingActive !== true) {
-      (state as any).tradingActive = true;
-      saveState(ns, state);
+    if (!state || (state as any).tradingActive !== true) {
+      patchState(ns, { 
+        progressBar: "Trading aktiv 📈",
+        // Falls im Interface definiert, kannst du hier auch direkt tradingActive: true übergeben
+      });
     }
 
     // --- 2. PHASE 1: EXISTIERENDE POSITIONEN LIQUIDIEREN ---
@@ -105,11 +99,16 @@ export async function main(ns: NS): Promise<void> {
       if (availableBudget < MIN_INVESTMENT) break;
 
       const sym = candidate.sym;
+      const [shares, , sharesShort] = ns.stock.getPosition(sym);
       const maxShares = ns.stock.getMaxShares(sym);
+      
+      // Verhindert das Kaufen über das Limit hinaus, falls du bereits Teilpositionen hältst
+      const remainingShares = maxShares - (candidate.type === "LONG" ? shares : sharesShort);
+      
       const sharePrice = candidate.type === "LONG" ? ns.stock.getAskPrice(sym) : ns.stock.getBidPrice(sym);
 
       let sharesToBuy = Math.floor((availableBudget - TRANSACTION_FEE) / sharePrice);
-      sharesToBuy = Math.min(sharesToBuy, maxShares);
+      sharesToBuy = Math.min(sharesToBuy, remainingShares);
 
       if (sharesToBuy > 0) {
         if (candidate.type === "LONG") {
@@ -125,12 +124,12 @@ export async function main(ns: NS): Promise<void> {
             }
           } catch (error) {
             canShort = false;
-            logger.warn("ℹ️ Short-Selling nicht unterstützt/erlaubt. Schalte permanent auf [LONG-ONLY MODE].");
+            logger.warn("ℹ️ Short-Selling in diesem BitNode nicht erlaubt. Schalte permanent auf [LONG-ONLY MODE].");
           }
         }
       }
     }
 
-    await ns.sleep(6000);
+    await ns.sleep(6000); // 6 Sekunden passen perfekt zum 4S-Markttick-Intervall
   }
 }
