@@ -64,8 +64,8 @@ export async function main(ns: NS): Promise<void> {
   const bnMults = loadBnMults(ns);
   logger.info("Subsysteme werden initialisiert...");
 
-  if (!ns.scriptRunning("sys-hud.ts", "home")) {
-    ns.exec("sys-hud.ts", "home", 1);
+  if (!ns.scriptRunning("sys-hud.js", "home")) {
+    ns.exec("sys-hud.js", "home", 1);
   }
 
   let lastRootCount = -1;

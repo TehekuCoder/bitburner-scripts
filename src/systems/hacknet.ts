@@ -194,7 +194,6 @@ export async function main(ns: NS): Promise<void> {
       const { type, index, cost } = bestUpgrade;
       if (type === "Neuer Node") {
         h.purchaseNode();
-        // Neue Nodes sind ein Meilenstein -> SUCCESS
         logger.success(
           `🎉 Neuer Hacknet-Node gekauft für $${ns.format.number(cost, 2)}`,
         );
@@ -203,13 +202,17 @@ export async function main(ns: NS): Promise<void> {
         else if (type === "RAM") h.upgradeRam(index, 1);
         else if (type === "Core") h.upgradeCore(index, 1);
 
-        // Normale Upgrades auf DEBUG herabstufen!
         const indexStr = ` (Node ${index})`;
         logger.debug(
           `Upgrade: ${type}${indexStr} für $${ns.format.number(cost, 2)}`,
         );
       }
+      // Schneller Takt, wenn wir aktiv Upgrades kaufen können
       await ns.sleep(50);
+    } else {
+      // 🛡️ FEHLSCHUTZ: Wenn kein Upgrade bezahlbar ist, warte 10 Sekunden,
+      // anstatt das Spiel mit einer unendlichen Schleife zu killen.
+      await ns.sleep(10000);
     }
   }
 }
