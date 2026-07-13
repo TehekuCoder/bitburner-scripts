@@ -15,14 +15,33 @@ const MEGACORPS = [
   "Fulcrum Technologies",
 ];
 
+// 🛠️ Auslagerung globaler Mappings zur Vermeidung von Redundanz
+const COMBAT_KEYS = ["strength", "defense", "dexterity", "agility"] as const;
+const GYM_STAT_MAP: Record<string, string> = {
+  strength: "Strength",
+  defense: "Defense",
+  dexterity: "Dexterity",
+  agility: "Agility",
+};
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
-  // 🏁 Logger-Instanz für dieses Subsystem initialisieren
-  const logger = new Logger(ns, "SLEEVE", "INFO");
+  const logger = new Logger(ns, "SLEEVE", "INFO", "/logs/sleeve.txt");
   logger.info("🦾 Sleeve-Subsystem aktiv. Kontrolliere Klone...");
 
   const BUDGET_MULTIPLIER = 10;
+
+  // Cache für Fraktions-Ruf-Abfragen (Throttling)
+  let factionsNeedingRep: FactionName[] = [];
+  let lastFactionScan = 0;
+  const SCAN_INTERVAL = 30000; // Nur alle 30 Sekunden scannen
+
+  const localLogBuffer: string[] = [];
+  function addLocalLog(msg: string) {
+    localLogBuffer.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+    if (localLogBuffer.length > 5) localLogBuffer.shift(); // Nur die letzten 5 behalten
+  }
 
   while (true) {
     if (ns.sleeve === undefined) {
@@ -36,28 +55,33 @@ export async function main(ns: NS): Promise<void> {
     const ownedAugs = ns.singularity.getOwnedAugmentations(true);
 
     // ======================================================================
-    // 1. RUF-EVALUIERUNG FÜR FACTION-GRIND
+    // 1. RUF-EVALUIERUNG (MIT THROTTLING)
     // ======================================================================
-    const factionsNeedingRep: FactionName[] = [];
-
-    for (const faction of p.factions) {
-      let maxRepNeeded = 0;
-      try {
-        const augs = ns.singularity.getAugmentationsFromFaction(faction);
-        for (const aug of augs) {
-          if (aug !== "NeuroFlux Governor" && !ownedAugs.includes(aug)) {
-            const req = ns.singularity.getAugmentationRepReq(aug);
-            if (req > maxRepNeeded) maxRepNeeded = req;
+    if (
+      Date.now() - lastFactionScan > SCAN_INTERVAL ||
+      factionsNeedingRep.length === 0
+    ) {
+      factionsNeedingRep = [];
+      for (const faction of p.factions) {
+        let maxRepNeeded = 0;
+        try {
+          const augs = ns.singularity.getAugmentationsFromFaction(faction);
+          for (const aug of augs) {
+            if (aug !== "NeuroFlux Governor" && !ownedAugs.includes(aug)) {
+              const req = ns.singularity.getAugmentationRepReq(aug);
+              if (req > maxRepNeeded) maxRepNeeded = req;
+            }
           }
+        } catch {
+          continue;
         }
-      } catch {
-        continue;
-      }
 
-      const currentRep = ns.singularity.getFactionRep(faction);
-      if (currentRep < maxRepNeeded) {
-        factionsNeedingRep.push(faction as FactionName);
+        const currentRep = ns.singularity.getFactionRep(faction);
+        if (currentRep < maxRepNeeded) {
+          factionsNeedingRep.push(faction as FactionName);
+        }
       }
+      lastFactionScan = Date.now();
     }
 
     // ======================================================================
@@ -89,7 +113,9 @@ export async function main(ns: NS): Promise<void> {
       if (stats.shock > 0) {
         if (currentTask?.type !== "RECOVERY") {
           ns.sleeve.setToShockRecovery(i);
-          logger.info(`💔 Klon #${i} geht in die Schock-Therapie.`);
+          const msg = `💔 Klon #${i} geht in die Schock-Therapie.`;
+          logger.info(msg);
+          addLocalLog(msg);
         }
         continue;
       }
@@ -98,7 +124,9 @@ export async function main(ns: NS): Promise<void> {
       if (stats.sync < 100) {
         if (currentTask?.type !== "SYNCHRO") {
           ns.sleeve.setToSynchronize(i);
-          logger.info(`⚡ Klon #${i} startet Gehirn-Synchronisation.`);
+          const msg = `⚡ Klon #${i} startet Gehirn-Synchronisation.`;
+          logger.info(msg);
+          addLocalLog(msg);
         }
         continue;
       }
@@ -106,15 +134,14 @@ export async function main(ns: NS): Promise<void> {
       // --- PHASE 3: AUTOMATISCHES AUGMENT-SHOPPING ---
       try {
         const purchasableAugs = ns.sleeve.getSleevePurchasableAugs(i);
-        purchasableAugs.sort((a, b) => a.cost - b.cost);
-
         if (purchasableAugs.length > 0) {
+          purchasableAugs.sort((a, b) => a.cost - b.cost);
           const cheapestAug = purchasableAugs[0];
-          if (ns.getPlayer().money > cheapestAug.cost * BUDGET_MULTIPLIER) {
+          if (p.money > cheapestAug.cost * BUDGET_MULTIPLIER) {
             if (ns.sleeve.purchaseSleeveAug(i, cheapestAug.name)) {
-              logger.success(
-                `🛒 Klon #${i}: Augment erworben -> ${cheapestAug.name}`,
-              );
+              const msg = `🛒 Klon #${i}: Augment erworben -> ${cheapestAug.name}`;
+              logger.success(msg);
+              addLocalLog(msg);
             }
           }
         }
@@ -123,6 +150,14 @@ export async function main(ns: NS): Promise<void> {
       }
 
       // --- PHASE 4: STRATEGISCHE ARBEITSZUTEILUNG ---
+
+      // Helper für niedrigsten Kampfstat ermitteln
+      const lowestStatName = COMBAT_KEYS.reduce((a, b) =>
+        stats.skills[a] < stats.skills[b] ? a : b,
+      );
+      const lowestSleeveCombatStat = stats.skills[lowestStatName];
+      const minRequiredStat = currentState?.targetStat || 0;
+
       if (factionsNeedingRep.length > 0) {
         // 🛑 GLOBAL OVERRIDE: Kriminalität erzwungen
         if (
@@ -130,67 +165,43 @@ export async function main(ns: NS): Promise<void> {
           currentState?.strategy === "KILLS"
         ) {
           const targetCrime = "Homicide";
-          // 🛠️ FIX: Optional Chaining (?.) verhindert Compiler-Fehler
           if (
             currentTask?.type !== "CRIME" ||
             currentTask?.crimeType !== targetCrime
           ) {
             ns.sleeve.setToCommitCrime(i, targetCrime);
-            logger.warn(
-              `🔫 Klon #${i}: Globaler Roadmap-Push aktiv -> ${targetCrime}.`,
-            );
+            const msg = `🔫 Klon #${i}: Globaler Roadmap-Push aktiv -> ${targetCrime}.`;
+            logger.warn(msg);
+            addLocalLog(msg);
           }
           continue;
         }
 
-        const minRequiredStat = currentState?.targetStat || 0;
-        const lowestSleeveCombatStat = Math.min(
-          stats.skills.strength,
-          stats.skills.defense,
-          stats.skills.dexterity,
-          stats.skills.agility,
-        );
-
+        // Globaler Trainingsmodus
         if (
           currentState?.strategy === "TRAIN" &&
           minRequiredStat > 0 &&
           lowestSleeveCombatStat < minRequiredStat
         ) {
-          const combatKeys: (keyof typeof stats.skills)[ ] = [
-            "strength",
-            "defense",
-            "dexterity",
-            "agility",
-          ];
-          const lowestStatName = combatKeys.reduce((a, b) =>
-            stats.skills[a] < stats.skills[b] ? a : b,
-          );
-
-          const gymStatMap: Record<string, string> = {
-            strength: "Strength",
-            defense: "Defense",
-            dexterity: "Dexterity",
-            agility: "Agility",
-          };
           const gymName =
             stats.city === "Volhaven" ? "Powerhouse Gym" : "Iron Gym";
-          const targetGymStat = gymStatMap[lowestStatName];
+          const targetGymStat = GYM_STAT_MAP[lowestStatName];
 
-          // 🛠️ FIX: Optional Chaining (?.) verhindert Compiler-Fehler
           if (
             currentTask?.type !== "CLASS" ||
             currentTask?.classType !== targetGymStat ||
             currentTask?.location !== gymName
           ) {
             ns.sleeve.setToGymWorkout(i, gymName, targetGymStat as GymType);
-            logger.info(
-              `🏋️ Klon #${i}: Vorab-Bootcamp aktiv! Trainiert ${targetGymStat} im ${gymName}.`,
-            );
+            const msg = `🏋️ Klon #${i}: Vorab-Bootcamp aktiv! Trainiert ${targetGymStat} im ${gymName}.`;
+            logger.info(msg);
+            addLocalLog(msg);
           }
           continue;
         }
-        let targetFaction: FactionName | null = null;
 
+        // Fraktions-Zuweisung ermitteln
+        let targetFaction: FactionName | null = null;
         if (currentTask?.type === "FACTION") {
           const currentFaction = currentTask.factionName as FactionName;
           if (factionsNeedingRep.includes(currentFaction)) {
@@ -202,7 +213,6 @@ export async function main(ns: NS): Promise<void> {
           const availableFactions = factionsNeedingRep.filter(
             (f) => !occupiedFactions.includes(f),
           );
-
           if (availableFactions.length > 0) {
             if (
               i === 0 &&
@@ -219,59 +229,34 @@ export async function main(ns: NS): Promise<void> {
         }
 
         if (targetFaction) {
-          // 🛠️ FIX: Optional Chaining (?.) verhindert Compiler-Fehler
-          if (
-            currentTask?.type === "FACTION" &&
-            currentTask?.factionName === targetFaction
-          ) {
-            // Wenn er schon für die korrekte Fraktion arbeitet, prüfen wir JETZT, ob er ins Bootcamp muss
-          }
-
-          // 🏋️ INTERN-BOOTCAMP: Klon braucht Training für effizienten Grind
+          // 🏋️ INTERN-BOOTCAMP (Vor Fraktionsarbeit)
           if (minRequiredStat > 0 && lowestSleeveCombatStat < minRequiredStat) {
-            const combatKeys: (keyof typeof stats.skills)[ ] = [
-              "strength",
-              "defense",
-              "dexterity",
-              "agility",
-            ];
-            const lowestStatName = combatKeys.reduce((a, b) =>
-              stats.skills[a] < stats.skills[b] ? a : b,
-            );
-
-            const gymStatMap: Record<string, string> = {
-              strength: "Strength",
-              defense: "Defense",
-              dexterity: "Dexterity",
-              agility: "Agility",
-          };
             const gymName =
               stats.city === "Volhaven" ? "Powerhouse Gym" : "Iron Gym";
-            const targetGymStat = gymStatMap[lowestStatName];
+            const targetGymStat = GYM_STAT_MAP[lowestStatName];
 
-            // 🛠️ CRITICAL FIX: Bedingung umgekehrt (!== "CLASS" || ...), um Deadlock zu verhindern!
             if (
               currentTask?.type !== "CLASS" ||
               currentTask?.classType !== targetGymStat ||
               currentTask?.location !== gymName
             ) {
               ns.sleeve.setToGymWorkout(i, gymName, targetGymStat as GymType);
-              logger.info(
-                `🏋️ Klon #${i}: Live-Bootcamp für ${targetFaction} aktiv -> Trainiert ${targetGymStat} (Ziel: ${minRequiredStat}).`,
-              );
+              const msg = `🏋️ Klon #${i}: Live-Bootcamp für ${targetFaction} aktiv -> Trainiert ${targetGymStat} (Ziel: ${minRequiredStat}).`;
+              logger.info(msg);
+              addLocalLog(msg);
             }
-            continue; // Verhindert das Weiterlaufen zur Faction-Arbeit während des Trainings
+            continue;
           }
 
-          // Wenn er stark genug ist -> Ab zur eigentlichen Fraktionsarbeit
+          // Ab zur Fraktionsarbeit
           const workTypes: FactionWorkType[] = ["hacking", "field", "security"];
           let assigned = false;
           for (const work of workTypes) {
             if (ns.sleeve.setToFactionWork(i, targetFaction, work)) {
               assigned = true;
-              logger.info(
-                `🤝 Klon #${i} arbeitet nun für Faction '${targetFaction}' (${work}).`,
-              );
+              const msg = `🤝 Klon #${i} arbeitet nun für Faction '${targetFaction}' (${work}).`;
+              logger.info(msg);
+              addLocalLog(msg);
               if (!occupiedFactions.includes(targetFaction)) {
                 occupiedFactions.push(targetFaction);
               }
@@ -284,7 +269,7 @@ export async function main(ns: NS): Promise<void> {
 
       // 🥈 PRIO 2: Unternehmens-Dienst & Uni-Push
       if (currentState?.strategy === "PSERV_RUSH") {
-        // 🚀 RUSH-MODUS VETO: Überspringe Uni & Firma, um Geldkosten zu blockieren
+        // Rush-Modus aktiv
       } else if (p.skills.hacking >= 250) {
         const employedCorps = Object.keys(p.jobs).filter((job) =>
           MEGACORPS.includes(job),
@@ -310,70 +295,54 @@ export async function main(ns: NS): Promise<void> {
               p.skills.charisma < targetStatThreshold
             ) {
               if (stats.city !== targetCity) {
-                if (ns.getPlayer().money >= 200_000) {
+                if (p.money >= 200_000) {
                   if (ns.sleeve.travel(i, targetCity)) {
-                    logger.info(
-                      `✈️ Klon #${i} reist von ${stats.city} nach ${targetCity} für die Universität.`,
-                    );
-                    stats.city = targetCity;
+                    const msg = `✈️ Klon #${i} reist von ${stats.city} nach ${targetCity} für die Universität.`;
+                    logger.info(msg);
+                    addLocalLog(msg);
                   }
                 } else {
-                  logger.warn(
-                    `⚠️ Klon #${i}: Geldmangel ($200k benötigt) für Reise nach ${targetCity}. Weiche auf Crime aus.`,
-                  );
+                  const msg = `⚠️ Klon #${i}: Geldmangel ($200k benötigt) für Reise nach ${targetCity}. Weiche auf Crime aus.`;
+                  logger.warn(msg);
+                  addLocalLog(msg);
                 }
               }
             }
 
             // A) HACKING-Defizit ausgleichen
             if (p.skills.hacking < targetStatThreshold) {
-              if (stats.city === targetCity) {
-                // 🛠️ FIX: Optional Chaining (?.)
-                if (
-                  currentTask?.type === "CLASS" &&
-                  currentTask?.classType === "Algorithms" &&
-                  currentTask?.location === bestUniversity
-                ) {
-                  continue;
-                }
-                ns.sleeve.setToUniversityCourse(
-                  i,
-                  bestUniversity,
-                  "Algorithms",
-                );
-                logger.info(
-                  `🎓 Klon #${i} lernt Algorithms an der ${bestUniversity}.`,
-                );
+              if (
+                currentTask?.type === "CLASS" &&
+                currentTask?.classType === "Algorithms" &&
+                currentTask?.location === bestUniversity
+              ) {
                 continue;
               }
+              ns.sleeve.setToUniversityCourse(i, bestUniversity, "Algorithms");
+              const msg = `🎓 Klon #${i} lernt Algorithms an der ${bestUniversity}.`;
+              logger.info(msg);
+              addLocalLog(msg);
+              continue;
             }
 
             // B) CHARISMA-Defizit ausgleichen
             else if (p.skills.charisma < targetStatThreshold) {
-              if (stats.city === targetCity) {
-                // 🛠️ FIX: Optional Chaining (?.)
-                if (
-                  currentTask?.type === "CLASS" &&
-                  currentTask?.classType === "Leadership" &&
-                  currentTask?.location === bestUniversity
-                ) {
-                  continue;
-                }
-                ns.sleeve.setToUniversityCourse(
-                  i,
-                  bestUniversity,
-                  "Leadership",
-                );
-                logger.info(
-                  `🎓 Klon #${i} lernt Leadership an der ${bestUniversity}.`,
-                );
+              if (
+                currentTask?.type === "CLASS" &&
+                currentTask?.classType === "Leadership" &&
+                currentTask?.location === bestUniversity
+              ) {
                 continue;
               }
+              ns.sleeve.setToUniversityCourse(i, bestUniversity, "Leadership");
+              const msg = `🎓 Klon #${i} lernt Leadership an der ${bestUniversity}.`;
+              logger.info(msg);
+              addLocalLog(msg);
+              continue;
             }
 
-            // C) Charakter-Stats sind bereit -> Sleeve farmt Firmen-Ruf
+            // C) Bereit für Firmen-Ruf
             else {
-              // 🛠️ FIX: Optional Chaining (?.)
               if (
                 currentTask?.type === "COMPANY" &&
                 currentTask?.companyName === targetCorp
@@ -381,7 +350,9 @@ export async function main(ns: NS): Promise<void> {
                 continue;
               }
               if (ns.sleeve.setToCompanyWork(i, targetCorp)) {
-                logger.info(`🏢 Klon #${i} farmt jetzt Ruf bei ${targetCorp}.`);
+                const msg = `🏢 Klon #${i} farmt jetzt Ruf bei ${targetCorp}.`;
+                logger.info(msg);
+                addLocalLog(msg);
                 continue;
               }
             }
@@ -393,7 +364,6 @@ export async function main(ns: NS): Promise<void> {
       const targetCrime =
         ns.heart.break() > -22 || p.numPeopleKilled < 30 ? "Homicide" : "Mug";
 
-      // 🛠️ FIX: Optional Chaining (?.)
       if (
         currentTask?.type === "CRIME" &&
         currentTask?.crimeType === targetCrime
@@ -402,13 +372,12 @@ export async function main(ns: NS): Promise<void> {
       }
 
       ns.sleeve.setToCommitCrime(i, targetCrime);
-      logger.warn(
-        `🔫 Klon #${i} wechselt auf Fallback-Kriminalität: ${targetCrime}`,
-      );
+      const msg = `🔫 Klon #${i} wechselt auf Fallback-Kriminalität: ${targetCrime}`;
+      logger.warn(msg);
     }
 
     // ======================================================================
-    // 4. 📊 MONITOR-DASHBOARD (LOG-AUSGABE)
+    // 4. 📊 MONITOR-DASHBOARD
     // ======================================================================
     ns.clearLog();
     ns.print(
@@ -421,6 +390,7 @@ export async function main(ns: NS): Promise<void> {
       "╠════════╪═════════╪═════════╪════════════════════════════════════════════════╣",
     );
 
+    // 1. Zuerst alle Zeilen für die Klone in die Tabelle drucken
     for (let i = 0; i < numSleeves; i++) {
       const stats = ns.sleeve.getSleeve(i);
       const task = ns.sleeve.getTask(i);
@@ -461,30 +431,21 @@ export async function main(ns: NS): Promise<void> {
       const taskStr = taskDesc.padEnd(46);
       ns.print(`║ ${idStr} │ ${shockStr} │ ${syncStr} │ ${taskStr} ║`);
     }
+
+    // 2. Dann die Tabelle sauber schließen
     ns.print(
       "╚════════╧═════════╧═════════╧════════════════════════════════════════════════╝",
     );
 
-    // 📜 Dynamischer Tail-View
-    try {
-      const logFileContent = ns.read("/logs/bitos_system.txt");
-      if (logFileContent) {
-        const lines = logFileContent.split("\n");
-        const sleeveLines = lines
-          .filter((line) => line.includes("[SLEEVE]"))
-          .slice(-6);
-
-        if (sleeveLines.length > 0) {
-          ns.print("\n📜 Aktuelle System-Ereignisse (Log):");
-          for (const line of sleeveLines) {
-            ns.print(line);
-          }
-        }
+    // 3. Jetzt die unschuldigen Log-Nachrichten darunter setzen
+    if (localLogBuffer.length > 0) {
+      ns.print("\n Letzte Aktionen:");
+      for (const logLine of localLogBuffer) {
+        ns.print(`  ${logLine}`);
       }
-    } catch {
-      /* Failsafe falls Datei blockiert */
     }
 
+    // 4. Und nur EINMAL am Ende schlafen
     await ns.sleep(2000);
   }
 }

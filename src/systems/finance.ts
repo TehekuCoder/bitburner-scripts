@@ -6,7 +6,7 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   
   // Zentralen Logger initialisieren
-  const logger = new Logger(ns, "FINANCE", "INFO");
+  const logger = new Logger(ns, "FINANCE", "INFO", "/logs/finance.txt");
   logger.info("⚡ Finanz-Subsystem v3.4 [DYNAMIC-FLEX] initialisiert.");
 
   let fullyUnlocked = false;

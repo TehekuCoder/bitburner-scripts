@@ -5,7 +5,7 @@ import { Logger } from "../core/logger.js";
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const h = ns.hacknet;
-  const logger = new Logger(ns, "HACKNET-EARLY", "INFO");
+  const logger = new Logger(ns, "HACKNET-EARLY", "INFO", "logs/hacknet-early.txt");
 
   const isCappedMode = ns.args.length > 0;
   const maxNodes = (ns.args[0] as number) || 15;
@@ -93,7 +93,7 @@ export async function main(ns: NS): Promise<void> {
         if (purchaseType === "Level") h.upgradeLevel(targetIndex, 1);
         if (purchaseType === "RAM") h.upgradeRam(targetIndex, 1);
         if (purchaseType === "Core") h.upgradeCore(targetIndex, 1);
-        logger.success(`Node ${targetIndex}: ${purchaseType}-Upgrade für $${ns.format.number(bestCost)}`);
+        logger.debug(`Node ${targetIndex}: ${purchaseType}-Upgrade für $${ns.format.number(bestCost)}`);
       }
       await ns.sleep(100);
     } else {
