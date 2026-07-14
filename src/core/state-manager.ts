@@ -81,6 +81,9 @@ export interface BotState {
   homeCores?: number;
   isHomePrioritized?: boolean;
   isRushModeActive?: boolean;
+
+  batcherPlan?: any | null; // Entspricht dem BatchPlan Interface
+  batcherDynamicMaxBatches?: number;
 }
 
 const STATE_PORT = 1;

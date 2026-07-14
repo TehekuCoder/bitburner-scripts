@@ -1,9 +1,11 @@
 import { NS } from "@ns";
-import { calculateBatch } from "../utils/batch-calculator.js";
 import { getAllServers } from "../lib/network.js";
-import { patchState, loadState,  BotState, clearState, saveState, } from "./state-manager.js";
+import { patchState, loadState } from "./state-manager.js";
 import { loadBnMults } from "../lib/state.js";
-import { Logger } from "./logger.js"; // 🌟 Logger integriert
+import { Logger } from "./logger.js";
+
+// Wir importieren NUR das Interface für Typsicherheit (kostet 0.00 GB RAM zur Laufzeit!)
+import { BatchPlan } from "../utils/batch-calculator.js";
 
 interface DashboardData {
   status: string;
@@ -20,30 +22,14 @@ interface DashboardData {
   lastWaveProfit: number;
 }
 
-interface BatchPlan {
-  hackThreads: number;
-  hackDelay: number;
-  weaken1Threads: number;
-  weaken1Delay: number;
-  growThreads: number;
-  growDelay: number;
-  weaken2Threads: number;
-  weaken2Delay: number;
-  totalRam: number;
-  executionTime: number;
-}
-
-// Globaler Zustand für UI-Ereignisse und Cache
 let cachedServers: string[] = [];
 let lastCacheUpdate = 0;
 let lastUiUpdate = 0;
 const eventLog: string[] = [];
 
-// Globale Systemkonstanten
 const HOME_RAM_RESERVE = 64;
 const SCRIPT_RAM_BASE = 1.75;
 const SPACER = 80;
-const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000; // 60 Minuten Failsafe-Limit
 
 function updateServerCache(ns: NS): void {
   const now = Date.now();
@@ -68,7 +54,6 @@ function logEvent(msg: string): void {
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
-  // 🌟 Logger für das Batcher-Subsystem initialisieren
   const logger = new Logger(ns, "Batcher", "INFO");
   const bnMults = loadBnMults(ns);
 
@@ -90,7 +75,6 @@ export async function main(ns: NS): Promise<void> {
 
   let lastLogStatus = "";
   let stallSettleTicks = 0;
-  let currentGreedFactor = 0.4;
   let lockedPlan: BatchPlan | null = null;
   let lastWaveProfit = 0;
 
@@ -112,7 +96,6 @@ export async function main(ns: NS): Promise<void> {
       let maxRam = ns.getServerMaxRam(server);
       if (server === "home") maxRam = Math.max(0, maxRam - HOME_RAM_RESERVE);
 
-      // Puffer-Drosselung einrechnen, falls Share-Buffer aktiv
       if (server !== "home" && shareBufferPercent > 0) {
         maxRam = maxRam * (1 - shareBufferPercent);
       }
@@ -126,142 +109,37 @@ export async function main(ns: NS): Promise<void> {
         Math.floor(freeRam / SCRIPT_RAM_BASE) * SCRIPT_RAM_BASE;
     }
 
-    // 🎯 TARGETING
+    // 🎯 TARGETING & REPLANNING (Ausgelagert in den Planer!)
     if (!target || batchesSentForTarget >= dynamicMaxBatchesForTarget) {
-      const newTarget = findBestBatchTargetForNetwork(
-        ns,
-        cachedServers,
-        totalUsableMaxRam,
-        bnMults,
-      );
+      logger.info("Starte Batch-Planer für Zielfindung...");
+      logEvent("📡 Suche optimales Ziel...");
 
-      if (newTarget) {
-        target = newTarget;
-        batchesSentForTarget = 0;
+      // Günstiges ns.exec auf Home nutzen (Kostet 0 GB, da ns.exec sowieso im RAM geladen ist!)
+      const pid = ns.exec("/utils/batch-planner.js", "home", 1);
+      if (pid > 0) {
+        while (ns.isRunning(pid)) {
+          await ns.sleep(50);
+        }
+      }
 
-        const serverMock = ns.getServer(target);
-        serverMock.hackDifficulty = serverMock.minDifficulty;
-        const weakenTime = ns.formulas!.hacking.weakenTime(
-          serverMock,
-          ns.getPlayer(),
+      const newState = loadState(ns);
+      target = newState?.batcherTarget || null;
+      lockedPlan = newState?.batcherPlan || null;
+      dynamicMaxBatchesForTarget = newState?.batcherDynamicMaxBatches || 500;
+      batchesSentForTarget = 0;
+
+      if (target && lockedPlan) {
+        logger.success(
+          `Pipeline-Plan fixiert: ${target} (Ram: ${ns.format.ram(lockedPlan.totalRam)})`,
         );
-
-        const maxConcurrentBatches = Math.max(
-          1,
-          Math.floor(weakenTime / SPACER),
-        );
-        const idealBatchRam = totalUsableMaxRam / maxConcurrentBatches;
-
-        let largestSingleServerRam = 0;
-        if (cachedServers.length > 0) {
-          largestSingleServerRam = ns.getServerMaxRam(cachedServers[0]);
-          if (cachedServers[0] === "home") {
-            largestSingleServerRam = Math.max(
-              0,
-              largestSingleServerRam - HOME_RAM_RESERVE,
-            );
-          }
-        }
-
-        const maxAllowedBatchRam = Math.min(
-          idealBatchRam,
-          largestSingleServerRam,
-        );
-        dynamicMaxBatchesForTarget = Math.max(500, maxConcurrentBatches * 2);
-
-        // Such-Schleife in der main() beim Target-Wechsel:
-        currentGreedFactor = 0.9;
-        let lockPlan = calculateBatch(
-          ns,
-          target,
-          bnMults,
-          currentGreedFactor,
-          SPACER,
-        ) as BatchPlan | null;
-
-        // Iterative Gier-Reduktion für Server-Slots
-        while (
-          (lockPlan === null || lockPlan.totalRam > maxAllowedBatchRam) &&
-          currentGreedFactor > 0.005 // 💡 Von 0.01 auf 0.005 gesenkt
-        ) {
-          currentGreedFactor -= 0.01;
-          lockPlan = calculateBatch(
-            ns,
-            target,
-            bnMults,
-            currentGreedFactor,
-            SPACER,
-          ) as BatchPlan | null;
-        }
-
-        // Fallback: Gesamten Netzwerk-Pool prüfen
-        if (!lockPlan || lockPlan.totalRam > totalUsableMaxRam) {
-          currentGreedFactor = 0.4;
-          lockPlan = calculateBatch(
-            ns,
-            target,
-            bnMults,
-            currentGreedFactor,
-            SPACER,
-          ) as BatchPlan | null;
-          while (
-            (lockPlan === null || lockPlan.totalRam > totalUsableMaxRam) &&
-            currentGreedFactor > 0.005 // 💡 Auch hier auf 0.005 gesenkt
-          ) {
-            currentGreedFactor -= 0.01;
-            lockPlan = calculateBatch(
-              ns,
-              target,
-              bnMults,
-              currentGreedFactor,
-              SPACER,
-            ) as BatchPlan | null;
-          }
-        }
-
-        if (lockPlan) {
-          lockedPlan = lockPlan;
-          logger.success(
-            `Pipeline-Plan fixiert: ${target} @ Gier ${(currentGreedFactor * 100).toFixed(1)}% (Ram: ${ns.format.ram(lockedPlan.totalRam)})`,
-          );
-          logEvent(
-            `🔒 Pipeline-Plan fixiert: ${target} @ Gier ${(currentGreedFactor * 100).toFixed(1)}%`,
-          );
-        } else {
-          logger.warn(
-            `Ziel ${target} mathematisch zu komplex. Rotiere Zielfindung...`,
-          );
-          logEvent(`⚠️ Ziel ${target} zu komplex. Suche neues Ziel...`);
-          target = null;
-          await ns.sleep(1000);
-          continue;
-        }
+        logEvent(`🔒 Pipeline-Plan geladen: ${target}`);
       } else {
+        logger.warn(`Kein valides Ziel gefunden. Rotiere Zielfindung...`);
         target = null;
         lockedPlan = null;
+        await ns.sleep(5000);
+        continue;
       }
-    }
-
-    if (!target) {
-      if (Date.now() - lastUiUpdate > 250) {
-        drawBatcherDashboard(ns, {
-          status: "SUCHE ZIEL",
-          target: "Keines",
-          progress: 0,
-          progressText: "Scanne Netzwerk nach profitablen Zielen...",
-          greed: 0,
-          ramNeeded: 0,
-          ramFree: totalUsableFreeRam,
-          ramTotal: totalUsableMaxRam,
-          batchesSent: 0,
-          batchesMax: dynamicMaxBatchesForTarget,
-          eventLog,
-          lastWaveProfit,
-        });
-        lastUiUpdate = Date.now();
-      }
-      await ns.sleep(1000);
-      continue;
     }
 
     const minSec = ns.getServerMinSecurityLevel(target);
@@ -285,7 +163,7 @@ export async function main(ns: NS): Promise<void> {
         executePrepPhase(ns, cachedServers, target, bnMults);
       } else {
         logger.warn(
-          `🚨 Pipeline Desync auf ${target} erkannt! (Sec: +${(curSec - minSec).toFixed(2)}, Geld: ${((curMoney / maxMoney) * 100).toFixed(1)}%). Flushe Pipeline...`,
+          `🚨 Pipeline Desync auf ${target} erkannt! Flushe Pipeline...`,
         );
         logEvent(`🛑 Desync! Pipeline geflusht & Recovery eingeleitet.`);
         await ns.sleep(SPACER * 10);
@@ -306,7 +184,6 @@ export async function main(ns: NS): Promise<void> {
           if (!ns.hasRootAccess(s)) continue;
           let mRam = ns.getServerMaxRam(s);
           if (s === "home") mRam = Math.max(0, mRam - HOME_RAM_RESERVE);
-
           if (currentState?.strategy === "REP" && s !== "home") {
             mRam = mRam * (1 - shareBufferPercent);
           }
@@ -321,7 +198,7 @@ export async function main(ns: NS): Promise<void> {
           target,
           progress,
           progressText: `Synchronisation läuft... (${secsLeft.toFixed(1)}s verbleibend)`,
-          greed: currentGreedFactor,
+          greed: 0.0, // Schätzung
           ramNeeded: 0,
           ramFree: tFree,
           ramTotal: tRam,
@@ -343,47 +220,43 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // 📈 LEVEL-UP ANTIZIPATION (ANTI-CLIPPING-SYSTEM)
-    const serverMock = ns.getServer(target);
-    serverMock.hackDifficulty = serverMock.minDifficulty;
-    const trueWeakenTime = ns.formulas!.hacking.weakenTime(
-      serverMock,
-      ns.getPlayer(),
-    );
+    // 📈 LEVEL-UP ANTIZIPATION (Über extrem günstiges ns.getWeakenTime!)
+    const trueWeakenTime = ns.getWeakenTime(target);
     const planWeakenTime = lockedPlan.executionTime - SPACER * 2;
 
     if (trueWeakenTime < planWeakenTime) {
       const timeDelta = planWeakenTime - trueWeakenTime;
       logger.info(
-        `📈 Hacking Level-Up registriert. Laufzeitverkürzung um ${(timeDelta / 1000).toFixed(2)}s. Rekalibriere Zeitachse...`,
+        `📈 Level-Up registriert! Laufzeitverkürzung um ${(timeDelta / 1000).toFixed(2)}s. Rufe Planer...`,
       );
-      logEvent(
-        `📈 Level-Up erkannt! Justiere Zeitachse... (-${(timeDelta / 1000).toFixed(2)}s)`,
-      );
+      logEvent(`📈 Level-Up erkannt! Rekalibriere...`);
 
-      const newPlan = calculateBatch(
-        ns,
-        target,
-        bnMults,
-        currentGreedFactor,
-        SPACER,
-      ) as BatchPlan | null;
-      if (newPlan) {
-        lockedPlan = newPlan;
-        // Künstliche Loop-Verzögerung, damit schnellere Folgewellen die langsameren Vorläufer nicht überholen
-        await ns.sleep(timeDelta);
+      const pid = ns.exec("/utils/batch-planner.js", "home", 1);
+      if (pid > 0) {
+        while (ns.isRunning(pid)) {
+          await ns.sleep(50);
+        }
       }
+      const newState = loadState(ns);
+      lockedPlan = newState?.batcherPlan || null;
+
+      await ns.sleep(timeDelta); // Überholpuffer
     }
 
-    let plan = lockedPlan;
-
-    if (plan) {
-      patchState(ns, {
-        batcherRamNeeded: plan.totalRam,
-        batcherTarget: target,
-      });
-      lastWaveProfit = maxMoney * currentGreedFactor;
+    const plan = lockedPlan;
+    if (!plan) {
+      target = null;
+      continue;
     }
+
+    // Ab hier weiß TS garantiert: 'plan' ist vom Typ 'BatchPlan' und niemals 'null'
+    patchState(ns, {
+      batcherRamNeeded: plan.totalRam,
+      batcherTarget: target,
+    });
+
+    const estimatedGreed = plan.hackThreads * 0.04;
+    lastWaveProfit = maxMoney * estimatedGreed;
 
     // --- RAM RESOURCE LOCK CHECKS ---
     if (totalUsableFreeRam < plan.totalRam) {
@@ -395,7 +268,7 @@ export async function main(ns: NS): Promise<void> {
           target,
           progress: totalUsableFreeRam / Math.max(1, requiredRam),
           progressText: `Warte auf RAM-Slot: ${ns.format.ram(totalUsableFreeRam)} / ${ns.format.ram(requiredRam)}`,
-          greed: currentGreedFactor,
+          greed: plan.hackThreads * 0.02, // Dynamisch geschätzt
           ramNeeded: requiredRam,
           ramFree: totalUsableFreeRam,
           ramTotal: totalUsableMaxRam,
@@ -420,7 +293,7 @@ export async function main(ns: NS): Promise<void> {
 
         if (stallSettleTicks > 25) {
           logger.warn(
-            `Zielserver ${target} nach Settle-Ticks instabil. Erzwinge Notfall-Prep-Phase.`,
+            `Zielserver ${target} nach Settle-Ticks instabil. Erzwinge Notfall-Prep.`,
           );
           logEvent("⚠️ Ziel instabil! Notfall-Prep.");
           batchesSentForTarget = 0;
@@ -456,7 +329,7 @@ export async function main(ns: NS): Promise<void> {
           target,
           progress: totalUsableFreeRam / plan.totalRam,
           progressText: `RAM fragmentiert. Warte auf atomaren Slot...`,
-          greed: currentGreedFactor,
+          greed: plan.hackThreads * 0.02,
           ramNeeded: plan.totalRam,
           ramFree: totalUsableFreeRam,
           ramTotal: totalUsableMaxRam,
@@ -480,7 +353,7 @@ export async function main(ns: NS): Promise<void> {
         target,
         progress: batchesSentForTarget / dynamicMaxBatchesForTarget,
         progressText: `Welle #${batchId} (${batchesSentForTarget}/${dynamicMaxBatchesForTarget} bis Rotation)`,
-        greed: currentGreedFactor,
+        greed: plan.hackThreads * 0.02,
         ramNeeded: plan.totalRam,
         ramFree: totalUsableFreeRam,
         ramTotal: totalUsableMaxRam,
@@ -519,15 +392,12 @@ function drawBatcherDashboard(ns: NS, data: DashboardData): void {
 
   ns.print(`============================================================`);
   ns.print(
-    `⚡ BIT-OS DYNAMIC BATCHER v2.0    |  Gewinn/Welle: +$${ns.format.number(data.lastWaveProfit)}`,
+    `⚡ BIT-OS DYNAMIC BATCHER v2.1    |  Gewinn/Welle: +$${ns.format.number(data.lastWaveProfit)}`,
   );
   ns.print(`============================================================`);
   ns.print(`FOKUS-ZIEL:      ${data.target}`);
   ns.print(`STATUS:          [${bar}] ${data.status}`);
   ns.print(`DETAILS:         ${data.progressText}`);
-  ns.print(
-    `GIER-FAKTOR: ${(data.greed * 100).toFixed(1)}% (Est. $${ns.format.number(maxMoney * data.greed)} pro Welle)`,
-  );
   ns.print(`------------------------------------------------------------`);
   ns.print(`NETZWERK-ALLOKATION:`);
   ns.print(
@@ -618,22 +488,12 @@ function executePrepPhase(
       Date.now(),
     );
   } else if (curMoney < maxMoney) {
-    let growThreads = 0;
-    if (ns.formulas && ns.formulas.hacking) {
-      const serverMock = ns.getServer(target);
-      const player = ns.getPlayer();
-      serverMock.hackDifficulty = minSec;
-      serverMock.moneyAvailable = Math.max(1, curMoney);
-      growThreads = Math.ceil(
-        ns.formulas.hacking.growThreads(serverMock, player, maxMoney),
-      );
-    } else {
-      const growthMultiplier = maxMoney / Math.max(1, curMoney);
-      growThreads = Math.ceil(ns.growthAnalyze(target, growthMultiplier));
-    }
+    const growthMultiplier = maxMoney / Math.max(1, curMoney);
+    const growThreads = Math.ceil(ns.growthAnalyze(target, growthMultiplier));
     const weakenThreadsNeeded = Math.ceil(
       (growThreads * 0.004) / weakenPotency,
     );
+
     dispatchBatchScript(
       ns,
       allServers,
@@ -655,53 +515,13 @@ function executePrepPhase(
   }
 }
 
-function findBestBatchTargetForNetwork(
-  ns: NS,
-  allServers: string[],
-  totalNetworkRam: number,
-  bnMults: any,
-): string | null {
-  const targets = allServers.filter(
-    (s) => ns.hasRootAccess(s) && ns.getServerMaxMoney(s) > 0,
-  );
-  let bestTarget = null;
-  let highestScore = 0;
-  const playerHackLevel = ns.getHackingLevel();
-
-  for (const s of targets) {
-    if (ns.getServerRequiredHackingLevel(s) > playerHackLevel) continue;
-
-    // 💡 NEU: Wenn das Netzwerk klein ist (unter 256 GB Gesamt-RAM),
-    // testen wir mit nur 1% Gier, damit machbare Early-Ziele nicht herausgefiltert werden.
-    const testGreed = totalNetworkRam < 256 ? 0.01 : 0.1;
-    let testPlan = calculateBatch(
-      ns,
-      s,
-      bnMults,
-      testGreed,
-      SPACER,
-    ) as BatchPlan | null;
-
-    if (!testPlan || testPlan.totalRam > totalNetworkRam) continue;
-    const idealExecutionTime = testPlan.executionTime;
-    if (idealExecutionTime > DYNAMIC_MAX_WEAKEN_TIME) continue;
-
-    const money = ns.getServerMaxMoney(s);
-    const score = money / idealExecutionTime;
-    if (score > highestScore) {
-      highestScore = score;
-      bestTarget = s;
-    }
-  }
-  return bestTarget;
-}
 function dispatchSplitBatch(
   ns: NS,
   allServers: string[],
   plan: BatchPlan,
   target: string,
   batchId: number,
-  logger: Logger, // 🌟 Parameter hinzugefügt
+  logger: Logger,
 ): boolean {
   const currentState = loadState(ns);
   const shareBufferPercent =
@@ -767,7 +587,6 @@ function dispatchSplitBatch(
       if (possibleThreads > 0) {
         const toDeploy = Math.min(possibleThreads, threadsLeft);
 
-        // Skripte dynamisch auf Remote-Server übertragen, falls nicht vorhanden
         if (server !== "home" && !ns.fileExists(task.script, server)) {
           ns.scp(task.script, server, "home");
           logger.info(
