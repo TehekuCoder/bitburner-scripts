@@ -1,91 +1,23 @@
 import { NS, Player, FactionName, CompanyName } from "@ns";
-import { loadState, patchState, BotStrategy } from "./state-manager.js"; 
-import { breakAndInfectNetwork, getAllServers } from "../lib/network.js";
+import { loadState, patchState, BotStrategy } from "./state-manager.js";
+import { breakAndInfectNetwork, getAllServers, findBestFallbackTarget, dispatchSimpleTask } from "../lib/network.js";
+import { findNextRoadmapFaction, applyToAllMegacorps } from "/lib/player.js";
 import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
 import { Logger } from "./logger.js";
+import { 
+  FactionConfig, 
+  REFRESH_INTERVALS, 
+  BATCHER_MIN_RAM, 
+  COMBAT_STATS, 
+  MEGACORPS, 
+  HACKING_FACTIONS, 
+  CITY_FACTIONS 
+} from "../lib/constants.js";
 
-interface FactionConfig {
-  name: FactionName;
-  minStat: number;
-  priority: number;
-}
-
-// --- CONFIGURATION CONSTANTS ---
-const REFRESH_INTERVALS = {
-  REP_CACHE: 900_000, // 15 Min.
-  MEGACORP_APPLY: 600_000, // 10 Min.
-  FALLBACK_TARGET: 300_000, // 5 Min.
-  STRATEGY_COOLDOWN: 60_000, // 1 Min. Schonfrist für Oszillation
-  NETWORK_SCAN: 20_000, // 🛠️ NEU: Nur alle 20 Sek. das Netzwerk scannen/infizieren
-};
-
-const BATCHER_MIN_RAM = 256;
-
-const COMBAT_STATS: (keyof Player["skills"])[] = [
-  "strength",
-  "defense",
-  "dexterity",
-  "agility",
-];
-
-const MEGACORPS: Record<string, CompanyName> = {
-  ECorp: "ECorp",
-  MegaCorp: "MegaCorp",
-  "KuaiGong International": "KuaiGong International",
-  "Four Sigma": "Four Sigma",
-  NWO: "NWO",
-  "Blade Industries": "Blade Industries",
-  "OmniTek Incorporated": "OmniTek Incorporated",
-  "Bachman & Associates": "Bachman & Associates",
-  "Clarke Incorporated": "Clarke Incorporated",
-  "Fulcrum Secret Technologies": "Fulcrum Technologies",
-};
-
-const HACKING_FACTIONS: FactionConfig[] = [
-  { name: "CyberSec", minStat: 0, priority: 1 },
-  { name: "Tian Di Hui", minStat: 0, priority: 2 },
-  { name: "Netburners", minStat: 0, priority: 3 },
-  { name: "NiteSec", minStat: 0, priority: 4 },
-  { name: "Slum Snakes", minStat: 30, priority: 5 },
-  { name: "Sector-12", minStat: 0, priority: 6 },
-  { name: "Chongqing", minStat: 0, priority: 7 },
-  { name: "Ishima", minStat: 0, priority: 8 },
-  { name: "New Tokyo", minStat: 0, priority: 9 },
-  { name: "Tetrads", minStat: 75, priority: 10 },
-  { name: "The Black Hand", minStat: 0, priority: 11 },
-  { name: "Aevum", minStat: 0, priority: 12 },
-  { name: "Volhaven", minStat: 0, priority: 13 },
-  { name: "The Syndicate", minStat: 200, priority: 14 },
-  { name: "BitRunners", minStat: 0, priority: 15 },
-  { name: "ECorp", minStat: 0, priority: 16 },
-  { name: "MegaCorp", minStat: 0, priority: 17 },
-  { name: "KuaiGong International", minStat: 0, priority: 18 },
-  { name: "Four Sigma", minStat: 0, priority: 19 },
-  { name: "NWO", minStat: 0, priority: 20 },
-  { name: "Blade Industries", minStat: 0, priority: 21 },
-  { name: "OmniTek Incorporated", minStat: 0, priority: 22 },
-  { name: "Bachman & Associates", minStat: 0, priority: 23 },
-  { name: "Clarke Incorporated", minStat: 0, priority: 24 },
-  { name: "Fulcrum Secret Technologies", minStat: 0, priority: 25 },
-  { name: "Silhouette", minStat: 0, priority: 26 },
-  { name: "The Dark Army", minStat: 300, priority: 27 },
-  { name: "Speakers for the Dead", minStat: 300, priority: 28 },
-  { name: "The Covenant", minStat: 850, priority: 29 },
-  { name: "Illuminati", minStat: 1200, priority: 30 },
-  { name: "Daedalus", minStat: 1500, priority: 31 },
-];
-
-const repCache: Record<string, number> = {};
-
-const CITY_FACTIONS: FactionName[] = [
-  "Sector-12" as FactionName,
-  "Aevum" as FactionName,
-  "Chongqing" as FactionName,
-  "New Tokyo" as FactionName,
-  "Ishima" as FactionName,
-  "Volhaven" as FactionName,
-];
-
+// --- NEUE EXTERNE MODULE ---
+import { determineStrategy } from "../lib/strategy.js";
+import { MetricTracker } from "../lib/metrics.js";
+import { generateProgressBar } from "../lib/ui-helper.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -97,52 +29,65 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  logger.info("Initialisiere Netzwerk-Multiplikatoren und Reputations-Cache...");
+  logger.info("Initialisiere Netzwerk-Multiplikatoren...");
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
-  buildReputationCache(ns);
 
-  let lastValue = 0;
-  let lastTime = Date.now();
-  let emaRate = 0;
-  let lastMode = "";
+  // Neuer, gekapselter Metric-Tracker (ersetzt lastValue, lastTime, emaRate, lastMode)
+  const metricTracker = new MetricTracker();
 
   let cachedFallbackTarget = "n00dles";
   let lastFallbackUpdate = 0;
-  let lastCacheRefresh = Date.now();
-  let modeLockTime = 0; 
+  let modeLockTime = 0;
   let lastCorpApplication = 0;
 
-  // 🛠️ Caching für Netzwerk-Scans initialisieren
   let allNetworkServers: string[] = [];
   let lastNetworkScan = 0;
+
+  // --- Absolute Pfade für Hilfsskripte ---
+  const analyzeFactionsScript = "/tasks/analyze-factions.js";
+  const sysBatcherScript = "/core/sys-batcher.js";
+  const fillRamScript = "/utils/fill-ram.js";
+  const factionShoppingScript = "/tasks/faction-shopping.js";
 
   while (true) {
     const now = Date.now();
 
-    // --- CACHE REFRESH ---
-    if (now - lastCacheRefresh > REFRESH_INTERVALS.REP_CACHE) {
-      buildReputationCache(ns);
-      lastCacheRefresh = now;
-      logger.info("Reputations-Cache routinemäßig aktualisiert.");
-    }
-
-    // --- 🛠️ THROTTLED NETZWERK SCAN ---
-    // Verhindert massiven CPU-Overhead durch ständiges Nuken und Suchen im Sekundentakt
-    if (now - lastNetworkScan > REFRESH_INTERVALS.NETWORK_SCAN || allNetworkServers.length === 0) {
+    // --- THROTTLED NETZWERK SCAN ---
+    if (
+      now - lastNetworkScan > REFRESH_INTERVALS.NETWORK_SCAN ||
+      allNetworkServers.length === 0
+    ) {
       breakAndInfectNetwork(ns);
       allNetworkServers = getAllServers(ns);
       lastNetworkScan = now;
     }
 
+    // --- STATE LADEN & DYNAMISCH EVALUIEREN ---
     const currentState = loadState(ns);
-    let mode: BotStrategy = "MONEY";
-    const p = ns.getPlayer();
+    const factionTargets = (currentState?.factionTargets ?? {}) as Record<
+      FactionName,
+      number
+    >;
 
-    // Zentralisiertes Home-RAM Tracking pro Tick
+    // Absolute Pfad-Prüfung für die Faction-Analyse
+    if (
+      Object.keys(factionTargets).length === 0 &&
+      !ns.isRunning(analyzeFactionsScript, "home")
+    ) {
+      const analyzeRam = ns.getScriptRam(analyzeFactionsScript, "home");
+      const freeHomeRam =
+        ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+      if (freeHomeRam >= analyzeRam) {
+        ns.run(analyzeFactionsScript, 1);
+        logger.info(
+          "Factions-Analyse fehlt im State. 'analyze-factions.js' proaktiv gestartet.",
+        );
+      }
+    }
+
+    const p = ns.getPlayer();
     const homeMaxRam = ns.getServerMaxRam("home");
     const getFreeRam = () => homeMaxRam - ns.getServerUsedRam("home");
-    
-    // 🛠️ Typensicherer Aufruf für die undokumentierte Karma-API
     const currentKarma = (ns as any).heart?.break() ?? 0;
 
     if (
@@ -153,21 +98,21 @@ export async function main(ns: NS): Promise<void> {
       lastCorpApplication = now;
     }
 
-    // --- 0. INFRASTRUKTUR VORABBERECHNUNG ---
+    // --- INFRASTRUKTUR VORABBERECHNUNG ---
     const pServers = ns.cloud.getServerNames();
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-    // Maximalen RAM-Riegel im gehackten Netzwerk ermitteln
     const maxNetworkRam = allNetworkServers.reduce((max, s) => {
-      if (!ns.hasRootAccess(s) || pServers.includes(s) || s === "home") return max;
+      if (!ns.hasRootAccess(s) || pServers.includes(s) || s === "home")
+        return max;
       const ram = ns.getServerMaxRam(s);
       return ram > max ? ram : max;
     }, 0);
 
-    // Batcher darf zünden, wenn Formulas da ist UND entweder Home groß genug ist ODER das Netzwerk nutzbaren RAM bietet
-    const canRunBatcher = hasFormulas && (homeMaxRam >= BATCHER_MIN_RAM || maxNetworkRam >= 32);
+    const canRunBatcher =
+      hasFormulas && (homeMaxRam >= BATCHER_MIN_RAM || maxNetworkRam >= 32);
 
-    // --- 1. DYNAMISCHE STRATEGIE-MATRIX ---
+    // --- STRATEGIE-MATRIX VARIABLEN ---
     const playerMoney = p.money;
     const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
     const companyRepMult = bnMults.CompanyWorkRepGain ?? 1;
@@ -175,7 +120,10 @@ export async function main(ns: NS): Promise<void> {
 
     const BASE_MONEY_THRESHOLD = factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
     const lastStrategy = currentState?.strategy || "MONEY";
-    const effectiveThreshold = lastStrategy === "REP" ? BASE_MONEY_THRESHOLD * 0.7 : BASE_MONEY_THRESHOLD;
+    const effectiveThreshold =
+      lastStrategy === "REP"
+        ? BASE_MONEY_THRESHOLD * 0.7
+        : BASE_MONEY_THRESHOLD;
 
     const isReadyForFactionGrind = playerMoney > effectiveThreshold;
 
@@ -184,133 +132,39 @@ export async function main(ns: NS): Promise<void> {
       currentFactionReps[f] = ns.singularity.getFactionRep(f);
     }
 
-    const nextRoadmapFaction = findNextRoadmapFaction(p, currentFactionReps);
+    const nextRoadmapFaction = findNextRoadmapFaction(
+      p,
+      currentFactionReps,
+      factionTargets,
+    );
     const roadmapFactionName = nextRoadmapFaction ? nextRoadmapFaction.name : null;
     const factionToWorkFor = factionRepMult > 0.1 ? nextRoadmapFaction : null;
-    
     const hasSavingTarget = factionToWorkFor !== null && !isReadyForFactionGrind;
 
-    let targetFaction: FactionName | null = roadmapFactionName && p.factions.includes(roadmapFactionName) ? roadmapFactionName : null;
-    let targetCompany: CompanyName | undefined = undefined;
-    let targetStat = 0;
-
-    // Prüfen, ob wir überhaupt noch PServers kaufen/upgraden müssen
     const maxPservers = ns.cloud.getServerLimit();
-    const lacksPservers = pServers.length < maxPservers || pServers.some(s => ns.getServerMaxRam(s) < 64);
+    const lacksPservers =
+      pServers.length < maxPservers ||
+      pServers.some((s) => ns.getServerMaxRam(s) < 64);
     const isRushActive = hasFormulas && homeMaxRam >= 256 && lacksPservers;
 
-    // --- STRATEGIE-ENTSCHEIDUNGSBAUM ---
-    if (p.skills.hacking < 50) {
-      mode = "XP_SPRINT";
-    } else if (nextRoadmapFaction && roadmapFactionName) {
-      const isMember = p.factions.includes(roadmapFactionName);
-      const isCombatFaction =
-        nextRoadmapFaction.minStat > 0 ||
-        ["Slum Snakes", "Tetrads", "The Syndicate", "The Dark Army", "Speakers for the Dead"].includes(roadmapFactionName);
+    // --- STRATEGIE ENTSCHEIDUNG (MODUL!) ---
+    const strategy = determineStrategy(
+      ns,
+      p,
+      currentState,
+      bnMults,
+      currentKarma,
+      isRushActive,
+      canRunBatcher,
+      factionTargets,
+      nextRoadmapFaction,
+      factionToWorkFor,
+      isReadyForFactionGrind
+    );
 
-      if (!isMember) {
-        targetFaction = roadmapFactionName;
+    let { mode, targetFaction, targetCompany, targetStat } = strategy;
 
-        if (roadmapFactionName === "Slum Snakes" && currentKarma > -9) {
-          mode = "CRIME";
-        } else if (roadmapFactionName === "Tetrads" && currentKarma > -18) {
-          mode = "CRIME";
-        } else if (roadmapFactionName === "The Syndicate" && currentKarma > -90) {
-          mode = "CRIME";
-        } else if (roadmapFactionName === "The Dark Army" && p.numPeopleKilled < 5) {
-          mode = "KILLS";
-          targetStat = 5;
-        } else if (roadmapFactionName === "Speakers for the Dead" && p.numPeopleKilled < 30) {
-          mode = "KILLS";
-          targetStat = 30;
-        } else if (
-          nextRoadmapFaction.minStat > 0 &&
-          Math.min(...COMBAT_STATS.map((s) => p.skills[s])) < nextRoadmapFaction.minStat
-        ) {
-          mode = "TRAIN";
-          targetStat = nextRoadmapFaction.minStat;
-        } else if (isRushActive) {
-          mode = "PSERV_RUSH"; 
-        } else {
-          mode = "MONEY";
-        }
-      } else {
-        if (isReadyForFactionGrind || isCombatFaction) {
-          mode = "REP";
-          targetFaction = roadmapFactionName;
-          targetStat = nextRoadmapFaction.minStat;
-        } else if (isRushActive) {
-          mode = "PSERV_RUSH"; 
-        } else {
-          mode = "MONEY";
-        }
-      }
-    } else if (isRushActive) {
-      mode = "PSERV_RUSH"; 
-    } else if (p.skills.hacking >= 250 && companyRepMult > 0.1) {
-      const needsSilhouette = !p.factions.includes("Silhouette" as FactionName) && (repCache["Silhouette"] ?? 0) > 0;
-      const isExecutive = Object.values(p.jobs).some((title) =>
-        ["Chief Technology Officer", "Chief Financial Officer", "Chief Executive Officer"].includes(title),
-      );
-      const hasEnoughKarma = currentKarma <= -22;
-
-      if (needsSilhouette && (!isExecutive || !hasEnoughKarma)) {
-        if (!hasEnoughKarma) {
-          mode = "CRIME";
-        } else {
-          mode = "CORP";
-          const currentCorpJob = Object.keys(p.jobs).find((corp) => MEGACORPS[corp] !== undefined);
-          targetCompany = currentCorpJob ? MEGACORPS[currentCorpJob] : Object.values(MEGACORPS)[0];
-        }
-      } else {
-        const missingCorpFaction = HACKING_FACTIONS.find(
-          (f) =>
-            !p.factions.includes(f.name) &&
-            MEGACORPS[f.name] !== undefined &&
-            ns.singularity.getCompanyRep(MEGACORPS[f.name]) < 400_000 &&
-            (repCache[f.name] ?? 0) > 0,
-        );
-
-        if (missingCorpFaction) {
-          mode = "CORP";
-          targetCompany = MEGACORPS[missingCorpFaction.name];
-        } else {
-          mode = "MONEY";
-        }
-      }
-    } else if (homeMaxRam < 256 || (crimeMoneyMult > 5 && !canRunBatcher)) {
-      mode = "CRIME";
-    } else {
-      mode = "MONEY";
-    }
-
-    // Optionaler Combat-Faction-Fokus
-    if (mode === "MONEY" && pServers.length > 0) {
-      const FOCUS_ON_COMBAT_FACTIONS = false;
-
-      if (FOCUS_ON_COMBAT_FACTIONS) {
-        const nextLockedCombatFaction = HACKING_FACTIONS.find((f) => !p.factions.includes(f.name) && f.minStat > 0);
-
-        if (nextLockedCombatFaction) {
-          let requiredKills = 0;
-          if (nextLockedCombatFaction.name === "The Dark Army") requiredKills = 5;
-          if (nextLockedCombatFaction.name === "Speakers for the Dead") requiredKills = 30;
-
-          const currentLowestCombatStat = Math.min(...COMBAT_STATS.map((s) => p.skills[s]));
-
-          if (p.numPeopleKilled < requiredKills) {
-            mode = "KILLS";
-            targetStat = requiredKills;
-            targetFaction = nextLockedCombatFaction.name;
-          } else if (currentLowestCombatStat < nextLockedCombatFaction.minStat) {
-            mode = "TRAIN";
-            targetStat = nextLockedCombatFaction.minStat;
-            targetFaction = nextLockedCombatFaction.name;
-          }
-        }
-      }
-    }
-
+    // --- FALLBACK TARGET UPDATE ---
     if (
       now - lastFallbackUpdate > REFRESH_INTERVALS.FALLBACK_TARGET ||
       cachedFallbackTarget === "n00dles"
@@ -329,10 +183,14 @@ export async function main(ns: NS): Promise<void> {
     const previousStrategy = currentState?.strategy || "MONEY";
 
     if (mode !== previousStrategy) {
-      const isOscillating = ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(mode) &&
-                            ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(previousStrategy);
+      const isOscillating =
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(mode) &&
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(previousStrategy);
 
-      if (isOscillating && now - modeLockTime < REFRESH_INTERVALS.STRATEGY_COOLDOWN) {
+      if (
+        isOscillating &&
+        now - modeLockTime < REFRESH_INTERVALS.STRATEGY_COOLDOWN
+      ) {
         mode = previousStrategy as BotStrategy;
         if (mode === "REP") targetFaction = currentState?.targetFaction || null;
         if (mode === "CORP") targetCompany = currentState?.targetCompany;
@@ -342,14 +200,14 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // --- 2. METRIK-ERFASSUNG & EMA ETA ENGINE ---
+    // --- METRIK-ERFASSUNG (MODUL!) ---
     let currentVal = 0;
     let targetVal = 0;
     let label = "";
 
     if (mode === "REP" && targetFaction) {
       currentVal = currentFactionReps[targetFaction] ?? ns.singularity.getFactionRep(targetFaction);
-      targetVal = repCache[targetFaction] || 0;
+      targetVal = factionTargets[targetFaction] ?? 0;
       label = `Fraktion: ${targetFaction}`;
     } else if (mode === "CORP" && targetCompany) {
       currentVal = ns.singularity.getCompanyRep(targetCompany);
@@ -365,91 +223,35 @@ export async function main(ns: NS): Promise<void> {
       label = `💀 Mordaufträge`;
     }
 
-    if (mode !== lastMode) {
-      logger.info(`🔄 Strategiewechsel initiiert: ${lastMode || "START"} ➔ ${mode} ${label ? `(${label})` : ""}`);
-      lastValue = currentVal;
-      lastTime = now;
-      emaRate = 0;
-      lastMode = mode;
-    } else if (targetVal > 0) {
-      const timeDiff = now - lastTime;
-      if (timeDiff >= 4000) {
-        const valDiff = currentVal - lastValue;
-        if (valDiff > 0) {
-          const instantRate = valDiff / (timeDiff / 1000);
-          emaRate = emaRate === 0 ? instantRate : emaRate * 0.7 + instantRate * 0.3;
-        }
-        lastValue = currentVal;
-        lastTime = now;
-      }
-    }
+    // Update den Tracker und logge Strategiewechsel via Callback
+    metricTracker.update(mode, currentVal, targetVal, (oldMode, newMode) => {
+      logger.info(
+        `🔄 Strategiewechsel: ${oldMode || "START"} ➔ ${newMode} ${label ? `(${label})` : ""}`,
+      );
+    });
 
-    let etaStr = "Berechne...";
-    if (targetVal === 0 && ["REP", "CORP", "TRAIN"].includes(mode)) {
-      etaStr = "Fertig (Max)"; 
-    } else if (emaRate > 0) {
-      const remaining = targetVal - currentVal;
-      if (remaining <= 0) {
-        etaStr = "Fertig";
-      } else {
-        const secondsLeft = remaining / emaRate;
-        if (secondsLeft > 3600) {
-          etaStr = `${Math.floor(secondsLeft / 3600)}h ${Math.floor((secondsLeft % 3600) / 60)}m`;
-        } else if (secondsLeft > 60) {
-          etaStr = `${Math.floor(secondsLeft / 60)}m ${Math.floor(secondsLeft % 60)}s`;
-        } else {
-          etaStr = `${Math.ceil(secondsLeft)}s`;
-        }
-      }
-    }
-    // --- 3. UI DASHBOARD UPDATE ---
-    let generatedBar = "";
-    if (["REP", "CORP", "TRAIN"].includes(mode) && targetVal > 0) {
-      const pct = ((currentVal / targetVal) * 100).toFixed(1);
-      generatedBar = `${label} | ${ns.format.number(currentVal, 1)}/${ns.format.number(targetVal, 1)} (${pct}%) | ETA: ${etaStr}`;
-    } else if (targetVal === 0 && mode === "REP" && targetFaction) {
-      generatedBar = `🥷 ${targetFaction} | Karma/Gang Grind aktiv`;
-    } else if (mode === "XP_SPRINT") {
-      generatedBar = "👶 Early Game: XP SPRINT (Hacking < 50)";
-    } else if (mode === "CRIME") {
-      generatedBar = crimeMoneyMult > 5 ? "🥷 BN-Synergie: Dauerhafter Crime Loop aktiv (Mörderischer Profit)" : "🥷 Mid-Game-Crime Loop für stabiles Einkommen";
-    } else if (mode === "PSERV_RUSH") {
-      const pservCost = ns.cloud.getServerCost(64);
-      const rushProgress = ((playerMoney / pservCost) * 100).toFixed(1);
-      generatedBar = canRunBatcher 
-        ? `🚀 BATCHER AKTIV (Netzwerk) | Cash: ${ns.format.number(playerMoney, 1)} / ${ns.format.number(pservCost, 0)} $ (${rushProgress}%)`
-        : `🚀 BATCHER RUSH aktiv | Cash: ${ns.format.number(playerMoney, 1)} / ${ns.format.number(pservCost, 0)} $ (${rushProgress}%) | Warte auf Infrastruktur`;
-    } else if (mode === "KILLS") {
-      generatedBar = `💀 Eliminierungs-Aufträge active (${currentVal}/${targetVal} Kills)`;
-    } else if (mode === "MONEY" && !canRunBatcher) {
-      if (!hasFormulas) {
-        generatedBar = `🏗️ Aufbau-Phase: Generiere Geld auf ${cachedFallbackTarget} (Warte auf Formulas.exe)`;
-      } else {
-        generatedBar = `🏗️ Aufbau-Phase: Generiere Geld auf ${cachedFallbackTarget} (Warte auf Server mit 32GB+ RAM)`;
-      }
-    } else {
-      if (factionToWorkFor) {
-        if (isReadyForFactionGrind) {
-          generatedBar = `⏳ Bereit für ${factionToWorkFor.name} | Warte auf Beitritt/Einladung`;
-        } else {
-          const progressPct = ((playerMoney / effectiveThreshold) * 100).toFixed(1);
-          generatedBar = `💰 Spare für ${factionToWorkFor.name}: ${ns.format.number(playerMoney, 1)} / ${ns.format.number(effectiveThreshold, 0)} $ (${progressPct}%)`;
-        }
-      } else {
-        generatedBar = "💰 Maximiere Profit (Batcher)";
-      }
-    }
-    let finalBar = generatedBar;
+    const etaStr = metricTracker.getEtaString(mode, currentVal, targetVal);
 
-    if (
-      (mode === "CRIME" || mode === "XP_SPRINT") &&
-      ns.isRunning("tasks/crime.js", "home")
-    ) {
-      if (currentState?.progressBar?.startsWith("🥷")) {
-        finalBar = currentState.progressBar;
-      }
-    }
+    // --- UI DASHBOARD UPDATE (MODUL!) ---
+    const finalBar = generateProgressBar(ns, {
+      mode,
+      label,
+      currentVal,
+      targetVal,
+      etaStr,
+      targetFaction,
+      playerMoney,
+      effectiveThreshold,
+      cachedFallbackTarget,
+      hasFormulas,
+      canRunBatcher,
+      factionToWorkFor,
+      isReadyForFactionGrind,
+      crimeMoneyMult,
+      currentState,
+    });
 
+    // --- NETZWERK- & WORKER-EINSTELLUNGEN ---
     let sharePercent = 0.0;
     if (mode === "REP") sharePercent = 0.4;
     if (mode === "MONEY") sharePercent = 0.1;
@@ -461,11 +263,12 @@ export async function main(ns: NS): Promise<void> {
       dynamicMaxXp = 1500;
     }
 
-    if (!canRunBatcher && ns.isRunning("utils/fill-ram.js", "home")) {
-      ns.scriptKill("utils/fill-ram.js", "home");
-      logger.info("Batcher nicht ausführbar. 'fill-ram.js' vorsorglich beendet.");
+    if (!canRunBatcher && ns.isRunning("/utils/fill-ram.js", "home")) {
+      ns.scriptKill("/utils/fill-ram.js", "home");
+      logger.info("Batcher nicht ausführbar. 'fill-ram.js' beendet.");
     }
 
+    // State updaten
     patchState(ns, {
       strategy: mode,
       targetFaction: targetFaction || undefined,
@@ -479,62 +282,86 @@ export async function main(ns: NS): Promise<void> {
       },
     });
 
-    const isEarlyGameCrime = homeMaxRam < 128 && (mode === "CRIME" || mode === "XP_SPRINT" || mode === "KILLS");
+    const isEarlyGameCrime =
+      homeMaxRam < 128 &&
+      (mode === "CRIME" || mode === "XP_SPRINT" || mode === "KILLS");
 
     if (isEarlyGameCrime) {
-      if (ns.isRunning("tasks/faction-shopping.js", "home")) ns.scriptKill("tasks/faction-shopping.js", "home");
-      const rogueScripts = ["systems/hacknet.js", "systems/hacknet-early.js"];
+      if (ns.isRunning("/tasks/faction-shopping.js", "home"))
+        ns.scriptKill("/tasks/faction-shopping.js", "home");
+      const rogueScripts = ["/systems/hacknet.js", "/systems/hacknet-early.js"];
       for (const script of rogueScripts) {
-        if (ns.fileExists(script, "home") && ns.isRunning(script, "home")) ns.scriptKill(script, "home");
+        if (ns.fileExists(script, "home") && ns.isRunning(script, "home"))
+          ns.scriptKill(script, "home");
       }
     } else {
-      if (getFreeRam() > 12 && !ns.isRunning("tasks/faction-shopping.js", "home")) {
-        ns.run("tasks/faction-shopping.js", 1);
+      if (
+        getFreeRam() > 12 &&
+        !ns.isRunning("/tasks/faction-shopping.js", "home")
+      ) {
+        ns.run("/tasks/faction-shopping.js", 1);
       }
     }
 
-    // --- 4. STRATEGIE-AWARE WORKER ALLOKATION ---
-    const workerScript = mode === "XP_SPRINT" ? "tasks/xp-grind.js" : "tasks/work.js";
-    const obsoleteScript = mode === "XP_SPRINT" ? "tasks/work.js" : "tasks/xp-grind.js";
+    // --- WORKER ALLOKATION ---
+    const workerScript = mode === "XP_SPRINT" ? "/tasks/xp-grind.js" : "/tasks/work.js";
+    const obsoleteScript = mode === "XP_SPRINT" ? "/tasks/work.js" : "/tasks/xp-grind.js";
 
-    const infectedServers = allNetworkServers.filter((s) => 
-      s !== "home" && !pServers.includes(s) && ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0
+    const infectedServers = allNetworkServers.filter(
+      (s) =>
+        s !== "home" &&
+        !pServers.includes(s) &&
+        ns.hasRootAccess(s) &&
+        ns.getServerMaxRam(s) > 0,
     );
 
     let workerFleet: string[] = [];
 
     if (canRunBatcher) {
-      if (!ns.isRunning("core/sys-batcher.js", "home") && getFreeRam() > 15) {
-        ns.run("core/sys-batcher.js", 1);
-        logger.success("🔥 System-Voraussetzungen erfüllt: 'sys-batcher.js' gestartet.");
+      if (!ns.isRunning(sysBatcherScript, "home") && getFreeRam() > 15) {
+        ns.run(sysBatcherScript, 1);
+        logger.success(
+          "🔥 System-Voraussetzungen erfüllt: 'sys-batcher.js' gestartet.",
+        );
       }
 
       const allAvailableHosts = [...infectedServers, ...pServers];
       for (const server of allAvailableHosts) {
-        if (ns.isRunning(workerScript, server)) ns.scriptKill(workerScript, server);
-        if (ns.isRunning(obsoleteScript, server)) ns.scriptKill(obsoleteScript, server);
+        if (ns.isRunning(workerScript, server))
+          ns.scriptKill(workerScript, server);
+        if (ns.isRunning(obsoleteScript, server))
+          ns.scriptKill(obsoleteScript, server);
       }
     } else {
       workerFleet = [...infectedServers, ...pServers];
 
-      // 🛠️ OPTIMIERT: ns.ps() wird nur noch aufgerufen, wenn der Worker tatsächlich läuft
       for (const server of workerFleet) {
         if (ns.isRunning(obsoleteScript, server)) {
           ns.scriptKill(obsoleteScript, server);
         }
 
         if (ns.isRunning(workerScript, server)) {
-          const runningProc = ns.ps(server).find((proc) => proc.filename === workerScript);
+          const runningProc = ns
+            .ps(server)
+            .find((proc) => proc.filename === workerScript);
           if (runningProc && runningProc.args[0] !== cachedFallbackTarget) {
             ns.scriptKill(workerScript, server);
           }
         }
       }
 
-      dispatchSimpleTask(ns, workerFleet, workerScript, cachedFallbackTarget, Infinity, bnMults);
+      dispatchSimpleTask(
+        ns,
+        workerFleet,
+        workerScript,
+        cachedFallbackTarget,
+        Infinity,
+        bnMults,
+      );
     }
 
-    const homeShouldRunWorker = !["REP", "TRAIN", "CORP", "CRIME"].includes(mode) && !canRunBatcher;
+    const homeShouldRunWorker =
+      !["REP", "TRAIN", "CORP", "CRIME"].includes(mode) && !canRunBatcher;
     if (!homeShouldRunWorker) {
       if (ns.isRunning(workerScript, "home")) {
         ns.scriptKill(workerScript, "home");
@@ -542,7 +369,9 @@ export async function main(ns: NS): Promise<void> {
     } else {
       let isWorkerRunningWithCorrectTarget = false;
       if (ns.isRunning(workerScript, "home")) {
-        const homeProc = ns.ps("home").find((proc) => proc.filename === workerScript);
+        const homeProc = ns
+          .ps("home")
+          .find((proc) => proc.filename === workerScript);
         if (homeProc && homeProc.args[0] !== cachedFallbackTarget) {
           ns.scriptKill(workerScript, "home");
         } else {
@@ -551,10 +380,16 @@ export async function main(ns: NS): Promise<void> {
       }
 
       const homeFreeRam = getFreeRam();
-      const reservedRam = bnMults.ServerWeakenRate < 1.0 ? Math.ceil(20 / bnMults.ServerWeakenRate) : 20;
+      const reservedRam =
+        bnMults.ServerWeakenRate < 1.0
+          ? Math.ceil(20 / bnMults.ServerWeakenRate)
+          : 20;
       const workerRam = ns.getScriptRam(workerScript);
 
-      if (homeFreeRam > reservedRam + workerRam && !isWorkerRunningWithCorrectTarget) {
+      if (
+        homeFreeRam > reservedRam + workerRam &&
+        !isWorkerRunningWithCorrectTarget
+      ) {
         const homeThreads = Math.floor((homeFreeRam - reservedRam) / workerRam);
         if (homeThreads > 0) {
           ns.run(workerScript, homeThreads, cachedFallbackTarget);
@@ -562,24 +397,30 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    const isRamReady = homeMaxRam >= 256 || (pServers.length > 0 && Math.max(...pServers.map((s) => ns.getServerMaxRam(s))) >= 64);
-    const executionAllowed = !hasFormulas || ns.isRunning("core/sys-batcher.js", "home");
+    const isRamReady =
+      homeMaxRam >= 256 ||
+      (pServers.length > 0 &&
+        Math.max(...pServers.map((s) => ns.getServerMaxRam(s))) >= 64);
+    const executionAllowed =
+      !hasFormulas || ns.isRunning(sysBatcherScript, "home");
 
     if (
       isRamReady &&
       !isEarlyGameCrime &&
       executionAllowed &&
-      !ns.isRunning("utils/fill-ram.js", "home") &&
+      !ns.isRunning(fillRamScript, "home") &&
       getFreeRam() > 15
     ) {
-      ns.run("utils/fill-ram.js", 1);
+      ns.run(fillRamScript, 1);
     }
 
     manageMicroservices(ns, mode, hasSavingTarget, logger, targetStat);
 
     if (mode === "MONEY" && !hasSavingTarget && canRunBatcher) {
       if (ns.singularity.getCurrentWork()) {
-        logger.info("Batcher läuft ohne offene Sparziele. Manuelle Arbeit gestoppt.");
+        logger.info(
+          "Batcher läuft ohne offene Sparziele. Manuelle Arbeit gestoppt.",
+        );
         ns.singularity.stopAction();
       }
     }
@@ -588,63 +429,32 @@ export async function main(ns: NS): Promise<void> {
   }
 }
 
-function buildReputationCache(ns: NS): void {
-  const ownedAugs = ns.singularity.getOwnedAugmentations(true);
-
-  for (const faction of HACKING_FACTIONS) {
-    let highest = 0;
-    try {
-      const augs = ns.singularity.getAugmentationsFromFaction(faction.name);
-      for (const aug of augs) {
-        if (!ownedAugs.includes(aug) && aug !== "NeuroFlux Governor") {
-          const req = ns.singularity.getAugmentationRepReq(aug);
-          if (req > highest) highest = req;
-        }
-      }
-      repCache[faction.name] = highest;
-    } catch {
-      repCache[faction.name] = 0;
-    }
-  }
-}
-
-function findNextRoadmapFaction(p: Player, factionReps: Record<string, number>): FactionConfig | null {
-  const currentCityFaction = p.factions.find(f => CITY_FACTIONS.includes(f as FactionName));
-
-  for (const faction of HACKING_FACTIONS) {
-    if (CITY_FACTIONS.includes(faction.name)) {
-      if (currentCityFaction && faction.name !== currentCityFaction) {
-        continue;
-      }
-    }
-
-    const repNeeded = repCache[faction.name] || 0;
-    if (repNeeded > 0) {
-      const currentRep = p.factions.includes(faction.name) ? (factionReps[faction.name] ?? 0) : 0;
-      if (currentRep < repNeeded) return faction;
-    }
-  }
-  return null;
-}
-
-function manageMicroservices(ns: NS, currentMode: string, hasSavingTarget: boolean, logger: Logger, targetStat?: number): void {
+function manageMicroservices(
+  ns: NS,
+  currentMode: string,
+  hasSavingTarget: boolean,
+  logger: Logger,
+  targetStat?: number,
+): void {
   const modeToScript: Record<string, string> = {
-    REP: "tasks/faction-grind.js",
-    CORP: "tasks/corp.js",
-    TRAIN: "tasks/train.js",
-    CRIME: "tasks/crime.js",
-    XP_SPRINT: "tasks/crime.js",
-    KILLS: "tasks/crime.js",
-    PSERV_RUSH: "tasks/crime.js",
+    REP: "/tasks/faction-grind.js",
+    CORP: "/tasks/corp.js",
+    TRAIN: "/tasks/train.js",
+    CRIME: "/tasks/crime.js",
+    XP_SPRINT: "/tasks/crime.js",
+    KILLS: "/tasks/crime.js",
+    PSERV_RUSH: "/tasks/crime.js",
   };
 
   let targetScript = modeToScript[currentMode];
 
-  if (currentMode === "MONEY" && (hasSavingTarget || !ns.isRunning("core/sys-batcher.js", "home"))) {
-    targetScript = "tasks/crime.js";
+  if (
+    currentMode === "MONEY" &&
+    (hasSavingTarget || !ns.isRunning("/core/sys-batcher.js", "home"))
+  ) {
+    targetScript = "/tasks/crime.js";
   }
 
-  // 1. Veraltete Microservices beenden
   for (const [_, script] of Object.entries(modeToScript)) {
     if (script !== targetScript && ns.isRunning(script, "home")) {
       ns.scriptKill(script, "home");
@@ -652,9 +462,8 @@ function manageMicroservices(ns: NS, currentMode: string, hasSavingTarget: boole
     }
   }
 
-  // 2. Ziel-Microservice intelligent starten/überprüfen
   if (targetScript && ns.fileExists(targetScript, "home")) {
-    const runningProc = ns.ps("home").find(p => p.filename === targetScript);
+    const runningProc = ns.ps("home").find((p) => p.filename === targetScript);
     const isRunning = runningProc !== undefined;
     let shouldStart = !isRunning;
 
@@ -662,9 +471,11 @@ function manageMicroservices(ns: NS, currentMode: string, hasSavingTarget: boole
       const currentRunningTarget = runningProc?.args[0] as number | undefined;
 
       if (currentRunningTarget !== targetStat) {
-        ns.scriptKill(targetScript, "home"); 
-        shouldStart = true;                  
-        logger.info(`🔄 Trainingsziel geändert (${currentRunningTarget} ➔ ${targetStat}). Starte Worker neu.`);
+        ns.scriptKill(targetScript, "home");
+        shouldStart = true;
+        logger.info(
+          `🔄 Trainingsziel geändert (${currentRunningTarget} ➔ ${targetStat}). Starte Worker neu.`,
+        );
       }
     }
 
@@ -675,106 +486,23 @@ function manageMicroservices(ns: NS, currentMode: string, hasSavingTarget: boole
       if (freeRam >= requiredRam) {
         const args: (string | number)[] = [];
         if (currentMode === "TRAIN" && targetStat !== undefined) {
-          args.push(targetStat); 
+          args.push(targetStat);
         }
-        
+
         const pid = ns.run(targetScript, 1, ...args);
         if (pid > 0) {
-          logger.success(`▶️ Microservice gestartet: ${targetScript} für [${currentMode}] mit Args: ${args}`);
+          logger.success(
+            `▶️ Microservice gestartet: ${targetScript} für [${currentMode}] mit Args: ${args}`,
+          );
         } else {
-          logger.error(`❌ Fehler beim Starten von ${targetScript} (PID war 0).`);
+          logger.error(
+            `❌ Fehler beim Starten von ${targetScript} (PID war 0).`,
+          );
         }
       } else {
-        logger.warn(`RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB.`);
-      }
-    }
-  }
-}
-
-export function findBestFallbackTarget(
-  ns: NS,
-  hackingLevel: number,
-  bnMults: any,
-  allServers: string[],
-  blacklistTarget: string | null = null,
-): string {
-  let bestTarget = "n00dles";
-  let maxWeight = 0;
-
-  const serverMaxMoneyMult = bnMults.ServerMaxMoney ?? 1.0;
-  const growthMult = bnMults.ServerGrowthRate ?? 1.0;
-  const isNoMoneyNode = serverMaxMoneyMult === 0;
-
-  for (const current of allServers) {
-    if (current === "home" || !ns.hasRootAccess(current) || current === blacklistTarget) continue;
-
-    const reqHacking = ns.getServerRequiredHackingLevel(current);
-    if (reqHacking > hackingLevel) continue;
-
-    if (isNoMoneyNode) {
-      const cycleTime = ns.getWeakenTime(current);
-      const weight = reqHacking / (Math.max(1, cycleTime) / 1000);
-      if (weight > maxWeight) {
-        maxWeight = weight;
-        bestTarget = current;
-      }
-      continue;
-    }
-
-    const serverMaxMoney = ns.getServerMaxMoney(current);
-    if (serverMaxMoney <= 0) continue;
-
-    const cycleTime = ns.getWeakenTime(current);
-    if (cycleTime > 5 * 60 * 1000) continue;
-
-    const weight = (serverMaxMoney / (cycleTime / 1000)) * (reqHacking / 100) * growthMult;
-
-    if (weight > maxWeight) {
-      maxWeight = weight;
-      bestTarget = current;
-    }
-  }
-  return bestTarget;
-}
-
-function applyToAllMegacorps(ns: NS, p: Player, logger: Logger): void {
-  for (const corpName of Object.values(MEGACORPS)) {
-    if (!p.jobs[corpName]) {
-      if (ns.singularity.applyToCompany(corpName, "Software")) {
-        logger.success(`💼 Bewerbung erfolgreich: Anstellung bei '${corpName}' erhalten.`);
-      }
-    }
-  }
-}
-
-function dispatchSimpleTask(
-  ns: NS,
-  servers: string[],
-  script: string,
-  target: string,
-  threads: number,
-  bnMults: any,
-): void {
-  let threadsRemaining = threads;
-
-  for (const server of servers) {
-    if (!ns.hasRootAccess(server)) continue;
-    if (ns.isRunning(script, server, target)) continue;
-
-    const homeBuffer = bnMults.ServerWeakenRate < 1.0 ? Math.ceil(48 / bnMults.ServerWeakenRate) : 48;
-    const maxRam = server === "home" ? ns.getServerMaxRam("home") - homeBuffer : ns.getServerMaxRam(server);
-    const freeRam = maxRam - ns.getServerUsedRam(server);
-    const scriptRam = ns.getScriptRam(script);
-
-    const possibleThreads = Math.floor(freeRam / scriptRam);
-
-    if (possibleThreads > 0) {
-      const threadsToRun = Math.min(possibleThreads, threadsRemaining);
-      ns.exec(script, server, threadsToRun, target);
-
-      if (threadsRemaining !== Infinity) {
-        threadsRemaining -= threadsToRun;
-        if (threadsRemaining <= 0) break;
+        logger.warn(
+          `RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB.`,
+        );
       }
     }
   }

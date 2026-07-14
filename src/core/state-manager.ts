@@ -27,6 +27,8 @@ export interface BotState {
   jobField?: JobField;
   targetKills?: number;
 
+  factionTargets?: Record<FactionName, number>;
+
   // --- Spur 2: Hacking & Batching (Parallel) ---
   batcherProgress?: string;
   batcherRamNeeded?: number;
@@ -72,6 +74,13 @@ export interface BotState {
   totalNodes?: number;
   isFleetMode?: boolean;
   sources?: Record<string, string>;
+
+  allServers?: string[];
+  bnMults?: Record<string, number>;
+
+  homeCores?: number;
+  isHomePrioritized?: boolean;
+  isRushModeActive?: boolean;
 }
 
 const STATE_PORT = 1;

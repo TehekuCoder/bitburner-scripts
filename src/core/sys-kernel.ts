@@ -1,17 +1,15 @@
-import { NS, Player } from "@ns";
+import { NS } from "@ns";
 import {
   loadState,
   patchState,
-  BotState,
   clearState,
   saveState,
 } from "./state-manager.js";
 import { getAllServers, breakAndInfectNetwork } from "../lib/network.js";
-import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
-import { provisionServer } from "../utils/provision.js";
 import { Logger } from "./logger.js";
+import { deployWorker } from "../utils/deployment.js";
 
-interface ScriptList {
+export interface ScriptList {
   worker: string;
   dispatcher: string;
   infra: string;
@@ -50,71 +48,22 @@ export async function main(ns: NS): Promise<void> {
 
   ns.disableLog("ALL");
 
-  // --- 🔄 BOOT-SEQUENCE: ENVIRONMENT ANALYSIS ---
-  try {
-    logger.info("Analysiere BitNode-Umgebung via Source-File 5...");
-    const realMults = ns.getBitNodeMultipliers();
-    ns.write("bn-multipliers.txt", JSON.stringify(realMults, null, 2), "w");
-    logger.success("bn-multipliers.txt erfolgreich generiert.");
-  } catch {
-    logger.warn("Source-File 5 nicht aktiv. Nutze Failsafe-Matrix.");
-    ns.write(
-      "bn-multipliers.txt",
-      JSON.stringify(DEFAULT_MULTIPLIERS, null, 2),
-      "w",
+  // --- 🔄 BOOT-SEQUENCE: ENVIRONMENT INITIALIZATION ---
+  logger.info("Starte System-Initializer...");
+  const initPid = ns.run("core/sys-initializer.js", 1);
+
+  if (initPid === 0) {
+    logger.error(
+      "Kritischer Fehler: sys-initializer.js konnte nicht gestartet werden!",
     );
+    return;
   }
 
-  const bnMults = loadBnMults(ns);
-  logger.info("Subsysteme werden initialisiert...");
-
-  // --- 🎖️ PROGRESSION DETECTION (0 GB RAM ANALYSE) ---
-  logger.info("Scanne Account-Progression und Unlocks...");
-  
-  let ownedSourceFiles: Record<number, number> = {};
-  let currentBN = 10;
-  let currentBNLvl = 2; // Du bist aktuell bei BN 10.2!
-
-  try {
-    // Falls SF4 (Singularity) aktiv ist, lesen wir die echten Daten live aus
-    const sfData = ns.singularity.getOwnedSourceFiles();
-    for (const sf of sfData) {
-      ownedSourceFiles[sf.n] = sf.lvl;
-    }
-    currentBN = ns.getResetInfo().currentNode;
-    // Das Level lässt sich leider nicht direkt per API auslesen, 
-    // daher nutzen wir deinen realen Stand als exzellenten Standardwert:
-    if (currentBN === 10) currentBNLvl = 2;
-  } catch {
-    // Failsafe-Fallback: Deine exakte historische Unlock-Reihenfolge!
-    // Unlocked: 1.1, 1.2, 4.1, 4.2, 4.3, 1.3, 5.1, 5.2, 5.3, 10.1.
-    ownedSourceFiles = {
-      1: 3,  // SF1 Maxed (1.1, 1.2, 1.3)
-      4: 3,  // SF4 Maxed (4.1, 4.2, 4.3)
-      5: 3,  // SF5 Maxed (5.1, 5.2, 5.3)
-      10: 1  // SF10 Level 1 (10.1 geschafft)
-    };
+  while (ns.isRunning(initPid)) {
+    await ns.sleep(50);
   }
+  logger.success("System-Initialisierung abgeschlossen.");
 
-  // DarkScapeNavigator Erkennung (Bitburner v3.0 / Custom)
-  const hasDarkScapeNavigator = 
-    ns.fileExists("DarkScapeNavigator.exe", "home") || 
-    ns.fileExists("DarkScapeNavigator.js", "home");
-
-  // TOR-Router Erkennung via simpler Netzwerkumgebung (0 GB RAM)
-  const hasTor = ns.scan("home").includes("darkweb");
-
-  // Einmalige Abfrage aktiver Firmen/Gangs beim Booten
-  let hasGang = false;
-  try { hasGang = ns.gang.inGang(); } catch {}
-
-  let hasCorp = false;
-  try { hasCorp = ns.corporation.hasCorporation(); } catch {}
-
-  let hasBladeburner = false;
-  try { hasBladeburner = ns.bladeburner.inBladeburner(); } catch {}
-
-  // 🆕 BOOT-RESET MIT INITIALISIERUNG ALLER SPUREN (Inklusive Progression)
   logger.info("Initialisiere globalen State-Port...");
   clearState(ns);
   saveState(ns, {
@@ -124,43 +73,44 @@ export async function main(ns: NS): Promise<void> {
     financeProgress: "Berechne Budget...",
     traderProgress: "Kein Depot",
     hacknetProgress: "Inaktiv",
-    
-    // Progressions-Spur befüllen
-    currentBitNode: currentBN,
-    currentBitNodeLevel: currentBNLvl,
-    sourceFiles: ownedSourceFiles,
-    hasDarkScapeNavigator: hasDarkScapeNavigator,
-    hasTorRouter: hasTor,
-    hasGang: hasGang,
-    hasCorporation: hasCorp,
-    hasBladeburner: hasBladeburner
+    currentBitNode: 1,
+    currentBitNodeLevel: 1,
+    sourceFiles: {},
+    hasDarkScapeNavigator: false,
+    hasTorRouter: false,
+    hasGang: false,
+    hasCorporation: false,
+    hasBladeburner: false,
+    allServers: [],
+    kernelTarget: "n00dles",
   });
 
-  // 🆕 AUTOMATISCHER START DER CORE-VISUALISIERUNG
-  if (!ns.scriptRunning("sys-hud.js", "home")) {
+  if (!ns.scriptRunning("core/sys-hud.js", "home")) {
     logger.info("Starte HUD-Overlay...");
-    ns.exec("sys-hud.js", "home", 1);
+    ns.run("core/sys-hud.js", 1);
   }
 
-  if (ns.fileExists(scripts.dashboard, "home") && !ns.scriptRunning(scripts.dashboard, "home")) {
+  if (
+    ns.fileExists(scripts.dashboard, "home") &&
+    !ns.scriptRunning(scripts.dashboard, "home")
+  ) {
     logger.success("Starte Consolidated Operational Dashboard...");
-    ns.exec(scripts.dashboard, "home", 1);
+    ns.run(scripts.dashboard, 1);
   }
 
-  // Caching-Variablen für Performance-Optimierung
   let lastRootCount = -1;
   let lastStrategy = "";
   let lastProgressBar = "";
   let lastDeployedTarget = "";
   let lastDeployedStrategy = "";
+  let lastProbeTime = 0;
 
   while (true) {
-    // 1. Netzwerk infizieren & scannen
+    const now = Date.now();
     breakAndInfectNetwork(ns);
     const allNodes: string[] = getAllServers(ns);
 
     const currentRootCount = allNodes.filter((n) => ns.hasRootAccess(n)).length;
-    const triggerBackdoor = currentRootCount > lastRootCount;
     const networkChanged = currentRootCount !== lastRootCount;
     lastRootCount = currentRootCount;
 
@@ -168,17 +118,61 @@ export async function main(ns: NS): Promise<void> {
     const player = ns.getPlayer();
     const currentState = loadState(ns);
 
+    // 🟢 Multiplikatoren gratis direkt aus der Datei lesen (0 GB RAM)
+    let bnMults: Record<string, number> = {};
+    try {
+      const fileContent = ns.read("/bn-multipliers.txt");
+      if (fileContent) {
+        bnMults = JSON.parse(fileContent);
+      }
+    } catch (_) {
+      // Falls die Datei beim allerersten Boot noch nicht existiert, bleibt bnMults leer ({})
+    }
+
+    // --- 📡 DYNAMISCHE PROGRESSION-PROBES & TARGETING ---
+    if (now - lastProbeTime > 15000) {
+      const freeRam = homeMax - ns.getServerUsedRam("home");
+
+      // 1. Singularity & SourceFiles Probe (~3.6 GB)
+      if (homeMax >= 8 && !ns.isRunning("/utils/probe-sing.js", "home")) {
+        if (freeRam >= 3.6) ns.run("/utils/probe-sing.js", 1);
+      }
+
+      // 2. Gang Probe (~5.6 GB)
+      if (homeMax >= 16 && !ns.isRunning("/utils/probe-gang.js", "home")) {
+        if (freeRam >= 5.6) ns.run("/utils/probe-gang.js", 1);
+      }
+
+      // 3. Bladeburner Probe (~5.6 GB)
+      if (homeMax >= 16 && !ns.isRunning("/utils/probe-blade.js", "home")) {
+        if (freeRam >= 5.6) ns.run("/utils/probe-blade.js", 1);
+      }
+
+      // 4. Corporation Probe (~81.6 GB)
+      if (homeMax >= 128 && !ns.isRunning("/utils/probe-corp.js", "home")) {
+        if (freeRam >= 81.6) ns.run("/utils/probe-corp.js", 1);
+      }
+
+      // 5. Target Finder Probe (~4.30 GB RAM) - Auslagerung von ns.getServer()
+      if (!ns.isRunning("/utils/probe-target.js", "home")) {
+        if (freeRam >= 4.3) {
+          ns.run("/utils/probe-target.js", 1);
+        }
+      }
+
+      lastProbeTime = now;
+    }
+
     let activeStrategy = currentState?.strategy || "MONEY";
     let activeProgressBar = currentState?.progressBar || "";
 
-    // --- 🧠 DYNAMISCHE EFFIZIENZ-MATRIX (GEWALTENTEILUNG) ---
     const isDispatcherReady =
       homeMax >= 256 && ns.fileExists(scripts.dispatcher, "home");
 
     if (!isDispatcherReady) {
-      // 🛡️ FALLBACK-LOGIK: Nur aktiv im Early-Game (wenn kein Dispatcher läuft)
+      // 🛡️ FALLBACK-LOGIK (Early Game) - Verwendet bnMults aus dem State!
       const hackingEfficiency =
-        bnMults.ServerMaxMoney * bnMults.ScriptHackMoneyGain;
+        (bnMults.ServerMaxMoney ?? 1.0) * (bnMults.ScriptHackMoneyGain ?? 1.0);
       const hackingExpMult = bnMults.HackingLevelMultiplier ?? 1.0;
 
       if (hackingEfficiency === 0) {
@@ -188,7 +182,7 @@ export async function main(ns: NS): Promise<void> {
       } else if (
         hackingEfficiency < 0.2 &&
         player.money < 50_000_000 &&
-        bnMults.CrimeMoney > 0.5
+        (bnMults.CrimeMoney ?? 1.0) > 0.5
       ) {
         activeStrategy = "CRIME";
         activeProgressBar = `🥷 Hacking ineffizient (${(hackingEfficiency * 100).toFixed(0)}%). Starte Verbrechen-Grind.`;
@@ -200,9 +194,9 @@ export async function main(ns: NS): Promise<void> {
             player.skills.agility) /
           4;
 
-        if (bnMults.CompanyWorkMoney > 1.2 && combatAvg >= 30) {
+        if ((bnMults.CompanyWorkMoney ?? 1.0) > 1.2 && combatAvg >= 30) {
           activeStrategy = "CORP";
-          activeProgressBar = `🏢 BN-Spezial: Firmen-Arbeit stark skaliert (${(bnMults.CompanyWorkMoney * 100).toFixed(0)}%).`;
+          activeProgressBar = `🏢 BN-Spezial: Firmen-Arbeit stark skaliert (${((bnMults.CompanyWorkMoney ?? 1.0) * 100).toFixed(0)}%).`;
         } else {
           activeStrategy = "MONEY";
           activeProgressBar = `💻 Hacking-Fleet aktiv (Netzwerk-Ressourcen optimal genutzt)`;
@@ -213,7 +207,6 @@ export async function main(ns: NS): Promise<void> {
         activeProgressBar = `⚠️ XP-Sprint aktiv, aber BN-Hacking-XP ist stark gedrosselt (${(hackingExpMult * 100).toFixed(0)}%)!`;
       }
 
-      // PERFORMANCE-FIX: Nur patchen, wenn sich Werte real verändert haben!
       if (
         activeStrategy !== lastStrategy ||
         activeProgressBar !== lastProgressBar
@@ -230,48 +223,30 @@ export async function main(ns: NS): Promise<void> {
       activeProgressBar = currentState?.progressBar || "";
     }
 
-    const bestTarget: string = findBestTarget(ns, allNodes, player, bnMults);
+    // Hole das beste Ziel sicher aus dem State (geschrieben von probe-target.ts)
+    const bestTarget = currentState?.kernelTarget || "n00dles";
 
-    // --- 📡 REALTIME-PROGRESSION CHECKS ---
-    // Wir aktualisieren im Loop günstige States (wie TOR, Gangs, Corps), falls sie im laufenden Run erworben werden
     const currentTor = ns.scan("home").includes("darkweb");
-    let currentGang = false;
-    try { currentGang = ns.gang.inGang(); } catch {}
-    let currentCorp = false;
-    try { currentCorp = ns.corporation.hasCorporation(); } catch {}
-    let currentBlade = false;
-    try { currentBlade = ns.bladeburner.inBladeburner(); } catch {}
+    const currentGang = currentState?.hasGang || false;
+    const currentCorp = currentState?.hasCorporation || false;
+    const currentBlade = currentState?.hasBladeburner || false;
 
-    const localStateSnapshot: BotState = {
-      ...(currentState || {}),
-      strategy: activeStrategy,
-      progressBar: activeProgressBar,
-      lastUpdate: Date.now(),
-      playerHacking: ns.getHackingLevel(),
-      hasTorRouter: currentTor,
-      hasGang: currentGang,
-      hasCorporation: currentCorp,
-      hasBladeburner: currentBlade
-    } as BotState;
+    // --- START SUITE-DAEMON WENN GENUG RAM ---
+    if (homeMax >= 16 && !ns.isRunning("/core/sys-suites.js", "home")) {
+      const freeRam = homeMax - ns.getServerUsedRam("home");
+      if (freeRam >= 12.0) {
+        logger.info("Starte Suite-Manager Daemon...");
+        ns.run("/core/sys-suites.js", 1);
+      }
+    }
 
-    // Subsysteme verwalten (Nutzt den aktualisierten Snapshot)
-    manageSuites(
-      ns,
-      scripts,
-      localStateSnapshot,
-      triggerBackdoor,
-      bnMults,
-      logger,
-    );
-
-    // --- 🚀 ORCHESTRIERUNG DER SUB-MANAGER ---
     let isDispatcherRunning = ns.isRunning(scripts.dispatcher, "home");
 
     if (isDispatcherReady && !isDispatcherRunning) {
       logger.info(
         "Starte zentralen System-Dispatcher (Dispatcher-Modus aktiv)...",
       );
-      ns.exec(scripts.dispatcher, "home", 1);
+      ns.run(scripts.dispatcher, 1);
       isDispatcherRunning = true;
     }
 
@@ -280,7 +255,7 @@ export async function main(ns: NS): Promise<void> {
       !ns.isRunning(scripts.infra, "home")
     ) {
       logger.info("Starte Infrastruktur-Manager...");
-      ns.exec(scripts.infra, "home", 1);
+      ns.run(scripts.infra, 1);
     }
 
     // --- 🧹 CLEANUP & 📡 WORKER DEPLOYMENT ---
@@ -303,8 +278,8 @@ export async function main(ns: NS): Promise<void> {
           let ramBuffer = 0;
           if (node === "home") {
             const weakenModifier =
-              bnMults.ServerWeakenRate < 1.0
-                ? Math.ceil(16 / bnMults.ServerWeakenRate)
+              (bnMults.ServerWeakenRate ?? 1.0) < 1.0
+                ? Math.ceil(16 / (bnMults.ServerWeakenRate ?? 1.0))
                 : 0;
             const baseBuffer = [
               "CRIME",
@@ -333,223 +308,16 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // --- 📡 EXPORTIEREN DER KERNEL-DATEN AN DAS PORT-SYSTEM ---
-    const pServers = ns.cloud.getServerNames();
-    const isFleetMode =
-      homeMax >= 256 && pServers.some((s) => ns.getServerMaxRam(s) >= 64);
-
     patchState(ns, {
-      kernelTarget: bestTarget,
       rootCount: currentRootCount,
       totalNodes: allNodes.length,
-      isFleetMode: isFleetMode,
       hasTorRouter: currentTor,
       hasGang: currentGang,
       hasCorporation: currentCorp,
-      hasBladeburner: currentBlade
+      hasBladeburner: currentBlade,
+      allServers: allNodes, // Füttert probe-target mit der Serverliste!
     });
 
     await ns.sleep(2000);
-  }
-}
-
-// ======================================================================
-// --- 🛠️ SUBSYSTEM MANAGER ---
-// ======================================================================
-function manageSuites(
-  ns: NS,
-  scripts: ScriptList,
-  state: BotState,
-  triggerBackdoor: boolean,
-  bnMults: any,
-  logger: Logger,
-): void {
-  const homeMaxRam = ns.getServerMaxRam("home");
-  const hasFormulas = ns.fileExists("Formulas.exe", "home");
-
-  const targetHacknetScript = hasFormulas
-    ? "systems/hacknet.js"
-    : "systems/hacknet-early.js";
-  const obsoleteHacknetScript = hasFormulas
-    ? "systems/hacknet-early.js"
-    : "systems/hacknet.js";
-
-  if (ns.isRunning(obsoleteHacknetScript, "home")) {
-    logger.info(`Beende veraltetes Hacknet-Skript (${obsoleteHacknetScript}).`);
-    ns.scriptKill(obsoleteHacknetScript, "home");
-  }
-
-  const hasBrute = ns.fileExists("BruteSSH.exe", "home");
-
-  if (homeMaxRam < 128 || !hasBrute) {
-    if (ns.isRunning(targetHacknetScript, "home")) {
-      logger.warn(
-        "Ressourcen oder Port-Tools unzureichend. Deaktiviere Hacknet-Subsystem.",
-      );
-      ns.scriptKill(targetHacknetScript, "home");
-    }
-  } else {
-    if (
-      ns.fileExists(targetHacknetScript, "home") &&
-      !ns.isRunning(targetHacknetScript, "home")
-    ) {
-      if (bnMults.HacknetNodeMoney < 0.4) {
-        logger.warn(
-          "Hacknet-Produktion durch BitNode gedrosselt! Starte im Failsafe-Modus.",
-        );
-        ns.exec(targetHacknetScript, "home", 1, 4, 100, 8, 4);
-      } else {
-        logger.success("Starte unlimitiertes Hacknet-Subsystem...");
-        ns.exec(targetHacknetScript, "home", 1);
-      }
-    }
-  }
-
-  if (
-    triggerBackdoor &&
-    ns.fileExists(scripts.backdoor, "home") &&
-    !ns.isRunning(scripts.backdoor, "home")
-  ) {
-    logger.info("Neuer anfälliger Server gefunden. Starte Backdoor-Prozess...");
-    ns.exec(scripts.backdoor, "home", 1);
-  }
-
-  // 🚀 OPTIMIERTE FINANCE START-LOGIK:
-  // Wir überlassen finance.ts die vollständige Lizenz- und Budgetkontrolle.
-  // Das Skript startet, sobald wir genug RAM haben, und meldet seinen Status ("EARLY") live ans Dashboard.
-  if (
-    ns.fileExists(scripts.trade, "home") &&
-    !ns.isRunning(scripts.trade, "home")
-  ) {
-    if (homeMaxRam >= 64) {
-      logger.success("Initialisiere Finanz-Subsystem [STATE-INTEGRATED]...");
-      ns.exec(scripts.trade, "home", 1);
-    }
-  }
-
-  // Nutzen der gecachten State-Variable statt redundanter File-Checks
-  if (state.hasDarkScapeNavigator && homeMaxRam >= 256) {
-    if (!ns.isRunning(scripts.replicator, "home")) {
-      logger.info(
-        "Darkscape-Netzwerk bereit. Starte DNet-Master Replicator...",
-      );
-      ns.exec(scripts.replicator, "home", 1);
-    }
-    if (
-      ns.fileExists(scripts.crawler, "home") &&
-      !ns.isRunning(scripts.crawler, "home")
-    ) {
-      logger.info("Starte DNet-Crawler...");
-      ns.exec(scripts.crawler, "home", 1);
-    }
-  }
-
-  if (ns.sleeve !== undefined && ns.fileExists(scripts.sleeve, "home")) {
-    if (!ns.isRunning(scripts.sleeve, "home")) {
-      logger.info(
-        "Sleeve-API detektiert. Initialisiere Klon-Automatisierung...",
-      );
-      ns.exec(scripts.sleeve, "home", 1);
-    }
-  }
-}
-
-function findBestTarget(
-  ns: NS,
-  nodes: string[],
-  player: Player,
-  bnMults: any,
-): string {
-  let best = "n00dles";
-  let maxWeight = 0;
-
-  const serverMaxMoneyMult = bnMults.ServerMaxMoney ?? 1.0;
-  const growthMult = bnMults.ServerGrowthRate ?? 1.0;
-  const isNoMoneyNode = serverMaxMoneyMult === 0;
-
-  for (const node of nodes) {
-    if (
-      node === "home" ||
-      node === "darkweb" ||
-      node.startsWith("hacknet-node")
-    )
-      continue;
-    if (!ns.hasRootAccess(node)) continue;
-
-    const srv = ns.getServer(node);
-    const maxMoney = srv.moneyMax ?? 0;
-
-    if (!isNoMoneyNode && maxMoney <= 0) continue;
-
-    const reqSkill = srv.requiredHackingSkill || 0;
-    if (reqSkill > player.skills.hacking) continue;
-
-    const cycleTime = ns.getWeakenTime(node);
-
-    if (isNoMoneyNode) {
-      const weight = reqSkill / (Math.max(1, cycleTime) / 1000);
-      if (weight > maxWeight) {
-        maxWeight = weight;
-        best = node;
-      }
-      continue;
-    }
-
-    if (cycleTime > 5 * 60 * 1000) continue;
-
-    const weight =
-      (maxMoney / (cycleTime / 1000)) * (reqSkill / 100) * growthMult;
-
-    if (weight > maxWeight) {
-      maxWeight = weight;
-      best = node;
-    }
-  }
-  return best;
-}
-
-async function deployWorker(
-  ns: NS,
-  targetNode: string,
-  scriptFilename: string,
-  hackTarget: string,
-  ramBuffer: number,
-  scripts: ScriptList,
-): Promise<void> {
-  if (targetNode !== "home") {
-    await provisionServer(ns, targetNode);
-  }
-
-  if (!ns.fileExists(scriptFilename, "home")) return;
-
-  const scriptCost = ns.getScriptRam(scriptFilename);
-  const maxRam = ns.getServerMaxRam(targetNode);
-  const usedRam = ns.getServerUsedRam(targetNode);
-  let freedRam = 0;
-
-  const procs = ns.ps(targetNode);
-  const allWorkerScripts = [
-    scripts.worker,
-    scripts.xpfarm,
-    scripts.hack,
-    scripts.grow,
-    scripts.weaken,
-  ];
-
-  for (const p of procs) {
-    if (
-      allWorkerScripts.includes(p.filename) &&
-      (p.filename !== scriptFilename || p.args[0] !== hackTarget)
-    ) {
-      ns.kill(p.pid);
-      freedRam += ns.getScriptRam(p.filename) * p.threads;
-    }
-  }
-
-  const actualFreeRam = maxRam - usedRam + freedRam - ramBuffer;
-  const threads = Math.floor(actualFreeRam / scriptCost);
-
-  if (threads > 0) {
-    ns.exec(scriptFilename, targetNode, threads, hackTarget);
   }
 }

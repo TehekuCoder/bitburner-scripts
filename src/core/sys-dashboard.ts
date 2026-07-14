@@ -1,11 +1,11 @@
-import { NS } from "@ns";
+import { NS, FactionName } from "@ns";
 import { loadState } from "./state-manager.js";
 import { loadBnMults } from "../lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
-  ns.ui.resizeTail(640, 480);
+  ns.ui.resizeTail(640, 580); // Leicht erhöht, um Platz für die Fraktionsliste zu machen
 
   const bnMults = loadBnMults(ns);
 
@@ -31,7 +31,6 @@ export async function main(ns: NS): Promise<void> {
       const paddedLabel = label.padEnd(15);
       const valStr = String(val);
 
-      // Entfernt alle ANSI-Farbcodes für eine präzise visuelle Breitenberechnung
       const visualLen = valStr.replace(
         /[\u001b\u009b][[()#;?]*(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?/g,
         "",
@@ -61,7 +60,7 @@ export async function main(ns: NS): Promise<void> {
     );
     printRow("STRATEGIE", state.strategy, "strategy");
 
-    // 🏆 1.5 Progression & Unlocks (Vollautomatisch durch Kernel-Erfassung)
+    // Progression & Unlocks
     const bitNodeStr = `BN ${state.currentBitNode ?? 10}.${state.currentBitNodeLevel ?? 2}`;
     printRow("CURRENT BITNODE", bitNodeStr, "currentBitNode");
 
@@ -89,11 +88,24 @@ export async function main(ns: NS): Promise<void> {
     printRow("COMPANY", state.targetCompany || "KEINE", "targetCompany");
     printRow("PROGRESS", state.progressBar || "Idle", "progressBar");
 
+    // 🛠️ NEU: Dynamische Reputations-Liste im Dashboard
+    const factionTargets = (state.factionTargets ?? {}) as Record<FactionName, number>;
+    const activeFactions = Object.keys(factionTargets) as FactionName[];
+    
+    if (activeFactions.length > 0) {
+      ns.print(` \x1b[38;5;244mKnown Faction Reputations:\x1b[0m`);
+      for (const fac of activeFactions) {
+        const rep = factionTargets[fac];
+        const isTarget = fac === state.targetFaction ? " \x1b[1;32m➔\x1b[0m" : "  ";
+        ns.print(`${isTarget} \x1b[38;5;248m${fac.padEnd(20)}\x1b[0m: ${ns.format.number(rep, 0)} Rep`);
+      }
+    }
+
     ns.print(
       `------------------------------------------------------------------`,
     );
 
-    // 3. Parallele Sub-Systeme (Neu im Multi-Lane System!)
+    // 3. Parallele Sub-Systeme
     ns.print(` \x1b[1;36m[ PARALLEL BACKGROUND SERVICES ]\x1b[0m`);
     printRow("BATCHING", state.batcherProgress || "Inaktiv", "batcherProgress");
     printRow(
@@ -112,7 +124,7 @@ export async function main(ns: NS): Promise<void> {
       `------------------------------------------------------------------`,
     );
 
-    // 4. BitNode Multiplikatoren (Statische Configs)
+    // 4. BitNode Multiplikatoren
     const hackYield = (
       bnMults.ServerMaxMoney *
       bnMults.ScriptHackMoneyGain *
@@ -126,24 +138,21 @@ export async function main(ns: NS): Promise<void> {
       `------------------------------------------------------------------`,
     );
 
-    // 5. Metadata & System-Taktung (Als System-Watchdog)
+    // 5. Metadata & System-Taktung
     const ageMs = Date.now() - (state.lastUpdate ?? Date.now());
     const ageSeconds = (ageMs / 1000).toFixed(1);
 
     let heartbeatStr = "";
     if (ageMs > 10000) {
-      // Über 10 Sekunden alt -> Tot oder schwerer Lag! (Blinkend Rot)
       heartbeatStr = `\x1b[5;1;31mWARNING (${ageSeconds}s ago)\x1b[0m`;
     } else if (ageMs > 3000) {
-      // Über 3 Sekunden alt -> Subsysteme verzögert (Gelb)
       heartbeatStr = `\x1b[1;33mDELAYED (${ageSeconds}s ago)\x1b[0m`;
     } else {
-      // Alles im grünen Bereich (Grün)
       heartbeatStr = `\x1b[1;32mHEALTHY (${ageSeconds}s ago)\x1b[0m`;
     }
 
     printRow("SYS HEARTBEAT", heartbeatStr, "lastUpdate");
 
-    await ns.sleep(1000); // 1 Sekunde Taktung ist perfekt für die UI
+    await ns.sleep(1000);
   }
 }

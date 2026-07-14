@@ -124,3 +124,100 @@ export function breakAndInfectNetwork(ns: NS): void {
     }
   }
 }
+
+/**
+ * Findet das profitabelste Ziel für einfache Hack/Grow/Weaken-Worker.
+ */
+export function findBestFallbackTarget(
+  ns: NS,
+  hackingLevel: number,
+  bnMults: any,
+  allServers: string[],
+  blacklistTarget: string | null = null,
+): string {
+  let bestTarget = "n00dles";
+  let maxWeight = 0;
+
+  const serverMaxMoneyMult = bnMults.ServerMaxMoney ?? 1.0;
+  const growthMult = bnMults.ServerGrowthRate ?? 1.0;
+  const isNoMoneyNode = serverMaxMoneyMult === 0;
+
+  for (const current of allServers) {
+    if (
+      current === "home" ||
+      !ns.hasRootAccess(current) ||
+      current === blacklistTarget
+    )
+      continue;
+
+    const reqHacking = ns.getServerRequiredHackingLevel(current);
+    if (reqHacking > hackingLevel) continue;
+
+    if (isNoMoneyNode) {
+      const cycleTime = ns.getWeakenTime(current);
+      const weight = reqHacking / (Math.max(1, cycleTime) / 1000);
+      if (weight > maxWeight) {
+        maxWeight = weight;
+        bestTarget = current;
+      }
+      continue;
+    }
+
+    const serverMaxMoney = ns.getServerMaxMoney(current);
+    if (serverMaxMoney <= 0) continue;
+
+    const cycleTime = ns.getWeakenTime(current);
+    if (cycleTime > 5 * 60 * 1000) continue; // Ignoriere extrem langsame Server im Early/Mid Game
+
+    const weight =
+      (serverMaxMoney / (cycleTime / 1000)) * (reqHacking / 100) * growthMult;
+
+    if (weight > maxWeight) {
+      maxWeight = weight;
+      bestTarget = current;
+    }
+  }
+  return bestTarget;
+}
+
+/**
+ * Verteilt Threads eines Skripts auf alle verfügbaren Server im Netzwerk.
+ */
+export function dispatchSimpleTask(
+  ns: NS,
+  servers: string[],
+  script: string,
+  target: string,
+  threads: number,
+  bnMults: any,
+): void {
+  let threadsRemaining = threads;
+
+  for (const server of servers) {
+    if (!ns.hasRootAccess(server)) continue;
+    if (ns.isRunning(script, server, target)) continue;
+
+    const homeBuffer =
+      bnMults.ServerWeakenRate < 1.0
+        ? Math.ceil(48 / bnMults.ServerWeakenRate)
+        : 48;
+    const maxRam =
+      server === "home"
+        ? ns.getServerMaxRam("home") - homeBuffer
+        : ns.getServerMaxRam(server);
+    const freeRam = maxRam - ns.getServerUsedRam(server);
+    const scriptRam = ns.getScriptRam(script);
+
+    const possibleThreads = Math.floor(freeRam / scriptRam);
+
+    if (possibleThreads > 0) {
+      const threadsToRun = Math.min(possibleThreads, threadsRemaining);
+      ns.exec(script, server, threadsToRun, target);
+
+      if (threadsRemaining !== Infinity) {
+        threadsRemaining -= threadsToRun;
+        if (threadsRemaining <= 0) break;
+      }
+    }
+  }
+}
