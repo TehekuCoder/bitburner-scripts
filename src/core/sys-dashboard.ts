@@ -5,7 +5,7 @@ import { loadBnMults } from "../lib/state.js";
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
-  ns.ui.resizeTail(640, 420);
+  ns.ui.resizeTail(640, 480);
 
   const bnMults = loadBnMults(ns);
 
@@ -21,11 +21,17 @@ export async function main(ns: NS): Promise<void> {
 
     const sources = state.sources || {};
     
-    // Hilfsfunktion für einheitliche UI-Zeilen mit Quellenangabe
+    // 🛡️ ANSI-SICHERES ALIGNMENT-WERKZEUG
     const printRow = (label: string, val: string | number | boolean, stateKey?: string) => {
       const source = stateKey ? `[${sources[stateKey] || "Init"}]` : "";
-      const paddedLabel = label.padEnd(14);
-      const paddedVal = String(val).padEnd(24);
+      const paddedLabel = label.padEnd(15);
+      const valStr = String(val);
+      
+      // Entfernt alle ANSI-Farbcodes für eine präzise visuelle Breitenberechnung
+      const visualLen = valStr.replace(/[\u001b\u009b][[()#;?]*(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?/g, '').length;
+      const paddingNeeded = Math.max(0, 25 - visualLen);
+      const paddedVal = valStr + " ".repeat(paddingNeeded);
+      
       ns.print(` ${paddedLabel} : ${paddedVal} \x1b[38;5;244m${source}\x1b[0m`);
     };
 
@@ -40,22 +46,39 @@ export async function main(ns: NS): Promise<void> {
     printRow("ENGINE MODE", (state.isFleetMode ? "DYNAMIC FLEET" : "BASIC LOOP"), "isFleetMode");
     printRow("STRATEGIE", state.strategy, "strategy");
 
+    // 🏆 1.5 Progression & Unlocks (Vollautomatisch durch Kernel-Erfassung)
+    const bitNodeStr = `BN ${state.currentBitNode ?? 10}.${state.currentBitNodeLevel ?? 2}`;
+    printRow("CURRENT BITNODE", bitNodeStr, "currentBitNode");
+
+    const formatUnlock = (active: boolean, name: string) => {
+      return active ? `\x1b[1;32m${name}\x1b[0m` : `\x1b[38;5;240m${name}\x1b[0m`;
+    };
+    const torStr = formatUnlock(!!state.hasTorRouter, "TOR");
+    const gangStr = formatUnlock(!!state.hasGang, "GANG");
+    const corpStr = formatUnlock(!!state.hasCorporation, "CORP");
+    const bladeStr = formatUnlock(!!state.hasBladeburner, "BLADE");
+    printRow("UNLOCKED SVCS", `${torStr} | ${gangStr} | ${corpStr} | ${bladeStr}`);
+
     ns.print(`------------------------------------------------------------------`);
     
-    // 2. Targets & Progression
-    if (state.isFleetMode) {
-      printRow("BATCH TARGET", state.batcherTarget || "Warte auf Dispatcher...", "batcherTarget");
-      printRow("FLEET TARGET", state.kernelTarget || "Keines", "kernelTarget");
-    } else {
-      printRow("BASIC TARGET", state.kernelTarget || "Keines", "kernelTarget");
-    }
-    
+    // 2. Primäre Fokus-Aktivität (Exklusiver Spieler-Task)
+    ns.print(` \x1b[1;34m[ MAIN PLAYER FOCUS ]\x1b[0m`);
     printRow("FRAKTION", state.targetFaction || "KEINE", "targetFaction");
     printRow("COMPANY", state.targetCompany || "KEINE", "targetCompany");
+    printRow("PROGRESS", state.progressBar || "Idle", "progressBar");
 
     ns.print(`------------------------------------------------------------------`);
 
-    // 3. BitNode Multiplikatoren (Statische Configs)
+    // 3. Parallele Sub-Systeme (Neu im Multi-Lane System!)
+    ns.print(` \x1b[1;36m[ PARALLEL BACKGROUND SERVICES ]\x1b[0m`);
+    printRow("BATCHING", state.batcherProgress || "Inaktiv", "batcherProgress");
+    printRow("FINANCES", state.financeProgress || "Berechne Budget...", "financeProgress");
+    printRow("HACKNET", state.hacknetProgress || "Inaktiv", "hacknetProgress");
+    printRow("STOCK TRADING", state.traderProgress || "Kein Depot", "traderProgress");
+
+    ns.print(`------------------------------------------------------------------`);
+
+    // 4. BitNode Multiplikatoren (Statische Configs)
     const hackYield = (bnMults.ServerMaxMoney * bnMults.ScriptHackMoneyGain * 100).toFixed(0);
     const weakenRate = (bnMults.ServerWeakenRate * 100).toFixed(0);
     printRow("HACK-YIELD", `${hackYield}% Effizienz`);
@@ -63,13 +86,12 @@ export async function main(ns: NS): Promise<void> {
 
     ns.print(`------------------------------------------------------------------`);
     
-    // 4. Status Bar & Updates
+    // 5. Metadata & System-Taktung
     const ageSeconds = ((Date.now() - state.lastUpdate) / 1000).toFixed(1);
-    printRow("PROGRESS", state.progressBar, "progressBar");
     printRow("LAST UPDATE", `${ageSeconds}s ago`, "lastUpdate");
     
     ns.print(`==================================================================`);
 
-    await ns.sleep(1000); // 1 Sekunde reicht für die Anzeige dicke aus (spart RAM & CPU)
+    await ns.sleep(1000); // 1 Sekunde Taktung ist perfekt für die UI
   }
 }

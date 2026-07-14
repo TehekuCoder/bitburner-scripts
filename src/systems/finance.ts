@@ -1,12 +1,12 @@
 import { NS } from "@ns";
-import { loadState, patchState } from "../core/state-manager.js";
+import { loadState, patchState, BotState } from "../core/state-manager.js";
 import { Logger } from "../core/logger.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   
   const logger = new Logger(ns, "FINANCE", "INFO", "/logs/finance.txt");
-  logger.info("⚡ Finanz-Subsystem v3.4 [DYNAMIC-FLEX] initialisiert.");
+  logger.info("⚡ Finanz-Subsystem v3.5 [STATE-INTEGRATED] initialisiert.");
 
   let fullyUnlocked = false;
   let canShort = true; 
@@ -15,25 +15,66 @@ export async function main(ns: NS): Promise<void> {
   const MIN_INVESTMENT = 5_000_000;
   const CASH_BUFFER = 2_000_000;
 
+  // Cleanup-Handler für den Fall, dass das Skript beendet wird
+  ns.atExit(() => {
+    patchState(ns, {
+      traderMode: "INACTIVE",
+      traderProgress: "Inaktiv"
+    });
+    logger.info("Portfolio-Manager sauber beendet. State auf INACTIVE gesetzt.");
+  });
+
   while (true) {
     const symbols = ns.stock.getSymbols();
 
     // --- 1. LIZENZ-VERWALTUNG & CAPABILITY-PROBE ---
     if (!fullyUnlocked) {
       let unlocked = true;
-      if (!ns.stock.hasWseAccount())
-        ns.stock.purchaseWseAccount() ? logger.success("WSE Konto erworben.") : (unlocked = false);
-      if (unlocked && !ns.stock.hasTixApiAccess())
-        ns.stock.purchaseTixApi() ? logger.success("TIX API freigeschaltet.") : (unlocked = false);
-      if (unlocked && !ns.stock.has4SData())
-        ns.stock.purchase4SMarketData() ? logger.success("4S Marktdaten aktiv.") : (unlocked = false);
-      if (unlocked && !ns.stock.has4SDataTixApi())
-        ns.stock.purchase4SMarketDataTixApi() ? logger.success("4S TIX API voll lizenziert.") : (unlocked = false);
+      let missingLicense = "";
+
+      if (!ns.stock.hasWseAccount()) {
+        missingLicense = "WSE Account ($100m)";
+        if (ns.stock.purchaseWseAccount()) {
+          logger.success("WSE Konto erworben.");
+        } else {
+          unlocked = false;
+        }
+      }
+      if (unlocked && !ns.stock.hasTixApiAccess()) {
+        missingLicense = "TIX API ($5b)";
+        if (ns.stock.purchaseTixApi()) {
+          logger.success("TIX API freigeschaltet.");
+        } else {
+          unlocked = false;
+        }
+      }
+      if (unlocked && !ns.stock.has4SData()) {
+        missingLicense = "4S Marktdaten ($1b)";
+        if (ns.stock.purchase4SMarketData()) {
+          logger.success("4S Marktdaten aktiv.");
+        } else {
+          unlocked = false;
+        }
+      }
+      if (unlocked && !ns.stock.has4SDataTixApi()) {
+        missingLicense = "4S TIX API ($25b)";
+        if (ns.stock.purchase4SMarketDataTixApi()) {
+          logger.success("4S TIX API voll lizenziert.");
+        } else {
+          unlocked = false;
+        }
+      }
 
       fullyUnlocked = unlocked;
 
       if (!fullyUnlocked) {
-        logger.info("⏳ Warte auf ausreichend Kapital für vollständige API-Lizenzen (60s Sleep)...");
+        // Melde dem State-Manager, dass wir noch in der Sparphase für Lizenzen sind
+        patchState(ns, {
+          traderMode: "EARLY",
+          traderProgress: `Spare auf ${missingLicense}`
+        });
+
+        logger.info(`⏳ Warte auf ausreichend Kapital für: ${missingLicense} (60s Sleep)...`);
         await ns.sleep(60000);
         continue;
       }
@@ -41,25 +82,28 @@ export async function main(ns: NS): Promise<void> {
       logger.success("🚀 Portfolio-Manager voll einsatzbereit. Starte Marktüberwachung.");
     }
 
-    // --- PORT-FIX: Atomares Setzen des Trading-Status ohne Type-Casting ---
-    const state = loadState(ns);
-    if (!state || (state as any).tradingActive !== true) {
-      patchState(ns, { 
-        progressBar: "Trading aktiv 📈",
-        // Falls im Interface definiert, kannst du hier auch direkt tradingActive: true übergeben
-      });
-    }
-
     // --- 2. PHASE 1: EXISTIERENDE POSITIONEN LIQUIDIEREN ---
+    let totalLongValue = 0;
+    let totalShortValue = 0;
+
     for (const sym of symbols) {
       const forecast = ns.stock.getForecast(sym);
       const [shares, avgPrice, sharesShort, avgPriceShort] = ns.stock.getPosition(sym);
+
+      // Wertermittlung der laufenden Positionen für den State-Manager
+      if (shares > 0) {
+        totalLongValue += shares * ns.stock.getBidPrice(sym);
+      }
+      if (sharesShort > 0) {
+        totalShortValue += sharesShort * ns.stock.getAskPrice(sym);
+      }
 
       if (shares > 0 && forecast < 0.5) {
         const priceSold = ns.stock.sellStock(sym, shares);
         if (priceSold > 0) {
           const profit = (priceSold - avgPrice) * shares - TRANSACTION_FEE;
           logger.success(`[EXIT LONG] ${sym} | Profit: $${ns.format.number(profit, 2)}`);
+          totalLongValue -= (shares * priceSold); // Direkt aus dem Live-Wert abziehen
         }
       }
 
@@ -68,6 +112,7 @@ export async function main(ns: NS): Promise<void> {
         if (priceSoldShort > 0) {
           const profit = (avgPriceShort - priceSoldShort) * sharesShort - TRANSACTION_FEE;
           logger.success(`[EXIT SHORT] ${sym} | Profit: $${ns.format.number(profit, 2)}`);
+          totalShortValue -= (sharesShort * priceSoldShort);
         }
       }
     }
@@ -102,9 +147,7 @@ export async function main(ns: NS): Promise<void> {
       const [shares, , sharesShort] = ns.stock.getPosition(sym);
       const maxShares = ns.stock.getMaxShares(sym);
       
-      // Verhindert das Kaufen über das Limit hinaus, falls du bereits Teilpositionen hältst
       const remainingShares = maxShares - (candidate.type === "LONG" ? shares : sharesShort);
-      
       const sharePrice = candidate.type === "LONG" ? ns.stock.getAskPrice(sym) : ns.stock.getBidPrice(sym);
 
       let sharesToBuy = Math.floor((availableBudget - TRANSACTION_FEE) / sharePrice);
@@ -115,12 +158,14 @@ export async function main(ns: NS): Promise<void> {
           const pricePaid = ns.stock.buyStock(sym, sharesToBuy);
           if (pricePaid > 0) {
             logger.info(`📈 [ENTER LONG] ${sym} (${(candidate.forecast * 100).toFixed(0)}%) | ${ns.format.number(sharesToBuy)} Units`);
+            totalLongValue += (sharesToBuy * pricePaid);
           }
         } else if (candidate.type === "SHORT" && canShort) {
           try {
             const pricePaidShort = ns.stock.buyShort(sym, sharesToBuy);
             if (pricePaidShort > 0) {
               logger.info(`📉 [ENTER SHORT] ${sym} (${(candidate.forecast * 100).toFixed(0)}%) | ${ns.format.number(sharesToBuy)} Units`);
+              totalShortValue += (sharesToBuy * pricePaidShort);
             }
           } catch (error) {
             canShort = false;
@@ -130,6 +175,21 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    await ns.sleep(6000); // 6 Sekunden passen perfekt zum 4S-Markttick-Intervall
+    // --- 5. STATE-UPDATE (SPUR 4) ---
+    // Hier füttern wir nun deine vordefinierten State-Keys
+    let progressString = "Suche Signale... 👀";
+    if (totalLongValue > 0 || totalShortValue > 0) {
+      const parts: string[] = [];
+      if (totalLongValue > 0) parts.push(`Long: $${ns.format.number(totalLongValue, 1)}`);
+      if (totalShortValue > 0) parts.push(`Short: $${ns.format.number(totalShortValue, 1)}`);
+      progressString = parts.join(" | ");
+    }
+
+    patchState(ns, {
+      traderMode: "4S_ACTIVE",
+      traderProgress: progressString
+    });
+
+    await ns.sleep(6000); // Synchronisiert mit dem 4S-Markttick
   }
 }

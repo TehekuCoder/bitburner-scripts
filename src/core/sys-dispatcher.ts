@@ -16,6 +16,7 @@ const REFRESH_INTERVALS = {
   MEGACORP_APPLY: 600_000, // 10 Min.
   FALLBACK_TARGET: 300_000, // 5 Min.
   STRATEGY_COOLDOWN: 60_000, // 1 Min. Schonfrist für Oszillation
+  NETWORK_SCAN: 20_000, // 🛠️ NEU: Nur alle 20 Sek. das Netzwerk scannen/infizieren
 };
 
 const BATCHER_MIN_RAM = 256;
@@ -108,8 +109,12 @@ export async function main(ns: NS): Promise<void> {
   let cachedFallbackTarget = "n00dles";
   let lastFallbackUpdate = 0;
   let lastCacheRefresh = Date.now();
-  let modeLockTime = 0; // 🛠️ Fix: Auf 0 initialisiert, damit der erste Wechsel nach Skript-Start sofort klappt!
+  let modeLockTime = 0; 
   let lastCorpApplication = 0;
+
+  // 🛠️ Caching für Netzwerk-Scans initialisieren
+  let allNetworkServers: string[] = [];
+  let lastNetworkScan = 0;
 
   while (true) {
     const now = Date.now();
@@ -121,8 +126,13 @@ export async function main(ns: NS): Promise<void> {
       logger.info("Reputations-Cache routinemäßig aktualisiert.");
     }
 
-    breakAndInfectNetwork(ns);
-    const allNetworkServers = getAllServers(ns);
+    // --- 🛠️ THROTTLED NETZWERK SCAN ---
+    // Verhindert massiven CPU-Overhead durch ständiges Nuken und Suchen im Sekundentakt
+    if (now - lastNetworkScan > REFRESH_INTERVALS.NETWORK_SCAN || allNetworkServers.length === 0) {
+      breakAndInfectNetwork(ns);
+      allNetworkServers = getAllServers(ns);
+      lastNetworkScan = now;
+    }
 
     const currentState = loadState(ns);
     let mode: BotStrategy = "MONEY";
@@ -131,7 +141,9 @@ export async function main(ns: NS): Promise<void> {
     // Zentralisiertes Home-RAM Tracking pro Tick
     const homeMaxRam = ns.getServerMaxRam("home");
     const getFreeRam = () => homeMaxRam - ns.getServerUsedRam("home");
-    const currentKarma = ns.heart.break();
+    
+    // 🛠️ Typensicherer Aufruf für die undokumentierte Karma-API
+    const currentKarma = (ns as any).heart?.break() ?? 0;
 
     if (
       p.skills.hacking >= 250 &&
@@ -176,7 +188,6 @@ export async function main(ns: NS): Promise<void> {
     const roadmapFactionName = nextRoadmapFaction ? nextRoadmapFaction.name : null;
     const factionToWorkFor = factionRepMult > 0.1 ? nextRoadmapFaction : null;
     
-    // 🛠️ HIER DER SCHLÜSSEL-FIX: Ein Sparziel existiert nur, wenn wir das Geld noch NICHT haben!
     const hasSavingTarget = factionToWorkFor !== null && !isReadyForFactionGrind;
 
     let targetFaction: FactionName | null = roadmapFactionName && p.factions.includes(roadmapFactionName) ? roadmapFactionName : null;
@@ -192,7 +203,6 @@ export async function main(ns: NS): Promise<void> {
     if (p.skills.hacking < 50) {
       mode = "XP_SPRINT";
     } else if (nextRoadmapFaction && roadmapFactionName) {
-      // FIX: Fraktionen werden jetzt ZUERST ausgewertet!
       const isMember = p.factions.includes(roadmapFactionName);
       const isCombatFaction =
         nextRoadmapFaction.minStat > 0 ||
@@ -220,7 +230,7 @@ export async function main(ns: NS): Promise<void> {
           mode = "TRAIN";
           targetStat = nextRoadmapFaction.minStat;
         } else if (isRushActive) {
-          mode = "PSERV_RUSH"; // Geldaufbau für Einladung via Crime beschleunigen
+          mode = "PSERV_RUSH"; 
         } else {
           mode = "MONEY";
         }
@@ -230,13 +240,13 @@ export async function main(ns: NS): Promise<void> {
           targetFaction = roadmapFactionName;
           targetStat = nextRoadmapFaction.minStat;
         } else if (isRushActive) {
-          mode = "PSERV_RUSH"; // Wenn wir noch nicht flüssig genug für Rep-Grind sind, pusht PSERV_RUSH das Wallet
+          mode = "PSERV_RUSH"; 
         } else {
           mode = "MONEY";
         }
       }
     } else if (isRushActive) {
-      mode = "PSERV_RUSH"; // Greift nur, wenn keine Fraktion ansteht
+      mode = "PSERV_RUSH"; 
     } else if (p.skills.hacking >= 250 && companyRepMult > 0.1) {
       const needsSilhouette = !p.factions.includes("Silhouette" as FactionName) && (repCache["Silhouette"] ?? 0) > 0;
       const isExecutive = Object.values(p.jobs).some((title) =>
@@ -374,9 +384,9 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-   let etaStr = "Berechne...";
+    let etaStr = "Berechne...";
     if (targetVal === 0 && ["REP", "CORP", "TRAIN"].includes(mode)) {
-      etaStr = "Fertig (Max)"; // 🛠️ Fix: statusStr zu etaStr korrigiert
+      etaStr = "Fertig (Max)"; 
     } else if (emaRate > 0) {
       const remaining = targetVal - currentVal;
       if (remaining <= 0) {
@@ -419,7 +429,6 @@ export async function main(ns: NS): Promise<void> {
       }
     } else {
       if (factionToWorkFor) {
-        // 🛠️ HIER DER UI-FIX: Wenn wir bereits genug Geld haben, zeigen wir das auch stolz an!
         if (isReadyForFactionGrind) {
           generatedBar = `⏳ Bereit für ${factionToWorkFor.name} | Warte auf Beitritt/Einladung`;
         } else {
@@ -457,7 +466,6 @@ export async function main(ns: NS): Promise<void> {
       logger.info("Batcher nicht ausführbar. 'fill-ram.js' vorsorglich beendet.");
     }
 
-    // 🆕 Hier wird nun patchState genutzt. Die Felder des Kernels bleiben unberührt!
     patchState(ns, {
       strategy: mode,
       targetFaction: targetFaction || undefined,
@@ -503,18 +511,23 @@ export async function main(ns: NS): Promise<void> {
 
       const allAvailableHosts = [...infectedServers, ...pServers];
       for (const server of allAvailableHosts) {
-        ns.scriptKill(workerScript, server);
-        ns.scriptKill(obsoleteScript, server);
+        if (ns.isRunning(workerScript, server)) ns.scriptKill(workerScript, server);
+        if (ns.isRunning(obsoleteScript, server)) ns.scriptKill(obsoleteScript, server);
       }
     } else {
       workerFleet = [...infectedServers, ...pServers];
 
+      // 🛠️ OPTIMIERT: ns.ps() wird nur noch aufgerufen, wenn der Worker tatsächlich läuft
       for (const server of workerFleet) {
-        if (ns.isRunning(obsoleteScript, server)) ns.scriptKill(obsoleteScript, server);
+        if (ns.isRunning(obsoleteScript, server)) {
+          ns.scriptKill(obsoleteScript, server);
+        }
 
-        const runningProc = ns.ps(server).find((proc) => proc.filename === workerScript);
-        if (runningProc && runningProc.args[0] !== cachedFallbackTarget) {
-          ns.scriptKill(workerScript, server);
+        if (ns.isRunning(workerScript, server)) {
+          const runningProc = ns.ps(server).find((proc) => proc.filename === workerScript);
+          if (runningProc && runningProc.args[0] !== cachedFallbackTarget) {
+            ns.scriptKill(workerScript, server);
+          }
         }
       }
 
@@ -523,18 +536,27 @@ export async function main(ns: NS): Promise<void> {
 
     const homeShouldRunWorker = !["REP", "TRAIN", "CORP", "CRIME"].includes(mode) && !canRunBatcher;
     if (!homeShouldRunWorker) {
-      ns.scriptKill(workerScript, "home");
+      if (ns.isRunning(workerScript, "home")) {
+        ns.scriptKill(workerScript, "home");
+      }
     } else {
-      const homeProc = ns.ps("home").find((proc) => proc.filename === workerScript);
-      if (homeProc && homeProc.args[0] !== cachedFallbackTarget) ns.scriptKill(workerScript, "home");
+      let isWorkerRunningWithCorrectTarget = false;
+      if (ns.isRunning(workerScript, "home")) {
+        const homeProc = ns.ps("home").find((proc) => proc.filename === workerScript);
+        if (homeProc && homeProc.args[0] !== cachedFallbackTarget) {
+          ns.scriptKill(workerScript, "home");
+        } else {
+          isWorkerRunningWithCorrectTarget = true;
+        }
+      }
 
       const homeFreeRam = getFreeRam();
       const reservedRam = bnMults.ServerWeakenRate < 1.0 ? Math.ceil(20 / bnMults.ServerWeakenRate) : 20;
       const workerRam = ns.getScriptRam(workerScript);
 
-      if (homeFreeRam > reservedRam + workerRam) {
+      if (homeFreeRam > reservedRam + workerRam && !isWorkerRunningWithCorrectTarget) {
         const homeThreads = Math.floor((homeFreeRam - reservedRam) / workerRam);
-        if (homeThreads > 0 && !ns.isRunning(workerScript, "home")) {
+        if (homeThreads > 0) {
           ns.run(workerScript, homeThreads, cachedFallbackTarget);
         }
       }
@@ -553,11 +575,8 @@ export async function main(ns: NS): Promise<void> {
       ns.run("utils/fill-ram.js", 1);
     }
 
-    // 🛠️ HIER DER FIX: Wir geben nun das korrigierte hasSavingTarget weiter!
-    manageMicroservices(ns, mode, hasSavingTarget, logger,targetStat);
+    manageMicroservices(ns, mode, hasSavingTarget, logger, targetStat);
 
-    // 🛠️ HIER DER FIX: Wenn wir die nötigen Millionen haben, stoppen wir die manuelle Arbeit (Crime) 
-    // und lassen den Batcher in Ruhe ungestört XP und Geld farmen!
     if (mode === "MONEY" && !hasSavingTarget && canRunBatcher) {
       if (ns.singularity.getCurrentWork()) {
         logger.info("Batcher läuft ohne offene Sparziele. Manuelle Arbeit gestoppt.");
@@ -590,13 +609,10 @@ function buildReputationCache(ns: NS): void {
 }
 
 function findNextRoadmapFaction(p: Player, factionReps: Record<string, number>): FactionConfig | null {
-  // Prüfen, ob wir bereits in einer der exklusiven Stadt-Fraktionen sind
   const currentCityFaction = p.factions.find(f => CITY_FACTIONS.includes(f as FactionName));
 
   for (const faction of HACKING_FACTIONS) {
-    // Wenn es sich um eine Stadt-Fraktion handelt...
     if (CITY_FACTIONS.includes(faction.name)) {
-      // ...und wir bereits in einer ANDEREN Stadt sind -> Überspringen!
       if (currentCityFaction && faction.name !== currentCityFaction) {
         continue;
       }
@@ -629,7 +645,7 @@ function manageMicroservices(ns: NS, currentMode: string, hasSavingTarget: boole
   }
 
   // 1. Veraltete Microservices beenden
-  for (const [mode, script] of Object.entries(modeToScript)) {
+  for (const [_, script] of Object.entries(modeToScript)) {
     if (script !== targetScript && ns.isRunning(script, "home")) {
       ns.scriptKill(script, "home");
       logger.info(`⏹️ Veralteten Microservice beendet: ${script}`);
@@ -638,19 +654,16 @@ function manageMicroservices(ns: NS, currentMode: string, hasSavingTarget: boole
 
   // 2. Ziel-Microservice intelligent starten/überprüfen
   if (targetScript && ns.fileExists(targetScript, "home")) {
-    // 🛠️ FIX 1: Wir suchen in der Prozessliste nach dem Skriptnamen (ignoriert Argumente bei der Existenzprüfung)
     const runningProc = ns.ps("home").find(p => p.filename === targetScript);
     const isRunning = runningProc !== undefined;
     let shouldStart = !isRunning;
 
-    // Spezieller Check für das Trainings-Skript:
-    // Läuft es bereits, aber mit einem ANDEREN Trainingsziel?
     if (isRunning && currentMode === "TRAIN" && targetStat !== undefined) {
       const currentRunningTarget = runningProc?.args[0] as number | undefined;
 
       if (currentRunningTarget !== targetStat) {
-        ns.scriptKill(targetScript, "home"); // Altes Ziel beenden
-        shouldStart = true;                  // Mit neuem Ziel neu starten
+        ns.scriptKill(targetScript, "home"); 
+        shouldStart = true;                  
         logger.info(`🔄 Trainingsziel geändert (${currentRunningTarget} ➔ ${targetStat}). Starte Worker neu.`);
       }
     }
@@ -662,10 +675,9 @@ function manageMicroservices(ns: NS, currentMode: string, hasSavingTarget: boole
       if (freeRam >= requiredRam) {
         const args: (string | number)[] = [];
         if (currentMode === "TRAIN" && targetStat !== undefined) {
-          args.push(targetStat); // Ziel-Stat als Argument übergeben!
+          args.push(targetStat); 
         }
         
-        // 🛠️ FIX 2: Nur loggen, wenn das Skript auch wirklich eine PID (> 0) erhalten hat
         const pid = ns.run(targetScript, 1, ...args);
         if (pid > 0) {
           logger.success(`▶️ Microservice gestartet: ${targetScript} für [${currentMode}] mit Args: ${args}`);
@@ -678,6 +690,7 @@ function manageMicroservices(ns: NS, currentMode: string, hasSavingTarget: boole
     }
   }
 }
+
 export function findBestFallbackTarget(
   ns: NS,
   hackingLevel: number,

@@ -1,6 +1,6 @@
 import { NS, NodeStats } from "@ns";
 import { loadBnMults } from "../lib/state.js";
-import { loadState } from "../core/state-manager.js";
+import { loadState, patchState } from "../core/state-manager.js";
 import { Logger } from "../core/logger.js";
 
 interface HacknetUpgrade {
@@ -23,9 +23,8 @@ export async function main(ns: NS): Promise<void> {
   const bnMults = loadBnMults(ns);
 
   if (bnMults.HacknetNodeMoney === 0) {
-    logger.warn(
-      "🛑 Hacknet-Produktion in diesem BitNode deaktiviert. System schaltet ab.",
-    );
+    logger.warn("🛑 Hacknet-Produktion in diesem BitNode deaktiviert. System schaltet ab.");
+    patchState(ns, { hacknetProgress: "Deaktiviert (BN)" });
     return;
   }
 
@@ -46,9 +45,8 @@ export async function main(ns: NS): Promise<void> {
     }
 
     if (isCappedMode && allNodesMaxed) {
-      logger.success(
-        "🏁 Alle Nodes haben das Netburners-Limit erreicht. Schalte ab.",
-      );
+      logger.success("🏁 Alle Nodes haben das Netburners-Limit erreicht. Schalte ab.");
+      patchState(ns, { hacknetProgress: "Capped & Maxed" });
       return;
     }
 
@@ -189,29 +187,66 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 🚀 3. KAUF AUSFÜHREN
+    // 🚀 3. KAUF AUSFÜHREN ODER STATE SCOUTEN
     if (bestUpgrade) {
       const { type, index, cost } = bestUpgrade;
+      const indexStr = index !== undefined ? ` (Node ${index})` : "";
+      
+      // State patchen, damit das Dashboard den Kauf anzeigt
+      patchState(ns, { hacknetProgress: `Kauf: ${type}${indexStr}` });
+
       if (type === "Neuer Node") {
         h.purchaseNode();
-        logger.success(
-          `🎉 Neuer Hacknet-Node gekauft für $${ns.format.number(cost, 2)}`,
-        );
+        logger.success(`🎉 Neuer Hacknet-Node gekauft für $${ns.format.number(cost, 2)}`);
       } else if (index !== undefined) {
         if (type === "Level") h.upgradeLevel(index, 1);
         else if (type === "RAM") h.upgradeRam(index, 1);
         else if (type === "Core") h.upgradeCore(index, 1);
 
-        const indexStr = ` (Node ${index})`;
-        logger.debug(
-          `Upgrade: ${type}${indexStr} für $${ns.format.number(cost, 2)}`,
-        );
+        logger.debug(`Upgrade: ${type}${indexStr} für $${ns.format.number(cost, 2)}`);
       }
-      // Schneller Takt, wenn wir aktiv Upgrades kaufen können
       await ns.sleep(50);
     } else {
-      // 🛡️ FEHLSCHUTZ: Wenn kein Upgrade bezahlbar ist, warte 10 Sekunden,
-      // anstatt das Spiel mit einer unendlichen Schleife zu killen.
+      // 🕵️ SCOUT-LOGIK: Warum gab es keinen Kauf? Wir suchen das absolut billigste Upgrade.
+      let cheapestCost = Infinity;
+      let cheapestDesc = "";
+
+      if (numNodes < maxNodes) {
+        const nodeCost = h.getPurchaseNodeCost();
+        if (nodeCost < cheapestCost) {
+          cheapestCost = nodeCost;
+          cheapestDesc = "Neuer Node";
+        }
+      }
+
+      for (let i = 0; i < numNodes; i++) {
+        const stats = h.getNodeStats(i);
+        if (stats.level < maxLevels) {
+          const c = h.getLevelUpgradeCost(i, 1);
+          if (c < cheapestCost) { cheapestCost = c; cheapestDesc = `N${i} Lvl`; }
+        }
+        if (stats.ram < maxRam) {
+          const c = h.getRamUpgradeCost(i, 1);
+          if (c < cheapestCost) { cheapestCost = c; cheapestDesc = `N${i} RAM`; }
+        }
+        if (stats.cores < maxCores) {
+          const c = h.getCoreUpgradeCost(i, 1);
+          if (c < cheapestCost) { cheapestCost = c; cheapestDesc = `N${i} Core`; }
+        }
+      }
+
+      let statusMsg = "Maxed Out";
+      if (cheapestCost !== Infinity) {
+        if (currentMoney - cheapestCost < reserve) {
+          statusMsg = `Reserve Block ($${ns.format.number(cheapestCost, 1)})`;
+        } else if (cheapestCost > budget) {
+          statusMsg = `Spare auf ${cheapestDesc} ($${ns.format.number(cheapestCost, 1)})`;
+        } else {
+          statusMsg = "Berechne ROI...";
+        }
+      }
+
+      patchState(ns, { hacknetProgress: statusMsg });
       await ns.sleep(10000);
     }
   }

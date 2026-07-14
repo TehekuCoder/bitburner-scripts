@@ -1,7 +1,7 @@
 import { NS } from "@ns";
 import { calculateBatch } from "../utils/batch-calculator.js";
 import { getAllServers } from "../lib/network.js";
-import { patchState, loadState } from "./state-manager.js";
+import { patchState, loadState,  BotState, clearState, saveState, } from "./state-manager.js";
 import { loadBnMults } from "../lib/state.js";
 import { Logger } from "./logger.js"; // 🌟 Logger integriert
 
