@@ -5,13 +5,9 @@ import { findNextRoadmapFaction, applyToAllMegacorps } from "/lib/player.js";
 import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
 import { Logger } from "./logger.js";
 import { 
-  FactionConfig, 
   REFRESH_INTERVALS, 
   BATCHER_MIN_RAM, 
-  COMBAT_STATS, 
-  MEGACORPS, 
-  HACKING_FACTIONS, 
-  CITY_FACTIONS 
+  COMBAT_STATS
 } from "../lib/constants.js";
 
 // --- NEUE EXTERNE MODULE ---
