@@ -554,7 +554,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // 🛠️ HIER DER FIX: Wir geben nun das korrigierte hasSavingTarget weiter!
-    manageMicroservices(ns, mode, hasSavingTarget, logger);
+    manageMicroservices(ns, mode, hasSavingTarget, logger,targetStat);
 
     // 🛠️ HIER DER FIX: Wenn wir die nötigen Millionen haben, stoppen wir die manuelle Arbeit (Crime) 
     // und lassen den Batcher in Ruhe ungestört XP und Geld farmen!
@@ -611,7 +611,7 @@ function findNextRoadmapFaction(p: Player, factionReps: Record<string, number>):
   return null;
 }
 
-function manageMicroservices(ns: NS, currentMode: string, hasSavingTarget: boolean, logger: Logger): void {
+function manageMicroservices(ns: NS, currentMode: string, hasSavingTarget: boolean, logger: Logger, targetStat?: number): void {
   const modeToScript: Record<string, string> = {
     REP: "tasks/faction-grind.js",
     CORP: "tasks/corp.js",
@@ -628,6 +628,7 @@ function manageMicroservices(ns: NS, currentMode: string, hasSavingTarget: boole
     targetScript = "tasks/crime.js";
   }
 
+  // 1. Veraltete Microservices beenden
   for (const [mode, script] of Object.entries(modeToScript)) {
     if (script !== targetScript && ns.isRunning(script, "home")) {
       ns.scriptKill(script, "home");
@@ -635,19 +636,48 @@ function manageMicroservices(ns: NS, currentMode: string, hasSavingTarget: boole
     }
   }
 
-  if (targetScript && !ns.isRunning(targetScript, "home") && ns.fileExists(targetScript, "home")) {
-    const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
-    const requiredRam = ns.getScriptRam(targetScript, "home");
+  // 2. Ziel-Microservice intelligent starten/überprüfen
+  if (targetScript && ns.fileExists(targetScript, "home")) {
+    // 🛠️ FIX 1: Wir suchen in der Prozessliste nach dem Skriptnamen (ignoriert Argumente bei der Existenzprüfung)
+    const runningProc = ns.ps("home").find(p => p.filename === targetScript);
+    const isRunning = runningProc !== undefined;
+    let shouldStart = !isRunning;
 
-    if (freeRam >= requiredRam) {
-      ns.run(targetScript, 1);
-      logger.success(`▶️ Neuen Microservice gestartet: ${targetScript} für Modus [${currentMode}]`);
-    } else {
-      logger.warn(`RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB.`);
+    // Spezieller Check für das Trainings-Skript:
+    // Läuft es bereits, aber mit einem ANDEREN Trainingsziel?
+    if (isRunning && currentMode === "TRAIN" && targetStat !== undefined) {
+      const currentRunningTarget = runningProc?.args[0] as number | undefined;
+
+      if (currentRunningTarget !== targetStat) {
+        ns.scriptKill(targetScript, "home"); // Altes Ziel beenden
+        shouldStart = true;                  // Mit neuem Ziel neu starten
+        logger.info(`🔄 Trainingsziel geändert (${currentRunningTarget} ➔ ${targetStat}). Starte Worker neu.`);
+      }
+    }
+
+    if (shouldStart) {
+      const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+      const requiredRam = ns.getScriptRam(targetScript, "home");
+
+      if (freeRam >= requiredRam) {
+        const args: (string | number)[] = [];
+        if (currentMode === "TRAIN" && targetStat !== undefined) {
+          args.push(targetStat); // Ziel-Stat als Argument übergeben!
+        }
+        
+        // 🛠️ FIX 2: Nur loggen, wenn das Skript auch wirklich eine PID (> 0) erhalten hat
+        const pid = ns.run(targetScript, 1, ...args);
+        if (pid > 0) {
+          logger.success(`▶️ Microservice gestartet: ${targetScript} für [${currentMode}] mit Args: ${args}`);
+        } else {
+          logger.error(`❌ Fehler beim Starten von ${targetScript} (PID war 0).`);
+        }
+      } else {
+        logger.warn(`RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB.`);
+      }
     }
   }
 }
-
 export function findBestFallbackTarget(
   ns: NS,
   hackingLevel: number,

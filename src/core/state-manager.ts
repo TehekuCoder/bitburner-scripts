@@ -31,7 +31,7 @@ export interface BotState {
   sleeveGlobalMode?: "RECOVERY" | "CRIME" | "COMPANY" | "FACTION";
   targetSleeveCompany?: CompanyName;
 
-  // --- 🆕 Neue Kernel- & UI-Tracking-Felder ---
+  // --- Neue Kernel- & UI-Tracking-Felder ---
   kernelTarget?: string;
   rootCount?: number;
   totalNodes?: number;
@@ -53,6 +53,14 @@ function getLogger(ns: NS): Logger {
 function getCallerName(ns: NS): string {
   const path = ns.getScriptName();
   return path.split("/").pop() || "unknown";
+}
+
+/**
+ * 🛠️ FIX: Einheitliche und absolut sichere Port-Leer-Prüfung
+ * Fängt alle Bitburner-spezifischen Rückgabewerte für leere Ports ab.
+ */
+function isPortEmpty(data: any): boolean {
+  return data === undefined || data === null || data === "NULL PORT DATA" || data === "NULL";
 }
 
 export function saveState(
@@ -91,7 +99,8 @@ export function patchState(
   const data = port.peek();
   let currentState: BotState | null = null;
   
-  if (data !== "NULL" && data !== undefined) {
+  // 🛠️ FIX: Nutzt jetzt den sicheren Check, um String-Zerstörung zu verhindern
+  if (!isPortEmpty(data)) {
     currentState = data as BotState;
   }
 
@@ -103,7 +112,7 @@ export function patchState(
     ...cleanedCurrentState,
   };
 
-  // 🛠️ Herkunfts-Verfolgung anwenden
+  // Herkunfts-Verfolgung anwenden
   const caller = getCallerName(ns);
   const newSources = { ...(oldSources || {}) };
   for (const key of Object.keys(partialState)) {
@@ -127,15 +136,19 @@ export function loadState(ns: NS): BotState | null {
     const port = ns.getPortHandle(STATE_PORT);
     const data = port.peek();
 
-    if (data === "NULL PORT DATA" || data === undefined) {
+    // 🛠️ FIX: Nutzt ebenfalls den einheitlichen Check
+    if (isPortEmpty(data)) {
       return null;
     }
 
     const state = data as BotState;
     const resetInfo = ns.getResetInfo();
-    const freshResetDetected = resetInfo.lastAugReset < 15000 && (Date.now() - state.lastUpdate) > resetInfo.lastAugReset;
+    
+    // 🛠️ Robustheitsschutz gegen unvollständige Alt-Zustände (verhindert NaN)
+    const lastUpdate = typeof state?.lastUpdate === "number" ? state.lastUpdate : 0;
+    const freshResetDetected = resetInfo.lastAugReset < 15000 && (Date.now() - lastUpdate) > resetInfo.lastAugReset;
 
-    if (state.playerHacking > ns.getHackingLevel() || freshResetDetected) {
+    if ((typeof state?.playerHacking === "number" && state.playerHacking > ns.getHackingLevel()) || freshResetDetected) {
       getLogger(ns).warn("Veralteten Zustand im Port nach Reset erkannt. Bereinige Port...");
       clearState(ns);
       return null;

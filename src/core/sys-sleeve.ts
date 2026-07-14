@@ -18,10 +18,10 @@ const MEGACORPS = [
 // 🛠️ Typen-Korrektur für v3.0: GymType erwartet großgeschriebene Werte!
 const COMBAT_KEYS = ["strength", "defense", "dexterity", "agility"] as const;
 const GYM_STAT_MAP: Record<string, GymType> = {
-  str: "str",
-  def: "def",
-  dex: "dex",
-  agi: "agi",
+  strength: "str" as GymType,
+  defense: "def" as GymType,
+  dexterity: "dex" as GymType,
+  agility: "agi" as GymType,
 };
 
 export async function main(ns: NS): Promise<void> {
