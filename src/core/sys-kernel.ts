@@ -215,6 +215,9 @@ export async function main(ns: NS): Promise<void> {
     const currentGang = currentState?.hasGang || false;
     const currentCorp = currentState?.hasCorporation || false;
     const currentBlade = currentState?.hasBladeburner || false;
+    
+    // 🟢 Überprüfe direkt, ob die API-Lizenz auf 'home' liegt
+    const hasNavigator = ns.fileExists("DarkscapeNavigator.exe", "home");
 
     if (homeMax >= 16 && !ns.isRunning("core/sys-suites.js", "home")) {
       const freeRam = homeMax - ns.getServerUsedRam("home");
@@ -242,8 +245,10 @@ export async function main(ns: NS): Promise<void> {
       ns.run(scripts.infra, 1);
     }
 
-    // 📡 Darknet läuft jetzt parallel im Hintergrund mit
+    // 📡 Darknet-Master & Crawler laufen jetzt parallel im Hintergrund, 
+    // aber erst sobald der Navigator gekauft wurde!
     if (
+      hasNavigator && 
       ns.fileExists(scripts.dnet, "home") &&
       !ns.isRunning(scripts.dnet, "home")
     ) {
@@ -252,10 +257,11 @@ export async function main(ns: NS): Promise<void> {
     }
 
     if (
+      hasNavigator &&
       ns.fileExists(scripts.crawler, "home") &&
       !ns.isRunning(scripts.crawler, "home")
     ) {
-      logger.info("Starte Darknet-Crawler..."); // 🟢 Log korrigiert
+      logger.info("Starte Darknet-Crawler...");
       ns.run(scripts.crawler, 1);
     }
 
@@ -272,7 +278,7 @@ export async function main(ns: NS): Promise<void> {
           if (!ns.hasRootAccess(node)) continue;
           if (
             node === "home" &&
-            ["TRAIN", "CORP", "CRIME"].includes(activeStrategy) // 🟢 DNET entfernt, home darf arbeiten!
+            ["TRAIN", "CORP", "CRIME"].includes(activeStrategy)
           )
             continue;
 
@@ -286,7 +292,7 @@ export async function main(ns: NS): Promise<void> {
               "CRIME",
               "TRAIN",
               "CORP",
-              "XP_SPRINT", // 🟢 DNET entfernt
+              "XP_SPRINT",
             ].includes(activeStrategy)
               ? 24
               : 8;
@@ -309,6 +315,7 @@ export async function main(ns: NS): Promise<void> {
       hasCorporation: currentCorp,
       hasBladeburner: currentBlade,
       allServers: allNodes,
+      hasDarkScapeNavigator: hasNavigator, // 🟢 State wird live synchronisiert
     });
 
     await ns.sleep(2000);
