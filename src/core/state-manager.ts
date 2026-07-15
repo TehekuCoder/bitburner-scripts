@@ -27,7 +27,8 @@ export interface BotState {
   jobField?: JobField;
   targetKills?: number;
 
-  factionTargets?: Record<FactionName, number>;
+  factionTargets?: Partial<Record<FactionName, number>>;
+  factionCurrentReps?: Partial<Record<FactionName, number>>; // 🟢 NEU: Trackt den aktuellen Ruf separat!
 
   // --- Spur 2: Hacking & Batching (Parallel) ---
   batcherProgress?: string;
@@ -56,9 +57,9 @@ export interface BotState {
 
   // --- Spur 7: Progression & Unlocks (0 GB RAM Info-Spur) ---
   // Hält fest, was in dieser BitNode oder permanent freigeschaltet ist
-  currentBitNode: number;              // Aktueller BitNode (z.B. 10)
-  currentBitNodeLevel: number;         // Aktuelles Level im aktuellen BitNode (z.B. 2)
-  sourceFiles: SourceFileProgress;     // Deine freigeschalteten SFs (z.B. { 1: 3, 4: 3, 5: 3, 10: 1 })
+  currentBitNode: number;         // Aktueller BitNode (z.B. 10)
+  currentBitNodeLevel: number;    // Aktuelles Level im aktuellen BitNode (z.B. 2)
+  sourceFiles: SourceFileProgress; // Deine freigeschalteten SFs (z.B. { 1: 3, 4: 3, 5: 3, 10: 1 })
   
   hasDarkScapeNavigator: boolean;     // Exklusiv für Bitburner 3.0 Navigator
   hasTorRouter: boolean;               // TOR-Router im aktuellen Run gekauft?

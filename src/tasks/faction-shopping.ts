@@ -20,16 +20,12 @@ export async function main(ns: NS): Promise<void> {
   const myFactions = player.factions;
   const NFG_NAME = "NeuroFlux Governor";
 
-  // --- GANG-DETEKTION ---
-  // Wir ermitteln, ob wir eine Gang haben, um diese Fraktion vom Singularity-Kauf auszuschließen
   let gangFaction = "";
   try {
     if (ns.gang && ns.gang.inGang()) {
       gangFaction = ns.gang.getGangInformation().faction;
     }
-  } catch {
-    // Falls das Quellfile/API-Recht für Gangs im aktuellen Node noch fehlt
-  }
+  } catch {}
 
   let report: string[] = [];
   const logReport = (msg: string) => {
@@ -41,12 +37,10 @@ export async function main(ns: NS): Promise<void> {
   logReport("🛍️ SHOPPING REPORT - " + new Date().toLocaleTimeString());
   logReport("==================================================\n");
 
-  // 1. ALLE EINZIGARTIGEN AUGMENTATIONS SCANNEN
   let shoppingList: AugShoppingItem[] = [];
   const ownedAugs = sing.getOwnedAugmentations(true);
 
   for (const faction of myFactions) {
-    // FIX: Überspringe die eigene Gang, da deren Upgrades über ns.gang gekauft werden müssen
     if (faction === gangFaction) continue;
 
     const factionRep = sing.getFactionRep(faction);
@@ -66,74 +60,52 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
-  logReport(
-    "📋 Scanner-Ergebnis: " +
-      shoppingList.length +
-      " einzigartige Augmentations qualifiziert.",
-  );
+  logReport(`📋 Scanner-Ergebnis: ${shoppingList.length} einzigartige Augmentations qualifiziert.`);
+  
+  // 🟢 2. MATHEMATISCHE OPTIMIERUNG (Sortiere AUFSTEIGEND!)
+  // Da die Schleife unten rückwärts läuft, fangen wir beim höchsten Index (der teuersten Aug) an!
+  shoppingList.sort((a, b) => a.price - b.price); 
+
   for (const item of shoppingList) {
-    logReport(
-      "  -> " +
-        item.name +
-        " (" +
-        item.faction +
-        ") - $" +
-        ns.format.number(item.price),
-    );
+    logReport(`  -> ${item.name} (${item.faction}) - $${ns.format.number(item.price)}`);
   }
   logReport("");
 
-  // 2. MATHEMATISCHE OPTIMIERUNG (Teuerste zuerst wegen des 1.9x Multiplikators)
-  shoppingList.sort((a, b) => b.price - a.price);
-
-  // 3. EINKAUFSSCHLEIFE
+  // 3. EINKAUFSSCHLEIFE (Teuerste zuerst dank Rückwärtsschleife + aufsteigender Sortierung)
   let boughtAnything = true;
   while (boughtAnything) {
     boughtAnything = false;
     const currentOwnedAndQueued = sing.getOwnedAugmentations(true);
 
-    // Nutzen einer klassischen Rückwärtsschleife für stabileres In-Place Splicing
     for (let i = shoppingList.length - 1; i >= 0; i--) {
       const item = shoppingList[i];
       const currentPrice = sing.getAugmentationPrice(item.name);
       const currentMoney = ns.getPlayer().money;
 
       const prereqs = sing.getAugmentationPrereq(item.name);
-      const missingPrereqs = prereqs.filter(
-        (p) => !currentOwnedAndQueued.includes(p),
-      );
+      const missingPrereqs = prereqs.filter((p) => !currentOwnedAndQueued.includes(p));
 
       if (missingPrereqs.length > 0) {
-        const prereqOnList = missingPrereqs.every((p) =>
-          shoppingList.some((s) => s.name === p),
-        );
+        const prereqOnList = missingPrereqs.every((p) => shoppingList.some((s) => s.name === p));
         if (!prereqOnList) {
-          logReport(
-            "⚠️ Skip " +
-              item.name +
-              ": Voraussetzung fehlt komplett im Besitz (" +
-              missingPrereqs.join(", ") +
-              ")",
-          );
+          logReport(`⚠️ Skip ${item.name}: Voraussetzung fehlt im Besitz (${missingPrereqs.join(", ")})`);
         }
         continue;
       }
 
       if (currentMoney < currentPrice) {
-        continue; // Geld reicht (noch) nicht, eventuell nach dem nächsten Zyklus
+        continue; 
       }
 
-      logReport("[SHOP] Versuche Kauf: " + item.name + " von " + item.faction);
+      logReport(`[SHOP] Versuche Kauf: ${item.name} von ${item.faction}`);
       const success = sing.purchaseAugmentation(item.faction, item.name);
 
       if (success) {
-        logReport(
-          "✅ ERFOLGREICH GEKAUFT: " + item.name + " (" + item.faction + ")",
-        );
+        logReport(`✅ ERFOLGREICH GEKAUFT: ${item.name} (${item.faction})`);
         shoppingList.splice(i, 1);
         boughtAnything = true;
       } else {
-        logReport("❌ Interner API-Fehler beim Kauf von " + item.name);
+        logReport(`❌ Interner API-Fehler beim Kauf von ${item.name}`);
       }
     }
   }
@@ -146,16 +118,17 @@ export async function main(ns: NS): Promise<void> {
   while (boughtNFG) {
     boughtNFG = false;
     let bestNFGFaction: FactionName | null = null;
+    let highestRep = -1;
+    const repReq = sing.getAugmentationRepReq(NFG_NAME);
 
+    // 🟢 Optimierung: Immer die Fraktion mit der HÖCHSTEN Reputation für NFG-Kauf wählen!
     for (const faction of myFactions) {
-      if (faction === gangFaction) continue; // Auch hier die Gang ausschließen
+      if (faction === gangFaction) continue;
 
       const factionRep = sing.getFactionRep(faction);
-      const repReq = sing.getAugmentationRepReq(NFG_NAME);
-
-      if (factionRep >= repReq) {
+      if (factionRep >= repReq && factionRep > highestRep) {
+        highestRep = factionRep;
         bestNFGFaction = faction;
-        break;
       }
     }
 
@@ -174,9 +147,7 @@ export async function main(ns: NS): Promise<void> {
   }
 
   if (nfgCount > 0) {
-    logReport(
-      "📈 NEUROFLUX UPGRADES: Insgesamt " + nfgCount + " Stufen investiert.",
-    );
+    logReport(`📈 NEUROFLUX UPGRADES: Insgesamt ${nfgCount} Stufen investiert.`);
   } else {
     logReport("ℹ️ Kein NeuroFlux Governor gekauft.");
   }

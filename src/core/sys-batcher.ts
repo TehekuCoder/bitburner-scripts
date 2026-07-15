@@ -109,13 +109,12 @@ export async function main(ns: NS): Promise<void> {
         Math.floor(freeRam / SCRIPT_RAM_BASE) * SCRIPT_RAM_BASE;
     }
 
-    // 🎯 TARGETING & REPLANNING (Ausgelagert in den Planer!)
+    // 🎯 TARGETING & REPLANNING (Pfad bereinigt auf "utils/batch-planner.js")
     if (!target || batchesSentForTarget >= dynamicMaxBatchesForTarget) {
       logger.info("Starte Batch-Planer für Zielfindung...");
       logEvent("📡 Suche optimales Ziel...");
 
-      // Günstiges ns.exec auf Home nutzen (Kostet 0 GB, da ns.exec sowieso im RAM geladen ist!)
-      const pid = ns.exec("/utils/batch-planner.js", "home", 1);
+      const pid = ns.exec("utils/batch-planner.js", "home", 1);
       if (pid > 0) {
         while (ns.isRunning(pid)) {
           await ns.sleep(50);
@@ -198,7 +197,7 @@ export async function main(ns: NS): Promise<void> {
           target,
           progress,
           progressText: `Synchronisation läuft... (${secsLeft.toFixed(1)}s verbleibend)`,
-          greed: 0.0, // Schätzung
+          greed: 0.0,
           ramNeeded: 0,
           ramFree: tFree,
           ramTotal: tRam,
@@ -220,7 +219,7 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // 📈 LEVEL-UP ANTIZIPATION (Über extrem günstiges ns.getWeakenTime!)
+    // 📈 LEVEL-UP REKALIBRIERUNG (Unterbrechungsfrei & Interaktiv!)
     const trueWeakenTime = ns.getWeakenTime(target);
     const planWeakenTime = lockedPlan.executionTime - SPACER * 2;
 
@@ -231,7 +230,7 @@ export async function main(ns: NS): Promise<void> {
       );
       logEvent(`📈 Level-Up erkannt! Rekalibriere...`);
 
-      const pid = ns.exec("/utils/batch-planner.js", "home", 1);
+      const pid = ns.exec("utils/batch-planner.js", "home", 1);
       if (pid > 0) {
         while (ns.isRunning(pid)) {
           await ns.sleep(50);
@@ -240,7 +239,28 @@ export async function main(ns: NS): Promise<void> {
       const newState = loadState(ns);
       lockedPlan = newState?.batcherPlan || null;
 
-      await ns.sleep(timeDelta); // Überholpuffer
+      // 🟢 Dashboard bleibt während des Überholpuffers voll aktiv!
+      const startSleep = Date.now();
+      while (Date.now() - startSleep < timeDelta) {
+        if (Date.now() - lastUiUpdate > 250) {
+          drawBatcherDashboard(ns, {
+            status: "RECALIBRATING",
+            target,
+            progress: (Date.now() - startSleep) / timeDelta,
+            progressText: `Warte auf Überholpuffer... (${((timeDelta - (Date.now() - startSleep)) / 1000).toFixed(1)}s)`,
+            greed: lockedPlan ? lockedPlan.hackThreads * 0.02 : 0,
+            ramNeeded: lockedPlan ? lockedPlan.totalRam : 0,
+            ramFree: totalUsableFreeRam,
+            ramTotal: totalUsableMaxRam,
+            batchesSent: batchesSentForTarget,
+            batchesMax: dynamicMaxBatchesForTarget,
+            eventLog,
+            lastWaveProfit,
+          });
+          lastUiUpdate = Date.now();
+        }
+        await ns.sleep(100);
+      }
     }
 
     const plan = lockedPlan;
@@ -249,7 +269,6 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // Ab hier weiß TS garantiert: 'plan' ist vom Typ 'BatchPlan' und niemals 'null'
     patchState(ns, {
       batcherRamNeeded: plan.totalRam,
       batcherTarget: target,
@@ -268,7 +287,7 @@ export async function main(ns: NS): Promise<void> {
           target,
           progress: totalUsableFreeRam / Math.max(1, requiredRam),
           progressText: `Warte auf RAM-Slot: ${ns.format.ram(totalUsableFreeRam)} / ${ns.format.ram(requiredRam)}`,
-          greed: plan.hackThreads * 0.02, // Dynamisch geschätzt
+          greed: plan.hackThreads * 0.02,
           ramNeeded: requiredRam,
           ramFree: totalUsableFreeRam,
           ramTotal: totalUsableMaxRam,
@@ -456,6 +475,12 @@ function dispatchBatchScript(
 
     if (possibleThreads > 0) {
       const threadsToRun = Math.min(possibleThreads, threadsRemaining);
+      
+      // 🟢 FIX: Kopiert das Prep-Skript, falls es auf dem Zielknoten fehlt!
+      if (server !== "home" && !ns.fileExists(script, server)) {
+        ns.scp(script, server, "home");
+      }
+
       ns.exec(script, server, threadsToRun, target, delay, id);
       threadsRemaining -= threadsToRun;
       if (threadsRemaining <= 0) break;
@@ -475,13 +500,14 @@ function executePrepPhase(
   const curMoney = ns.getServerMoneyAvailable(target);
   const weakenPotency = 0.05 * (bnMults.ServerWeakenRate ?? 1.0);
 
+  // 🟢 Pfade bereinigt (ohne führende Slashes!)
   if (curSec > minSec) {
     const secDeficit = curSec - minSec;
     const weakenThreads = Math.ceil(secDeficit / weakenPotency);
     dispatchBatchScript(
       ns,
       allServers,
-      "/tasks/weaken.js",
+      "tasks/weaken.js",
       weakenThreads,
       target,
       0,
@@ -497,7 +523,7 @@ function executePrepPhase(
     dispatchBatchScript(
       ns,
       allServers,
-      "/tasks/grow.js",
+      "tasks/grow.js",
       growThreads,
       target,
       0,
@@ -506,7 +532,7 @@ function executePrepPhase(
     dispatchBatchScript(
       ns,
       allServers,
-      "/tasks/weaken.js",
+      "tasks/weaken.js",
       weakenThreadsNeeded,
       target,
       50,
@@ -527,24 +553,25 @@ function dispatchSplitBatch(
   const shareBufferPercent =
     currentState?.fillerConfig?.shareMaxRamPercent || 0.0;
 
+  // 🟢 Pfade bereinigt (ohne führende Slashes!)
   const tasks = [
     {
-      script: "/tasks/hack.js",
+      script: "tasks/hack.js",
       threads: plan.hackThreads,
       delay: plan.hackDelay,
     },
     {
-      script: "/tasks/weaken.js",
+      script: "tasks/weaken.js",
       threads: plan.weaken1Threads,
       delay: plan.weaken1Delay,
     },
     {
-      script: "/tasks/grow.js",
+      script: "tasks/grow.js",
       threads: plan.growThreads,
       delay: plan.growDelay,
     },
     {
-      script: "/tasks/weaken.js",
+      script: "tasks/weaken.js",
       threads: plan.weaken2Threads,
       delay: plan.weaken2Delay,
     },
@@ -587,6 +614,7 @@ function dispatchSplitBatch(
       if (possibleThreads > 0) {
         const toDeploy = Math.min(possibleThreads, threadsLeft);
 
+        // 🟢 Pfad-Prüfung und Kopieren klappt nun perfekt, da pfadangaben 100% matchen!
         if (server !== "home" && !ns.fileExists(task.script, server)) {
           ns.scp(task.script, server, "home");
           logger.info(

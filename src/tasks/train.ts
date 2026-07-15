@@ -1,7 +1,8 @@
 import { NS, GymType } from "@ns";
-import { loadState, patchState } from "../core/state-manager.js"; // 🛠️ Relativen Pfad angepasst
+import { loadState, patchState } from "../core/state-manager.js"; 
 
-type GymStat = "strength" | "defense" | "desktop" | "dexterity" | "agility";
+// 🟢 Typ-Definition bereinigt ("desktop" gelöscht)
+type GymStat = "strength" | "defense" | "dexterity" | "agility";
 
 const STAT_MAP: Record<string, GymType> = {
   strength: "str",
@@ -48,7 +49,6 @@ export async function main(ns: NS): Promise<void> {
     if (lowStat) {
       const shortStat = STAT_MAP[lowStat];
 
-      // Reiseschutz (Sector-12 Powerhouse Gym)
       if (p.city !== ns.enums.CityName.Sector12) {
         if (p.money < 200000) {
           ns.print(`[WARN] Zu wenig Geld für die Reise nach Sector-12 ($200k benötigt).`);
@@ -59,15 +59,15 @@ export async function main(ns: NS): Promise<void> {
       }
 
       const currentWork = sing.getCurrentWork();
-      const isAlreadyTraining = currentWork?.type === "CLASS" && 
-                                (currentWork as any).classType === shortStat && 
-                                (currentWork as any).className === "Powerhouse Gym";
+      const isAlreadyTraining =
+        currentWork?.type === "CLASS" && 
+        (currentWork as any).classType === shortStat && 
+        (currentWork as any).className === "Powerhouse Gym";
 
       if (!isAlreadyTraining) {
         sing.gymWorkout("Powerhouse Gym", shortStat, useFocus);
       }
 
-      // HUD & Heartbeat Update
       const currentLevel = Math.floor(p.skills[lowStat as keyof typeof p.skills] as number);
       patchState(ns, { 
         progressBar: `🏋️ ${DISPLAY_MAP[lowStat]}: ${currentLevel}/${targetStat}`,
@@ -80,6 +80,6 @@ export async function main(ns: NS): Promise<void> {
       });
     }
 
-    await ns.sleep(2000); // 🔥 Von 4000 auf 2000 verkürzt wegen des Dashboard-Takt-Schutzes!
+    await ns.sleep(2000); 
   }
 }

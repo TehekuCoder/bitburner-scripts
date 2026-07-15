@@ -10,7 +10,7 @@ import {
   COMBAT_STATS
 } from "../lib/constants.js";
 
-// --- NEUE EXTERNE MODULE ---
+// --- EXTERNE MODULE ---
 import { determineStrategy } from "../lib/strategy.js";
 import { MetricTracker } from "../lib/metrics.js";
 import { generateProgressBar } from "../lib/ui-helper.js";
@@ -28,7 +28,7 @@ export async function main(ns: NS): Promise<void> {
   logger.info("Initialisiere Netzwerk-Multiplikatoren...");
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
 
-  // Neuer, gekapselter Metric-Tracker (ersetzt lastValue, lastTime, emaRate, lastMode)
+  // Gekapselter Metric-Tracker
   const metricTracker = new MetricTracker();
 
   let cachedFallbackTarget = "n00dles";
@@ -39,11 +39,9 @@ export async function main(ns: NS): Promise<void> {
   let allNetworkServers: string[] = [];
   let lastNetworkScan = 0;
 
-  // --- Absolute Pfade für Hilfsskripte ---
-  const analyzeFactionsScript = "/tasks/analyze-factions.js";
-  const sysBatcherScript = "/core/sys-batcher.js";
-  const fillRamScript = "/utils/fill-ram.js";
-  const factionShoppingScript = "/tasks/faction-shopping.js";
+  // --- Absolute Pfade für Hilfsskripte (Bereinigt!) ---
+  const sysBatcherScript = "core/sys-batcher.js";
+  const fillRamScript = "utils/fill-ram.js";
 
   while (true) {
     const now = Date.now();
@@ -58,28 +56,11 @@ export async function main(ns: NS): Promise<void> {
       lastNetworkScan = now;
     }
 
-    // --- STATE LADEN & DYNAMISCH EVALUIEREN ---
+    // --- STATE LADEN ---
     const currentState = loadState(ns);
-    const factionTargets = (currentState?.factionTargets ?? {}) as Record<
-      FactionName,
-      number
-    >;
-
-    // Absolute Pfad-Prüfung für die Faction-Analyse
-    if (
-      Object.keys(factionTargets).length === 0 &&
-      !ns.isRunning(analyzeFactionsScript, "home")
-    ) {
-      const analyzeRam = ns.getScriptRam(analyzeFactionsScript, "home");
-      const freeHomeRam =
-        ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
-      if (freeHomeRam >= analyzeRam) {
-        ns.run(analyzeFactionsScript, 1);
-        logger.info(
-          "Factions-Analyse fehlt im State. 'analyze-factions.js' proaktiv gestartet.",
-        );
-      }
-    }
+    
+    // Typisierung korrigiert auf Partial (keine Compiler-Fehler mehr!)
+    const factionTargets = (currentState?.factionTargets ?? {}) as Partial<Record<FactionName, number>>;
 
     const p = ns.getPlayer();
     const homeMaxRam = ns.getServerMaxRam("home");
@@ -111,8 +92,7 @@ export async function main(ns: NS): Promise<void> {
     // --- STRATEGIE-MATRIX VARIABLEN ---
     const playerMoney = p.money;
     const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
-    const companyRepMult = bnMults.CompanyWorkRepGain ?? 1;
-    const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
+    const crimeMoneyMult = bnMults.CrimeMoney ?? 1; // 🟢 Diese Zeile wieder einfügen!
 
     const BASE_MONEY_THRESHOLD = factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
     const lastStrategy = currentState?.strategy || "MONEY";
@@ -128,11 +108,13 @@ export async function main(ns: NS): Promise<void> {
       currentFactionReps[f] = ns.singularity.getFactionRep(f);
     }
 
+    // FactionTargets wird hier sicher verwendet, da der Initializer sie garantiert befüllt hat
     const nextRoadmapFaction = findNextRoadmapFaction(
       p,
       currentFactionReps,
-      factionTargets,
+      factionTargets as Record<FactionName, number>,
     );
+
     const roadmapFactionName = nextRoadmapFaction ? nextRoadmapFaction.name : null;
     const factionToWorkFor = factionRepMult > 0.1 ? nextRoadmapFaction : null;
     const hasSavingTarget = factionToWorkFor !== null && !isReadyForFactionGrind;
@@ -152,7 +134,7 @@ export async function main(ns: NS): Promise<void> {
       currentKarma,
       isRushActive,
       canRunBatcher,
-      factionTargets,
+      factionTargets as Record<FactionName, number>,
       nextRoadmapFaction,
       factionToWorkFor,
       isReadyForFactionGrind
@@ -196,7 +178,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // --- METRIK-ERFASSUNG (MODUL!) ---
+    // --- METRIK-ERFASSUNG ---
     let currentVal = 0;
     let targetVal = 0;
     let label = "";
@@ -219,7 +201,6 @@ export async function main(ns: NS): Promise<void> {
       label = `💀 Mordaufträge`;
     }
 
-    // Update den Tracker und logge Strategiewechsel via Callback
     metricTracker.update(mode, currentVal, targetVal, (oldMode, newMode) => {
       logger.info(
         `🔄 Strategiewechsel: ${oldMode || "START"} ➔ ${newMode} ${label ? `(${label})` : ""}`,
@@ -228,7 +209,7 @@ export async function main(ns: NS): Promise<void> {
 
     const etaStr = metricTracker.getEtaString(mode, currentVal, targetVal);
 
-    // --- UI DASHBOARD UPDATE (MODUL!) ---
+    // --- UI DASHBOARD UPDATE ---
     const finalBar = generateProgressBar(ns, {
       mode,
       label,
@@ -259,8 +240,8 @@ export async function main(ns: NS): Promise<void> {
       dynamicMaxXp = 1500;
     }
 
-    if (!canRunBatcher && ns.isRunning("/utils/fill-ram.js", "home")) {
-      ns.scriptKill("/utils/fill-ram.js", "home");
+    if (!canRunBatcher && ns.isRunning("utils/fill-ram.js", "home")) {
+      ns.scriptKill("utils/fill-ram.js", "home");
       logger.info("Batcher nicht ausführbar. 'fill-ram.js' beendet.");
     }
 
@@ -283,9 +264,9 @@ export async function main(ns: NS): Promise<void> {
       (mode === "CRIME" || mode === "XP_SPRINT" || mode === "KILLS");
 
     if (isEarlyGameCrime) {
-      if (ns.isRunning("/tasks/faction-shopping.js", "home"))
-        ns.scriptKill("/tasks/faction-shopping.js", "home");
-      const rogueScripts = ["/systems/hacknet.js", "/systems/hacknet-early.js"];
+      if (ns.isRunning("tasks/faction-shopping.js", "home"))
+        ns.scriptKill("tasks/faction-shopping.js", "home");
+      const rogueScripts = ["systems/hacknet.js", "systems/hacknet-early.js"];
       for (const script of rogueScripts) {
         if (ns.fileExists(script, "home") && ns.isRunning(script, "home"))
           ns.scriptKill(script, "home");
@@ -293,15 +274,15 @@ export async function main(ns: NS): Promise<void> {
     } else {
       if (
         getFreeRam() > 12 &&
-        !ns.isRunning("/tasks/faction-shopping.js", "home")
+        !ns.isRunning("tasks/faction-shopping.js", "home")
       ) {
-        ns.run("/tasks/faction-shopping.js", 1);
+        ns.run("tasks/faction-shopping.js", 1);
       }
     }
 
     // --- WORKER ALLOKATION ---
-    const workerScript = mode === "XP_SPRINT" ? "/tasks/xp-grind.js" : "/tasks/work.js";
-    const obsoleteScript = mode === "XP_SPRINT" ? "/tasks/work.js" : "/tasks/xp-grind.js";
+    const workerScript = mode === "XP_SPRINT" ? "tasks/xp-grind.js" : "tasks/work.js";
+    const obsoleteScript = mode === "XP_SPRINT" ? "tasks/work.js" : "tasks/xp-grind.js";
 
     const infectedServers = allNetworkServers.filter(
       (s) =>
@@ -433,22 +414,22 @@ function manageMicroservices(
   targetStat?: number,
 ): void {
   const modeToScript: Record<string, string> = {
-    REP: "/tasks/faction-grind.js",
-    CORP: "/tasks/corp.js",
-    TRAIN: "/tasks/train.js",
-    CRIME: "/tasks/crime.js",
-    XP_SPRINT: "/tasks/crime.js",
-    KILLS: "/tasks/crime.js",
-    PSERV_RUSH: "/tasks/crime.js",
+    REP: "tasks/faction-grind.js",
+    CORP: "tasks/corp.js",
+    TRAIN: "tasks/train.js",
+    CRIME: "tasks/crime.js",
+    XP_SPRINT: "tasks/crime.js",
+    KILLS: "tasks/crime.js",
+    PSERV_RUSH: "tasks/crime.js",
   };
 
   let targetScript = modeToScript[currentMode];
 
   if (
     currentMode === "MONEY" &&
-    (hasSavingTarget || !ns.isRunning("/core/sys-batcher.js", "home"))
+    (hasSavingTarget || !ns.isRunning("core/sys-batcher.js", "home"))
   ) {
-    targetScript = "/tasks/crime.js";
+    targetScript = "tasks/crime.js";
   }
 
   for (const [_, script] of Object.entries(modeToScript)) {

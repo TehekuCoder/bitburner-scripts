@@ -1,5 +1,5 @@
 import { NS, CompanyName, JobField } from "@ns";
-import { loadState, patchState, BotState } from "../core/state-manager.js"; // 🛠️ Nun mit patchState
+import { loadState, patchState } from "../core/state-manager.js"; 
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -19,12 +19,11 @@ export async function main(ns: NS): Promise<void> {
     }
 
     if (!targetCompany) {
-      ns.print("[WARN] Modus ist CORP, aber kein 'targetCompany' definiert.");
+      ns.print("[WARN] Modus ist CORP, aber kein 'targetCompany' defined.");
       await ns.sleep(2000);
       continue;
     }
 
-    // Beförderung prüfen
     const isPromoted = sing.applyToCompany(targetCompany, jobField);
     const playerJobs = ns.getPlayer().jobs;
     const currentJobTitle = playerJobs[targetCompany] || "Bewerber";
@@ -33,9 +32,11 @@ export async function main(ns: NS): Promise<void> {
       ns.print(`🎉 [PROMOTION] Beförderung bei ${targetCompany}! Neuer Job: ${currentJobTitle}`);
     }
 
-    // Arbeit sicherstellen
     const currentWork = sing.getCurrentWork();
-    const isAlreadyWorkingHere = currentWork?.type === "COMPANY" && currentWork.companyName === targetCompany;
+    // 🟢 TypeScript Type-Cast eingebaut, um strict compiler errors zu verhindern
+    const isAlreadyWorkingHere =
+      currentWork?.type === "COMPANY" &&
+      (currentWork as any).companyName === targetCompany;
 
     if (!isAlreadyWorkingHere) {
       ns.print(`[WORK] Starte Arbeit bei ${targetCompany} als ${currentJobTitle}...`);
@@ -45,7 +46,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // HUD & Heartbeat Update
     const currentRep = sing.getCompanyRep(targetCompany);
     patchState(ns, {
       progressBar: `💼 ${targetCompany}: ${currentJobTitle} (${ns.format.number(currentRep, 0)} Rep)`,

@@ -1,5 +1,5 @@
 import { NS, CrimeType } from "@ns";
-import { loadState, patchState } from "../core/state-manager.js"; // 🛠️ Pfad korrigiert & patchState
+import { loadState, patchState } from "../core/state-manager.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -12,7 +12,14 @@ export async function main(ns: NS): Promise<void> {
     const state = loadState(ns);
     const mode = (state?.strategy || "IDLE") as string;
 
-    if (mode !== "CRIME" && mode !== "MONEY" && mode !== "KILLS" && mode !== "XP_SPRINT") {
+    // 🟢 HIER: "PSERV_RUSH" zur Whitelist hinzugefügt!
+    if (
+      mode !== "CRIME" &&
+      mode !== "MONEY" &&
+      mode !== "KILLS" &&
+      mode !== "XP_SPRINT" &&
+      mode !== "PSERV_RUSH"
+    ) {
       ns.print(`[EXIT] Modus ist nun ${mode}. Beende Crime-Worker.`);
       return;
     }

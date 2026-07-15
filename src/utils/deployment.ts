@@ -1,29 +1,22 @@
 import { NS } from "@ns";
-import { provisionServer } from "../utils/provision.js";
-import { ScriptList } from "../core/sys-kernel.js";
+import { ScriptList } from "../core/types.js"; // Import aus neutraler Datei!
 
 /**
  * Verteilt Worker-Skripte auf einem Ziel-Server und maximiert die Thread-Auslastung.
+ * Komplett synchron und ohne blockierenden Overhead!
  */
-export async function deployWorker(
+export function deployWorker(
   ns: NS,
   targetNode: string,
   scriptFilename: string,
   hackTarget: string,
   ramBuffer: number,
   scripts: ScriptList,
-): Promise<void> {
-  if (targetNode !== "home") {
-    await provisionServer(ns, targetNode);
-  }
-
+): void {
+  // 1. Quellcode-Validierung
   if (!ns.fileExists(scriptFilename, "home")) return;
 
-  const scriptCost = ns.getScriptRam(scriptFilename);
-  const maxRam = ns.getServerMaxRam(targetNode);
-  const usedRam = ns.getServerUsedRam(targetNode);
-  let freedRam = 0;
-
+  // 2. Alte Prozesse identifizieren und restlos terminieren
   const procs = ns.ps(targetNode);
   const allWorkerScripts = [
     scripts.worker,
@@ -33,20 +26,33 @@ export async function deployWorker(
     scripts.weaken,
   ];
 
-  // Alte Worker auf diesem Server beenden, falls das Ziel oder die Strategie gewechselt hat
+  let killedAny = false;
   for (const p of procs) {
     if (
       allWorkerScripts.includes(p.filename) &&
       (p.filename !== scriptFilename || p.args[0] !== hackTarget)
     ) {
       ns.kill(p.pid);
-      freedRam += ns.getScriptRam(p.filename) * p.threads;
+      killedAny = true;
     }
   }
 
-  const actualFreeRam = maxRam - usedRam + freedRam - ramBuffer;
+  // 3. Skript kopieren, falls es nicht auf dem Zielserver existiert
+  if (targetNode !== "home" && !ns.fileExists(scriptFilename, targetNode)) {
+    ns.scp(scriptFilename, targetNode, "home");
+  }
+
+  // 4. Exakte RAM-Berechnung (Nachdem die alten Prozesse gekillt wurden!)
+  const scriptCost = ns.getScriptRam(scriptFilename);
+  if (scriptCost === 0) return;
+
+  const maxRam = ns.getServerMaxRam(targetNode);
+  const usedRam = ns.getServerUsedRam(targetNode);
+  const actualFreeRam = maxRam - usedRam - ramBuffer;
+
   const threads = Math.floor(actualFreeRam / scriptCost);
 
+  // 5. Starten
   if (threads > 0) {
     ns.exec(scriptFilename, targetNode, threads, hackTarget);
   }

@@ -8,19 +8,21 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     const state = loadState(ns);
     
-    // Sicherstellen, dass der State und das Ziel existieren
     if (!state || !state.targetFaction) {
       ns.print("⏳ Warte auf Zielvorgabe durch den Dispatcher...");
       await ns.sleep(2000);
       continue;
     }
 
-    // Durch den 'continue'-Check oben weiß TS jetzt sicher: targetFaction ist ein FactionName!
     const faction: FactionName = state.targetFaction;
     const sing = ns.singularity;
     const currentWork = sing.getCurrentWork();
 
-    let isWorkingCorrectly = currentWork && currentWork.type === "FACTION" && currentWork.factionName === faction;
+    // 🟢 Type-Cast für strict TS
+    let isWorkingCorrectly =
+      currentWork &&
+      currentWork.type === "FACTION" &&
+      (currentWork as any).factionName === faction;
 
     if (!isWorkingCorrectly) {
       ns.print("🚀 Wechsle Arbeit auf Fraktion: " + faction);
@@ -34,17 +36,15 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // Aktuelle Reputation ermitteln
     const currentRep = sing.getFactionRep(faction);
 
-    // 🛠️ NEU & ULTRA-WICHTIG FÜR DEN DISPATCHER:
-    // Wir updaten nicht nur die Progressbar, sondern halten auch das globale factionTargets-Objekt aktuell!
-    const updatedTargets = { ...(state.factionTargets ?? {}) } as Record<FactionName, number>;
-    updatedTargets[faction] = currentRep;
+    // 🟢 Korrektur: Wir speichern die aktuelle Rep in 'factionCurrentReps', nicht in 'factionTargets'!
+    const updatedCurrentReps = { ...(state.factionCurrentReps ?? {}) } as Record<FactionName, number>;
+    updatedCurrentReps[faction] = currentRep;
 
     patchState(ns, {
       progressBar: `🧬 ${faction}: ${ns.format.number(currentRep, 0)} Rep`,
-      factionTargets: updatedTargets
+      factionCurrentReps: updatedCurrentReps // Verhindert das Zerschießen deiner Kernel-Ziele
     });
 
     await ns.sleep(2000);
