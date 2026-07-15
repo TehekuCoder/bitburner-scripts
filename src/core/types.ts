@@ -8,7 +8,7 @@ export interface ScriptList {
   xpfarm: string;
   trade: string;
   hacknet: string;
-  replicator: string;
+  dnet: string;
   crawler: string;
   hack: string;
   grow: string;

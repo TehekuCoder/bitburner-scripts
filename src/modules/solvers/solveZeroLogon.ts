@@ -1,8 +1,9 @@
 import { NS } from "@ns";
 
-/**
- * Solver für ZeroLogon - Es wird kein Passwort benötigt.
- */
-export async function solveZeroLogon(ns: NS, details: any): Promise<string> {
-  return "";
+export async function solveZeroLogon(ns: NS, host: string, details: any): Promise<string | null> {
+  const result = await ns.dnet.authenticate(host, "");
+  if (result && result.success) {
+    return "";
+  }
+  return null;
 }

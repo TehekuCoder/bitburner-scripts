@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { Logger } from "./logger.js"; // 📝 Logger importieren
+import { Logger } from "./logger.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -8,7 +8,6 @@ export async function main(ns: NS): Promise<void> {
   const jsonDbFile = "/dnet-master-db.json";
   const textDbFile = "/passwords.txt";
 
-  // 🏁 Darknet-Logger mit separater Logdatei initialisieren
   const logger = new Logger(ns, "DNET-MASTER", "INFO", "/logs/dnet_system.txt");
   logger.info("🖥️ Darknet-Master gestartet. Lausche auf Port " + PORT_ID);
 
@@ -32,10 +31,10 @@ export async function main(ns: NS): Promise<void> {
       if (host && password !== undefined && passwordDb[host] !== password) {
         passwordDb[host] = password;
 
-        // 📝 Zentralen Erfolg verbuchen
-        logger.success(
-          `🔑 Neues Passwort registriert: ${host} -> "${password}"`,
-        );
+        logger.success(`🔑 Neues Passwort registriert: ${host} -> "${password}"`);
+
+        // 🟢 FIX: Aktualisierte JSON-Datenbank direkt auf Disk schreiben
+        await ns.write(jsonDbFile, JSON.stringify(passwordDb, null, 2), "w");
 
         const uniquePasswords = [...new Set(Object.values(passwordDb))].filter(
           (pw) =>

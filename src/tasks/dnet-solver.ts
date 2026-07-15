@@ -1,18 +1,6 @@
 import { NS } from "@ns";
-import { Logger } from "../../core/logger.js";
-
-// 🔄 Absolute Entwarnung: Diese Imports bleiben hier, da dein Solver damit trotzdem nur 3,85 GB verbraucht!
-import { solveRoman } from "/modules/solvers/solveRoman";
-import { solveBaseConversion } from "/modules/solvers/solveBaseConversion";
-import { solvePr0verFl0 } from "/modules/solvers/solvePr0verFl0";
-import { solveOpenWebAccessPoint } from "/modules/solvers/solveOpenWebAccessPoint";
-import { solveDeskMemo } from "/modules/solvers/solveDeskMemo";
-import { solveCloudBlare } from "/modules/solvers/solveCloudBlare";
-import { solveAnagram } from "/modules/solvers/solveAnagram";
-import { solveNIL } from "/modules/solvers/solveNIL";
-import { solveDeepGreen } from "/modules/solvers/solveDeepGreen";
-import { solveAccountsManager } from "/modules/solvers/solveAccountsManager";
-import { solveFactoriOs } from "/modules/solvers/solveFactoriOs";
+import { Logger } from "../core/logger.js";
+import { runSolver } from "/modules/solvers/solveManager";
 
 export interface ServerAuthDetails {
   isConnectedToCurrentServer: boolean;
@@ -36,9 +24,7 @@ const COOLDOWN_MS = 5 * 60 * 1000;
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
-  if (ns.args.length < 5) {
-    return;
-  }
+  if (ns.args.length < 5) return;
 
   const host = String(ns.args[0]);
   const modelId = String(ns.args[1]);
@@ -53,9 +39,7 @@ export async function main(ns: NS): Promise<void> {
     "/logs/dnet_system.txt",
   );
 
-  if (isServerInCooldown(ns, host)) {
-    return;
-  }
+  if (isServerInCooldown(ns, host)) return;
 
   const details: ServerAuthDetails = {
     isConnectedToCurrentServer: true,
@@ -70,69 +54,31 @@ export async function main(ns: NS): Promise<void> {
 
   const connectedServers = ns.dnet.probe();
   if (!connectedServers.includes(host)) {
-    logger.warn(
-      `⚠️ Host '${host}' nach Thread-Reload verloren gegangen. Abbruch.`,
-    );
+    logger.warn(`⚠️ Host '${host}' nach Thread-Reload verloren gegangen. Abbruch.`);
     return;
   }
 
-  // Heuristik
+  // Heuristik-Vorprüfung
   const smartGuesses = getHeuristicCandidates(details);
   for (const guess of smartGuesses) {
     if ((await ns.dnet.authenticate(host, guess)).success) {
       logger.success(`🚀 Blitz-Erfolg via Heuristik auf ${host}: "${guess}"`);
       ns.writePort(5, `${host}:${guess}`);
+      updateJsonDatabase(ns, host, guess);
       return;
     }
   }
 
   logger.info(`🔨 Krypto-Angriff auf Modell [${modelId}] gestartet...`);
-  let correctPassword: string | null = null;
+  
+  // Der Manager übernimmt die Arbeit und wählt den passenden Solver
+  const correctPassword = await runSolver(ns, host, modelId, details);
 
-  switch (details.modelId) {
-    case "BellaCuore":
-      correctPassword = await solveRoman(ns, host, details);
-      break;
-    case "OctantVoxel":
-      correctPassword = await solveBaseConversion(ns, host, details);
-      break;
-    case "Pr0verFl0":
-      correctPassword = await solvePr0verFl0(ns, host, details);
-      break;
-    case "OpenWebAccessPoint":
-      correctPassword = await solveOpenWebAccessPoint(ns, host, details);
-      break;
-    case "DeskMemo_3.1":
-      correctPassword = await solveDeskMemo(ns, host, details);
-      break;
-    case "CloudBlare(tm)":
-      correctPassword = await solveCloudBlare(ns, host, details);
-      break;
-    case "ZeroLogon":
-      if ((await ns.dnet.authenticate(host, "")).success) correctPassword = "";
-      break;
-    case "PHP 5.4":
-      correctPassword = await solveAnagram(ns, host, details);
-      break;
-    case "NIL":
-      correctPassword = await solveNIL(ns, host, details);
-      break;
-    case "DeepGreen":
-      correctPassword = await solveDeepGreen(ns, host, details);
-      break;
-    case "AccountsManager_4.2":
-      correctPassword = await solveAccountsManager(ns, host, details);
-      break;
-    case "Factori-Os":
-      correctPassword = await solveFactoriOs(ns, host, details);
-      break;
-    default:
-      logger.warn(
-        `⚠️ Unbekanntes Modell: ${details.modelId}. Starte Dictionary-Fallback.`,
-      );
-      if (await dictionaryAttack(ns, host, details)) return;
-      if (await fileLootAttack(ns, host, details)) return;
-      break;
+  // Fallback, falls kein passender Solver registriert ist oder fehlschlug
+  if (correctPassword === null) {
+    logger.warn(`⚠️ Kein Solver-Ergebnis für ${modelId}. Starte Dictionary- & File-Loot-Fallback.`);
+    if (await dictionaryAttack(ns, host, details)) return;
+    if (await fileLootAttack(ns, host, details)) return;
   }
 
   if (correctPassword !== null) {
@@ -140,20 +86,17 @@ export async function main(ns: NS): Promise<void> {
     if (authResult.success) {
       ns.writePort(5, `${host}:${correctPassword}`);
       updateJsonDatabase(ns, host, correctPassword);
-      logger.success(
-        `🎉 [SUCCESS] Server gebrochen! ${host} -> "${correctPassword}"`,
-      );
+      logger.success(`🎉 [SUCCESS] Server gebrochen! ${host} -> "${correctPassword}"`);
       return;
     }
   }
 
-  logger.error(
-    `❌ Krypto-Angriff auf ${host} fehlgeschlagen. Cooldown aktiviert.`,
-    false,
-  );
+  logger.error(`❌ Krypto-Angriff auf ${host} fehlgeschlagen. Cooldown aktiviert.`, false);
   setServerCooldown(ns, host);
 }
+
 // --- HILFSFUNKTIONEN ---
+
 function isServerInCooldown(ns: NS, host: string): boolean {
   if (!ns.fileExists(COOLDOWN_FILE)) return false;
   const lines = ns.read(COOLDOWN_FILE).split("\n");
@@ -192,24 +135,16 @@ function updateJsonDatabase(ns: NS, host: string, newPw: string): void {
   ns.write(file, JSON.stringify(db, null, 2), "w");
 }
 
-async function dictionaryAttack(
-  ns: NS,
-  host: string,
-  details: ServerAuthDetails,
-): Promise<boolean> {
+async function dictionaryAttack(ns: NS, host: string, details: ServerAuthDetails): Promise<boolean> {
   const jsonDbFile = "/dnet-master-db.json";
   if (!ns.fileExists(jsonDbFile)) return false;
   try {
     const db = JSON.parse(ns.read(jsonDbFile));
     const list = [...new Set(Object.values(db) as string[])].filter(
-      (pw) =>
-        pw !== undefined &&
-        !pw.includes("You have discovered") &&
-        pw.length < 30,
+      (pw) => pw !== undefined && !pw.includes("You have discovered") && pw.length < 30
     );
     for (const pw of list) {
-      if (details.passwordLength && pw.length !== details.passwordLength)
-        continue;
+      if (details.passwordLength && pw.length !== details.passwordLength) continue;
       if ((await ns.dnet.authenticate(host, pw)).success) {
         ns.writePort(5, `${host}:${pw}`);
         updateJsonDatabase(ns, host, pw);
@@ -220,11 +155,7 @@ async function dictionaryAttack(
   return false;
 }
 
-async function fileLootAttack(
-  ns: NS,
-  host: string,
-  details: ServerAuthDetails,
-): Promise<boolean> {
+async function fileLootAttack(ns: NS, host: string, details: ServerAuthDetails): Promise<boolean> {
   try {
     const files = ns.ls(host, ".txt");
     for (const file of files) {

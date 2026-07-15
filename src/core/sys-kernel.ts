@@ -1,15 +1,11 @@
 // src/core/sys-kernel.ts
 
 import { NS } from "@ns";
-import {
-  loadState,
-  patchState,
-  saveState,
-} from "./state-manager.js";
+import { loadState, patchState, saveState } from "./state-manager.js";
 import { getAllServers, breakAndInfectNetwork } from "../lib/network.js";
 import { Logger } from "./logger.js";
 import { deployWorker } from "../utils/deployment.js";
-import { ScriptList } from "./types.js"; // 🟢 Importiert aus den zentralen Typen ohne Konflikte!
+import { ScriptList } from "./types.js";
 
 export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "Kernel", "INFO");
@@ -22,8 +18,8 @@ export async function main(ns: NS): Promise<void> {
     xpfarm: "tasks/xp-grind.js",
     trade: "systems/finance.js",
     hacknet: "systems/hacknet-early.js",
-    replicator: "core/dnet-master.js",
-    crawler: "tasks/dnet/dnet-crawler.js",
+    dnet: "core/dnet-master.js",
+    crawler: "tasks/dnet-crawler.js",
     hack: "tasks/hack.js",
     grow: "tasks/grow.js",
     weaken: "tasks/weaken.js",
@@ -95,13 +91,16 @@ export async function main(ns: NS): Promise<void> {
   // Throttling für Netzwerk-Scans im Kernel
   let allNodes: string[] = [];
   let lastNetworkScan = 0;
-  const NETWORK_SCAN_INTERVAL = 30000; // Alle 30 Sekunden scannen reicht völlig!
+  const NETWORK_SCAN_INTERVAL = 30000;
 
   while (true) {
     const now = Date.now();
 
     // --- THROTTLED NETZWERK SCAN ---
-    if (now - lastNetworkScan > NETWORK_SCAN_INTERVAL || allNodes.length === 0) {
+    if (
+      now - lastNetworkScan > NETWORK_SCAN_INTERVAL ||
+      allNodes.length === 0
+    ) {
       breakAndInfectNetwork(ns);
       allNodes = getAllServers(ns);
       lastNetworkScan = now;
@@ -115,16 +114,13 @@ export async function main(ns: NS): Promise<void> {
     const player = ns.getPlayer();
     const currentState = loadState(ns);
 
-    // Multiplikatoren aus Datei lesen
     let bnMults: Record<string, number> = {};
     try {
       const fileContent = ns.read("/bn-multipliers.txt");
       if (fileContent) {
         bnMults = JSON.parse(fileContent);
       }
-    } catch (_) {
-      // Fallback falls Datei noch fehlt
-    }
+    } catch (_) {}
 
     // --- 📡 DYNAMISCHE PROGRESSION-PROBES & TARGETING ---
     if (now - lastProbeTime > 15000) {
@@ -162,7 +158,6 @@ export async function main(ns: NS): Promise<void> {
       homeMax >= 256 && ns.fileExists(scripts.dispatcher, "home");
 
     if (!isDispatcherReady) {
-      // 🛡️ DEINE ORIGINAL FALLBACK-LOGIK (Early Game)
       const hackingEfficiency =
         (bnMults.ServerMaxMoney ?? 1.0) * (bnMults.ScriptHackMoneyGain ?? 1.0);
       const hackingExpMult = bnMults.HackingLevelMultiplier ?? 1.0;
@@ -247,6 +242,23 @@ export async function main(ns: NS): Promise<void> {
       ns.run(scripts.infra, 1);
     }
 
+    // 📡 Darknet läuft jetzt parallel im Hintergrund mit
+    if (
+      ns.fileExists(scripts.dnet, "home") &&
+      !ns.isRunning(scripts.dnet, "home")
+    ) {
+      logger.info("Starte Darknet-Master Daemon...");
+      ns.run(scripts.dnet, 1);
+    }
+
+    if (
+      ns.fileExists(scripts.crawler, "home") &&
+      !ns.isRunning(scripts.crawler, "home")
+    ) {
+      logger.info("Starte Darknet-Crawler..."); // 🟢 Log korrigiert
+      ns.run(scripts.crawler, 1);
+    }
+
     // --- 🧹 CLEANUP & WORKER DEPLOYMENT (Nur wenn Dispatcher schläft) ---
     if (!isDispatcherRunning) {
       const targetChanged = bestTarget !== lastDeployedTarget;
@@ -260,7 +272,7 @@ export async function main(ns: NS): Promise<void> {
           if (!ns.hasRootAccess(node)) continue;
           if (
             node === "home" &&
-            ["REP", "TRAIN", "CORP", "CRIME"].includes(activeStrategy)
+            ["TRAIN", "CORP", "CRIME"].includes(activeStrategy) // 🟢 DNET entfernt, home darf arbeiten!
           )
             continue;
 
@@ -272,25 +284,16 @@ export async function main(ns: NS): Promise<void> {
                 : 0;
             const baseBuffer = [
               "CRIME",
-              "REP",
               "TRAIN",
               "CORP",
-              "XP_SPRINT",
+              "XP_SPRINT", // 🟢 DNET entfernt
             ].includes(activeStrategy)
               ? 24
               : 8;
             ramBuffer = Math.min(baseBuffer + weakenModifier, homeMax * 0.4);
           }
 
-          // 🟢 Absolut synchrone Verteilung ohne Lags
-          deployWorker(
-            ns,
-            node,
-            activeScript,
-            bestTarget,
-            ramBuffer,
-            scripts,
-          );
+          deployWorker(ns, node, activeScript, bestTarget, ramBuffer, scripts);
         }
 
         lastDeployedTarget = bestTarget;

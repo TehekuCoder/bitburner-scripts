@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { Logger } from "../../core/logger.js"; // Pfad anpassen falls nötig
+import { Logger } from "../core/logger.js";
 
 const processedServers = new Set<string>();
 const COOLDOWN_FILE = "/dnet-cooldowns.txt";
@@ -40,7 +40,6 @@ export async function main(ns: NS): Promise<void> {
   const currentHost = ns.getHostname();
   ns.disableLog("ALL");
 
-  // 🏁 Logger instanziieren (schreibt zentral nach /logs/dnet_system.txt)
   const logger = new Logger(
     ns,
     `CRAWLER-${currentHost}`,
@@ -54,8 +53,9 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const now = Date.now();
-    const solverScript = "/tasks/dnet/dnet-solver.js";
-    const lootScript = "/tasks/dnet/dnet-loot.js";
+    const solverScript = "/tasks/dnet-solver.js";
+    const lootScript = "/tasks/dnet-loot.js";
+    const phishScript = "/tasks/dnet-phish.js";
 
     const maxRam = ns.getServerMaxRam(currentHost);
     let freeRam = maxRam - ns.getServerUsedRam(currentHost);
@@ -64,8 +64,7 @@ export async function main(ns: NS): Promise<void> {
 
     let isSolverRunning = ns.scriptRunning(solverScript, currentHost);
     const isLootRunning = ns.scriptRunning(lootScript, currentHost);
-    const isLootDue =
-      now - lastLootTime > LOOT_INTERVAL_MS && currentHost !== "home";
+    const isLootDue = now - lastLootTime > LOOT_INTERVAL_MS && currentHost !== "home";
 
     const nearbyServers = ns.dnet.probe();
     let targetToCrack: string | null = null;
@@ -75,29 +74,23 @@ export async function main(ns: NS): Promise<void> {
       if (hostname === "home") continue;
       if (isServerInCooldown(ns, hostname)) continue;
 
+      // Korrekte API-Methode aus dem Spiel:
       let details = ns.dnet.getServerDetails(hostname) as any;
       if (!details.isConnectedToCurrentServer || !details.isOnline) continue;
 
       if (!details.hasSession) {
         const storedPassword = getPasswordFromRegistry(ns, hostname);
         if (storedPassword !== null) {
-          logger.info(
-            `🔍 Bekanntes Passwort für ${hostname} in Registry gefunden. Versuche Direkt-Login...`,
-          );
+          logger.info(`🔍 Bekanntes Passwort für ${hostname} in Registry gefunden. Versuche Direkt-Login...`);
           try {
             await ns.dnet.connectToSession(hostname, storedPassword);
             details = ns.dnet.getServerDetails(hostname) as any;
 
             if (!details.hasSession) {
-              logger.warn(
-                `⚠️ Direkt-Login für ${hostname} fehlgeschlagen (PW veraltet?). Weiche auf Solver aus.`,
-              );
+              logger.warn(`⚠️ Direkt-Login für ${hostname} fehlgeschlagen (PW veraltet?). Weiche auf Solver aus.`);
             }
           } catch (e) {
-            logger.error(
-              `❌ Fehler bei Direkt-Login auf ${hostname}: ${e}`,
-              false,
-            );
+            logger.error(`❌ Fehler bei Direkt-Login auf ${hostname}: ${e}`, false);
           }
         }
       }
@@ -114,9 +107,7 @@ export async function main(ns: NS): Promise<void> {
 
     if (isLootDue && !isLootRunning && maxRam >= requiredLootRam) {
       if (isSolverRunning) {
-        logger.warn(
-          `🚨 Loot-Intervall fällig! Erzwinge RAM-Eviction von Solver auf ${currentHost}.`,
-        );
+        logger.warn(`🚨 Loot-Intervall fällig! Erzwinge RAM-Eviction von Solver auf ${currentHost}.`);
         ns.scriptKill(solverScript, currentHost);
         await ns.sleep(200);
         isSolverRunning = false;
@@ -129,10 +120,11 @@ export async function main(ns: NS): Promise<void> {
     let solverStarted = false;
 
     if (targetToCrack && targetDetails) {
-      if (requiredSolverRam === 0) {
-        logger.info(
-          `📦 Solver-Abhängigkeiten fehlen auf ${currentHost}. Repliziere Krypto-Module von home...`,
-        );
+      const hasSolverModules = ns.fileExists("/modules/solvers/solveManager.js", currentHost) || 
+                               ns.fileExists("/modules/solvers/solveManager.ts", currentHost);
+
+      if (requiredSolverRam === 0 || !hasSolverModules) {
+        logger.info(`📦 Solver-Abhängigkeiten fehlen auf ${currentHost}. Repliziere Krypto-Module von home...`);
         ns.scp(solverScript, currentHost, "home");
         const solverModules = ns.ls("home", "/modules/solvers/");
         if (solverModules.length > 0) {
@@ -148,9 +140,7 @@ export async function main(ns: NS): Promise<void> {
         }
 
         if (!ns.scriptRunning(solverScript, currentHost)) {
-          logger.info(
-            `📡 Target gesichtet: ${targetToCrack} [${targetDetails.modelId}]. Starte Krypto-Solver.`,
-          );
+          logger.info(`📡 Target gesichtet: ${targetToCrack} [${targetDetails.modelId}]. Starte Krypto-Solver.`);
           ns.exec(
             solverScript,
             currentHost,
@@ -164,9 +154,7 @@ export async function main(ns: NS): Promise<void> {
         }
         solverStarted = true;
       } else {
-        logger.debug(
-          `ℹ️ RAM knapp auf ${currentHost}. Überlasse ${targetToCrack} dem restlichen Botnetz.`,
-        );
+        logger.debug(`ℹ️ RAM knapp auf ${currentHost}. Überlasse ${targetToCrack} dem restlichen Botnetz.`);
       }
     }
 
@@ -178,12 +166,7 @@ export async function main(ns: NS): Promise<void> {
       !isLootRunning &&
       isLootDue
     ) {
-      const phishScript = "/tasks/dnet/dnet-phish.js";
-
-      if (
-        !ns.fileExists(phishScript, currentHost) ||
-        !ns.fileExists(lootScript, currentHost)
-      ) {
+      if (!ns.fileExists(phishScript, currentHost) || !ns.fileExists(lootScript, currentHost)) {
         ns.scp([phishScript, lootScript], currentHost, "home");
       }
 
@@ -212,13 +195,13 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
- // Ausbreitung (Wurm-Logik)
+    // Wurm-Logik zur Ausbreitung
     for (const hostname of processedServers) {
       if (!ns.serverExists(hostname)) continue;
 
       if (!ns.scriptRunning(scriptName, hostname)) {
         const isDarkweb = hostname === "darkweb";
-        const minRamRequired = isDarkweb ? 2 : 8; // Darkweb braucht niedrigere Hürde
+        const minRamRequired = isDarkweb ? 2 : 8;
 
         if (ns.getServerMaxRam(hostname) >= minRamRequired) {
           const details = ns.dnet.getServerDetails(hostname) as any;
@@ -235,27 +218,21 @@ export async function main(ns: NS): Promise<void> {
           if (sessionReady) {
             logger.info(`🚀 Wurm-Ausbreitung: Infiziere ${hostname} und starte Crawler.`);
             
-            // Vollständiges Paket inklusive des Loggers packen!
             const filesToCopy = [
               scriptName,
               solverScript,
               lootScript,
-              "/tasks/dnet/dnet-phish.js",
+              phishScript,
               "/dnet-master-db.json",
               "/utils/progress.js",
-              "/core/logger.js" // Schützt vor dem lautlosen Kompilierungs-Crash
+              "/core/logger.js"
             ];
 
-            // Immer von 'home' oder dem aktuellen Host ziehen, falls vorhanden
             ns.scp(filesToCopy, hostname, currentHost);
-            
-            // Skript auf dem Remote-Server starten
             ns.exec(scriptName, hostname, 1);
           }
         } else {
-          logger.warn(
-            `⚠️ ${hostname} hat zu wenig RAM (${ns.getServerMaxRam(hostname)}GB) für den Crawler.`,
-          );
+          logger.warn(`⚠️ ${hostname} hat zu wenig RAM (${ns.getServerMaxRam(hostname)}GB) für den Crawler.`);
         }
       }
     }

@@ -2,20 +2,15 @@ import { NS } from "@ns";
 
 export async function solveBaseConversion(ns: NS, host: string, details: any): Promise<string | null> {
   const parts = (details.data || "").split(",");
-  
-  if (parts.length !== 2) {
-    ns.print(`🔴 [BaseConversion] Fehler: Ungültiges Datenformat (erwartet 'Basis,Wert') auf ${host}: ${details.data}`);
-    return null;
-  }
+  if (parts.length !== 2) return null;
 
   const base = parseInt(parts[0], 10);
   const valueStr = parts[1].trim();
   const decimalValue = parseInt(valueStr, base);
 
-  if (isNaN(decimalValue)) {
-    ns.print(`🔴 [BaseConversion] Fehler: Konvertierung fehlgeschlagen für Basis ${base} und Wert ${valueStr} auf ${host}`);
-    return null;
-  }
+  if (isNaN(decimalValue)) return null;
 
-  return decimalValue.toString();
+  const guess = decimalValue.toString();
+  const result = await ns.dnet.authenticate(host, guess);
+  return (result && result.success) ? guess : null;
 }

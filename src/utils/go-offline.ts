@@ -1,11 +1,12 @@
 import { NS } from "@ns";
 import { getAllServers } from "../lib/network.js";
-import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
 import { provisionServer } from "./provision.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  ns.tprint("💤 [BitOS] Leite Schlafmodus ein. Initialisiere Multi-Target-Balancing...");
+  ns.tprint(
+    "💤 [BitOS] Leite Schlafmodus ein. Initialisiere Multi-Target-Balancing...",
+  );
 
   // ====================================================================
   // SCHRITT 1: NUKLEARER SCHLAG GEGEN 'HOME'
@@ -19,9 +20,13 @@ export async function main(ns: NS): Promise<void> {
   const playerHacking = ns.getPlayer().skills.hacking;
   const allServers = getAllServers(ns);
 
-  // Finde alle hackbaren Server mit Geld und sortiere sie nach maximalem Geld (höchstes zuerst)
   const validTargets = allServers
-    .filter(s => ns.hasRootAccess(s) && ns.getServerMaxMoney(s) > 0 && ns.getServerRequiredHackingLevel(s) <= playerHacking)
+    .filter(
+      (s) =>
+        ns.hasRootAccess(s) &&
+        ns.getServerMaxMoney(s) > 0 &&
+        ns.getServerRequiredHackingLevel(s) <= playerHacking,
+    )
     .sort((a, b) => ns.getServerMaxMoney(b) - ns.getServerMaxMoney(a));
 
   if (validTargets.length === 0) {
@@ -29,25 +34,34 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  // Wir definieren unsere Top 3 Ziele für die Lastverteilung
-  const targetTier1 = validTargets[0]; // Das absolute Top-Ziel (z.B. max-hardware)
-  const targetTier2 = validTargets[1] || targetTier1; // Zweitbeste Wahl
-  const targetTier3 = validTargets[2] || targetTier2; // Drittbeste Wahl
+  const targetTier1 = validTargets[0];
+  const targetTier2 = validTargets[1] || targetTier1;
+  const targetTier3 = validTargets[2] || targetTier2;
 
   ns.tprint(`🎯 [BitOS] Lastverteilung aktiv:`);
-  ns.tprint(`   - Tier 1 (High RAM / Home) -> ${targetTier1} ($${ns.format.number(ns.getServerMaxMoney(targetTier1))})`);
-  ns.tprint(`   - Tier 2 (Mid-Range/P-Serv) -> ${targetTier2} ($${ns.format.number(ns.getServerMaxMoney(targetTier2))})`);
-  ns.tprint(`   - Tier 3 (Low-RAM Network)  -> ${targetTier3} ($${ns.format.number(ns.getServerMaxMoney(targetTier3))})`);
+  ns.tprint(
+    `   - Tier 1 (High RAM / Home) -> ${targetTier1} ($${ns.format.number(ns.getServerMaxMoney(targetTier1))})`,
+  );
+  ns.tprint(
+    `   - Tier 2 (Mid-Range/P-Serv) -> ${targetTier2} ($${ns.format.number(ns.getServerMaxMoney(targetTier2))})`,
+  );
+  ns.tprint(
+    `   - Tier 3 (Low-RAM Network)  -> ${targetTier3} ($${ns.format.number(ns.getServerMaxMoney(targetTier3))})`,
+  );
 
-// ====================================================================
-  // SCHRITT 3: WORKER-VERTEILUNG NACH LEISTUNGSKLASSE (REPAIRED)
   // ====================================================================
-  const pServers = ns.cloud.getServerNames();
-  const workerScript = "/tasks/work.js"; // Einheitlich mit führendem Slash
+  // SCHRITT 3: WORKER-VERTEILUNG NACH LEISTUNGSKLASSE
+  // ====================================================================
+  const pServers = ns.cloud.getServerNames(); // 🟢 Bitburner 3.0 API
+  const workerScript = "/tasks/work.js";
   const workerRam = ns.getScriptRam(workerScript);
+  const mySelfRam = ns.getScriptRam(ns.getScriptName());
 
   const hostServers = allServers.filter(
-    s => s === "home" || pServers.includes(s) || (ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0)
+    (s) =>
+      s === "home" ||
+      pServers.includes(s) ||
+      (ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0),
   );
 
   let totalShareThreads = 0;
@@ -55,33 +69,35 @@ export async function main(ns: NS): Promise<void> {
 
   for (const server of hostServers) {
     const activeProcesses = ns.ps(server);
-    
-    // Pfadunabhängiges Killen: Wir prüfen via .includes(), ob das Skript weg muss
+
     if (server !== "home") {
       for (const proc of activeProcesses) {
         if (proc.filename.includes("share")) {
           totalShareThreads += proc.threads;
         } else if (
-          proc.filename.includes("hack.js") || 
-          proc.filename.includes("grow.js") || 
-          proc.filename.includes("weaken.js") || 
-          proc.filename.includes("work.js") || 
+          proc.filename.includes("hack.js") ||
+          proc.filename.includes("grow.js") ||
+          proc.filename.includes("weaken.js") ||
+          proc.filename.includes("work.js") ||
           proc.filename.includes("xp-grind.js")
         ) {
           ns.scriptKill(proc.filename, server);
         }
       }
-      // Kurze Atempause, damit die Engine das RAM im selben Frame freigibt
       await ns.sleep(20);
     }
 
     await provisionServer(ns, server);
 
-    const reserve = server === "home" ? 32 : 0; 
+    const reserve = server === "home" ? 32 : 0;
     const maxRam = ns.getServerMaxRam(server) - reserve;
-    
-    // ✅ FIX: Nutze das echte, verbleibende physische RAM nach der Bereinigung
-    const freeRam = maxRam - ns.getServerUsedRam(server);
+
+    let usedRam = ns.getServerUsedRam(server);
+    if (server === "home") {
+      usedRam = Math.max(0, usedRam - mySelfRam);
+    }
+
+    const freeRam = maxRam - usedRam;
     const threads = Math.floor(freeRam / workerRam);
 
     if (threads > 0) {
@@ -97,15 +113,14 @@ export async function main(ns: NS): Promise<void> {
       }
 
       activeTargets.add(assignedTarget);
-      
-      // Skript kopieren falls nötig und ausführen
+
       if (server !== "home") ns.scp(workerScript, server, "home");
       ns.exec(workerScript, server, threads, assignedTarget);
     }
   }
 
   // ====================================================================
-  // 📊 MONITORING (DYNAMIC FOR ALL TARGETS)
+  // 📊 MONITORING MIT DYNAMISCHER WARTEZEIT-SCHÄTZUNG
   // ====================================================================
   ns.tprint("⏳ [BitOS] Multi-Zyklen gestartet. Kalibrierung läuft...");
   ns.ui.openTail();
@@ -113,58 +128,88 @@ export async function main(ns: NS): Promise<void> {
   let stableTicks = 0;
   let lastTotalIncome = 0;
   const startTime = Date.now();
-  
-  // Failsafe basierend auf dem langsamsten der Top-Ziele
-  const maxWaitTime = Math.max(
-    ns.getWeakenTime(targetTier1),
-    ns.getWeakenTime(targetTier2)
-  ) + ns.getHackTime(targetTier1) + 10000;
+
+  // Schätzung der benötigten Zeit für die erste profitable Hack-Welle:
+  // Um stabil Geld zu machen, müssen die Server meist einmal geschwächt und gewachsen werden.
+  // Weaken-Zeit ist hierbei das absolute zeitliche Limit.
+  const longestWeakenTime = Math.max(
+    ...Array.from(activeTargets).map((t) => ns.getWeakenTime(t)),
+  );
+
+  const maxWaitTime = longestWeakenTime + 5000; // 5 Sekunden Puffer für die Engine-Ausführung
 
   while (true) {
     let currentTotalIncome = 0;
 
-    // Einkommen von ALLEN gesetzten Zielen zusammenrechnen
     for (const server of hostServers) {
       for (const target of activeTargets) {
-        currentTotalIncome += ns.getScriptIncome(workerScript, server, target);
+        const income = ns.getScriptIncome(workerScript, server, target);
+
+        // 🟢 SANIERUNG: Ignoriere negative Werte (Timing-Bugs) und ungültige Zahlen (NaN)
+        if (!isNaN(income) && income > 0) {
+          currentTotalIncome += income;
+        }
       }
     }
 
-    const elapsedSecs = Math.floor((Date.now() - startTime) / 1000);
+    const elapsedMs = Date.now() - startTime;
+    const elapsedSecs = Math.floor(elapsedMs / 1000);
+    // 🟢 Berechnung der verbleibenden Wartezeit bis zur Stabilisierung
+    const remainingMs = Math.max(0, maxWaitTime - elapsedMs);
+    const remainingSecs = Math.ceil(remainingMs / 1000);
 
     ns.clearLog();
     ns.print(`============================================================`);
     ns.print(`🔥 BIT-OS CLUSTER-KALIBRIERUNG (MULTI-TARGET MODUS)`);
     ns.print(`============================================================`);
     ns.print(`AKTIVE CLUSTER-ZIELE: ${Array.from(activeTargets).join(", ")}`);
-    ns.print(`LAUFZEIT:             ${elapsedSecs}s / Failsafe: ${Math.floor(maxWaitTime / 1000)}s`);
-    
+    ns.print(
+      `LAUFZEIT:             ${elapsedSecs}s / Failsafe: ${Math.floor(maxWaitTime / 1000)}s`,
+    );
+
+    // 🟢 Der neue visuelle Hinweis für den Spieler:
+    if (currentTotalIncome === 0) {
+      ns.print(
+        `⚠️ WARTEZEIT-SCHÄTZUNG: ca. ${remainingSecs}s bis zum ersten Profit...`,
+      );
+      ns.print(`                      (Server-Präparation läuft noch)`);
+    } else {
+      ns.print(`✅ STATUS:             Netzwerk produziert aktiv.`);
+    }
+    ns.print(`------------------------------------------------------------`);
+
     if (currentTotalIncome < 0) {
       ns.print(`NETZWERK-PROD:        🚀 Hyper-Produktion (> $10q/s)`);
     } else {
-      ns.print(`NETZWERK-PROD:        $${ns.format.number(currentTotalIncome)} / Sekunde`);
-      ns.print(`Hochrechnung / Std:   $${ns.format.number(currentTotalIncome * 3600)} / Stunde`);
+      ns.print(
+        `NETZWERK-PROD:        $${ns.format.number(currentTotalIncome)} / Sekunde`,
+      );
+      ns.print(
+        `Hochrechnung / Std:   $${ns.format.number(currentTotalIncome * 3600)} / Stunde`,
+      );
     }
-    
+
     ns.print(`🛡️ UTILITY:            ${totalShareThreads} Share-Threads aktiv`);
     const bar = "█".repeat(stableTicks) + "░".repeat(8 - stableTicks);
     ns.print(`STABILITÄT:           [${bar}] (${stableTicks}/8 Ticks)`);
     ns.print(`============================================================`);
 
-if (currentTotalIncome < 0) {
+    if (currentTotalIncome < 0) {
       stableTicks++;
-    } else if (currentTotalIncome > 0 && Math.abs(currentTotalIncome - lastTotalIncome) < (currentTotalIncome * 0.05)) {
+    } else if (
+      currentTotalIncome > 0 &&
+      Math.abs(currentTotalIncome - lastTotalIncome) < currentTotalIncome * 0.05
+    ) {
       stableTicks++;
     } else if (currentTotalIncome > 0) {
       stableTicks = Math.max(1, stableTicks);
     } else {
-      // Wenn Einkommen 0 ist, warten wir einfach ruhig ab, ohne die Ticks zu bestrafen
       if (lastTotalIncome > 0) {
-        stableTicks = 0; // Nur resetten, wenn wir schon mal Geld hatten und es eingebrochen ist
+        stableTicks = 0;
       }
     }
 
-    if (stableTicks >= 8 || (Date.now() - startTime) > maxWaitTime) {
+    if (stableTicks >= 8 || elapsedMs > maxWaitTime) {
       break;
     }
 
@@ -172,6 +217,5 @@ if (currentTotalIncome < 0) {
     await ns.sleep(3000);
   }
 
-  // Output bereitstellen
   ns.tprint(`🚀 [BitOS] NETZWERK STABILISIERT. Bereit für Offline-Phase.`);
 }

@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { Logger } from "../../core/logger.js";
+import { Logger } from "../core/logger.js"; // 🟢 Pfad vereinfacht!
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -41,9 +41,7 @@ export async function main(ns: NS): Promise<void> {
 
   const files = ns.ls(currentHost, ".cache");
   if (files.length > 0) {
-    logger.success(
-      `💰 Verarbeite ${files.length} lokale Caches auf ${currentHost}.`,
-    );
+    logger.success(`💰 Verarbeite ${files.length} lokale Caches auf ${currentHost}.`);
   }
 
   for (const file of files) {
