@@ -1,9 +1,11 @@
+// modules/suite-manager.ts
+
 import { NS } from "@ns";
-import { BotState } from "/core/state-manager.js"; // Passe den Pfad ggf. an deinen echten State-Manager an
+import { BotState } from "/core/state-manager.js"; 
 
 export function manageSuites(
   ns: NS,
-  scripts: any,
+  scripts: { backdoor: string; trade: string; sleeve: string }, // 🟢 Explizit typisiert für maximale Sicherheit
   state: BotState,
   triggerBackdoor: boolean,
   bnMults: any,
@@ -12,7 +14,7 @@ export function manageSuites(
   const homeMaxRam = ns.getServerMaxRam("home");
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  // --- Hacknet Logik ---
+  // --- ⚡ Hacknet Logik ---
   const targetHacknetScript = hasFormulas ? "systems/hacknet.js" : "systems/hacknet-early.js";
   const obsoleteHacknetScript = hasFormulas ? "systems/hacknet-early.js" : "systems/hacknet.js";
 
@@ -37,30 +39,19 @@ export function manageSuites(
     }
   }
 
-  // --- Backdoor Logik ---
+  // --- 🚪 Backdoor Logik ---
   if (triggerBackdoor && ns.fileExists(scripts.backdoor, "home") && !ns.isRunning(scripts.backdoor, "home")) {
     logger.info("Neuer anfälliger Server gefunden. Starte Backdoor-Prozess...");
     ns.exec(scripts.backdoor, "home", 1);
   }
 
-  // --- Finance Logik ---
+  // --- 📈 Finance Logik ---
   if (ns.fileExists(scripts.trade, "home") && !ns.isRunning(scripts.trade, "home") && homeMaxRam >= 64) {
     logger.success("Initialisiere Finanz-Subsystem...");
     ns.exec(scripts.trade, "home", 1);
   }
 
-  // --- Replicator & Crawler Logik ---
-  if (state.hasDarkScapeNavigator && homeMaxRam >= 256) {
-    if (!ns.isRunning(scripts.replicator, "home")) {
-      logger.info("Starte DNet-Master Replicator...");
-      ns.exec(scripts.replicator, "home", 1);
-    }
-    if (ns.fileExists(scripts.crawler, "home") && !ns.isRunning(scripts.crawler, "home")) {
-      ns.exec(scripts.crawler, "home", 1);
-    }
-  }
-
-  // --- Sleeve Logik ---
+  // --- 👥 Sleeve Logik ---
   if (ns.sleeve !== undefined && ns.fileExists(scripts.sleeve, "home") && !ns.isRunning(scripts.sleeve, "home")) {
     logger.info("Sleeve-API detektiert. Initialisiere Klon-Automatisierung...");
     ns.exec(scripts.sleeve, "home", 1);
