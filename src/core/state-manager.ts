@@ -34,6 +34,7 @@ export interface BotState {
   batcherProgress?: string;
   batcherRamNeeded?: number;
   batcherTarget?: string;
+  batcherActive:boolean;
   fillerConfig?: {
     shareMaxRamPercent: number;
     maxXpLevel: number;
@@ -53,19 +54,20 @@ export interface BotState {
 
   // --- Spur 6: Sleeves (Parallel) ---
   sleeveGlobalMode?: "RECOVERY" | "CRIME" | "COMPANY" | "FACTION";
+  sleeveProgress?: string; // 🟢 NEU: Aggregierte Übersicht (z.B. "3 CRIME; 2 TRAIN; 3 SYNC")
   targetSleeveCompany?: CompanyName;
 
   // --- Spur 7: Progression & Unlocks (0 GB RAM Info-Spur) ---
   // Hält fest, was in dieser BitNode oder permanent freigeschaltet ist
-  currentBitNode: number;         // Aktueller BitNode (z.B. 10)
-  currentBitNodeLevel: number;    // Aktuelles Level im aktuellen BitNode (z.B. 2)
+  currentBitNode: number; // Aktueller BitNode (z.B. 10)
+  currentBitNodeLevel: number; // Aktuelles Level im aktuellen BitNode (z.B. 2)
   sourceFiles: SourceFileProgress; // Deine freigeschalteten SFs (z.B. { 1: 3, 4: 3, 5: 3, 10: 1 })
-  
-  hasDarkScapeNavigator: boolean;     // Exklusiv für Bitburner 3.0 Navigator
-  hasTorRouter: boolean;               // TOR-Router im aktuellen Run gekauft?
-  hasGang: boolean;                    // Gang freigeschaltet und aktiv?
-  hasCorporation: boolean;             // Corp aktiv?
-  hasBladeburner: boolean;             // Bladeburner aktiv?
+
+  hasDarkScapeNavigator: boolean; // Exklusiv für Bitburner 3.0 Navigator
+  hasTorRouter: boolean; // TOR-Router im aktuellen Run gekauft?
+  hasGang: boolean; // Gang freigeschaltet und aktiv?
+  hasCorporation: boolean; // Corp aktiv?
+  hasBladeburner: boolean; // Bladeburner aktiv?
 
   // --- Kernel- & UI-Tracking-Felder ---
   lastUpdate: number;
@@ -160,26 +162,29 @@ export function patchState(
   } = currentState || {};
 
   // Default-Werte für Progression, damit keine "undefined"-Fehler auftreten
-  const baseState: Omit<BotState, "lastUpdate" | "playerHacking" | "sources"> = {
-    strategy: "MONEY",
-    progressBar: "Prüfe System...",
-    batcherProgress: "Inaktiv",
-    financeProgress: "Berechne Budget...",
-    traderProgress: "Kein Depot",
-    hacknetProgress: "Inaktiv",
-    
-    // Standatmuster für Progression
-    currentBitNode: 1,
-    currentBitNodeLevel: 1,
-    sourceFiles: {},
-    hasDarkScapeNavigator: false,
-    hasTorRouter: false,
-    hasGang: false,
-    hasCorporation: false,
-    hasBladeburner: false,
-    
-    ...cleanedCurrentState,
-  };
+  const baseState: Omit<BotState, "lastUpdate" | "playerHacking" | "sources"> =
+    {
+      strategy: "MONEY",
+      progressBar: "Prüfe System...",
+      batcherProgress: "Inaktiv",
+      batcherActive: false,
+      financeProgress: "Berechne Budget...",
+      traderProgress: "Kein Depot",
+      hacknetProgress: "Inaktiv",
+      sleeveProgress: "Inaktiv", // 🟢 NEU: Verhindert undefined-Fehler beim ersten Start
+
+      // Standatmuster für Progression
+      currentBitNode: 1,
+      currentBitNodeLevel: 1,
+      sourceFiles: {},
+      hasDarkScapeNavigator: false,
+      hasTorRouter: false,
+      hasGang: false,
+      hasCorporation: false,
+      hasBladeburner: false,
+
+      ...cleanedCurrentState,
+    };
 
   const caller = getCallerName(ns);
   const newSources = { ...(oldSources || {}) };

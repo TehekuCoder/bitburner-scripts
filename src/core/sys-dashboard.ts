@@ -1,157 +1,111 @@
-import { NS, FactionName } from "@ns";
+import { NS } from "@ns";
 import { loadState } from "./state-manager.js";
-import { loadBnMults } from "../lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
-  ns.ui.resizeTail(640, 580); // Leicht erhöht, um Platz für die Fraktionsliste zu machen
-
-  const bnMults = loadBnMults(ns);
+  ns.ui.resizeTail(500, 340); // Leicht erhöht (340 statt 320), damit die Sleeves ohne Scrollbalken reinpassen!
 
   while (true) {
     const state = loadState(ns);
     ns.clearLog();
 
     if (!state) {
-      ns.print("⏳ Warte auf Initialisierung des System-States...");
+      ns.print("⏳ Warte auf System-State...");
       await ns.sleep(1000);
       continue;
     }
 
-    const sources = state.sources || {};
-
-    // 🛡️ ANSI-SICHERES ALIGNMENT-WERKZEUG
-    const printRow = (
-      label: string,
-      val: string | number | boolean,
-      stateKey?: string,
+    // --- HELPER FÜR FARBCODIERTEN STATUS ---
+    const formatStatus = (
+      prog: string | undefined,
+      inactiveKeywords = ["inaktiv", "kein", "idle", "off"], // "off" hier als Standard hinzugefügt
     ) => {
-      const source = stateKey ? `[${sources[stateKey] || "Init"}]` : "";
-      const paddedLabel = label.padEnd(15);
-      const valStr = String(val);
-
-      const visualLen = valStr.replace(
-        /[\u001b\u009b][[()#;?]*(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?/g,
-        "",
-      ).length;
-      const paddingNeeded = Math.max(0, 25 - visualLen);
-      const paddedVal = valStr + " ".repeat(paddingNeeded);
-
-      ns.print(` ${paddedLabel} : ${paddedVal} \x1b[38;5;244m${source}\x1b[0m`);
+      if (!prog) return "\x1b[38;5;240mOFF\x1b[0m";
+      const lower = prog.toLowerCase();
+      if (inactiveKeywords.some((k) => lower.includes(k))) {
+        return `\x1b[38;5;240m${prog}\x1b[0m`; // Grau für Inaktiv
+      }
+      if (
+        lower.includes("aktiv") ||
+        lower.includes("running") ||
+        lower.includes("saving") ||
+        lower.includes("sprint")
+      ) {
+        return `\x1b[1;32m${prog}\x1b[0m`; // Grün für aktive Arbeit
+      }
+      return `\x1b[1;33m${prog}\x1b[0m`; // Gelb für Übergänge/Warten (z.B. Shock/Sync %)
     };
 
-    ns.print(
-      `==================================================================`,
-    );
-    ns.print(`👑 \x1b[1;32mBIT-OS CONSOLIDATED OPERATIONAL DASHBOARD\x1b[0m`);
-    ns.print(
-      `==================================================================`,
-    );
+    const printRow = (label: string, val: string) => {
+      ns.print(` ${label.padEnd(12)} : ${val}`);
+    };
 
-    // 1. System & Netzwerk Status
+    // --- HEADER ---
+    ns.print(`==================================================`);
+    ns.print(
+      `🤖 \x1b[1;32mBIT-OS CORE MONITOR\x1b[0m               [BN ${state.currentBitNode ?? 1}.${state.currentBitNodeLevel ?? 1}]`,
+    );
+    ns.print(`==================================================`);
+
+    // 1. System & Engine
     const rootCount = state.rootCount ?? 0;
     const totalNodes = state.totalNodes ?? 0;
-    printRow("NETWORK UNITS", `${rootCount}/${totalNodes}`, "rootCount");
+    const modeStr = state.isFleetMode ? "FLEET" : "BASIC";
+
+    printRow("STRATEGIE", `\x1b[1;35m${state.strategy}\x1b[0m (${modeStr})`);
     printRow(
-      "ENGINE MODE",
-      state.isFleetMode ? "DYNAMIC FLEET" : "BASIC LOOP",
-      "isFleetMode",
+      "NETZWERK",
+      `\x1b[1;32m${rootCount}/${totalNodes}\x1b[0m rooted Nodes`,
     );
-    printRow("STRATEGIE", state.strategy, "strategy");
 
-    // Progression & Unlocks
-    const bitNodeStr = `BN ${state.currentBitNode ?? 10}.${state.currentBitNodeLevel ?? 2}`;
-    printRow("CURRENT BITNODE", bitNodeStr, "currentBitNode");
+    ns.print(`--------------------------------------------------`);
 
-    const formatUnlock = (active: boolean, name: string) => {
-      return active
-        ? `\x1b[1;32m${name}\x1b[0m`
-        : `\x1b[38;5;240m${name}\x1b[0m`;
-    };
-    const torStr = formatUnlock(!!state.hasTorRouter, "TOR");
-    const gangStr = formatUnlock(!!state.hasGang, "GANG");
-    const corpStr = formatUnlock(!!state.hasCorporation, "CORP");
-    const bladeStr = formatUnlock(!!state.hasBladeburner, "BLADE");
+    // 2. Hauptaktivität (Player Focus)
+    ns.print(` \x1b[1;34m[ EXCLUSIVE MAIN TASK ]\x1b[0m`);
+    const target =
+      state.targetFaction || state.targetCompany || "Solo-Progression";
+    printRow("ZIEL", `\x1b[38;5;250m${target}\x1b[0m`);
+    printRow("STATUS", formatStatus(state.progressBar));
+
+    ns.print(`--------------------------------------------------`);
+
+    // 3. Parallel Background Scripts / Services
+    ns.print(` \x1b[1;36m[ BACKGROUND SERVICES ]\x1b[0m`);
+
+    // Batcher
+    const bTarget = state.batcherTarget ? ` -> ${state.batcherTarget}` : "";
     printRow(
-      "UNLOCKED SVCS",
-      `${torStr} | ${gangStr} | ${corpStr} | ${bladeStr}`,
+      "BATCHER",
+      formatStatus(state.batcherProgress) +
+        (state.batcherProgress !== "Inaktiv" ? bTarget : ""),
     );
 
-    ns.print(
-      `------------------------------------------------------------------`,
-    );
+    // Finanzen & Upgrades
+    printRow("FINANZEN", formatStatus(state.financeProgress));
 
-    // 2. Primäre Fokus-Aktivität (Exklusiver Spieler-Task)
-    ns.print(` \x1b[1;34m[ MAIN PLAYER FOCUS ]\x1b[0m`);
-    printRow("FRAKTION", state.targetFaction || "KEINE", "targetFaction");
-    printRow("COMPANY", state.targetCompany || "KEINE", "targetCompany");
-    printRow("PROGRESS", state.progressBar || "Idle", "progressBar");
+    // Hacknet
+    printRow("HACKNET", formatStatus(state.hacknetProgress));
 
-    // 🛠️ NEU: Dynamische Reputations-Liste im Dashboard
-    const factionTargets = (state.factionTargets ?? {}) as Record<FactionName, number>;
-    const activeFactions = Object.keys(factionTargets) as FactionName[];
-    
-    if (activeFactions.length > 0) {
-      ns.print(` \x1b[38;5;244mKnown Faction Reputations:\x1b[0m`);
-      for (const fac of activeFactions) {
-        const rep = factionTargets[fac];
-        const isTarget = fac === state.targetFaction ? " \x1b[1;32m➔\x1b[0m" : "  ";
-        ns.print(`${isTarget} \x1b[38;5;248m${fac.padEnd(20)}\x1b[0m: ${ns.format.number(rep, 0)} Rep`);
-      }
+    // Stock Trader
+    printRow("STOCKS", formatStatus(state.traderProgress));
+
+    // Sleeves (wird jetzt absolut sauber farbcodiert!)
+    if (state.sleeveProgress) {
+      printRow("SLEEVES", formatStatus(state.sleeveProgress));
     }
 
-    ns.print(
-      `------------------------------------------------------------------`,
-    );
+    ns.print(`--------------------------------------------------`);
 
-    // 3. Parallele Sub-Systeme
-    ns.print(` \x1b[1;36m[ PARALLEL BACKGROUND SERVICES ]\x1b[0m`);
-    printRow("BATCHING", state.batcherProgress || "Inaktiv", "batcherProgress");
-    printRow(
-      "FINANCES",
-      state.financeProgress || "Berechne Budget...",
-      "financeProgress",
-    );
-    printRow("HACKNET", state.hacknetProgress || "Inaktiv", "hacknetProgress");
-    printRow(
-      "STOCK TRADING",
-      state.traderProgress || "Kein Depot",
-      "traderProgress",
-    );
-
-    ns.print(
-      `------------------------------------------------------------------`,
-    );
-
-    // 4. BitNode Multiplikatoren
-    const hackYield = (
-      bnMults.ServerMaxMoney *
-      bnMults.ScriptHackMoneyGain *
-      100
-    ).toFixed(0);
-    const weakenRate = (bnMults.ServerWeakenRate * 100).toFixed(0);
-    printRow("HACK-YIELD", `${hackYield}% Effizienz`);
-    printRow("WEAKEN-RATE", `${weakenRate}% Tempo`);
-
-    ns.print(
-      `------------------------------------------------------------------`,
-    );
-
-    // 5. Metadata & System-Taktung
+    // 4. Heartbeat
     const ageMs = Date.now() - (state.lastUpdate ?? Date.now());
-    const ageSeconds = (ageMs / 1000).toFixed(1);
+    const ageSec = (ageMs / 1000).toFixed(1);
+    let heartbeat = `\x1b[1;32mOK (${ageSec}s)\x1b[0m`;
 
-    let heartbeatStr = "";
-    if (ageMs > 10000) {
-      heartbeatStr = `\x1b[5;1;31mWARNING (${ageSeconds}s ago)\x1b[0m`;
-    } else if (ageMs > 3000) {
-      heartbeatStr = `\x1b[1;33mDELAYED (${ageSeconds}s ago)\x1b[0m`;
-    } else {
-      heartbeatStr = `\x1b[1;32mHEALTHY (${ageSeconds}s ago)\x1b[0m`;
-    }
+    if (ageMs > 10000) heartbeat = `\x1b[5;1;31mDEAD (${ageSec}s)\x1b[0m`;
+    else if (ageMs > 3000) heartbeat = `\x1b[1;33mLAGGING (${ageSec}s)\x1b[0m`;
 
-    printRow("SYS HEARTBEAT", heartbeatStr, "lastUpdate");
+    printRow("HEARTBEAT", heartbeat);
 
     await ns.sleep(1000);
   }

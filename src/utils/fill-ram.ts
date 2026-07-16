@@ -5,11 +5,14 @@ export async function main(ns: NS): Promise<void> {
   const target = ns.getHostname();
   ns.disableLog("ALL");
 
-  const fillerScripts = ["/tasks/share.js", "/tasks/xp-grind.js"];
+  // Pfade pre-normalisiert ohne führenden Slash für performante String-Vergleiche
+  const fillerScripts = ["tasks/share.js", "tasks/xp-grind.js"];
+
+  const maxRam = ns.getServerMaxRam(target);
 
   // Mindestanforderung prüfen
-  if (ns.getServerMaxRam(target) < 64) {
-    ns.print(`[INFO] Server-RAM < 64GB. fill-ram bleibt inaktiv.`);
+  if (maxRam < 64) {
+    ns.print(`[INFO] Server-RAM (${maxRam}GB) < 64GB. fill-ram bleibt inaktiv.`);
     for (const script of fillerScripts) {
       ns.scriptKill(script, target);
     }
@@ -24,7 +27,12 @@ export async function main(ns: NS): Promise<void> {
     const p = ns.getPlayer();
     const currentSharePower = ns.getSharePower();
 
-    const maxRam = ns.getServerMaxRam(target);
+    // ⚡ PERFORMANCE-BOOST: ns.ps() nur EINMAL aufrufen und direkt normalisieren
+    const activeProcesses = ns.ps(target).map(proc => ({
+      ...proc,
+      normalizedName: proc.filename.replace(/^\//, "")
+    }));
+
     let allowedSharePercent = 0.0;
     let maxXpLevel = MAX_USEFUL_HACK_LEVEL;
 
@@ -38,140 +46,95 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // Share-Cap Absicherung
-    if (
-      currentSharePower >= GLOBAL_SHARE_POWER_CAP &&
-      state?.strategy !== "REP"
-    ) {
+    if (currentSharePower >= GLOBAL_SHARE_POWER_CAP && state?.strategy !== "REP") {
       allowedSharePercent = 0.02;
     }
 
-    let activeScript = "";
-    let targetThreads = 0;
-
-    // IN DER WHILE-LOOP VON FILL-RAM.TS
-    const isBatcherActive =
-      state?.strategy === "MONEY" ||
-      (state?.batcherRamNeeded && state.batcherRamNeeded > 0);
-
     // --- EINHEITLICHE RAM-RESERVIERUNG ---
+    const isBatcherActive = state?.strategy === "MONEY" || (state?.batcherRamNeeded && state.batcherRamNeeded > 0);
     let baseReserve = 0;
-    const currentRamUsedByOtherThings = ns.getServerUsedRam(target);
-    const batcherRamReservation = state?.batcherRamNeeded
-      ? state.batcherRamNeeded + 4
-      : 40;
+    const batcherRamReservation = state?.batcherRamNeeded ? state.batcherRamNeeded + 4 : 40;
 
     if (target === "home") {
-      // 1. Home-Server: Ein fester Basis-Schutzpuffer (32GB) + Batcher-Bedarf falls aktiv
-      baseReserve = 32;
+      // Dynamischer Puffer: Maximal 25% des RAMs auf kleinen Home-Servern, gecappt bei 32GB
+      baseReserve = Math.min(32, maxRam * 0.25);
       if (isBatcherActive) {
         baseReserve += batcherRamReservation;
       }
     } else {
-      // 2. P-Server (Gekaufte Server):
       if (isBatcherActive) {
-        // Festgelegter 40% Block für den Batcher, 60% stehen für Shares/XP offen
-        baseReserve = Math.floor(maxRam * 0.4);
+        baseReserve = Math.floor(maxRam * 0.4); // 40% für Batcher reservieren
       } else {
-        // Standard-Puffer für spontane Worker-Dispatches wenn kein Batcher läuft
-        baseReserve = 32;
+        baseReserve = Math.min(32, maxRam * 0.1); // Kleiner Puffer für Standard-Worker
       }
     }
-    // -------------------------------------
 
-    // A: XP-Grind Logik
+    // Bestimme das aktive Skript anhand der aktuellen Bedingungen
+    let activeScript = "";
     if (
       p.skills.hacking < maxXpLevel &&
-      // ... hier geht dein Skript ganz normal weiter
-      p.skills.hacking < MAX_USEFUL_HACK_LEVEL &&
       state?.strategy !== "MONEY" &&
       (state?.strategy === "XP_SPRINT" || p.skills.hacking < 250)
     ) {
-      activeScript = "/tasks/xp-grind.js";
-      const scriptRam = ns.getScriptRam(activeScript, target);
-      const usedRam = ns.getServerUsedRam(target);
-
-      const currentThreads = ns
-        .ps(target)
-        .filter(
-          (proc) =>
-            proc.filename.replace(/^\//, "") ===
-            activeScript.replace(/^\//, ""),
-        )
-        .reduce((acc, proc) => acc + proc.threads, 0);
-
-      // Freies RAM berechnen unter Berücksichtigung der aktiven Threads dieses Skripts
-      const availableRam =
-        maxRam - (usedRam - currentThreads * scriptRam) - baseReserve;
-      targetThreads = Math.floor(availableRam / scriptRam);
-    }
-    // B: Share-Logik
-    else if (allowedSharePercent > 0) {
-      activeScript = "/tasks/share.js";
-      const scriptRam = ns.getScriptRam(activeScript, target);
-
-      // Prozentual erlaubtes RAM berechnen
-      const maxAllowedShareRam = maxRam * allowedSharePercent;
-      targetThreads = Math.floor(maxAllowedShareRam / scriptRam);
-
-      const usedRam = ns.getServerUsedRam(target);
-
-      const currentThreads = ns
-        .ps(target)
-        .filter(
-          (proc) =>
-            proc.filename.replace(/^\//, "") ===
-            activeScript.replace(/^\//, ""),
-        )
-        .reduce((acc, proc) => acc + proc.threads, 0);
-
-      // Physikalische Obergrenze durch den berechneten Systempuffer prüfen
-      const physicalAvailableRam =
-        maxRam - (usedRam - currentThreads * scriptRam) - baseReserve;
-      const physicalMaxThreads = Math.floor(physicalAvailableRam / scriptRam);
-
-      targetThreads = Math.min(targetThreads, physicalMaxThreads);
+      activeScript = "tasks/xp-grind.js";
+    } else if (allowedSharePercent > 0) {
+      activeScript = "tasks/share.js";
     }
 
-    if (targetThreads < 0) targetThreads = 0;
-
-    // --- ANTI-LEAK-CLEANUP ---
+    // 🔄 REIHENFOLGE-OPTIMIERUNG: Cleanup inaktiver Filler VOR der RAM-Berechnung
+    // Das gibt das RAM sofort frei und verhindert den 1.5-Sekunden-Lag beim Strategiewechsel
     for (const fScript of fillerScripts) {
-      const isRunningNormalized = ns
-        .ps(target)
-        .some(
-          (p) => p.filename.replace(/^\//, "") === fScript.replace(/^\//, ""),
-        );
-
-      if (fScript !== activeScript && isRunningNormalized) {
-        ns.scriptKill(fScript, target);
+      if (fScript !== activeScript) {
+        const isRunning = activeProcesses.some(proc => proc.normalizedName === fScript);
+        if (isRunning) {
+          ns.scriptKill(fScript, target);
+          // Aus der lokalen Prozessliste entfernen, damit das RAM rechnerisch sofort frei ist
+          const idx = activeProcesses.findIndex(proc => proc.normalizedName === fScript);
+          if (idx !== -1) activeProcesses.splice(idx, 1);
+        }
       }
     }
 
-    // --- EXECUTION & HYSTERESE SCALING ---
+    let targetThreads = 0;
+
     if (activeScript !== "") {
-      const currentThreads = ns
-        .ps(target)
-        .filter(
-          (proc) =>
-            proc.filename.replace(/^\//, "") ===
-            activeScript.replace(/^\//, ""),
-        )
+      const scriptRam = ns.getScriptRam(activeScript, target);
+      const usedRam = ns.getServerUsedRam(target);
+
+      // Ermittle die aktuell laufenden Threads des AKTIVEN Filler-Skripts
+      const currentThreads = activeProcesses
+        .filter(proc => proc.normalizedName === activeScript)
         .reduce((acc, proc) => acc + proc.threads, 0);
 
+      // Rechnerisch freies RAM bestimmen (als ob das aktive Filler-Skript nicht liefe)
+      const virtualFreeRam = maxRam - (usedRam - (currentThreads * scriptRam)) - baseReserve;
+
+      if (activeScript === "tasks/xp-grind.js") {
+        targetThreads = Math.max(0, Math.floor(virtualFreeRam / scriptRam));
+      } else if (activeScript === "tasks/share.js") {
+        const maxAllowedShareRam = maxRam * allowedSharePercent;
+        const threadCapByPercent = Math.floor(maxAllowedShareRam / scriptRam);
+        const threadCapByPhysicalRam = Math.floor(virtualFreeRam / scriptRam);
+
+        targetThreads = Math.max(0, Math.min(threadCapByPercent, threadCapByPhysicalRam));
+      }
+
+      // --- EXECUTION & HYSTERESE SCALING ---
       const threadDiff = Math.abs(targetThreads - currentThreads);
-      const shouldScaleDown = targetThreads < currentThreads;
+      const shouldScaleDown = targetThreads < currentThreads; // Sofort runterfahren bei RAM-Mangel
       const shouldScaleUp =
         targetThreads > currentThreads &&
-        (threadDiff > currentThreads * 0.1 || currentThreads === 0);
+        (threadDiff > currentThreads * 0.1 || currentThreads === 0); // Nur hochskalieren bei >10% Änderung
 
       if (shouldScaleDown || shouldScaleUp) {
-        if (currentThreads > 0) ns.scriptKill(activeScript, target);
+        if (currentThreads > 0) {
+          ns.scriptKill(activeScript, target);
+        }
         if (targetThreads > 0) {
-          if (activeScript === "/tasks/xp-grind.js") {
-            const xpTarget =
-              ns.serverExists("joesguns") && ns.hasRootAccess("joesguns")
-                ? "joesguns"
-                : "foodnstuff";
+          if (activeScript === "tasks/xp-grind.js") {
+            const xpTarget = ns.serverExists("joesguns") && ns.hasRootAccess("joesguns")
+              ? "joesguns"
+              : "foodnstuff";
 
             ns.exec(
               activeScript,
@@ -179,7 +142,7 @@ export async function main(ns: NS): Promise<void> {
               targetThreads,
               xpTarget,
               0,
-              Math.random(),
+              Math.random() // Verhindert collisions bei Multi-Server-Starts
             );
           } else {
             ns.exec(activeScript, target, targetThreads);

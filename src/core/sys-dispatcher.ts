@@ -245,19 +245,34 @@ export async function main(ns: NS): Promise<void> {
       logger.info("Batcher nicht ausführbar. 'fill-ram.js' beendet.");
     }
 
-    // State updaten
-    patchState(ns, {
-      strategy: mode,
-      targetFaction: targetFaction || undefined,
-      targetCompany: targetCompany,
-      targetStat: mode === "TRAIN" ? targetStat : undefined,
-      targetKills: mode === "KILLS" ? targetStat : undefined,
-      progressBar: finalBar,
-      fillerConfig: {
-        shareMaxRamPercent: sharePercent,
-        maxXpLevel: dynamicMaxXp,
-      },
-    });
+// ... (Zeile ~350 im Dispatcher)
+
+const isBatcherRunning = ns.isRunning(sysBatcherScript, "home");
+
+patchState(ns, {
+  strategy: mode,
+  targetFaction: targetFaction || undefined,
+  targetCompany: targetCompany,
+  targetStat: mode === "TRAIN" ? targetStat : undefined,
+  targetKills: mode === "KILLS" ? targetStat : undefined,
+  progressBar: finalBar,
+  
+  // 🟢 System-Status des Batchers
+  batcherActive: isBatcherRunning, 
+  
+  // 🟢 Cleanup: Wenn der Batcher nicht läuft, setzen wir Progress & Target zurück.
+  // Wenn er läuft, lassen wir die Keys weg, damit wir die Werte des Batchers nicht überschreiben!
+  ...(isBatcherRunning ? {} : { 
+    batcherProgress: "Inaktiv", 
+    batcherTarget: undefined,
+    batcherRamNeeded: 0 
+  }),
+
+  fillerConfig: {
+    shareMaxRamPercent: sharePercent,
+    maxXpLevel: dynamicMaxXp,
+  },
+});
 
     const isEarlyGameCrime =
       homeMaxRam < 128 &&

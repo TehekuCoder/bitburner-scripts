@@ -57,6 +57,9 @@ export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "Batcher", "INFO");
   const bnMults = loadBnMults(ns);
 
+  // 🟢 INITIALISIERUNG: Dem State-Manager sofort mitteilen, dass wir hochfahren
+  patchState(ns, { batcherProgress: "Initialisiere..." });
+
   if (
     (bnMults.ScriptHackMoneyGain ?? 1) === 0 ||
     (bnMults.ServerMaxMoney ?? 1) === 0
@@ -65,6 +68,7 @@ export async function main(ns: NS): Promise<void> {
       "Hacking-Multiplikatoren blockieren Profit-Generierung. Batcher terminiert.",
     );
     logEvent("🛑 Hacking wirft hier kein Geld ab. Batcher deaktiviert.");
+    patchState(ns, { batcherProgress: "Inaktiv (Kein Profit)" });
     return;
   }
 
@@ -109,10 +113,11 @@ export async function main(ns: NS): Promise<void> {
         Math.floor(freeRam / SCRIPT_RAM_BASE) * SCRIPT_RAM_BASE;
     }
 
-    // 🎯 TARGETING & REPLANNING (Pfad bereinigt auf "utils/batch-planner.js")
+    // 🎯 TARGETING & REPLANNING
     if (!target || batchesSentForTarget >= dynamicMaxBatchesForTarget) {
       logger.info("Starte Batch-Planer für Zielfindung...");
       logEvent("📡 Suche optimales Ziel...");
+      patchState(ns, { batcherProgress: "Suche Ziel..." });
 
       const pid = ns.exec("utils/batch-planner.js", "home", 1);
       if (pid > 0) {
@@ -136,6 +141,7 @@ export async function main(ns: NS): Promise<void> {
         logger.warn(`Kein valides Ziel gefunden. Rotiere Zielfindung...`);
         target = null;
         lockedPlan = null;
+        patchState(ns, { batcherProgress: "Kein Ziel gefunden" });
         await ns.sleep(5000);
         continue;
       }
@@ -154,7 +160,8 @@ export async function main(ns: NS): Promise<void> {
     if (needsInitialPrep || isMassiveDesync) {
       const currentWeakenTime = ns.getWeakenTime(target);
       lockedPlan = null;
-      patchState(ns, { batcherTarget: target });
+
+      // 🟢 Redundantes patchState entfernt (wird nun automatisch via drawBatcherDashboard erledigt)
 
       if (batchesSentForTarget === 0) {
         logger.info(`Initialisiere Prep-Phase für Zielserver: ${target}`);
@@ -196,7 +203,7 @@ export async function main(ns: NS): Promise<void> {
           status: "PREPPING",
           target,
           progress,
-          progressText: `Synchronisation läuft... (${secsLeft.toFixed(1)}s verbleibend)`,
+          progressText: `${secsLeft.toFixed(1)}s verbleibend`,
           greed: 0.0,
           ramNeeded: 0,
           ramFree: tFree,
@@ -219,7 +226,7 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // 📈 LEVEL-UP REKALIBRIERUNG (Unterbrechungsfrei & Interaktiv!)
+    // 📈 LEVEL-UP REKALIBRIERUNG
     const trueWeakenTime = ns.getWeakenTime(target);
     const planWeakenTime = lockedPlan.executionTime - SPACER * 2;
 
@@ -239,7 +246,6 @@ export async function main(ns: NS): Promise<void> {
       const newState = loadState(ns);
       lockedPlan = newState?.batcherPlan || null;
 
-      // 🟢 Dashboard bleibt während des Überholpuffers voll aktiv!
       const startSleep = Date.now();
       while (Date.now() - startSleep < timeDelta) {
         if (Date.now() - lastUiUpdate > 250) {
@@ -269,10 +275,7 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    patchState(ns, {
-      batcherRamNeeded: plan.totalRam,
-      batcherTarget: target,
-    });
+    // 🟢 Redundantes patchState entfernt (wird nun atomar über drawBatcherDashboard erledigt!)
 
     const estimatedGreed = plan.hackThreads * 0.04;
     lastWaveProfit = maxMoney * estimatedGreed;
@@ -286,7 +289,7 @@ export async function main(ns: NS): Promise<void> {
           status: "STALLED (RAM)",
           target,
           progress: totalUsableFreeRam / Math.max(1, requiredRam),
-          progressText: `Warte auf RAM-Slot: ${ns.format.ram(totalUsableFreeRam)} / ${ns.format.ram(requiredRam)}`,
+          progressText: `${ns.format.ram(totalUsableFreeRam)} / ${ns.format.ram(requiredRam)}`,
           greed: plan.hackThreads * 0.02,
           ramNeeded: requiredRam,
           ramFree: totalUsableFreeRam,
@@ -347,7 +350,7 @@ export async function main(ns: NS): Promise<void> {
           status: "STALLED (FRAG)",
           target,
           progress: totalUsableFreeRam / plan.totalRam,
-          progressText: `RAM fragmentiert. Warte auf atomaren Slot...`,
+          progressText: `RAM fragmentiert`,
           greed: plan.hackThreads * 0.02,
           ramNeeded: plan.totalRam,
           ramFree: totalUsableFreeRam,
@@ -371,7 +374,7 @@ export async function main(ns: NS): Promise<void> {
         status: "RUNNING",
         target,
         progress: batchesSentForTarget / dynamicMaxBatchesForTarget,
-        progressText: `Welle #${batchId} (${batchesSentForTarget}/${dynamicMaxBatchesForTarget} bis Rotation)`,
+        progressText: `Welle #${batchId} (${batchesSentForTarget}/${dynamicMaxBatchesForTarget})`,
         greed: plan.hackThreads * 0.02,
         ramNeeded: plan.totalRam,
         ramFree: totalUsableFreeRam,
@@ -408,6 +411,37 @@ function drawBatcherDashboard(ns: NS, data: DashboardData): void {
   const ramUsed = data.ramTotal - data.ramFree;
   const ramPercent = data.ramTotal > 0 ? (ramUsed / data.ramTotal) * 100 : 0;
   const bar = makeProgressBar(data.progress, 20);
+
+  // ------------------------------------------------------------
+  // 🟢 NEU: STATE-MANAGER AKTUALISIERUNG (Gekoppelt an die UI-Taktung!)
+  // ------------------------------------------------------------
+  let stateProgressText = "Aktiv";
+  switch (data.status) {
+    case "PREPPING":
+      stateProgressText = `Prep: ${data.target} (${(data.progress * 100).toFixed(0)}%)`;
+      break;
+    case "RECALIBRATING":
+      stateProgressText = `Rekalibriere: ${data.target}`;
+      break;
+    case "STALLED (RAM)":
+      stateProgressText = `RAM-Mangel (${ns.format.ram(data.ramFree)}/${ns.format.ram(data.ramNeeded)})`;
+      break;
+    case "STALLED (FRAG)":
+      stateProgressText = `Frag: RAM fragmentiert`;
+      break;
+    case "RUNNING":
+      stateProgressText = `Batching: ${data.target} (${data.batchesSent}/${data.batchesMax})`;
+      break;
+    default:
+      stateProgressText = data.status;
+  }
+
+  patchState(ns, {
+    batcherProgress: stateProgressText,
+    batcherTarget: data.target || undefined,
+    batcherRamNeeded: data.ramNeeded,
+  });
+  // ------------------------------------------------------------
 
   ns.print(`============================================================`);
   ns.print(
@@ -476,7 +510,6 @@ function dispatchBatchScript(
     if (possibleThreads > 0) {
       const threadsToRun = Math.min(possibleThreads, threadsRemaining);
       
-      // 🟢 FIX: Kopiert das Prep-Skript, falls es auf dem Zielknoten fehlt!
       if (server !== "home" && !ns.fileExists(script, server)) {
         ns.scp(script, server, "home");
       }
@@ -500,7 +533,6 @@ function executePrepPhase(
   const curMoney = ns.getServerMoneyAvailable(target);
   const weakenPotency = 0.05 * (bnMults.ServerWeakenRate ?? 1.0);
 
-  // 🟢 Pfade bereinigt (ohne führende Slashes!)
   if (curSec > minSec) {
     const secDeficit = curSec - minSec;
     const weakenThreads = Math.ceil(secDeficit / weakenPotency);
@@ -553,7 +585,6 @@ function dispatchSplitBatch(
   const shareBufferPercent =
     currentState?.fillerConfig?.shareMaxRamPercent || 0.0;
 
-  // 🟢 Pfade bereinigt (ohne führende Slashes!)
   const tasks = [
     {
       script: "tasks/hack.js",
@@ -614,7 +645,6 @@ function dispatchSplitBatch(
       if (possibleThreads > 0) {
         const toDeploy = Math.min(possibleThreads, threadsLeft);
 
-        // 🟢 Pfad-Prüfung und Kopieren klappt nun perfekt, da pfadangaben 100% matchen!
         if (server !== "home" && !ns.fileExists(task.script, server)) {
           ns.scp(task.script, server, "home");
           logger.info(

@@ -1,8 +1,10 @@
+// sys-sleeve.ts
+
 import { NS, FactionName } from "@ns";
-import { loadState } from "./state-manager.js";
+import { loadState, patchState } from "./state-manager.js"; // 🟢 patchState importiert
 import { Logger } from "./logger.js";
-import { getFactionsNeedingRep, manageAllSleeves } from "../lib/sleeve-manager.js"; // 🟢 Ausgelagert
-import { printSleeveDashboard } from "../lib/sleeve-ui.js";                       // 🟢 Ausgelagert
+import { getFactionsNeedingRep, manageAllSleeves } from "../lib/sleeve-manager.js";
+import { printSleeveDashboard } from "../lib/sleeve-ui.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -10,15 +12,14 @@ export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "SLEEVE", "INFO", "/logs/sleeve.txt");
   logger.info("🦾 Sleeve-Subsystem aktiv. Kontrolliere Klone...");
 
-  // Cache für Fraktions-Ruf-Abfragen (Throttling)
   let factionsNeedingRep: FactionName[] = [];
   let lastFactionScan = 0;
-  const SCAN_INTERVAL = 30000; // Nur alle 30 Sekunden scannen
+  const SCAN_INTERVAL = 30000;
 
   const localLogBuffer: string[] = [];
   function addLocalLog(msg: string) {
     localLogBuffer.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
-    if (localLogBuffer.length > 5) localLogBuffer.shift(); // Nur die letzten 5 behalten
+    if (localLogBuffer.length > 5) localLogBuffer.shift();
   }
 
   while (true) {
@@ -32,9 +33,6 @@ export async function main(ns: NS): Promise<void> {
     const currentState = loadState(ns);
     const ownedAugs = ns.singularity.getOwnedAugmentations(true);
 
-    // ======================================================================
-    // 1. RUF-EVALUIERUNG (MIT THROTTLING)
-    // ======================================================================
     if (
       Date.now() - lastFactionScan > SCAN_INTERVAL ||
       factionsNeedingRep.length === 0
@@ -43,9 +41,7 @@ export async function main(ns: NS): Promise<void> {
       lastFactionScan = Date.now();
     }
 
-    // ======================================================================
-    // 2. STRATEGISCHE ARBEITSZUTEILUNG
-    // ======================================================================
+    // 1. Zuweisung & Berechnung (verändert das lokale currentState-Objekt)
     manageAllSleeves(
       ns,
       p,
@@ -56,9 +52,11 @@ export async function main(ns: NS): Promise<void> {
       addLocalLog
     );
 
-    // ======================================================================
-    // 3. UI DASHBOARD RENDERING
-    // ======================================================================
+    // 🟢 NEU: Schreibe den berechneten Fortschritt aktiv zurück in das System-State!
+    if (currentState && currentState.sleeveProgress) {
+      patchState(ns, { sleeveProgress: currentState.sleeveProgress });
+    }
+
     printSleeveDashboard(ns, numSleeves, localLogBuffer);
 
     await ns.sleep(2000);

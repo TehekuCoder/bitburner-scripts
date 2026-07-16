@@ -7,7 +7,7 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const state = loadState(ns);
-    
+
     if (!state || !state.targetFaction) {
       ns.print("⏳ Warte auf Zielvorgabe durch den Dispatcher...");
       await ns.sleep(2000);
@@ -26,10 +26,18 @@ export async function main(ns: NS): Promise<void> {
 
     if (!isWorkingCorrectly) {
       ns.print("🚀 Wechsle Arbeit auf Fraktion: " + faction);
-      
-      let success = sing.workForFaction(faction, ns.enums.FactionWorkType.hacking, false);
+
+      let success = sing.workForFaction(
+        faction,
+        ns.enums.FactionWorkType.hacking,
+        false,
+      );
       if (!success) {
-        success = sing.workForFaction(faction, ns.enums.FactionWorkType.field, false);
+        success = sing.workForFaction(
+          faction,
+          ns.enums.FactionWorkType.field,
+          false,
+        );
       }
       if (!success) {
         sing.workForFaction(faction, ns.enums.FactionWorkType.security, false);
@@ -39,12 +47,14 @@ export async function main(ns: NS): Promise<void> {
     const currentRep = sing.getFactionRep(faction);
 
     // 🟢 Korrektur: Wir speichern die aktuelle Rep in 'factionCurrentReps', nicht in 'factionTargets'!
-    const updatedCurrentReps = { ...(state.factionCurrentReps ?? {}) } as Record<FactionName, number>;
+    const updatedCurrentReps = {
+      ...(state.factionCurrentReps ?? {}),
+    } as Record<FactionName, number>;
     updatedCurrentReps[faction] = currentRep;
 
     patchState(ns, {
-      progressBar: `🧬 ${faction}: ${ns.format.number(currentRep, 0)} Rep`,
-      factionCurrentReps: updatedCurrentReps // Verhindert das Zerschießen deiner Kernel-Ziele
+      // progressBar wurde hier entfernt, damit der Dispatcher die Kontrolle behält!
+      factionCurrentReps: updatedCurrentReps, // Verhindert das Zerschießen deiner Kernel-Ziele
     });
 
     await ns.sleep(2000);
