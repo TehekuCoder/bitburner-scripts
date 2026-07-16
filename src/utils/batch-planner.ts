@@ -10,7 +10,10 @@ const SPACER = 80;
 const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000; // 60 Minuten
 
 export async function main(ns: NS): Promise<void> {
-  ns.disableLog("ALL");
+  // Wir aktivieren Log-Ausgaben für die manuelle Diagnose im Terminal
+  ns.disableLog("getServerMaxRam");
+  ns.disableLog("getServerUsedRam");
+
   const bnMults = loadBnMults(ns);
   const currentState = loadState(ns);
   const shareBufferPercent =
@@ -41,6 +44,7 @@ export async function main(ns: NS): Promise<void> {
   );
 
   if (!target) {
+    ns.print("🚨 KRITISCH: Kein einziges Ziel im Netzwerk konnte validiert werden!");
     patchState(ns, {
       batcherTarget: undefined,
       batcherPlan: null,
@@ -82,22 +86,36 @@ export async function main(ns: NS): Promise<void> {
     SPACER,
   ) as BatchPlan | null;
 
-  // Iterative Gier-Reduktion
-  while (
-    (lockPlan === null || lockPlan.totalRam > maxAllowedBatchRam) &&
-    currentGreedFactor > 0.005
-  ) {
+  // 🟢 SAFED: Iterative Gier-Reduktion mit Schutz vor dem 0-Thread-Knick
+  let lastValidPlan = lockPlan;
+  while (currentGreedFactor > 0.005) {
     currentGreedFactor -= 0.01;
-    lockPlan = calculateBatch(
+    const nextPlan = calculateBatch(
       ns,
       target,
       bnMults,
       currentGreedFactor,
       SPACER,
     ) as BatchPlan | null;
+
+    if (nextPlan === null) {
+      // Wenn das Verringern der Gier zu 0 Threads führt, brechen wir ab und behalten das letzte funktionierende Minimum
+      break;
+    }
+
+    lockPlan = nextPlan;
+    lastValidPlan = nextPlan;
+
+    if (lockPlan.totalRam <= maxAllowedBatchRam) {
+      break; // Plan passt in den Single-Server-Slot!
+    }
+  }
+  
+  if (lockPlan && lockPlan.totalRam > maxAllowedBatchRam && lastValidPlan) {
+    lockPlan = lastValidPlan;
   }
 
-  // Fallback auf den gesamten Pool
+  // 🟢 SAFED: Fallback auf den gesamten Pool (mit Schutz vor 0 Threads)
   if (!lockPlan || lockPlan.totalRam > totalUsableMaxRam) {
     currentGreedFactor = 0.4;
     lockPlan = calculateBatch(
@@ -107,32 +125,49 @@ export async function main(ns: NS): Promise<void> {
       currentGreedFactor,
       SPACER,
     ) as BatchPlan | null;
-    while (
-      (lockPlan === null || lockPlan.totalRam > totalUsableMaxRam) &&
-      currentGreedFactor > 0.005
-    ) {
+    
+    lastValidPlan = lockPlan;
+
+    while (currentGreedFactor > 0.005) {
       currentGreedFactor -= 0.01;
-      lockPlan = calculateBatch(
+      const nextPlan = calculateBatch(
         ns,
         target,
         bnMults,
         currentGreedFactor,
         SPACER,
       ) as BatchPlan | null;
+
+      if (nextPlan === null) {
+        break;
+      }
+
+      lockPlan = nextPlan;
+      lastValidPlan = nextPlan;
+
+      if (lockPlan.totalRam <= totalUsableMaxRam) {
+        break; // Passt in den Gesamtpool!
+      }
+    }
+
+    if (lockPlan && lockPlan.totalRam > totalUsableMaxRam && lastValidPlan) {
+      lockPlan = lastValidPlan;
     }
   }
 
   // 4. Plan in State einfrieren
-  if (lockPlan) {
+  if (lockPlan && lockPlan.totalRam <= totalUsableMaxRam) {
+    ns.print(`🎯 Erfolg! Ziel gewählt: ${target} (${ns.format.ram(lockPlan.totalRam)} RAM pro Welle)`);
     patchState(ns, {
       batcherTarget: target,
       batcherPlan: lockPlan,
       batcherDynamicMaxBatches: dynamicMaxBatchesForTarget,
     });
   } else {
+    ns.print(`🛑 FEHLER: Finaler Plan überschreitet immer noch das Gesamtnetzwerk-RAM.`);
     patchState(ns, {
-      batcherTarget: undefined, // undefined matched 'string | undefined'
-      batcherPlan: null, // Bleibt null, da batcherPlan?: any | null erlaubt
+      batcherTarget: undefined,
+      batcherPlan: null,
     });
   }
 }
@@ -150,28 +185,63 @@ function findBestBatchTargetForNetwork(
   let highestScore = 0;
   const playerHackLevel = ns.getHackingLevel();
 
+  ns.print(`=== NETZWERK-DIAGNOSE ===`);
+  ns.print(`Verfügbares Pool-RAM: ${ns.format.ram(totalNetworkRam)}`);
+
+  if (totalNetworkRam <= 0) {
+    ns.print("⚠️ WARNUNG: Usable Network-RAM ist 0 GB! Reserven oder Share-Percent prüfen!");
+    return null;
+  }
+
   for (const s of targets) {
     if (ns.getServerRequiredHackingLevel(s) > playerHackLevel) continue;
 
-    const testGreed = totalNetworkRam < 256 ? 0.01 : 0.1;
-    let testPlan = calculateBatch(
-      ns,
-      s,
-      bnMults,
-      testGreed,
-      SPACER,
-    ) as BatchPlan | null;
+    const startGreed = totalNetworkRam < 256 ? 0.01 : 0.1;
+    let testPlan: BatchPlan | null = null;
 
-    if (!testPlan || testPlan.totalRam > totalNetworkRam) continue;
+    // 🟢 DYNAMISCHE GIER-ANPASSUNG NACH OBEN
+    // Falls die Gier so klein ist, dass 0 Threads entstehen, tasten wir uns hoch,
+    // bis wir die mathematische Untergrenze für genau 1 Hack-Thread erreichen.
+    for (let greed = startGreed; greed <= 0.95; greed += 0.05) {
+      testPlan = calculateBatch(
+        ns,
+        s,
+        bnMults,
+        greed,
+        SPACER,
+      ) as BatchPlan | null;
+      if (testPlan !== null) {
+        break; // Mindestens 1 Hack-Thread gefunden!
+      }
+    }
+
+    if (!testPlan) {
+      ns.print(`[${s}] ❌ Übersprungen: Selbst bei 95% Gier kein gültiger Plan.`);
+      continue;
+    }
+
+    if (testPlan.totalRam > totalNetworkRam) {
+      ns.print(`[${s}] ❌ RAM-Limit: Benötigt ${ns.format.ram(testPlan.totalRam)} (Pool hat nur ${ns.format.ram(totalNetworkRam)})`);
+      continue;
+    }
+
     const idealExecutionTime = testPlan.executionTime;
-    if (idealExecutionTime > DYNAMIC_MAX_WEAKEN_TIME) continue;
+    if (idealExecutionTime > DYNAMIC_MAX_WEAKEN_TIME) {
+      ns.print(`[${s}] ❌ Zeitlimit: Laufzeit ${(idealExecutionTime / 1000 / 60).toFixed(1)} Min zu lang.`);
+      continue;
+    }
 
     const money = ns.getServerMaxMoney(s);
     const score = money / idealExecutionTime;
+    
+    ns.print(`[${s}]  Validiert! Score: ${ns.format.number(score)} (RAM: ${ns.format.ram(testPlan.totalRam)})`);
+
     if (score > highestScore) {
       highestScore = score;
       bestTarget = s;
     }
   }
+  
+  ns.print(`👑 Gewähltes Ziel: ${bestTarget || "KEINES"}`);
   return bestTarget;
 }

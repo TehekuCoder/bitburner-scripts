@@ -113,17 +113,28 @@ export async function main(ns: NS): Promise<void> {
         Math.floor(freeRam / SCRIPT_RAM_BASE) * SCRIPT_RAM_BASE;
     }
 
-    // 🎯 TARGETING & REPLANNING
+    // 🎯 TARGETING & REPLANNING (Mit verbesserter Fehlerdiagnose!)
     if (!target || batchesSentForTarget >= dynamicMaxBatchesForTarget) {
       logger.info("Starte Batch-Planer für Zielfindung...");
       logEvent("📡 Suche optimales Ziel...");
       patchState(ns, { batcherProgress: "Suche Ziel..." });
 
       const pid = ns.exec("utils/batch-planner.js", "home", 1);
-      if (pid > 0) {
-        while (ns.isRunning(pid)) {
-          await ns.sleep(50);
-        }
+
+      // 🔴 DIAGNOSE A: Start-Fehlschlag prüfen
+      if (pid === 0) {
+        logger.error(
+          "🛑 Konnte 'utils/batch-planner.js' nicht starten! RAM-Mangel oder Datei existiert nicht.",
+        );
+        logEvent("🛑 Planner-Start fehlgeschlagen!");
+        patchState(ns, { batcherProgress: "Fehler: Start Planner" });
+        await ns.sleep(5000);
+        continue;
+      }
+
+      // Warten auf Beendigung des Planners
+      while (ns.isRunning(pid)) {
+        await ns.sleep(50);
       }
 
       const newState = loadState(ns);
@@ -139,9 +150,25 @@ export async function main(ns: NS): Promise<void> {
         logEvent(`🔒 Pipeline-Plan geladen: ${target}`);
       } else {
         logger.warn(`Kein valides Ziel gefunden. Rotiere Zielfindung...`);
+
+        // 🔴 DIAGNOSE B: Fehlt Formulas.exe?
+        if (!ns.formulas || !ns.formulas.hacking) {
+          logger.error(
+            "🚨 SYSTEM-FEHLER: 'Formulas.exe' ist nicht freigeschaltet! Batch-Berechnung unmöglich.",
+          );
+          logEvent("🚨 Fehler: Formulas fehlt!");
+          patchState(ns, { batcherProgress: "Formulas.exe fehlt!" });
+        } else {
+          // 🔴 DIAGNOSE C: Stiller Absturz des Planners
+          logger.error(
+            "⚠️ Planner beendet, aber kein Ziel im State hinterlassen. Eventuell Absturz im Planner-Skript?",
+          );
+          logEvent("⚠️ Planner-Fehler!");
+          patchState(ns, { batcherProgress: "Planner lieferte kein Ziel" });
+        }
+
         target = null;
         lockedPlan = null;
-        patchState(ns, { batcherProgress: "Kein Ziel gefunden" });
         await ns.sleep(5000);
         continue;
       }
@@ -509,7 +536,7 @@ function dispatchBatchScript(
 
     if (possibleThreads > 0) {
       const threadsToRun = Math.min(possibleThreads, threadsRemaining);
-      
+
       if (server !== "home" && !ns.fileExists(script, server)) {
         ns.scp(script, server, "home");
       }
