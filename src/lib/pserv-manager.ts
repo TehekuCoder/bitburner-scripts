@@ -1,11 +1,14 @@
+// src/lib/pserv-manager.ts
+
 import { NS } from "@ns";
-import { provisionServer } from "../utils/provision.js"; // 🟢 Korrekter relativer Pfad
+import { provisionServer } from "../utils/provision.js"; 
 import { Logger } from "../core/logger.js";
 
 export async function handleServerPurchases(
   ns: NS,
   bnMults: any,
   freezePservers: boolean,
+  moneyReserve: number, // 🟢 Neu eingepflegt
   logger: Logger,
 ): Promise<void> {
   const maxServers = ns.cloud.getServerLimit();
@@ -24,10 +27,17 @@ export async function handleServerPurchases(
     !hasEligiblePserv &&
     currentServers.length > 0;
 
+  // Wenn P-Server eingefroren sind und wir nicht im lategame "Rush" sind, sofort stoppen
   if (freezePservers && !rushSinglePserv) return;
 
   const maxRam = ns.cloud.getRamLimit();
-  let currentBudget = ns.getPlayer().money * 0.9;
+  const playerMoney = ns.getPlayer().money;
+
+  // 🛑 CRITICAL FIX: Absoluter finanzieller Schutzwall
+  if (playerMoney <= moneyReserve) return; 
+  
+  // Das Budget ist 90% von dem Geld, das uns nach Abzug der Reserve FREI zur Verfügung steht
+  let currentBudget = (playerMoney - moneyReserve) * 0.9;
   if (currentBudget < 50_000) return;
 
   let allowedMaxRam = 64;
@@ -46,7 +56,10 @@ export async function handleServerPurchases(
     let maxPservRam = 0;
     let bestServer = "";
 
-    for (const server of currentServers) {
+    // Frische Serverliste innerhalb der Schleife abfragen, falls sich Daten geändert haben
+    const updatedServers = ns.cloud.getServerNames();
+
+    for (const server of updatedServers) {
       const ram = ns.getServerMaxRam(server);
       if (ram < minRam) {
         minRam = ram;
@@ -68,7 +81,7 @@ export async function handleServerPurchases(
     if (ns.cloud.getServerCost(affordableNewRam) > currentBudget)
       affordableNewRam = 0;
 
-    if (currentServers.length === 0 && affordableNewRam >= 8) {
+    if (updatedServers.length === 0 && affordableNewRam >= 8) {
       const initialRam = Math.min(affordableNewRam, 64);
       if (await buyNewServer(ns, initialRam, maxServers, logger)) {
         currentBudget -= ns.cloud.getServerCost(initialRam);
@@ -89,7 +102,7 @@ export async function handleServerPurchases(
           }
         }
       }
-    } else if (currentServers.length < maxServers) {
+    } else if (updatedServers.length < maxServers) {
       if (worstServer !== "" && minRam < affordableNewRam) {
         const nextRam = minRam * 2;
         const upgradeCost =

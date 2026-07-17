@@ -1,5 +1,3 @@
-// src/core/sys-kernel.ts
-
 import { NS } from "@ns";
 import { loadState, patchState, saveState } from "./state-manager.js";
 import { getAllServers, breakAndInfectNetwork } from "../lib/network.js";
@@ -34,9 +32,7 @@ export async function main(ns: NS): Promise<void> {
   const initPid = ns.run("core/sys-initializer.js", 1);
 
   if (initPid === 0) {
-    logger.error(
-      "Kritischer Fehler: sys-initializer.js konnte nicht gestartet werden!",
-    );
+    logger.error("Kritischer Fehler: sys-initializer.js konnte nicht gestartet werden!");
     return;
   }
 
@@ -73,10 +69,7 @@ export async function main(ns: NS): Promise<void> {
     ns.run("core/sys-hud.js", 1);
   }
 
-  if (
-    ns.fileExists(scripts.dashboard, "home") &&
-    !ns.scriptRunning(scripts.dashboard, "home")
-  ) {
+  if (ns.fileExists(scripts.dashboard, "home") && !ns.scriptRunning(scripts.dashboard, "home")) {
     logger.success("Starte Consolidated Operational Dashboard...");
     ns.run(scripts.dashboard, 1);
   }
@@ -88,7 +81,6 @@ export async function main(ns: NS): Promise<void> {
   let lastDeployedStrategy = "";
   let lastProbeTime = 0;
 
-  // Throttling für Netzwerk-Scans im Kernel
   let allNodes: string[] = [];
   let lastNetworkScan = 0;
   const NETWORK_SCAN_INTERVAL = 30000;
@@ -97,10 +89,7 @@ export async function main(ns: NS): Promise<void> {
     const now = Date.now();
 
     // --- THROTTLED NETZWERK SCAN ---
-    if (
-      now - lastNetworkScan > NETWORK_SCAN_INTERVAL ||
-      allNodes.length === 0
-    ) {
+    if (now - lastNetworkScan > NETWORK_SCAN_INTERVAL || allNodes.length === 0) {
       breakAndInfectNetwork(ns);
       allNodes = getAllServers(ns);
       lastNetworkScan = now;
@@ -122,6 +111,19 @@ export async function main(ns: NS): Promise<void> {
       }
     } catch (_) {}
 
+    // --- 💰 DYNAMISCHER FINANZ-PROTEKTOR (ANTI-P-SERVER-LOCK) ---
+    let homeUpgradeCost = 0;
+    try {
+      // Holt die exakten Kosten für das nächste Home-RAM Upgrade via Singularity
+      homeUpgradeCost = ns.singularity.getUpgradeHomeRamCost();
+    } catch (_) {}
+
+    // Wenn wir unter 256 GB sind, sperren wir das Geld für P-Server!
+    let dynamicReserve = currentState?.moneyReserve || 0;
+    if (homeMax < 256 && homeUpgradeCost > 0) {
+      dynamicReserve = homeUpgradeCost;
+    }
+
     // --- 📡 DYNAMISCHE PROGRESSION-PROBES & TARGETING ---
     if (now - lastProbeTime > 15000) {
       const freeRam = homeMax - ns.getServerUsedRam("home");
@@ -129,64 +131,48 @@ export async function main(ns: NS): Promise<void> {
       if (homeMax >= 8 && !ns.isRunning("utils/probe-sing.js", "home")) {
         if (freeRam >= 3.6) ns.run("utils/probe-sing.js", 1);
       }
-
       if (homeMax >= 16 && !ns.isRunning("utils/probe-gang.js", "home")) {
         if (freeRam >= 5.6) ns.run("utils/probe-gang.js", 1);
       }
-
       if (homeMax >= 16 && !ns.isRunning("utils/probe-blade.js", "home")) {
         if (freeRam >= 5.6) ns.run("utils/probe-blade.js", 1);
       }
-
       if (homeMax >= 128 && !ns.isRunning("utils/probe-corp.js", "home")) {
         if (freeRam >= 81.6) ns.run("utils/probe-corp.js", 1);
       }
-
       if (!ns.isRunning("utils/probe-target.js", "home")) {
         if (freeRam >= 4.3) {
           ns.run("utils/probe-target.js", 1);
         }
       }
-
       lastProbeTime = now;
     }
 
     let activeStrategy = currentState?.strategy || "MONEY";
     let activeProgressBar = currentState?.progressBar || "";
 
-    const isDispatcherReady =
-      homeMax >= 256 && ns.fileExists(scripts.dispatcher, "home");
+    // ⚡ OPTIMIERUNG: Erlaubt den Dispatcher bereits ab 64 GB RAM statt 256 GB!
+    const isDispatcherReady = homeMax >= 64 && ns.fileExists(scripts.dispatcher, "home");
 
     if (!isDispatcherReady) {
-      const hackingEfficiency =
-        (bnMults.ServerMaxMoney ?? 1.0) * (bnMults.ScriptHackMoneyGain ?? 1.0);
+      const hackingEfficiency = (bnMults.ServerMaxMoney ?? 1.0) * (bnMults.ScriptHackMoneyGain ?? 1.0);
       const hackingExpMult = bnMults.HackingLevelMultiplier ?? 1.0;
 
       if (hackingEfficiency === 0) {
         activeStrategy = "XP_SPRINT";
-        activeProgressBar =
-          "📉 BN-Sonderregel: Hacking wirft kein Geld ab! Fokus auf XP-Sprint.";
-      } else if (
-        hackingEfficiency < 0.2 &&
-        player.money < 50_000_000 &&
-        (bnMults.CrimeMoney ?? 1.0) > 0.5
-      ) {
+        activeProgressBar = "📉 BN-Sonderregel: Hacking wirft kein Geld ab! Fokus auf XP-Sprint.";
+      } else if (hackingEfficiency < 0.2 && player.money < 50_000_000 && (bnMults.CrimeMoney ?? 1.0) > 0.5) {
         activeStrategy = "CRIME";
         activeProgressBar = `🥷 Hacking ineffizient (${(hackingEfficiency * 100).toFixed(0)}%). Starte Verbrechen-Grind.`;
       } else {
-        const combatAvg =
-          (player.skills.strength +
-            player.skills.defense +
-            player.skills.dexterity +
-            player.skills.agility) /
-          4;
+        const combatAvg = (player.skills.strength + player.skills.defense + player.skills.dexterity + player.skills.agility) / 4;
 
         if ((bnMults.CompanyWorkMoney ?? 1.0) > 1.2 && combatAvg >= 30) {
           activeStrategy = "CORP";
           activeProgressBar = `🏢 BN-Spezial: Firmen-Arbeit stark skaliert (${((bnMults.CompanyWorkMoney ?? 1.0) * 100).toFixed(0)}%).`;
         } else {
           activeStrategy = "MONEY";
-          activeProgressBar = `💻 Hacking-Fleet aktiv (Netzwerk-Ressourcen optimal genutzt)`;
+          activeProgressBar = `💻 Hacking-Fleet aktiv (Warte auf 64GB RAM für Batcher)`;
         }
       }
 
@@ -194,10 +180,7 @@ export async function main(ns: NS): Promise<void> {
         activeProgressBar = `⚠️ XP-Sprint aktiv, aber BN-Hacking-XP ist stark gedrosselt (${(hackingExpMult * 100).toFixed(0)}%)!`;
       }
 
-      if (
-        activeStrategy !== lastStrategy ||
-        activeProgressBar !== lastProgressBar
-      ) {
+      if (activeStrategy !== lastStrategy || activeProgressBar !== lastProgressBar) {
         patchState(ns, {
           strategy: activeStrategy,
           progressBar: activeProgressBar,
@@ -215,8 +198,6 @@ export async function main(ns: NS): Promise<void> {
     const currentGang = currentState?.hasGang || false;
     const currentCorp = currentState?.hasCorporation || false;
     const currentBlade = currentState?.hasBladeburner || false;
-    
-    // 🟢 Überprüfe direkt, ob die API-Lizenz auf 'home' liegt
     const hasNavigator = ns.fileExists("DarkscapeNavigator.exe", "home");
 
     if (homeMax >= 16 && !ns.isRunning("core/sys-suites.js", "home")) {
@@ -230,37 +211,22 @@ export async function main(ns: NS): Promise<void> {
     let isDispatcherRunning = ns.isRunning(scripts.dispatcher, "home");
 
     if (isDispatcherReady && !isDispatcherRunning) {
-      logger.info(
-        "Starte zentralen System-Dispatcher (Dispatcher-Modus aktiv)...",
-      );
+      logger.info("Starte zentralen System-Dispatcher (Dispatcher-Modus aktiv)...");
       ns.run(scripts.dispatcher, 1);
       isDispatcherRunning = true;
     }
 
-    if (
-      ns.fileExists(scripts.infra, "home") &&
-      !ns.isRunning(scripts.infra, "home")
-    ) {
+    if (ns.fileExists(scripts.infra, "home") && !ns.isRunning(scripts.infra, "home")) {
       logger.info("Starte Infrastruktur-Manager...");
       ns.run(scripts.infra, 1);
     }
 
-    // 📡 Darknet-Master & Crawler laufen jetzt parallel im Hintergrund, 
-    // aber erst sobald der Navigator gekauft wurde!
-    if (
-      hasNavigator && 
-      ns.fileExists(scripts.dnet, "home") &&
-      !ns.isRunning(scripts.dnet, "home")
-    ) {
+    if (hasNavigator && ns.fileExists(scripts.dnet, "home") && !ns.isRunning(scripts.dnet, "home")) {
       logger.info("Starte Darknet-Master Daemon...");
       ns.run(scripts.dnet, 1);
     }
 
-    if (
-      hasNavigator &&
-      ns.fileExists(scripts.crawler, "home") &&
-      !ns.isRunning(scripts.crawler, "home")
-    ) {
+    if (hasNavigator && ns.fileExists(scripts.crawler, "home") && !ns.isRunning(scripts.crawler, "home")) {
       logger.info("Starte Darknet-Crawler...");
       ns.run(scripts.crawler, 1);
     }
@@ -271,31 +237,16 @@ export async function main(ns: NS): Promise<void> {
       const strategyChanged = activeStrategy !== lastDeployedStrategy;
 
       if (targetChanged || strategyChanged || networkChanged) {
-        let activeScript =
-          activeStrategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
+        let activeScript = activeStrategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
 
         for (const node of allNodes) {
           if (!ns.hasRootAccess(node)) continue;
-          if (
-            node === "home" &&
-            ["TRAIN", "CORP", "CRIME"].includes(activeStrategy)
-          )
-            continue;
+          if (node === "home" && ["TRAIN", "CORP", "CRIME"].includes(activeStrategy)) continue;
 
           let ramBuffer = 0;
           if (node === "home") {
-            const weakenModifier =
-              (bnMults.ServerWeakenRate ?? 1.0) < 1.0
-                ? Math.ceil(16 / (bnMults.ServerWeakenRate ?? 1.0))
-                : 0;
-            const baseBuffer = [
-              "CRIME",
-              "TRAIN",
-              "CORP",
-              "XP_SPRINT",
-            ].includes(activeStrategy)
-              ? 24
-              : 8;
+            const weakenModifier = (bnMults.ServerWeakenRate ?? 1.0) < 1.0 ? Math.ceil(16 / (bnMults.ServerWeakenRate ?? 1.0)) : 0;
+            const baseBuffer = ["CRIME", "TRAIN", "CORP", "XP_SPRINT"].includes(activeStrategy) ? 24 : 8;
             ramBuffer = Math.min(baseBuffer + weakenModifier, homeMax * 0.4);
           }
 
@@ -307,6 +258,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    // Synchronisiere alle ermittelten Werte inklusive der neuen dynamicReserve
     patchState(ns, {
       rootCount: currentRootCount,
       totalNodes: allNodes.length,
@@ -315,7 +267,8 @@ export async function main(ns: NS): Promise<void> {
       hasCorporation: currentCorp,
       hasBladeburner: currentBlade,
       allServers: allNodes,
-      hasDarkScapeNavigator: hasNavigator, // 🟢 State wird live synchronisiert
+      hasDarkScapeNavigator: hasNavigator,
+      moneyReserve: dynamicReserve, // Verhindert, dass sys-infra das Geld für Home-RAM ausgibt
     });
 
     await ns.sleep(2000);

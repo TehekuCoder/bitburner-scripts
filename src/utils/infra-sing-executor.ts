@@ -1,6 +1,8 @@
+// src/utils/infra-sing-executor.ts
+
 import { NS, ProgramName } from "@ns";
 import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
-import { patchState, loadState } from "../core/state-manager.js";
+import { patchState } from "../core/state-manager.js";
 import { Logger } from "../core/logger.js";
 
 const TARGET_PROGRAMS = [
@@ -18,22 +20,18 @@ export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "Infra-Sing", "INFO");
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
 
-  const player = ns.getPlayer();
   const currentHacking = ns.getHackingLevel();
-  const homeCostMultiplier = bnMults.HomeComputerRamCost ?? 1.0;
-  const baseReserve = homeCostMultiplier > 2 ? 2_000_000 : 500_000;
-  const dynamicReserve = Math.max(baseReserve, player.money * 0.05);
 
   // 1. Programme kaufen
   handleProgramPurchases(ns, logger, currentHacking);
 
   // 2. Home Server Upgrades durchführen
-  handleHomeServerPurchases(ns, dynamicReserve, logger);
+  handleHomeServerPurchases(ns, logger);
 
   // 3. Home-Shield berechnen und in den State schreiben
   const shieldActive = checkHomeUpgradeShield(ns);
 
-  // 4. Aktuelle CPU-Kerne erfassen (kostet ns.getServer -> 2GB)
+  // 4. Aktuelle CPU-Kerne erfassen
   const homeCores = ns.getServer("home").cpuCores;
 
   patchState(ns, {
@@ -74,25 +72,54 @@ function handleProgramPurchases(ns: NS, logger: Logger, currentHacking: number):
   }
 }
 
-function handleHomeServerPurchases(ns: NS, reserveMoney: number, logger: Logger): void {
+function handleHomeServerPurchases(ns: NS, logger: Logger): void {
   const sing = ns.singularity;
-  let availableMoney = ns.getPlayer().money - reserveMoney;
+  const homeMaxRam = ns.getServerMaxRam("home");
+  
+  // 🟢 FIX: Flacher Puffer. Verhindert, dass das Skript bei exaktem Kontostand blockiert.
+  const safetyBuffer = 200_000; 
+  let availableMoney = ns.getPlayer().money - safetyBuffer;
   if (availableMoney <= 0) return;
 
   const ramCost = sing.getUpgradeHomeRamCost();
-  if (ramCost !== Infinity && availableMoney >= ramCost) {
-    if (sing.upgradeHomeRam()) {
-      const newRam = ns.getServerMaxRam("home");
-      ns.toast(`Home RAM erweitert!`, "success");
-      logger.success(`🏠 Home-RAM Upgrade durchgeführt. Neuer Wert: ${ns.format.ram(newRam)}`);
-      availableMoney -= ramCost;
-    }
-  }
-
   const coreCost = sing.getUpgradeHomeCoresCost();
-  if (coreCost !== Infinity && availableMoney >= coreCost) {
-    if (sing.upgradeHomeCores()) {
-      ns.toast(`Home Cores erweitert!`, "success");
+
+  // 🚨 STRATEGISCHE PRIORISIERUNG: Unter 256GB RAM haben Cores striktes Kaufverbot,
+  // es sei denn, wir können uns BEIDES gleichzeitig leisten. RAM hat Vorrang für den Batcher!
+  if (homeMaxRam < 256) {
+    if (ramCost !== Infinity && availableMoney >= ramCost) {
+      if (sing.upgradeHomeRam()) {
+        const newRam = ns.getServerMaxRam("home");
+        ns.toast(`Home RAM erweitert!`, "success");
+        logger.success(`🏠 Home-RAM Upgrade durchgeführt. Neuer Wert: ${ns.format.ram(newRam)}`);
+        availableMoney -= ramCost;
+      }
+    }
+    
+    // Cores im Early-Game nur kaufen, wenn das RAM-Upgrade dadurch nicht verzögert wird
+    if (coreCost !== Infinity && availableMoney >= coreCost) {
+      if (ramCost === Infinity || (availableMoney - coreCost) >= ramCost) {
+        if (sing.upgradeHomeCores()) {
+          ns.toast(`Home Cores erweitert!`, "success");
+          logger.success("🏠 Home-Cores Upgrade durchgeführt.");
+        }
+      }
+    }
+  } else {
+    // Late-Game Balancing: Kaufe was bezahlbar ist, RAM bevorzugt
+    if (ramCost !== Infinity && availableMoney >= ramCost) {
+      if (sing.upgradeHomeRam()) {
+        const newRam = ns.getServerMaxRam("home");
+        ns.toast(`Home RAM erweitert!`, "success");
+        logger.success(`🏠 Home-RAM Upgrade durchgeführt. Neuer Wert: ${ns.format.ram(newRam)}`);
+        availableMoney -= ramCost;
+      }
+    }
+    if (coreCost !== Infinity && availableMoney >= coreCost) {
+      if (sing.upgradeHomeCores()) {
+        ns.toast(`Home Cores erweitert!`, "success");
+        logger.success("🏠 Home-Cores Upgrade durchgeführt.");
+      }
     }
   }
 }
@@ -101,20 +128,22 @@ function checkHomeUpgradeShield(ns: NS): boolean {
   const sing = ns.singularity;
   const nextRamCost = sing.getUpgradeHomeRamCost();
   const nextCoreCost = sing.getUpgradeHomeCoresCost();
+  const homeMaxRam = ns.getServerMaxRam("home");
 
-  if (nextRamCost === Infinity && nextCoreCost === Infinity) return false;
+  if (nextRamCost === Infinity && nextCoreCost === Infinity) {
+    patchState(ns, { moneyReserve: 0, isRushModeActive: false });
+    return false;
+  }
+
+  // Bestimme das strategische Ziel: Unter 256GB blockieren wir ALLES für RAM.
+  const targetUpgradeCost = (homeMaxRam < 256 && nextRamCost !== Infinity) 
+    ? nextRamCost 
+    : Math.min(nextRamCost, nextCoreCost);
 
   const currentMoney = ns.getPlayer().money;
-  const minHomeCost = Math.min(nextRamCost, nextCoreCost);
-
   const currentServers = ns.cloud.getServerNames();
-  const currentMinRam = currentServers.length > 0
-    ? Math.min(...currentServers.map((s) => ns.getServerMaxRam(s)))
-    : 8;
 
-  const nextPservUpgradeCost = ns.cloud.getServerCost(currentMinRam * 2) - ns.cloud.getServerCost(currentMinRam);
-
-  const homeMaxRam = ns.getServerMaxRam("home");
+  // Rush-Mode Evaluierung beibehalten
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
   const hasEligiblePserv = currentServers.some((s) => ns.getServerMaxRam(s) >= 64);
   const isRushMode = hasFormulas && homeMaxRam >= 256 && !hasEligiblePserv && currentServers.length > 0;
@@ -124,10 +153,13 @@ function checkHomeUpgradeShield(ns: NS): boolean {
     return false;
   }
 
-  const shieldActive = currentMoney >= minHomeCost * 0.5 && minHomeCost < nextPservUpgradeCost * 5;
+  // 🛑 LOGIK-FIX: Der fehlerhafte P-Server-Vergleich wurde entfernt.
+  // Der Shield bleibt jetzt unter 256GB RAM IMMER aktiv, um den Meilenstein zu sichern.
+  // Über 256GB greift er, sobald wir 20% des Upgrade-Preises angespart haben.
+  const shieldActive = homeMaxRam < 256 || currentMoney >= targetUpgradeCost * 0.2;
 
   patchState(ns, {
-    moneyReserve: shieldActive ? minHomeCost : 0,
+    moneyReserve: shieldActive ? targetUpgradeCost : 0,
     isRushModeActive: false
   });
 
