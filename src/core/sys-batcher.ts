@@ -42,6 +42,8 @@ function logEvent(msg: string): void {
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
+  ns.ui.openTail();
+
   const logger = new Logger(ns, "Batcher", "INFO");
   const bnMults = loadBnMults(ns);
 
@@ -187,8 +189,12 @@ export async function main(ns: NS): Promise<void> {
 
     isMassiveDesync = curSec > minSec + 3.0; // Das hier reicht völlig aus!
 
+    // --- 🛠️ TOLERANZ-BUFFER GEGEN INFINITE PREP-LOOPS ---
+    const isSecurityPerfect = curSec <= minSec + 0.1;
+    const isMoneyPerfect = curMoney >= maxMoney * 0.98; // 98% Füllung reicht für den Start!
+
     const needsInitialPrep =
-      batchesSentForTarget === 0 && (curSec > minSec || curMoney < maxMoney);
+      batchesSentForTarget === 0 && (!isSecurityPerfect || !isMoneyPerfect);
 
     // --- KALIBRIERUNGS- & DESYNC-MANAGEMENT ---
     if (needsInitialPrep || isMassiveDesync) {
@@ -437,27 +443,71 @@ function dispatchBatchScript(
   }
 }
 
-function executePrepPhase(ns: NS, allServers: string[], target: string, bnMults: any): void {
+function executePrepPhase(
+  ns: NS,
+  allServers: string[],
+  target: string,
+  bnMults: any,
+): void {
   const minSec = ns.getServerMinSecurityLevel(target);
   const curSec = ns.getServerSecurityLevel(target);
   const maxMoney = ns.getServerMaxMoney(target);
   const curMoney = ns.getServerMoneyAvailable(target);
   const weakenPotency = 0.05 * (bnMults.ServerWeakenRate ?? 1.0);
 
-  // 1. Wenn Security zu hoch ist, schwächen
-  if (curSec > minSec) {
+  // 1. Wenn Security erhöht ist, gezielt abschwächen
+  if (curSec > minSec + 0.1) {
     const secDeficit = curSec - minSec;
     const weakenThreads = Math.ceil(secDeficit / weakenPotency);
-    dispatchBatchScript(ns, allServers, "tasks/weaken.js", weakenThreads, target, 0, Date.now());
-  } 
-  
-  // 2. Unabhängig davon: Wenn Geld fehlt, zeitgleich Grow + Kompensations-Weaken feuern!
-  if (curMoney < maxMoney) {
-    const growthMultiplier = maxMoney / Math.max(1, curMoney);
-    const growThreads = Math.ceil(ns.growthAnalyze(target, growthMultiplier));
-    const weakenThreadsNeeded = Math.ceil((growThreads * 0.004) / weakenPotency);
+    dispatchBatchScript(
+      ns,
+      allServers,
+      "tasks/weaken.js",
+      weakenThreads,
+      target,
+      0,
+      Date.now(),
+    );
+  }
 
-    dispatchBatchScript(ns, allServers, "tasks/grow.js", growThreads, target, 0, Date.now());
-    dispatchBatchScript(ns, allServers, "tasks/weaken.js", weakenThreadsNeeded, target, 50, Date.now());
+  // 2. Wenn Geld fehlt, präzise auf Max-Formel berechnen
+  if (curMoney < maxMoney * 0.98) {
+    let growThreads = 0;
+
+    if (ns.formulas && ns.formulas.hacking) {
+      // Nutzen des präzisen Formelsystems unter simulierten Idealbedingungen
+      const serverMock = ns.getServer(target);
+      serverMock.hackDifficulty = serverMock.minDifficulty;
+      serverMock.moneyAvailable = Math.max(1, curMoney);
+      growThreads = Math.ceil(
+        ns.formulas.hacking.growThreads(serverMock, ns.getPlayer(), maxMoney),
+      );
+    } else {
+      const growthMultiplier = maxMoney / Math.max(1, curMoney);
+      growThreads = Math.ceil(ns.growthAnalyze(target, growthMultiplier));
+    }
+
+    const weakenThreadsNeeded = Math.ceil(
+      (growThreads * 0.004) / weakenPotency,
+    );
+
+    dispatchBatchScript(
+      ns,
+      allServers,
+      "tasks/grow.js",
+      growThreads,
+      target,
+      0,
+      Date.now(),
+    );
+    dispatchBatchScript(
+      ns,
+      allServers,
+      "tasks/weaken.js",
+      weakenThreadsNeeded,
+      target,
+      50,
+      Date.now(),
+    );
   }
 }

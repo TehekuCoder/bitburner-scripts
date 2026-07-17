@@ -1,80 +1,38 @@
+// src/systems/finance.ts
+
 import { NS } from "@ns";
-import { loadState, patchState } from "../core/state-manager.js";
+import { patchState } from "../core/state-manager.js";
 import { Logger } from "../core/logger.js";
 
-// --- GLOBALE KONSTANTEN ---
 const TRANSACTION_FEE = 100_000;
 const MIN_INVESTMENT = 5_000_000;
-const CASH_BUFFER = 2_000_000; // Eiserne Reserve für Trading-Gebühren
-
-// 🛡️ DYNAMISCHE RESERVE-BERECHNUNG
-// Berechnet, wie viel Geld für essenzielle Meilensteine gesichert werden muss
-function getDynamicReserve(ns: NS): { reserve: number; financeProgress: string } {
-  const currentMoney = ns.getServerMoneyAvailable("home");
-  
-  // FIX: Prüft die Existenz des darkweb-Servers statt des nicht existenten Player-Attributs
-  const hasTor = ns.serverExists("darkweb"); 
-  
-  let targetReserve = 0;
-  let targetName = "";
-
-  if (!hasTor) {
-    targetReserve = 200_000;
-    targetName = "TOR Router";
-  } else if (!ns.fileExists("BruteSSH.exe", "home")) {
-    targetReserve = 500_000;
-    targetName = "BruteSSH";
-  } else if (!ns.fileExists("FTPCrack.exe", "home")) {
-    targetReserve = 1_500_000;
-    targetName = "FTPCrack";
-  } else if (!ns.fileExists("relaySMTP.exe", "home")) {
-    targetReserve = 5_000_000;
-    targetName = "relaySMTP";
-  } else if (!ns.fileExists("HTTPWorm.exe", "home")) {
-    targetReserve = 30_000_000;
-    targetName = "HTTPWorm";
-  } else if (!ns.fileExists("SQLInject.exe", "home")) {
-    targetReserve = 250_000_000;
-    targetName = "SQLInject";
-  } else if (!ns.fileExists("Formulas.exe", "home")) {
-    targetReserve = 5_000_000_000;
-    targetName = "Formulas.exe";
-  }
-
-  let reserve = 0;
-  let financeProgress = "";
-
-  if (targetReserve > 0) {
-    // Wenn wir mehr als 50% des Ziels haben, frieren wir den Betrag ein
-    if (currentMoney >= targetReserve * 0.5) {
-      reserve = targetReserve;
-      financeProgress = `Sichere $${ns.format.number(reserve, 0)} (${targetName})`;
-    } else {
-      // Sonst sparen wir weich mit 10% unseres aktuellen Budgets an
-      reserve = currentMoney * 0.1;
-      financeProgress = `Aufbau f. ${targetName}`;
-    }
-  } else {
-    // Alle Pflichtkäufe erledigt: 5% des Kapitals als liquide Reserve halten
-    reserve = Math.max(CASH_BUFFER, currentMoney * 0.05);
-    financeProgress = `Aktiv | Res: $${ns.format.number(reserve, 1)}`;
-  }
-
-  // FIX: Rückgabe-Eigenschaften stimmen nun exakt mit dem Typ überein
-  return { reserve, financeProgress };
-}
+const CASH_BUFFER = 2_000_000; 
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   
+  // 🛑 AUTOMATISCHER RAM-SCHUTZWALL (Early Exit)
+  const homeMaxRam = ns.getServerMaxRam("home");
+  const playerMoney = ns.getPlayer().money;
+  const hasWse = ns.stock.hasWseAccount();
+
+  if (!hasWse && (playerMoney < 100_000_000 || homeMaxRam < 128)) {
+    // Wenn zu früh im Run: Sofort beenden und RAM freigeben!
+    patchState(ns, {
+      traderMode: "INACTIVE",
+      traderProgress: "Warte auf $100m + 128GB RAM",
+      financeProgress: "Inaktiv"
+    });
+    return; 
+  }
+
   const logger = new Logger(ns, "FINANCE", "INFO", "/logs/finance.txt");
-  logger.info("⚡ Finanz- & Reserve-Subsystem v4.1 [TYPED] aktiv.");
+  logger.info("⚡ Finanz-Subsystem aktiv. RAM-Kriterien erfüllt.");
 
   let fullyUnlocked = false;
   let canShort = true; 
   let lastLogTime = 0;
 
-  // Cleanup-Handler für sauberen Exit
   ns.atExit(() => {
     patchState(ns, {
       traderMode: "INACTIVE",
@@ -85,9 +43,6 @@ export async function main(ns: NS): Promise<void> {
   });
 
   while (true) {
-    // --- 0. BUDGET- & RESERVE-UPDATE ---
-    const { reserve, financeProgress } = getDynamicReserve(ns);
-
     // --- 1. LIZENZ-VERWALTUNG & CAPABILITY-PROBE ---
     if (!fullyUnlocked) {
       let unlocked = true;
@@ -95,76 +50,56 @@ export async function main(ns: NS): Promise<void> {
 
       if (!ns.stock.hasWseAccount()) {
         missingLicense = "WSE Account ($100m)";
-        if (ns.stock.purchaseWseAccount()) {
-          logger.success("WSE Konto erworben.");
-        } else {
-          unlocked = false;
-        }
+        if (ns.stock.purchaseWseAccount()) logger.success("WSE Konto erworben.");
+        else unlocked = false;
       }
       if (unlocked && !ns.stock.hasTixApiAccess()) {
         missingLicense = "TIX API ($5b)";
-        if (ns.stock.purchaseTixApi()) {
-          logger.success("TIX API freigeschaltet.");
-        } else {
-          unlocked = false;
-        }
+        if (ns.stock.purchaseTixApi()) logger.success("TIX API freigeschaltet.");
+        else unlocked = false;
       }
       if (unlocked && !ns.stock.has4SData()) {
         missingLicense = "4S Marktdaten ($1b)";
-        if (ns.stock.purchase4SMarketData()) {
-          logger.success("4S Marktdaten aktiv.");
-        } else {
-          unlocked = false;
-        }
+        if (ns.stock.purchase4SMarketData()) logger.success("4S Marktdaten aktiv.");
+        else unlocked = false;
       }
       if (unlocked && !ns.stock.has4SDataTixApi()) {
         missingLicense = "4S TIX API ($25b)";
-        if (ns.stock.purchase4SMarketDataTixApi()) {
-          logger.success("4S TIX API voll lizenziert.");
-        } else {
-          unlocked = false;
-        }
+        if (ns.stock.purchase4SMarketDataTixApi()) logger.success("4S TIX API voll lizenziert.");
+        else unlocked = false;
       }
 
       fullyUnlocked = unlocked;
 
-      // Wir patchen beide Spuren! Dadurch sieht das Dashboard sofort den Sparstatus
       patchState(ns, {
-        moneyReserve: reserve,
-        financeProgress: financeProgress,
         traderMode: "EARLY",
-        traderProgress: fullyUnlocked ? "Initialisiere..." : `Spare auf ${missingLicense}`
+        traderProgress: fullyUnlocked ? "Initialisiere..." : `Spare auf ${missingLicense}`,
+        financeProgress: fullyUnlocked ? "Markt-Bereit" : "Lizenzsuche"
       });
 
       if (!fullyUnlocked) {
         const now = Date.now();
-        if (now - lastLogTime > 60000) { // Log gedrosselt auf 60s
+        if (now - lastLogTime > 60000) {
           logger.info(`⏳ Warte auf Budget für ${missingLicense}...`);
           lastLogTime = now;
         }
-        await ns.sleep(6000); // 6s Markttakt für flüssige Dashboard-Updates!
+        await ns.sleep(6000);
         continue;
       }
-
       logger.success("🚀 Portfolio-Manager voll einsatzbereit. Starte Marktüberwachung.");
     }
 
-    // --- 2. AB HIER IST DER ZUGRIFF AUF DIE STOCK-API SICHER (TIX UNLOCKED) ---
+    // --- 2. TRADING LOGIK (UNVERÄNDERT) ---
     const symbols = ns.stock.getSymbols();
     let totalLongValue = 0;
     let totalShortValue = 0;
 
-    // --- 3. PHASE 1: EXISTIERENDE POSITIONEN LIQUIDIEREN ---
     for (const sym of symbols) {
       const forecast = ns.stock.getForecast(sym);
       const [shares, avgPrice, sharesShort, avgPriceShort] = ns.stock.getPosition(sym);
 
-      if (shares > 0) {
-        totalLongValue += shares * ns.stock.getBidPrice(sym);
-      }
-      if (sharesShort > 0) {
-        totalShortValue += sharesShort * ns.stock.getAskPrice(sym);
-      }
+      if (shares > 0) totalLongValue += shares * ns.stock.getBidPrice(sym);
+      if (sharesShort > 0) totalShortValue += sharesShort * ns.stock.getAskPrice(sym);
 
       if (shares > 0 && forecast < 0.5) {
         const priceSold = ns.stock.sellStock(sym, shares);
@@ -185,32 +120,22 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // --- 4. PHASE 2: MARKTANALYSE & PORTFOLIO-PRIORISIERUNG ---
     const buyCandidates: { sym: string; forecast: number; type: "LONG" | "SHORT"; strength: number; }[] = [];
-
     for (const sym of symbols) {
       const forecast = ns.stock.getForecast(sym);
       const [shares, , sharesShort] = ns.stock.getPosition(sym);
 
       if (shares === 0 && sharesShort === 0) {
-        if (forecast > 0.6) {
-          buyCandidates.push({ sym, forecast, type: "LONG", strength: forecast - 0.5 });
-        }
-        else if (canShort && forecast < 0.4) {
-          buyCandidates.push({ sym, forecast, type: "SHORT", strength: 0.5 - forecast });
-        }
+        if (forecast > 0.6) buyCandidates.push({ sym, forecast, type: "LONG", strength: forecast - 0.5 });
+        else if (canShort && forecast < 0.4) buyCandidates.push({ sym, forecast, type: "SHORT", strength: 0.5 - forecast });
       }
     }
 
     buyCandidates.sort((a, b) => b.strength - a.strength);
 
-    // --- 5. PHASE 3: GEZIELTES KAPITAL-INVESTMENT (Unter Berücksichtigung der Reserve!) ---
     for (const candidate of buyCandidates) {
       const currentMoney = ns.getPlayer().money;
-      
-      // Wir halten die eiserne Reserve UND die dynamische Reserve für Programme zurück!
-      const activeReserve = Math.max(CASH_BUFFER, reserve);
-      const availableBudget = currentMoney - activeReserve;
+      const availableBudget = currentMoney - CASH_BUFFER;
 
       if (availableBudget < MIN_INVESTMENT) break;
 
@@ -246,7 +171,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // --- 6. STATE-UPDATE (SPUR 3 & 4) ---
     let progressString = "Suche Signale... 👀";
     if (totalLongValue > 0 || totalShortValue > 0) {
       const parts: string[] = [];
@@ -256,12 +180,10 @@ export async function main(ns: NS): Promise<void> {
     }
 
     patchState(ns, {
-      moneyReserve: reserve,
-      financeProgress: financeProgress,
       traderMode: "4S_ACTIVE",
       traderProgress: progressString
     });
 
-    await ns.sleep(6000); // 6s Taktung perfekt abgestimmt auf den 4S-Markttick
+    await ns.sleep(6000);
   }
 }

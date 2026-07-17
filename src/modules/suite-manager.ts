@@ -66,34 +66,34 @@ export function manageSuites(
 
   for (const node of networkNodes) {
     if (node === "home" || node === "darkweb" || node.startsWith("hacknet-node")) continue;
-    
-    // Vermeide w0r1d_d43m0n automatisiert im Überwachungs-Loop
     if (node === "w0r1d_d43m0n") continue; 
 
     if (ns.serverExists(node)) {
       const srv = ns.getServer(node);
-      // Wenn gerootet, aber kein Backdoor UND dein Level reicht JETZT aus -> Trigger setzen!
       if (srv.hasAdminRights && !srv.backdoorInstalled && !srv.purchasedByPlayer) {
         if (currentHackingLevel >= (srv.requiredHackingSkill ?? 0)) {
           backdoorIsNeeded = true;
-          break; // Ein einziger Kandidat reicht, um das Skript zu rechtfertigen
+          break; 
         }
       }
     }
   }
 
   if (backdoorIsNeeded) {
-    // Startet das Skript nur, wenn RAM frei ist UND es nicht ohnehin schon läuft
     tryLaunch(scripts.backdoor, [], () => {
       logger.info("Verifizierte Backdoor-Lücke im Netzwerk entdeckt. Starte Infiltration...");
     });
   }
 
-  // --- 📈 Finance Logik ---
-  if (homeMaxRam >= 64) {
+  // --- 📈 Finance Logik (Sperre unter 512GB RAM) ---
+  if (homeMaxRam >= 512) {
     tryLaunch(scripts.trade, [], () => {
       logger.success("Initialisiere Finanz-Subsystem...");
     });
+  } else if (ns.isRunning(scripts.trade, "home")) {
+    // 🛑 DEFENSIVER GEGEN-KILLSWITCH: Schützt den RAM, falls manuell gestartet
+    logger.warn(`Erzwinge Stopp von finance.js. Home-RAM (${ns.format.ram(homeMaxRam)}) unter 512GB.`);
+    ns.scriptKill(scripts.trade, "home");
   }
 
   // --- 👥 Sleeve Logik ---

@@ -1,3 +1,5 @@
+// utils/batch-planner.ts
+
 import { NS } from "@ns";
 import { calculateBatch, BatchPlan } from "./batch-calculator.js";
 import { getAllServers } from "../lib/network.js";
@@ -10,14 +12,12 @@ const SPACER = 80;
 const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000; // 60 Minuten
 
 export async function main(ns: NS): Promise<void> {
-  // Wir aktivieren Log-Ausgaben für die manuelle Diagnose im Terminal
   ns.disableLog("getServerMaxRam");
   ns.disableLog("getServerUsedRam");
 
   const bnMults = loadBnMults(ns);
   const currentState = loadState(ns);
-  const shareBufferPercent =
-    currentState?.fillerConfig?.shareMaxRamPercent || 0.0;
+  const shareBufferPercent = currentState?.fillerConfig?.shareMaxRamPercent || 0.0;
 
   // 1. Verfügbaren Netzwerk-RAM ermitteln
   const cachedServers = getAllServers(ns).sort(
@@ -25,26 +25,41 @@ export async function main(ns: NS): Promise<void> {
   );
 
   let totalUsableMaxRam = 0;
+  let currentFreeRamPool = 0;
+
   for (const server of cachedServers) {
     if (!ns.hasRootAccess(server)) continue;
+    
     let maxRam = ns.getServerMaxRam(server);
-    if (server === "home") maxRam = Math.max(0, maxRam - HOME_RAM_RESERVE);
+    let usedRam = ns.getServerUsedRam(server);
+
+    if (server === "home") {
+      maxRam = Math.max(0, maxRam - HOME_RAM_RESERVE);
+      usedRam = Math.min(maxRam, usedRam);
+    }
+
+    let freeRam = Math.max(0, maxRam - usedRam);
+
     if (server !== "home" && shareBufferPercent > 0) {
       maxRam = maxRam * (1 - shareBufferPercent);
+      freeRam = freeRam * (1 - shareBufferPercent);
     }
+
     totalUsableMaxRam += Math.floor(maxRam / SCRIPT_RAM_BASE) * SCRIPT_RAM_BASE;
+    currentFreeRamPool += Math.floor(freeRam / SCRIPT_RAM_BASE) * SCRIPT_RAM_BASE;
   }
 
-  // 2. Bestes Ziel ermitteln
+  // 2. Bestes Ziel ermitteln (Erzwinge Prüfung gegen AKTUELL FREIEN RAM)
   const target = findBestBatchTargetForNetwork(
     ns,
     cachedServers,
     totalUsableMaxRam,
+    currentFreeRamPool,
     bnMults,
   );
 
   if (!target) {
-    ns.print("🚨 KRITISCH: Kein einziges Ziel im Netzwerk konnte validiert werden!");
+    ns.print("🚨 KRITISCH: Kein Ziel passt in den aktuell freien RAM-Pool!");
     patchState(ns, {
       batcherTarget: undefined,
       batcherPlan: null,
@@ -55,10 +70,7 @@ export async function main(ns: NS): Promise<void> {
   // 3. Perfekten Plan schmieden
   const serverMock = ns.getServer(target);
   serverMock.hackDifficulty = serverMock.minDifficulty;
-  const weakenTime = ns.formulas!.hacking.weakenTime(
-    serverMock,
-    ns.getPlayer(),
-  );
+  const weakenTime = ns.formulas!.hacking.weakenTime(serverMock, ns.getPlayer());
 
   const maxConcurrentBatches = Math.max(1, Math.floor(weakenTime / SPACER));
   const idealBatchRam = totalUsableMaxRam / maxConcurrentBatches;
@@ -67,47 +79,29 @@ export async function main(ns: NS): Promise<void> {
   if (cachedServers.length > 0) {
     largestSingleServerRam = ns.getServerMaxRam(cachedServers[0]);
     if (cachedServers[0] === "home") {
-      largestSingleServerRam = Math.max(
-        0,
-        largestSingleServerRam - HOME_RAM_RESERVE,
-      );
+      largestSingleServerRam = Math.max(0, largestSingleServerRam - HOME_RAM_RESERVE);
     }
   }
 
-  const maxAllowedBatchRam = Math.min(idealBatchRam, largestSingleServerRam);
+  // 🛑 HARD-CAP: Eine Welle darf NIEMALS größer sein als der freie RAM-Pool
+  const maxAllowedBatchRam = Math.min(idealBatchRam, largestSingleServerRam, currentFreeRamPool);
   const dynamicMaxBatchesForTarget = Math.max(500, maxConcurrentBatches * 2);
 
   let currentGreedFactor = 0.9;
-  let lockPlan = calculateBatch(
-    ns,
-    target,
-    bnMults,
-    currentGreedFactor,
-    SPACER,
-  ) as BatchPlan | null;
+  let lockPlan = calculateBatch(ns, target, bnMults, currentGreedFactor, SPACER) as BatchPlan | null;
 
-  // 🟢 SAFED: Iterative Gier-Reduktion mit Schutz vor dem 0-Thread-Knick
   let lastValidPlan = lockPlan;
   while (currentGreedFactor > 0.005) {
     currentGreedFactor -= 0.01;
-    const nextPlan = calculateBatch(
-      ns,
-      target,
-      bnMults,
-      currentGreedFactor,
-      SPACER,
-    ) as BatchPlan | null;
+    const nextPlan = calculateBatch(ns, target, bnMults, currentGreedFactor, SPACER) as BatchPlan | null;
 
-    if (nextPlan === null) {
-      // Wenn das Verringern der Gier zu 0 Threads führt, brechen wir ab und behalten das letzte funktionierende Minimum
-      break;
-    }
+    if (nextPlan === null) break;
 
     lockPlan = nextPlan;
     lastValidPlan = nextPlan;
 
     if (lockPlan.totalRam <= maxAllowedBatchRam) {
-      break; // Plan passt in den Single-Server-Slot!
+      break; // Plan passt perfekt in den Slot und den freien RAM!
     }
   }
   
@@ -115,48 +109,33 @@ export async function main(ns: NS): Promise<void> {
     lockPlan = lastValidPlan;
   }
 
-  // 🟢 SAFED: Fallback auf den gesamten Pool (mit Schutz vor 0 Threads)
-  if (!lockPlan || lockPlan.totalRam > totalUsableMaxRam) {
+  // Fallback-Schleife ebenfalls gegen den freien Pool absichern
+  if (!lockPlan || lockPlan.totalRam > currentFreeRamPool) {
     currentGreedFactor = 0.4;
-    lockPlan = calculateBatch(
-      ns,
-      target,
-      bnMults,
-      currentGreedFactor,
-      SPACER,
-    ) as BatchPlan | null;
-    
+    lockPlan = calculateBatch(ns, target, bnMults, currentGreedFactor, SPACER) as BatchPlan | null;
     lastValidPlan = lockPlan;
 
     while (currentGreedFactor > 0.005) {
       currentGreedFactor -= 0.01;
-      const nextPlan = calculateBatch(
-        ns,
-        target,
-        bnMults,
-        currentGreedFactor,
-        SPACER,
-      ) as BatchPlan | null;
+      const nextPlan = calculateBatch(ns, target, bnMults, currentGreedFactor, SPACER) as BatchPlan | null;
 
-      if (nextPlan === null) {
-        break;
-      }
+      if (nextPlan === null) break;
 
       lockPlan = nextPlan;
       lastValidPlan = nextPlan;
 
-      if (lockPlan.totalRam <= totalUsableMaxRam) {
-        break; // Passt in den Gesamtpool!
+      if (lockPlan.totalRam <= currentFreeRamPool) {
+        break; 
       }
     }
 
-    if (lockPlan && lockPlan.totalRam > totalUsableMaxRam && lastValidPlan) {
+    if (lockPlan && lockPlan.totalRam > currentFreeRamPool && lastValidPlan) {
       lockPlan = lastValidPlan;
     }
   }
 
   // 4. Plan in State einfrieren
-  if (lockPlan && lockPlan.totalRam <= totalUsableMaxRam) {
+  if (lockPlan && lockPlan.totalRam <= currentFreeRamPool) {
     ns.print(`🎯 Erfolg! Ziel gewählt: ${target} (${ns.format.ram(lockPlan.totalRam)} RAM pro Welle)`);
     patchState(ns, {
       batcherTarget: target,
@@ -164,7 +143,7 @@ export async function main(ns: NS): Promise<void> {
       batcherDynamicMaxBatches: dynamicMaxBatchesForTarget,
     });
   } else {
-    ns.print(`🛑 FEHLER: Finaler Plan überschreitet immer noch das Gesamtnetzwerk-RAM.`);
+    ns.print(`🛑 FEHLER: Finaler Plan überschreitet den freien RAM-Pool immer noch.`);
     patchState(ns, {
       batcherTarget: undefined,
       batcherPlan: null,
@@ -176,6 +155,7 @@ function findBestBatchTargetForNetwork(
   ns: NS,
   allServers: string[],
   totalNetworkRam: number,
+  currentFreeRamPool: number,
   bnMults: any,
 ): string | null {
   const targets = allServers.filter(
@@ -186,55 +166,40 @@ function findBestBatchTargetForNetwork(
   const playerHackLevel = ns.getHackingLevel();
 
   ns.print(`=== NETZWERK-DIAGNOSE ===`);
-  ns.print(`Verfügbares Pool-RAM: ${ns.format.ram(totalNetworkRam)}`);
+  ns.print(`Maximaler Pool-RAM: ${ns.format.ram(totalNetworkRam)}`);
+  ns.print(`Aktuell freier RAM: ${ns.format.ram(currentFreeRamPool)}`);
 
-  if (totalNetworkRam <= 0) {
-    ns.print("⚠️ WARNUNG: Usable Network-RAM ist 0 GB! Reserven oder Share-Percent prüfen!");
-    return null;
-  }
+  if (currentFreeRamPool <= 0) return null;
 
   for (const s of targets) {
     if (ns.getServerRequiredHackingLevel(s) > playerHackLevel) continue;
 
-    const startGreed = totalNetworkRam < 256 ? 0.01 : 0.1;
+    // Defensiver Start-Gierfaktor im Early Game
+    const startGreed = currentFreeRamPool < 256 ? 0.01 : 0.1;
     let testPlan: BatchPlan | null = null;
 
-    // 🟢 DYNAMISCHE GIER-ANPASSUNG NACH OBEN
-    // Falls die Gier so klein ist, dass 0 Threads entstehen, tasten wir uns hoch,
-    // bis wir die mathematische Untergrenze für genau 1 Hack-Thread erreichen.
     for (let greed = startGreed; greed <= 0.95; greed += 0.05) {
-      testPlan = calculateBatch(
-        ns,
-        s,
-        bnMults,
-        greed,
-        SPACER,
-      ) as BatchPlan | null;
-      if (testPlan !== null) {
-        break; // Mindestens 1 Hack-Thread gefunden!
-      }
+      testPlan = calculateBatch(ns, s, bnMults, greed, SPACER) as BatchPlan | null;
+      if (testPlan !== null) break; 
     }
 
-    if (!testPlan) {
-      ns.print(`[${s}] ❌ Übersprungen: Selbst bei 95% Gier kein gültiger Plan.`);
-      continue;
-    }
+    if (!testPlan) continue;
 
-    if (testPlan.totalRam > totalNetworkRam) {
-      ns.print(`[${s}] ❌ RAM-Limit: Benötigt ${ns.format.ram(testPlan.totalRam)} (Pool hat nur ${ns.format.ram(totalNetworkRam)})`);
+    // 🛑 DER REAL-TIME FILTER:
+    // Wenn die absolute Minimalwelle (1 Hack-Thread) größer ist als das, was JETZT gerade frei ist,
+    // überspringen wir den Server rigoros.
+    if (testPlan.totalRam > currentFreeRamPool) {
+      ns.print(`[${s}] ❌ RAM-Mangel: Mindestwelle benötigt ${ns.format.ram(testPlan.totalRam)} (Frei: ${ns.format.ram(currentFreeRamPool)})`);
       continue;
     }
 
     const idealExecutionTime = testPlan.executionTime;
-    if (idealExecutionTime > DYNAMIC_MAX_WEAKEN_TIME) {
-      ns.print(`[${s}] ❌ Zeitlimit: Laufzeit ${(idealExecutionTime / 1000 / 60).toFixed(1)} Min zu lang.`);
-      continue;
-    }
+    if (idealExecutionTime > DYNAMIC_MAX_WEAKEN_TIME) continue;
 
     const money = ns.getServerMaxMoney(s);
     const score = money / idealExecutionTime;
     
-    ns.print(`[${s}]  Validiert! Score: ${ns.format.number(score)} (RAM: ${ns.format.ram(testPlan.totalRam)})`);
+    ns.print(`[${s}] ✅ Validiert! Score: ${ns.format.number(score)} (RAM: ${ns.format.ram(testPlan.totalRam)})`);
 
     if (score > highestScore) {
       highestScore = score;
