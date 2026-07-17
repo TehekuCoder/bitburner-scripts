@@ -28,7 +28,6 @@ export async function main(ns: NS): Promise<void> {
   logger.info("Initialisiere Netzwerk-Multiplikatoren...");
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
 
-  // Gekapselter Metric-Tracker
   const metricTracker = new MetricTracker();
 
   let cachedFallbackTarget = "n00dles";
@@ -39,14 +38,13 @@ export async function main(ns: NS): Promise<void> {
   let allNetworkServers: string[] = [];
   let lastNetworkScan = 0;
 
-  // --- Absolute Pfade für Hilfsskripte (Bereinigt!) ---
-  const sysBatcherScript = "core/sys-batcher.js";
+  // 🟢 ÄNDERUNG: Auf den neuen JIT-Batcher umgewiesen
+  const sysBatcherScript = "core/sys-jit-batcher.js"; 
   const fillRamScript = "utils/fill-ram.js";
 
   while (true) {
     const now = Date.now();
 
-    // --- THROTTLED NETZWERK SCAN ---
     if (
       now - lastNetworkScan > REFRESH_INTERVALS.NETWORK_SCAN ||
       allNetworkServers.length === 0
@@ -56,10 +54,7 @@ export async function main(ns: NS): Promise<void> {
       lastNetworkScan = now;
     }
 
-    // --- STATE LADEN ---
     const currentState = loadState(ns);
-    
-    // Typisierung korrigiert auf Partial (keine Compiler-Fehler mehr!)
     const factionTargets = (currentState?.factionTargets ?? {}) as Partial<Record<FactionName, number>>;
 
     const p = ns.getPlayer();
@@ -75,7 +70,6 @@ export async function main(ns: NS): Promise<void> {
       lastCorpApplication = now;
     }
 
-    // --- INFRASTRUKTUR VORABBERECHNUNG ---
     const pServers = ns.cloud.getServerNames();
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
@@ -89,10 +83,9 @@ export async function main(ns: NS): Promise<void> {
     const canRunBatcher =
       hasFormulas && (homeMaxRam >= BATCHER_MIN_RAM || maxNetworkRam >= 32);
 
-    // --- STRATEGIE-MATRIX VARIABLEN ---
     const playerMoney = p.money;
     const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
-    const crimeMoneyMult = bnMults.CrimeMoney ?? 1; // 🟢 Diese Zeile wieder einfügen!
+    const crimeMoneyMult = bnMults.CrimeMoney ?? 1; 
 
     const BASE_MONEY_THRESHOLD = factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
     const lastStrategy = currentState?.strategy || "MONEY";
@@ -108,7 +101,6 @@ export async function main(ns: NS): Promise<void> {
       currentFactionReps[f] = ns.singularity.getFactionRep(f);
     }
 
-    // FactionTargets wird hier sicher verwendet, da der Initializer sie garantiert befüllt hat
     const nextRoadmapFaction = findNextRoadmapFaction(
       p,
       currentFactionReps,
@@ -125,7 +117,6 @@ export async function main(ns: NS): Promise<void> {
       pServers.some((s) => ns.getServerMaxRam(s) < 64);
     const isRushActive = hasFormulas && homeMaxRam >= 256 && lacksPservers;
 
-    // --- STRATEGIE ENTSCHEIDUNG (MODUL!) ---
     const strategy = determineStrategy(
       ns,
       p,
@@ -142,7 +133,6 @@ export async function main(ns: NS): Promise<void> {
 
     let { mode, targetFaction, targetCompany, targetStat } = strategy;
 
-    // --- FALLBACK TARGET UPDATE ---
     if (
       now - lastFallbackUpdate > REFRESH_INTERVALS.FALLBACK_TARGET ||
       cachedFallbackTarget === "n00dles"
@@ -157,7 +147,6 @@ export async function main(ns: NS): Promise<void> {
       lastFallbackUpdate = now;
     }
 
-    // --- COOLDOWN ENGINE (SCHONFRIST) ---
     const previousStrategy = currentState?.strategy || "MONEY";
 
     if (mode !== previousStrategy) {
@@ -178,7 +167,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // --- METRIK-ERFASSUNG ---
     let currentVal = 0;
     let targetVal = 0;
     let label = "";
@@ -209,7 +197,6 @@ export async function main(ns: NS): Promise<void> {
 
     const etaStr = metricTracker.getEtaString(mode, currentVal, targetVal);
 
-    // --- UI DASHBOARD UPDATE ---
     const finalBar = generateProgressBar(ns, {
       mode,
       label,
@@ -228,7 +215,6 @@ export async function main(ns: NS): Promise<void> {
       currentState,
     });
 
-    // --- NETZWERK- & WORKER-EINSTELLUNGEN ---
     let sharePercent = 0.0;
     if (mode === "REP") sharePercent = 0.4;
     if (mode === "MONEY") sharePercent = 0.1;
@@ -245,34 +231,30 @@ export async function main(ns: NS): Promise<void> {
       logger.info("Batcher nicht ausführbar. 'fill-ram.js' beendet.");
     }
 
-// ... (Zeile ~350 im Dispatcher)
+    const isBatcherRunning = ns.isRunning(sysBatcherScript, "home");
 
-const isBatcherRunning = ns.isRunning(sysBatcherScript, "home");
+    patchState(ns, {
+      strategy: mode,
+      targetFaction: targetFaction || undefined,
+      targetCompany: targetCompany,
+      targetStat: mode === "TRAIN" ? targetStat : undefined,
+      targetKills: mode === "KILLS" ? targetStat : undefined,
+      progressBar: finalBar,
+      
+      batcherActive: isBatcherRunning, 
+      
+      // Wenn er läuft, lassen wir die Keys unberührt, damit der JIT-Batcher ungestört in den Port schreiben kann!
+      ...(isBatcherRunning ? {} : { 
+        batcherProgress: "Inaktiv", 
+        batcherTarget: undefined,
+        batcherRamNeeded: 0 
+      }),
 
-patchState(ns, {
-  strategy: mode,
-  targetFaction: targetFaction || undefined,
-  targetCompany: targetCompany,
-  targetStat: mode === "TRAIN" ? targetStat : undefined,
-  targetKills: mode === "KILLS" ? targetStat : undefined,
-  progressBar: finalBar,
-  
-  // 🟢 System-Status des Batchers
-  batcherActive: isBatcherRunning, 
-  
-  // 🟢 Cleanup: Wenn der Batcher nicht läuft, setzen wir Progress & Target zurück.
-  // Wenn er läuft, lassen wir die Keys weg, damit wir die Werte des Batchers nicht überschreiben!
-  ...(isBatcherRunning ? {} : { 
-    batcherProgress: "Inaktiv", 
-    batcherTarget: undefined,
-    batcherRamNeeded: 0 
-  }),
-
-  fillerConfig: {
-    shareMaxRamPercent: sharePercent,
-    maxXpLevel: dynamicMaxXp,
-  },
-});
+      fillerConfig: {
+        shareMaxRamPercent: sharePercent,
+        maxXpLevel: dynamicMaxXp,
+      },
+    });
 
     const isEarlyGameCrime =
       homeMaxRam < 128 &&
@@ -295,7 +277,6 @@ patchState(ns, {
       }
     }
 
-    // --- WORKER ALLOKATION ---
     const workerScript = mode === "XP_SPRINT" ? "tasks/xp-grind.js" : "tasks/work.js";
     const obsoleteScript = mode === "XP_SPRINT" ? "tasks/work.js" : "tasks/xp-grind.js";
 
@@ -313,7 +294,7 @@ patchState(ns, {
       if (!ns.isRunning(sysBatcherScript, "home") && getFreeRam() > 15) {
         ns.run(sysBatcherScript, 1);
         logger.success(
-          "🔥 System-Voraussetzungen erfüllt: 'sys-batcher.js' gestartet.",
+          `🔥 System-Voraussetzungen erfüllt: '${sysBatcherScript}' gestartet.`,
         );
       }
 
@@ -406,16 +387,8 @@ patchState(ns, {
       ns.run(fillRamScript, 1);
     }
 
-    manageMicroservices(ns, mode, hasSavingTarget, logger, targetStat);
-
-    if (mode === "MONEY" && !hasSavingTarget && canRunBatcher) {
-      if (ns.singularity.getCurrentWork()) {
-        logger.info(
-          "Batcher läuft ohne offene Sparziele. Manuelle Arbeit gestoppt.",
-        );
-        ns.singularity.stopAction();
-      }
-    }
+    // 🟢 Übergebe hier den korrekten Skriptnamen, um Race-Conditions im Microservice-Manager zu fixen
+    manageMicroservices(ns, mode, hasSavingTarget, logger, sysBatcherScript, targetStat);
 
     await ns.sleep(2000);
   }
@@ -426,6 +399,7 @@ function manageMicroservices(
   currentMode: string,
   hasSavingTarget: boolean,
   logger: Logger,
+  sysBatcherScript: string, // 🟢 Parameter hinzugefügt
   targetStat?: number,
 ): void {
   const modeToScript: Record<string, string> = {
@@ -440,9 +414,10 @@ function manageMicroservices(
 
   let targetScript = modeToScript[currentMode];
 
+  // 🟢 ÄNDERUNG: Nutzt jetzt den dynamischen JIT-Pfad statt des hartcodierten alten Namens
   if (
     currentMode === "MONEY" &&
-    (hasSavingTarget || !ns.isRunning("core/sys-batcher.js", "home"))
+    (hasSavingTarget || !ns.isRunning(sysBatcherScript, "home"))
   ) {
     targetScript = "tasks/crime.js";
   }

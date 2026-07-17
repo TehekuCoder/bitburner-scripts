@@ -11,30 +11,27 @@ export interface BatchPlan {
   weaken1Delay: number;
   growDelay: number;
   weaken2Delay: number;
+  // 🟢 NEU FÜR JIT: Puren Laufzeiten für die absolute Terminplanung
+  hackTime: number;
+  growTime: number;
+  weakenTime: number;
   totalRam: number;
   executionTime: number;
 }
 
-// 📌 Globale Skriptpfade (Verhindert fatale RAM-Fehlkalkulationen durch Pfadmismatch)
 const PATH_HACK = "/tasks/hack.js";
 const PATH_GROW = "/tasks/grow.js";
 const PATH_WEAKEN = "/tasks/weaken.js";
 
 /**
  * Berechnet einen mathematisch präzisen HWGW-Batch-Plan unter Idealbedingungen.
- * 
- * @param ns Die Netscript-Umgebung
- * @param targetName Name des Zielservers
- * @param bnMults Aktuelle BitNode-Multiplikatoren für die Skalierung der Weaken-Potenz
- * @param hackPercent Prozentualer Anteil des Geldes, der entzogen werden soll (Gier-Faktor)
- * @param spacer Zeitlicher Sicherheitsabstand zwischen den Wellen-Einschlägen in ms
  */
 export function calculateBatch(
   ns: NS,
   targetName: string,
   bnMults: any = DEFAULT_MULTIPLIERS,
   hackPercent = 0.04,
-  spacer = 80 // Synchronisiert auf das Standardraster des Kernels
+  spacer = 80 
 ): BatchPlan | null {
   if (!ns.formulas || !ns.formulas.hacking) return null;
 
@@ -43,7 +40,7 @@ export function calculateBatch(
 
   if (!server.moneyMax || server.moneyMax <= 0) return null;
 
-  // 1. Virtuellen Server auf Idealbedingungen setzen (Fundament des zyklischen Batchings)
+  // 1. Virtuellen Server auf Idealbedingungen setzen
   server.hackDifficulty = server.minDifficulty;
   server.moneyAvailable = server.moneyMax;
 
@@ -54,18 +51,17 @@ export function calculateBatch(
   let hackThreads = Math.floor(hackPercent / pctPerThread);
   if (hackThreads < 1) return null; 
 
-  // 📊 Dynamische Weaken-Effektivität (BitNode-Skalierung einrechnen)
+  // 📊 Dynamische Weaken-Effektivität
   const weakenPotency = 0.05 * (bnMults.ServerWeakenRate ?? 1.0);
 
-  // 3. Weaken 1 Phase berechnen (Kompensation des Hack-Sicherheitsanstiegs)
+  // 3. Weaken 1 Phase berechnen
   const hackSecIncrease = ns.hackAnalyzeSecurity(hackThreads);
   const weaken1Threads = Math.ceil(hackSecIncrease / weakenPotency);
 
-  // 4. Server-Zustand für die anschließende Grow-Simulation modifizieren
-  // Verhindert rechnerischen Absturz auf 0 Dollar bei aggressiven Gier-Faktoren
+  // 4. Server-Zustand für Grow-Simulation modifizieren
   server.moneyAvailable = Math.max(1, server.moneyMax * (1 - hackThreads * pctPerThread));
 
-  // 5. Grow-Phase & Weaken 2 Phase berechnen (Kompensation des Grow-Sicherheitsanstiegs)
+  // 5. Grow-Phase & Weaken 2 Phase berechnen
   const growThreads = Math.ceil(ns.formulas.hacking.growThreads(server, player, server.moneyMax));
   const growSecIncrease = ns.growthAnalyzeSecurity(growThreads, targetName);
   const weaken2Threads = Math.ceil(growSecIncrease / weakenPotency);
@@ -75,14 +71,15 @@ export function calculateBatch(
   const tG = ns.formulas.hacking.growTime(server, player);
   const tH = ns.formulas.hacking.hackTime(server, player);
 
-  // 7. Präzise Delays für das HWGW-Timing ermitteln (Desync-Präventionsraster)
+  // 7. Präzise Delays (Bleiben für Legacy-Zwecke oder relative Berechnungen erhalten)
   const hackDelay = tW - spacer - tH;
   const weaken1Delay = 0;
   const growDelay = tW + spacer - tG;
   const weaken2Delay = spacer * 2;
 
-  // Failsafe: Falls die Serverlaufzeiten zu kurz für das Spacing-Raster sind
-  if (hackDelay < 0 || growDelay < 0) return null;
+  // 🔴 JIT-ANPASSUNG: growDelay < 0 bleibt ein Failsafe, aber ein negatives hackDelay 
+  // ist für den JIT-Scheduler kein Problem mehr, da wir echte Timestamps nutzen!
+  if (growDelay < 0 || tW <= 0) return null;
 
   // 8. Atomare RAM-Kosten exakt ermitteln
   const ramHack = ns.getScriptRam(PATH_HACK);
@@ -105,6 +102,10 @@ export function calculateBatch(
     weaken1Delay,
     growDelay,
     weaken2Delay,
+    // 🟢 NEU FÜR JIT: Werte direkt in den Plan schreiben
+    hackTime: tH,
+    growTime: tG,
+    weakenTime: tW,
     totalRam,
     executionTime: tW + spacer * 2,
   };

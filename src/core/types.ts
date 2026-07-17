@@ -16,7 +16,6 @@ export interface ScriptList {
   sleeve: string;
   dashboard: string;
 }
-// core/types.ts
 
 export interface BatchPlan {
   target: string;
@@ -28,6 +27,10 @@ export interface BatchPlan {
   weaken1Delay: number;
   growDelay: number;
   weaken2Delay: number;
+  // 🟢 Synchronisiert mit utils/batch-calculator.ts
+  hackTime: number;
+  growTime: number;
+  weakenTime: number;
   totalRam: number;
   executionTime: number;
 }
@@ -44,4 +47,14 @@ export interface WorkerNode {
   hostname: string;
   freeRam: number;
   maxRam: number;
+}
+
+export interface JitEvent {
+  id: string;          // Eindeutige ID (z.B. "batch-42-hack")
+  batchId: number;     // Zuordnung zur Welle
+  script: string;      // "tasks/hack.js", etc.
+  threads: number;
+  target: string;
+  startTime: number;   // Absoluter Unix-Zeitstempel (Date.now() + X), wann das exec() feuern MUSS
+  landTime: number;    // Wann der Effekt einschlagen soll (für das Monitoring)
 }

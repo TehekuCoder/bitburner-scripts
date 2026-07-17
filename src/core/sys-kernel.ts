@@ -1,12 +1,11 @@
 import { NS } from "@ns";
-import { loadState, patchState, saveState } from "./state-manager.js";
-import { getAllServers, breakAndInfectNetwork } from "../lib/network.js";
+import { loadState, patchState } from "./state-manager.js";
 import { Logger } from "./logger.js";
-import { deployWorker } from "../utils/deployment.js";
 import { ScriptList } from "./types.js";
 
 export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "Kernel", "INFO");
+  ns.disableLog("ALL");
 
   const scripts: ScriptList = {
     worker: "tasks/work.js",
@@ -25,252 +24,87 @@ export async function main(ns: NS): Promise<void> {
     dashboard: "core/sys-dashboard.js",
   };
 
-  ns.disableLog("ALL");
-
-  // --- 🔄 BOOT-SEQUENCE: ENVIRONMENT INITIALIZATION ---
-  logger.info("Starte System-Initializer...");
+  // --- 🔄 BOOT-SEQUENCE: INITIALIZER ---
+  logger.info("Initiiere System-Boot...");
   const initPid = ns.run("core/sys-initializer.js", 1);
-
   if (initPid === 0) {
-    logger.error("Kritischer Fehler: sys-initializer.js konnte nicht gestartet werden!");
+    logger.error("Kritischer Boot-Fehler: Initializer konnte nicht gestartet werden!");
     return;
   }
-
   while (ns.isRunning(initPid)) {
     await ns.sleep(50);
   }
-  logger.success("System-Initialisierung abgeschlossen.");
 
-  // --- 📡 SICHERER STATE-MERGE ---
-  logger.info("Verbinde mit globalem State-Port...");
+  // --- 📡 INITIAL STATE SETTING ---
   const existingState = (loadState(ns) || {}) as Record<string, any>;
-
   patchState(ns, {
     strategy: existingState.strategy || "MONEY",
-    progressBar: existingState.progressBar || "Kernel erfolgreich gestartet.",
-    batcherProgress: existingState.batcherProgress || "Inaktiv",
-    financeProgress: existingState.financeProgress || "Berechne Budget...",
-    traderProgress: existingState.traderProgress || "Kein Depot",
-    hacknetProgress: existingState.hacknetProgress || "Inaktiv",
-    currentBitNode: existingState.currentBitNode || 1,
-    currentBitNodeLevel: existingState.currentBitNodeLevel || 1,
-    sourceFiles: existingState.sourceFiles || {},
-    hasDarkScapeNavigator: existingState.hasDarkScapeNavigator || false,
-    hasTorRouter: existingState.hasTorRouter || false,
-    hasGang: existingState.hasGang || false,
-    hasCorporation: existingState.hasCorporation || false,
-    hasBladeburner: existingState.hasBladeburner || false,
+    progressBar: "Kernel operativ. Warte auf Subsysteme.",
     allServers: existingState.allServers || [],
     kernelTarget: existingState.kernelTarget || "n00dles",
   });
 
-  if (!ns.scriptRunning("core/sys-hud.js", "home")) {
-    logger.info("Starte HUD-Overlay...");
-    ns.run("core/sys-hud.js", 1);
-  }
-
+  // --- 🖥️ CORE UI BOOT ---
+  if (!ns.scriptRunning("core/sys-hud.js", "home")) ns.run("core/sys-hud.js", 1);
   if (ns.fileExists(scripts.dashboard, "home") && !ns.scriptRunning(scripts.dashboard, "home")) {
-    logger.success("Starte Consolidated Operational Dashboard...");
     ns.run(scripts.dashboard, 1);
   }
 
-  let lastRootCount = -1;
-  let lastStrategy = "";
-  let lastProgressBar = "";
-  let lastDeployedTarget = "";
-  let lastDeployedStrategy = "";
-  let lastProbeTime = 0;
-
-  let allNodes: string[] = [];
-  let lastNetworkScan = 0;
-  const NETWORK_SCAN_INTERVAL = 30000;
+  // Pfade für die beiden Flotten-Modi
+  const earlyFleetScript = "core/sys-early-fleet.js";
 
   while (true) {
-    const now = Date.now();
-
-    // --- THROTTLED NETZWERK SCAN ---
-    if (now - lastNetworkScan > NETWORK_SCAN_INTERVAL || allNodes.length === 0) {
-      breakAndInfectNetwork(ns);
-      allNodes = getAllServers(ns);
-      lastNetworkScan = now;
-    }
-
-    const currentRootCount = allNodes.filter((n) => ns.hasRootAccess(n)).length;
-    const networkChanged = currentRootCount !== lastRootCount;
-    lastRootCount = currentRootCount;
-
     const homeMax = ns.getServerMaxRam("home");
-    const player = ns.getPlayer();
     const currentState = loadState(ns);
-
-    let bnMults: Record<string, number> = {};
-    try {
-      const fileContent = ns.read("/bn-multipliers.txt");
-      if (fileContent) {
-        bnMults = JSON.parse(fileContent);
-      }
-    } catch (_) {}
-
-    // --- 💰 DYNAMISCHER FINANZ-PROTEKTOR (ANTI-P-SERVER-LOCK) ---
-    let homeUpgradeCost = 0;
-    try {
-      // Holt die exakten Kosten für das nächste Home-RAM Upgrade via Singularity
-      homeUpgradeCost = ns.singularity.getUpgradeHomeRamCost();
-    } catch (_) {}
-
-    // Wenn wir unter 256 GB sind, sperren wir das Geld für P-Server!
-    let dynamicReserve = currentState?.moneyReserve || 0;
-    if (homeMax < 256 && homeUpgradeCost > 0) {
-      dynamicReserve = homeUpgradeCost;
-    }
-
-    // --- 📡 DYNAMISCHE PROGRESSION-PROBES & TARGETING ---
-    if (now - lastProbeTime > 15000) {
-      const freeRam = homeMax - ns.getServerUsedRam("home");
-
-      if (homeMax >= 8 && !ns.isRunning("utils/probe-sing.js", "home")) {
-        if (freeRam >= 3.6) ns.run("utils/probe-sing.js", 1);
-      }
-      if (homeMax >= 16 && !ns.isRunning("utils/probe-gang.js", "home")) {
-        if (freeRam >= 5.6) ns.run("utils/probe-gang.js", 1);
-      }
-      if (homeMax >= 16 && !ns.isRunning("utils/probe-blade.js", "home")) {
-        if (freeRam >= 5.6) ns.run("utils/probe-blade.js", 1);
-      }
-      if (homeMax >= 128 && !ns.isRunning("utils/probe-corp.js", "home")) {
-        if (freeRam >= 81.6) ns.run("utils/probe-corp.js", 1);
-      }
-      if (!ns.isRunning("utils/probe-target.js", "home")) {
-        if (freeRam >= 4.3) {
-          ns.run("utils/probe-target.js", 1);
-        }
-      }
-      lastProbeTime = now;
-    }
-
-    let activeStrategy = currentState?.strategy || "MONEY";
-    let activeProgressBar = currentState?.progressBar || "";
-
-    // ⚡ OPTIMIERUNG: Erlaubt den Dispatcher bereits ab 64 GB RAM statt 256 GB!
-    const isDispatcherReady = homeMax >= 64 && ns.fileExists(scripts.dispatcher, "home");
-
-    if (!isDispatcherReady) {
-      const hackingEfficiency = (bnMults.ServerMaxMoney ?? 1.0) * (bnMults.ScriptHackMoneyGain ?? 1.0);
-      const hackingExpMult = bnMults.HackingLevelMultiplier ?? 1.0;
-
-      if (hackingEfficiency === 0) {
-        activeStrategy = "XP_SPRINT";
-        activeProgressBar = "📉 BN-Sonderregel: Hacking wirft kein Geld ab! Fokus auf XP-Sprint.";
-      } else if (hackingEfficiency < 0.2 && player.money < 50_000_000 && (bnMults.CrimeMoney ?? 1.0) > 0.5) {
-        activeStrategy = "CRIME";
-        activeProgressBar = `🥷 Hacking ineffizient (${(hackingEfficiency * 100).toFixed(0)}%). Starte Verbrechen-Grind.`;
-      } else {
-        const combatAvg = (player.skills.strength + player.skills.defense + player.skills.dexterity + player.skills.agility) / 4;
-
-        if ((bnMults.CompanyWorkMoney ?? 1.0) > 1.2 && combatAvg >= 30) {
-          activeStrategy = "CORP";
-          activeProgressBar = `🏢 BN-Spezial: Firmen-Arbeit stark skaliert (${((bnMults.CompanyWorkMoney ?? 1.0) * 100).toFixed(0)}%).`;
-        } else {
-          activeStrategy = "MONEY";
-          activeProgressBar = `💻 Hacking-Fleet aktiv (Warte auf 64GB RAM für Batcher)`;
-        }
-      }
-
-      if (activeStrategy === "XP_SPRINT" && hackingExpMult < 0.2) {
-        activeProgressBar = `⚠️ XP-Sprint aktiv, aber BN-Hacking-XP ist stark gedrosselt (${(hackingExpMult * 100).toFixed(0)}%)!`;
-      }
-
-      if (activeStrategy !== lastStrategy || activeProgressBar !== lastProgressBar) {
-        patchState(ns, {
-          strategy: activeStrategy,
-          progressBar: activeProgressBar,
-        });
-        lastStrategy = activeStrategy;
-        lastProgressBar = activeProgressBar;
-      }
-    } else {
-      activeStrategy = currentState?.strategy || "MONEY";
-      activeProgressBar = currentState?.progressBar || "";
-    }
-
-    const bestTarget = currentState?.kernelTarget || "n00dles";
-    const currentTor = ns.scan("home").includes("darkweb");
-    const currentGang = currentState?.hasGang || false;
-    const currentCorp = currentState?.hasCorporation || false;
-    const currentBlade = currentState?.hasBladeburner || false;
     const hasNavigator = ns.fileExists("DarkscapeNavigator.exe", "home");
 
+    // --- 🤖 SUBSYSTEM ORCHESTRATION ---
+
+    // 1. Suite-Manager Daemon (Ab 16GB)
     if (homeMax >= 16 && !ns.isRunning("core/sys-suites.js", "home")) {
-      const freeRam = homeMax - ns.getServerUsedRam("home");
-      if (freeRam >= 12.0) {
-        logger.info("Starte Suite-Manager Daemon...");
+      if ((homeMax - ns.getServerUsedRam("home")) >= 12.0) {
         ns.run("core/sys-suites.js", 1);
       }
     }
 
-    let isDispatcherRunning = ns.isRunning(scripts.dispatcher, "home");
-
-    if (isDispatcherReady && !isDispatcherRunning) {
-      logger.info("Starte zentralen System-Dispatcher (Dispatcher-Modus aktiv)...");
-      ns.run(scripts.dispatcher, 1);
-      isDispatcherRunning = true;
-    }
-
+    // 2. Infrastruktur-Manager (Immer aktiv für P-Server/Upgrades)
     if (ns.fileExists(scripts.infra, "home") && !ns.isRunning(scripts.infra, "home")) {
-      logger.info("Starte Infrastruktur-Manager...");
       ns.run(scripts.infra, 1);
     }
 
-    if (hasNavigator && ns.fileExists(scripts.dnet, "home") && !ns.isRunning(scripts.dnet, "home")) {
-      logger.info("Starte Darknet-Master Daemon...");
-      ns.run(scripts.dnet, 1);
+    // 3. Darknet- / Crawler-Daemons (Nur wenn Navigator vorhanden)
+    if (hasNavigator) {
+      if (ns.fileExists(scripts.dnet, "home") && !ns.isRunning(scripts.dnet, "home")) ns.run(scripts.dnet, 1);
+      if (ns.fileExists(scripts.crawler, "home") && !ns.isRunning(scripts.crawler, "home")) ns.run(scripts.crawler, 1);
     }
 
-    if (hasNavigator && ns.fileExists(scripts.crawler, "home") && !ns.isRunning(scripts.crawler, "home")) {
-      logger.info("Starte Darknet-Crawler...");
-      ns.run(scripts.crawler, 1);
-    }
+    // --- ⚡ DYNAMISCHER FLOTTEN-MODUS SHIFT ---
+    const isDispatcherReady = homeMax >= 64 && ns.fileExists(scripts.dispatcher, "home");
 
-    // --- 🧹 CLEANUP & WORKER DEPLOYMENT (Nur wenn Dispatcher schläft) ---
-    if (!isDispatcherRunning) {
-      const targetChanged = bestTarget !== lastDeployedTarget;
-      const strategyChanged = activeStrategy !== lastDeployedStrategy;
-
-      if (targetChanged || strategyChanged || networkChanged) {
-        let activeScript = activeStrategy === "XP_SPRINT" ? scripts.xpfarm : scripts.worker;
-
-        for (const node of allNodes) {
-          if (!ns.hasRootAccess(node)) continue;
-          if (node === "home" && ["TRAIN", "CORP", "CRIME"].includes(activeStrategy)) continue;
-
-          let ramBuffer = 0;
-          if (node === "home") {
-            const weakenModifier = (bnMults.ServerWeakenRate ?? 1.0) < 1.0 ? Math.ceil(16 / (bnMults.ServerWeakenRate ?? 1.0)) : 0;
-            const baseBuffer = ["CRIME", "TRAIN", "CORP", "XP_SPRINT"].includes(activeStrategy) ? 24 : 8;
-            ramBuffer = Math.min(baseBuffer + weakenModifier, homeMax * 0.4);
-          }
-
-          deployWorker(ns, node, activeScript, bestTarget, ramBuffer, scripts);
-        }
-
-        lastDeployedTarget = bestTarget;
-        lastDeployedStrategy = activeStrategy;
+    if (isDispatcherReady) {
+      // Modus: Advanced Batching
+      if (ns.isRunning(earlyFleetScript, "home")) {
+        logger.info("Upgrade auf Advanced Batcher. Stoppe Early-Fleet...");
+        ns.scriptKill(earlyFleetScript, "home");
+      }
+      if (!ns.isRunning(scripts.dispatcher, "home")) {
+        logger.success("Starte zentralen System-Dispatcher...");
+        ns.run(scripts.dispatcher, 1);
+      }
+    } else {
+      // Modus: Early-Game Basic Hacking / XP Grind
+      if (!ns.isRunning(earlyFleetScript, "home") && ns.fileExists(earlyFleetScript, "home")) {
+        logger.info("Dispatcher nicht bereit (<64GB). Starte Early-Fleet Manager...");
+        ns.run(earlyFleetScript, 1);
       }
     }
 
-    // Synchronisiere alle ermittelten Werte inklusive der neuen dynamicReserve
+    // Passt die globalen Netzwerk-Grunddaten an, ohne tiefe Scans im Kernel zu machen
     patchState(ns, {
-      rootCount: currentRootCount,
-      totalNodes: allNodes.length,
-      hasTorRouter: currentTor,
-      hasGang: currentGang,
-      hasCorporation: currentCorp,
-      hasBladeburner: currentBlade,
-      allServers: allNodes,
       hasDarkScapeNavigator: hasNavigator,
-      moneyReserve: dynamicReserve, // Verhindert, dass sys-infra das Geld für Home-RAM ausgibt
+      totalNodes: currentState?.allServers?.length || 0,
     });
 
-    await ns.sleep(2000);
+    await ns.sleep(5000); // 5 Sekunden Intervall reicht für die reine Prozessüberwachung völlig aus
   }
 }
