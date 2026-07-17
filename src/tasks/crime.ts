@@ -17,8 +17,8 @@ export async function main(ns: NS): Promise<void> {
       mode !== "CRIME" &&
       mode !== "MONEY" &&
       mode !== "KILLS" &&
-      mode !== "XP_SPRINT" &&
-      mode !== "PSERV_RUSH"
+      mode !== "XP_SPRINT"
+
     ) {
       ns.print(`[EXIT] Modus ist nun ${mode}. Beende Crime-Worker.`);
       return;

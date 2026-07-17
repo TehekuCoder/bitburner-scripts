@@ -74,7 +74,7 @@ export function determineStrategy(
         mode = "TRAIN";
         targetStat = nextRoadmapFaction.minStat;
       } else if (isRushActive) {
-        mode = "PSERV_RUSH";
+        mode = "MONEY";
       } else {
         mode = "MONEY";
       }
@@ -84,13 +84,13 @@ export function determineStrategy(
         targetFaction = roadmapFactionName;
         targetStat = nextRoadmapFaction.minStat;
       } else if (isRushActive) {
-        mode = "PSERV_RUSH";
+        mode = "MONEY";
       } else {
         mode = "MONEY";
       }
     }
   } else if (isRushActive) {
-    mode = "PSERV_RUSH";
+    mode = "MONEY";
   } else if (p.skills.hacking >= 250 && companyRepMult > 0.1) {
     const needsSilhouette =
       !p.factions.includes("Silhouette" as FactionName) &&

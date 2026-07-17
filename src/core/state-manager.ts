@@ -8,8 +8,7 @@ export type BotStrategy =
   | "CORP"
   | "TRAIN"
   | "KILLS"
-  | "CRIME"
-  | "PSERV_RUSH";
+  | "CRIME";
 
 // Typisierung für die permanenten Source-File-Upgrades
 export interface SourceFileProgress {

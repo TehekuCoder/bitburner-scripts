@@ -64,14 +64,6 @@ export function generateProgressBar(ns: NS, params: UIProgressBarParams): string
         : "🥷 Mid-Game-Crime Loop für stabiles Einkommen";
   } 
   
-  else if (mode === "PSERV_RUSH") {
-    const pservCost = ns.cloud.getServerCost(64);
-    const rushProgress = ((playerMoney / pservCost) * 100).toFixed(1);
-    generatedBar = canRunBatcher
-      ? `🚀 BATCHER AKTIV (Netzwerk) | Cash: ${ns.format.number(playerMoney, 1)} / ${ns.format.number(pservCost, 0)} $ (${rushProgress}%)`
-      : `🚀 BATCHER RUSH aktiv | Cash: ${ns.format.number(playerMoney, 1)} / ${ns.format.number(pservCost, 0)} $ (${rushProgress}%) | Warte auf Infrastruktur`;
-  } 
-  
   else if (mode === "KILLS") {
     generatedBar = `💀 Eliminierungs-Aufträge active (${currentVal}/${targetVal} Kills)`;
   } 

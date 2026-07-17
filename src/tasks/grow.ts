@@ -1,11 +1,20 @@
 import { NS } from "@ns";
 
 export async function main(ns: NS): Promise<void> {
-  ns.disableLog("ALL");
+  // ns.disableLog("ALL");
 
   const target = ns.args[0] as string;
-  const delay = (ns.args[1] as number) ?? 0;
+  
+  // 🟢 KUGELSICHER: Laufzeit-Konvertierung zu einer echten Zahl
+  const delay = Number(ns.args[1]) || 0;
   const batchId = (ns.args[2] as string) ?? "LEGACY";
 
-  await ns.grow(target, { additionalMsec: delay });
+  // Debug-Anzeige im Skript-Log (kannst du später auskommentieren)
+  ns.print(`[DEBUG] grow startet auf ${target}. Delay: ${delay}ms (Batch: ${batchId})`);
+
+  if (delay > 0) {
+    await ns.grow(target, { additionalMsec: delay });
+  } else {
+    await ns.grow(target);
+  }
 }

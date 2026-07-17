@@ -3,24 +3,12 @@ import { getAllServers } from "../lib/network.js";
 import { patchState, loadState } from "./state-manager.js";
 import { loadBnMults } from "../lib/state.js";
 import { Logger } from "./logger.js";
+import { InFlightBatch, WorkerNode } from "core/types";
+import { drawBatcherDashboard } from "core/batcher-ui.js";
 
 // Wir importieren NUR das Interface für Typsicherheit (kostet 0.00 GB RAM zur Laufzeit!)
 import { BatchPlan } from "../utils/batch-calculator.js";
-
-interface DashboardData {
-  status: string;
-  target: string;
-  progress: number;
-  progressText: string;
-  greed: number;
-  ramNeeded: number;
-  ramFree: number;
-  ramTotal: number;
-  batchesSent: number;
-  batchesMax: number;
-  eventLog: string[];
-  lastWaveProfit: number;
-}
+import { dispatchSplitBatch } from "core/batch-dispatcher";
 
 let cachedServers: string[] = [];
 let lastCacheUpdate = 0;
@@ -95,6 +83,9 @@ export async function main(ns: NS): Promise<void> {
     const shareBufferPercent =
       currentState?.fillerConfig?.shareMaxRamPercent || 0.0;
 
+    // 🟢 NEU: Vorbereitung der strukturierten Worker-Knoten für den Dispatcher
+    const workers: WorkerNode[] = [];
+
     for (const server of cachedServers) {
       if (!ns.hasRootAccess(server)) continue;
       let maxRam = ns.getServerMaxRam(server);
@@ -111,7 +102,19 @@ export async function main(ns: NS): Promise<void> {
         Math.floor(maxRam / SCRIPT_RAM_BASE) * SCRIPT_RAM_BASE;
       totalUsableFreeRam +=
         Math.floor(freeRam / SCRIPT_RAM_BASE) * SCRIPT_RAM_BASE;
+
+      // Wir nehmen nur Server in den Pool auf, auf denen tatsächlich gearbeitet werden kann
+      if (freeRam > 0) {
+        workers.push({
+          hostname: server,
+          maxRam: maxRam,
+          freeRam: freeRam,
+        });
+      }
     }
+
+    // Sortiere Worker absteigend nach freiem RAM (Größte zuerst = weniger Thread-Fragmentierung!)
+    workers.sort((a, b) => b.freeRam - a.freeRam);
 
     // 🎯 TARGETING & REPLANNING (Mit verbesserter Fehlerdiagnose!)
     if (!target || batchesSentForTarget >= dynamicMaxBatchesForTarget) {
@@ -179,7 +182,11 @@ export async function main(ns: NS): Promise<void> {
     const maxMoney = ns.getServerMaxMoney(target);
     const curMoney = ns.getServerMoneyAvailable(target);
 
-    const isMassiveDesync = curSec > minSec + 1 || curMoney < maxMoney * 0.85;
+    // --- PIPELINE-AWARE DESYNC CHECK ---
+    let isMassiveDesync = false;
+
+    isMassiveDesync = curSec > minSec + 3.0; // Das hier reicht völlig aus!
+
     const needsInitialPrep =
       batchesSentForTarget === 0 && (curSec > minSec || curMoney < maxMoney);
 
@@ -187,8 +194,6 @@ export async function main(ns: NS): Promise<void> {
     if (needsInitialPrep || isMassiveDesync) {
       const currentWeakenTime = ns.getWeakenTime(target);
       lockedPlan = null;
-
-      // 🟢 Redundantes patchState entfernt (wird nun automatisch via drawBatcherDashboard erledigt)
 
       if (batchesSentForTarget === 0) {
         logger.info(`Initialisiere Prep-Phase für Zielserver: ${target}`);
@@ -302,10 +307,8 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // 🟢 Redundantes patchState entfernt (wird nun atomar über drawBatcherDashboard erledigt!)
-
-    const estimatedGreed = plan.hackThreads * 0.04;
-    lastWaveProfit = maxMoney * estimatedGreed;
+    const profitGreed = plan.hackThreads * 0.04;
+    lastWaveProfit = maxMoney * profitGreed;
 
     // --- RAM RESOURCE LOCK CHECKS ---
     if (totalUsableFreeRam < plan.totalRam) {
@@ -333,43 +336,9 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    if (lastLogStatus.startsWith("WAIT_")) {
-      const freshSec = ns.getServerSecurityLevel(target);
-      const freshMoney = ns.getServerMoneyAvailable(target);
-
-      if (freshSec > minSec || freshMoney < maxMoney) {
-        stallSettleTicks++;
-
-        if (stallSettleTicks > 25) {
-          logger.warn(
-            `Zielserver ${target} nach Settle-Ticks instabil. Erzwinge Notfall-Prep.`,
-          );
-          logEvent("⚠️ Ziel instabil! Notfall-Prep.");
-          batchesSentForTarget = 0;
-          stallSettleTicks = 0;
-          lockedPlan = null;
-          lastLogStatus = "PREPPING";
-          await ns.sleep(SPACER);
-          continue;
-        }
-        await ns.sleep(SPACER);
-        continue;
-      }
-    }
-
-    stallSettleTicks = 0;
-    lastLogStatus =
-      curSec > minSec || curMoney < maxMoney ? "WAIT_SETTLE" : "RUNNING";
-
-    // 🚀 BATCH CLUSTER ALLOKATION
-    const dispatchSuccess = dispatchSplitBatch(
-      ns,
-      cachedServers,
-      plan,
-      target,
-      batchId,
-      logger,
-    );
+    // 🟢 ERSETZEN DURCH:
+    // Wir feuern bedingungslos, solange kein massiver Desync (Security > minSec + 3.0) vorliegt!
+    const dispatchSuccess = dispatchSplitBatch(ns, plan, workers, batchId);
 
     if (!dispatchSuccess) {
       if (Date.now() - lastUiUpdate > 250) {
@@ -424,86 +393,6 @@ function makeProgressBar(progress: number, width = 20): string {
   return "█".repeat(filledLength) + "░".repeat(emptyLength);
 }
 
-function drawBatcherDashboard(ns: NS, data: DashboardData): void {
-  ns.clearLog();
-
-  const hasValidTarget = data.target !== "Keines" && data.target !== "";
-
-  const curSec = hasValidTarget ? ns.getServerSecurityLevel(data.target) : 0;
-  const minSec = hasValidTarget ? ns.getServerMinSecurityLevel(data.target) : 0;
-  const curMoney = hasValidTarget ? ns.getServerMoneyAvailable(data.target) : 0;
-  const maxMoney = hasValidTarget ? ns.getServerMaxMoney(data.target) : 0;
-
-  const moneyPercent = maxMoney > 0 ? (curMoney / maxMoney) * 100 : 0;
-  const ramUsed = data.ramTotal - data.ramFree;
-  const ramPercent = data.ramTotal > 0 ? (ramUsed / data.ramTotal) * 100 : 0;
-  const bar = makeProgressBar(data.progress, 20);
-
-  // ------------------------------------------------------------
-  // 🟢 NEU: STATE-MANAGER AKTUALISIERUNG (Gekoppelt an die UI-Taktung!)
-  // ------------------------------------------------------------
-  let stateProgressText = "Aktiv";
-  switch (data.status) {
-    case "PREPPING":
-      stateProgressText = `Prep: ${data.target} (${(data.progress * 100).toFixed(0)}%)`;
-      break;
-    case "RECALIBRATING":
-      stateProgressText = `Rekalibriere: ${data.target}`;
-      break;
-    case "STALLED (RAM)":
-      stateProgressText = `RAM-Mangel (${ns.format.ram(data.ramFree)}/${ns.format.ram(data.ramNeeded)})`;
-      break;
-    case "STALLED (FRAG)":
-      stateProgressText = `Frag: RAM fragmentiert`;
-      break;
-    case "RUNNING":
-      stateProgressText = `Batching: ${data.target} (${data.batchesSent}/${data.batchesMax})`;
-      break;
-    default:
-      stateProgressText = data.status;
-  }
-
-  patchState(ns, {
-    batcherProgress: stateProgressText,
-    batcherTarget: data.target || undefined,
-    batcherRamNeeded: data.ramNeeded,
-  });
-  // ------------------------------------------------------------
-
-  ns.print(`============================================================`);
-  ns.print(
-    `⚡ BIT-OS DYNAMIC BATCHER v2.1    |  Gewinn/Welle: +$${ns.format.number(data.lastWaveProfit)}`,
-  );
-  ns.print(`============================================================`);
-  ns.print(`FOKUS-ZIEL:      ${data.target}`);
-  ns.print(`STATUS:          [${bar}] ${data.status}`);
-  ns.print(`DETAILS:         ${data.progressText}`);
-  ns.print(`------------------------------------------------------------`);
-  ns.print(`NETZWERK-ALLOKATION:`);
-  ns.print(
-    `RAM Pool:    ${ns.format.ram(ramUsed)} / ${ns.format.ram(data.ramTotal)} (${ramPercent.toFixed(1)}%)`,
-  );
-  ns.print(
-    `Wellen-Ram:  ${ns.format.ram(data.ramNeeded)} Benötigt | Frei gepoolt: ${ns.format.ram(data.ramFree)}`,
-  );
-  ns.print(`------------------------------------------------------------`);
-  ns.print(`ZIELSERVER-ZUSTAND:`);
-  ns.print(`Sicherheit:  ${curSec.toFixed(2)} / ${minSec.toFixed(2)} (Min)`);
-  ns.print(
-    `Finanzen:    $${ns.format.number(curMoney)} / $${ns.format.number(maxMoney)} (${moneyPercent.toFixed(1)}%)`,
-  );
-  ns.print(`------------------------------------------------------------`);
-  ns.print(`EREIGNIS-PROTOKOLL:`);
-  if (data.eventLog.length === 0) {
-    ns.print(`> Warte auf Systemereignisse...`);
-  } else {
-    for (const log of data.eventLog) {
-      ns.print(`> ${log}`);
-    }
-  }
-  ns.print(`============================================================`);
-}
-
 function dispatchBatchScript(
   ns: NS,
   allServers: string[],
@@ -548,156 +437,27 @@ function dispatchBatchScript(
   }
 }
 
-function executePrepPhase(
-  ns: NS,
-  allServers: string[],
-  target: string,
-  bnMults: any,
-): void {
+function executePrepPhase(ns: NS, allServers: string[], target: string, bnMults: any): void {
   const minSec = ns.getServerMinSecurityLevel(target);
   const curSec = ns.getServerSecurityLevel(target);
   const maxMoney = ns.getServerMaxMoney(target);
   const curMoney = ns.getServerMoneyAvailable(target);
   const weakenPotency = 0.05 * (bnMults.ServerWeakenRate ?? 1.0);
 
+  // 1. Wenn Security zu hoch ist, schwächen
   if (curSec > minSec) {
     const secDeficit = curSec - minSec;
     const weakenThreads = Math.ceil(secDeficit / weakenPotency);
-    dispatchBatchScript(
-      ns,
-      allServers,
-      "tasks/weaken.js",
-      weakenThreads,
-      target,
-      0,
-      Date.now(),
-    );
-  } else if (curMoney < maxMoney) {
+    dispatchBatchScript(ns, allServers, "tasks/weaken.js", weakenThreads, target, 0, Date.now());
+  } 
+  
+  // 2. Unabhängig davon: Wenn Geld fehlt, zeitgleich Grow + Kompensations-Weaken feuern!
+  if (curMoney < maxMoney) {
     const growthMultiplier = maxMoney / Math.max(1, curMoney);
     const growThreads = Math.ceil(ns.growthAnalyze(target, growthMultiplier));
-    const weakenThreadsNeeded = Math.ceil(
-      (growThreads * 0.004) / weakenPotency,
-    );
+    const weakenThreadsNeeded = Math.ceil((growThreads * 0.004) / weakenPotency);
 
-    dispatchBatchScript(
-      ns,
-      allServers,
-      "tasks/grow.js",
-      growThreads,
-      target,
-      0,
-      Date.now(),
-    );
-    dispatchBatchScript(
-      ns,
-      allServers,
-      "tasks/weaken.js",
-      weakenThreadsNeeded,
-      target,
-      50,
-      Date.now(),
-    );
+    dispatchBatchScript(ns, allServers, "tasks/grow.js", growThreads, target, 0, Date.now());
+    dispatchBatchScript(ns, allServers, "tasks/weaken.js", weakenThreadsNeeded, target, 50, Date.now());
   }
-}
-
-function dispatchSplitBatch(
-  ns: NS,
-  allServers: string[],
-  plan: BatchPlan,
-  target: string,
-  batchId: number,
-  logger: Logger,
-): boolean {
-  const currentState = loadState(ns);
-  const shareBufferPercent =
-    currentState?.fillerConfig?.shareMaxRamPercent || 0.0;
-
-  const tasks = [
-    {
-      script: "tasks/hack.js",
-      threads: plan.hackThreads,
-      delay: plan.hackDelay,
-    },
-    {
-      script: "tasks/weaken.js",
-      threads: plan.weaken1Threads,
-      delay: plan.weaken1Delay,
-    },
-    {
-      script: "tasks/grow.js",
-      threads: plan.growThreads,
-      delay: plan.growDelay,
-    },
-    {
-      script: "tasks/weaken.js",
-      threads: plan.weaken2Threads,
-      delay: plan.weaken2Delay,
-    },
-  ];
-
-  let totalFree = 0;
-  for (const s of allServers) {
-    if (!ns.hasRootAccess(s)) continue;
-    let maxRam = ns.getServerMaxRam(s);
-
-    if (s === "home") {
-      maxRam = Math.max(0, maxRam - HOME_RAM_RESERVE);
-    } else if (currentState?.strategy === "REP") {
-      maxRam = maxRam * (1 - shareBufferPercent);
-    }
-
-    totalFree += maxRam - ns.getServerUsedRam(s);
-  }
-
-  if (totalFree < plan.totalRam) return false;
-
-  for (const task of tasks) {
-    let threadsLeft = task.threads;
-    if (threadsLeft <= 0) continue;
-
-    for (const server of allServers) {
-      if (!ns.hasRootAccess(server)) continue;
-
-      let maxRam = ns.getServerMaxRam(server);
-      if (server === "home") {
-        maxRam = Math.max(0, maxRam - HOME_RAM_RESERVE);
-      } else if (currentState?.strategy === "REP") {
-        maxRam = maxRam * (1 - shareBufferPercent);
-      }
-
-      const freeRam = maxRam - ns.getServerUsedRam(server);
-      const scriptRam = ns.getScriptRam(task.script);
-      const possibleThreads = Math.floor(freeRam / scriptRam);
-
-      if (possibleThreads > 0) {
-        const toDeploy = Math.min(possibleThreads, threadsLeft);
-
-        if (server !== "home" && !ns.fileExists(task.script, server)) {
-          ns.scp(task.script, server, "home");
-          logger.info(
-            `💾 Skript '${task.script}' auf Zielknoten '${server}' deployt.`,
-          );
-        }
-
-        const pid = ns.exec(
-          task.script,
-          server,
-          toDeploy,
-          target,
-          task.delay,
-          batchId,
-        );
-        if (pid > 0) {
-          threadsLeft -= toDeploy;
-        }
-
-        if (threadsLeft <= 0) break;
-      }
-    }
-
-    if (threadsLeft > 0) {
-      return false;
-    }
-  }
-  return true;
 }
