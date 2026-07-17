@@ -20,7 +20,6 @@ const PATH_WEAKEN = "/tasks/weaken.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  //   ns.ui.openTail();
 
   const logger = new Logger(
     ns,
@@ -71,7 +70,7 @@ export async function main(ns: NS): Promise<void> {
     const virtualFreeRam = realFreeRam - queueRam;
 
     // -------------------------------------------------------------------------
-    // 🎯 INTERNES TARGETING & REPLANNING (Früher utils/batch-planner.ts)
+    // 🎯 INTERNES TARGETING & REPLANNING
     // -------------------------------------------------------------------------
     if (
       !target ||
@@ -83,12 +82,11 @@ export async function main(ns: NS): Promise<void> {
       );
       patchState(ns, { batcherProgress: "Berechne optimales Ziel..." });
 
-      // Rufe die ehemals externe Logik direkt im Speicher auf
       const planning = internalPlanner(
         ns,
         servers,
-        getNetworkMaxRam(ns, servers), // 🟢 HIER: Statisches Max-RAM statt fluktuierendes Freies RAM!
-        virtualFreeRam, // Das virtuelle freie RAM bleibt hier für die Slot-Prüfung korrekt
+        getNetworkMaxRam(ns, servers),
+        virtualFreeRam,
         bnMults,
       );
 
@@ -103,7 +101,6 @@ export async function main(ns: NS): Promise<void> {
         activePlan = planning.plan;
         dynamicMaxBatchesForTarget = planning.maxBatches;
       } else if (planning) {
-        // Gleiches Ziel, aber Pipeline wird für eine neue Runde aufgefrischt
         activePlan = planning.plan;
         dynamicMaxBatchesForTarget = planning.maxBatches;
         batchesSentForTarget = 0;
@@ -145,7 +142,6 @@ export async function main(ns: NS): Promise<void> {
         const startG = landG - activePlan.growTime;
         const startW2 = landW2 - activePlan.weakenTime;
 
-        // 🟢 BUG-FIX: Nur noch EIN Array definieren, direkt filtern und EINMAL pushen
         const validEvents = [
           {
             id: `b${bId}-h`,
@@ -217,16 +213,19 @@ export async function main(ns: NS): Promise<void> {
         continue;
       }
 
-      // ⚡ Optimierung: Auch hier die gecashten Server nutzen
       const workers = getAvailableWorkers(ns, servers);
       const dispatched = executeOnWorkers(ns, event, workers);
 
       if (!dispatched) {
         logger.error(
-          `🛑 JIT-Kollaps! Realer RAM-Mangel bei ${event.id}. Breche Pipeline ab.`,
+          `🛑 JIT-Kollaps! Realer RAM-Mangel bei ${event.id}. Breche Pipeline ab und starte Cooldown...`,
         );
         eventQueue.length = 0;
         target = null;
+        
+        patchState(ns, { batcherProgress: "Kollaps-Sicherheits-Cooldown (5s)" });
+        // 🟢 FIX: 5 Sekunden Zwangspause, um den Panic-Loop zu durchbrechen und RAM freizugeben
+        await ns.sleep(5000); 
         break;
       }
     }
@@ -251,11 +250,8 @@ function internalPlanner(
   bnMults: any,
 ): { target: string; plan: BatchPlan; maxBatches: number } | null {
   const currentState = loadState(ns);
-  const shareBufferPercent =
-    currentState?.fillerConfig?.shareMaxRamPercent || 0.0;
   const playerHackLevel = ns.getHackingLevel();
 
-  // Filter gültige Ziele heraus
   const targets = servers.filter(
     (s) =>
       ns.hasRootAccess(s) &&
@@ -286,11 +282,9 @@ function internalPlanner(
 
     if (!testPlan || testPlan.totalRam > currentFreeRamPool) continue;
 
-    // 🟢 DURCH DIESE REINE GELD-BEWERTUNG:
     const idealExecutionTime = testPlan.executionTime;
     if (idealExecutionTime > DYNAMIC_MAX_WEAKEN_TIME) continue;
 
-    // Der Server mit dem höchsten maximalen Geld gewinnt das Rennen
     const score = ns.getServerMaxMoney(s);
 
     if (score > highestScore) {
@@ -301,7 +295,6 @@ function internalPlanner(
 
   if (!bestTarget) return null;
 
-  // Perfekten, optimierten Plan für das gewählte Ziel schmieden (Greed-Schleife)
   const serverMock = ns.getServer(bestTarget);
   serverMock.hackDifficulty = serverMock.minDifficulty;
   const weakenTime = ns.formulas!.hacking.weakenTime(
@@ -359,7 +352,6 @@ function internalPlanner(
   if (lockPlan && lockPlan.totalRam > maxAllowedBatchRam && lastValidPlan)
     lockPlan = lastValidPlan;
 
-  // Fallback-Schleife, falls die Welle immer noch zu fett für das freie RAM ist
   if (!lockPlan || lockPlan.totalRam > currentFreeRamPool) {
     currentGreedFactor = 0.4;
     lockPlan = calculateBatch(
@@ -416,12 +408,12 @@ function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   }
   return workers.sort((a, b) => b.freeRam - a.freeRam);
 }
+
 function executeOnWorkers(
   ns: NS,
   event: JitEvent,
   workers: WorkerNode[],
 ): boolean {
-  // 🟢 Absoluter Failsafe: Wenn ein Event 0 Threads hat, direkt als "erfolgreich ausgeführt" markieren
   if (event.threads <= 0) return true;
 
   let threadsLeft = event.threads;
@@ -449,50 +441,28 @@ function executeOnWorkers(
   return threadsLeft === 0;
 }
 
-/**
- * Berechnet das absolut real verfügbare RAM aller im Moment nutzbaren Server
- * unter strikter Berücksichtigung bereits laufender Fremdskripte (wie dem Dispatcher).
- */
 function getNetworkRealFreeRam(ns: NS, servers: string[]): number {
   let totalFreeRam = 0;
-
   for (const s of servers) {
     if (!ns.hasRootAccess(s)) continue;
-
     let max = ns.getServerMaxRam(s);
-    if (s === "home") {
-      max = Math.max(0, max - HOME_RAM_RESERVE);
-    }
-
+    if (s === "home") max = Math.max(0, max - HOME_RAM_RESERVE);
     const used = ns.getServerUsedRam(s);
-    // Wichtig: Nur das reale Delta berechnen, das dem Batcher zur Verfügung steht
     const free = max - used;
-
-    if (free > 0) {
-      totalFreeRam += free;
-    }
+    if (free > 0) totalFreeRam += free;
   }
   return totalFreeRam;
 }
 
-/**
- * Berechnet, wie viel RAM die bereits geplanten, aber noch nicht
- * geschossenen Events in der Zukunft blockieren werden.
- */
 function getQueueRam(ns: NS, queue: any[]): number {
   let totalRam = 0;
   for (const ev of queue) {
-    // Ermittelt dynamisch die RAM-Kosten des jeweiligen Skripts (Hack, Grow, Weaken)
     const scriptCost = ns.getScriptRam(ev.script);
     totalRam += ev.threads * scriptCost;
   }
   return totalRam;
 }
 
-/**
- * Berechnet die absolute Max-Kapazität des Netzwerks (statisch),
- * damit der Planer stabile Ziel-Batch-Größen berechnen kann.
- */
 function getNetworkMaxRam(ns: NS, servers: string[]): number {
   let totalMax = 0;
   for (const s of servers) {
