@@ -20,7 +20,7 @@ const PATH_WEAKEN = "/tasks/weaken.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  ns.ui.openTail();
+  //   ns.ui.openTail();
 
   const logger = new Logger(
     ns,
@@ -66,13 +66,9 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const now = Date.now();
-    // ⚡ Optimierung: Übergebe das bestehende 'servers'-Array, statt neu zu scannen
-    const netRam = getNetworkRamMetrics(ns, servers);
-    const virtualFreeRam = getVirtualFreeRam(
-      ns,
-      netRam.totalMaxRam,
-      eventQueue,
-    );
+    const realFreeRam = getNetworkRealFreeRam(ns, servers);
+    const queueRam = getQueueRam(ns, eventQueue);
+    const virtualFreeRam = realFreeRam - queueRam;
 
     // -------------------------------------------------------------------------
     // 🎯 INTERNES TARGETING & REPLANNING (Früher utils/batch-planner.ts)
@@ -91,8 +87,8 @@ export async function main(ns: NS): Promise<void> {
       const planning = internalPlanner(
         ns,
         servers,
-        netRam.totalMaxRam,
-        virtualFreeRam,
+        getNetworkMaxRam(ns, servers), // 🟢 HIER: Statisches Max-RAM statt fluktuierendes Freies RAM!
+        virtualFreeRam, // Das virtuelle freie RAM bleibt hier für die Slot-Prüfung korrekt
         bnMults,
       );
 
@@ -238,7 +234,7 @@ export async function main(ns: NS): Promise<void> {
     if (now - lastStateUpdate > 1000) {
       patchState(ns, {
         batcherProgress: `Executing JIT | Queue: ${eventQueue.length} Events`,
-        batcherRamNeeded: Math.max(0, netRam.totalMaxRam - virtualFreeRam),
+        batcherRamNeeded: Math.max(0, realFreeRam - virtualFreeRam),
       });
       lastStateUpdate = now;
     }
@@ -246,7 +242,6 @@ export async function main(ns: NS): Promise<void> {
     await ns.sleep(15);
   }
 }
-
 
 function internalPlanner(
   ns: NS,
@@ -315,14 +310,14 @@ function internalPlanner(
   const maxConcurrentBatches = Math.max(1, Math.floor(weakenTime / SPACER));
   const idealBatchRam = totalUsableMaxRam / maxConcurrentBatches;
 
-  let largestSingleServerRam = totalUsableMaxRam; // Fallback
-  if (servers.length > 0) {
-    largestSingleServerRam = ns.getServerMaxRam(servers[0]);
-    if (servers[0] === "home")
-      largestSingleServerRam = Math.max(
-        0,
-        largestSingleServerRam - HOME_RAM_RESERVE,
-      );
+  let largestSingleServerRam = 0;
+  for (const s of servers) {
+    if (!ns.hasRootAccess(s)) continue;
+    let max = ns.getServerMaxRam(s);
+    if (s === "home") max = Math.max(0, max - HOME_RAM_RESERVE);
+    if (max > largestSingleServerRam) {
+      largestSingleServerRam = max;
+    }
   }
 
   const maxAllowedBatchRam = Math.min(
@@ -406,30 +401,6 @@ function internalPlanner(
   return null;
 }
 
-function getNetworkRamMetrics(ns: NS, servers: string[]) {
-  let totalMaxRam = 0;
-  for (const s of servers) {
-    if (!ns.hasRootAccess(s)) continue;
-    let max = ns.getServerMaxRam(s);
-    if (s === "home") max = Math.max(0, max - HOME_RAM_RESERVE);
-    totalMaxRam += max;
-  }
-  return { totalMaxRam };
-}
-
-function getVirtualFreeRam(
-  ns: NS,
-  totalMaxRam: number,
-  queue: JitEvent[],
-): number {
-  let reservedRam = 0;
-  for (const ev of queue) {
-    const scriptRam = ns.getScriptRam(ev.script);
-    reservedRam += ev.threads * scriptRam;
-  }
-  return Math.max(0, totalMaxRam - reservedRam);
-}
-
 function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   const workers: WorkerNode[] = [];
   for (const s of servers) {
@@ -474,4 +445,59 @@ function executeOnWorkers(
     }
   }
   return threadsLeft === 0;
+}
+
+/**
+ * Berechnet das absolut real verfügbare RAM aller im Moment nutzbaren Server
+ * unter strikter Berücksichtigung bereits laufender Fremdskripte (wie dem Dispatcher).
+ */
+function getNetworkRealFreeRam(ns: NS, servers: string[]): number {
+  let totalFreeRam = 0;
+
+  for (const s of servers) {
+    if (!ns.hasRootAccess(s)) continue;
+
+    let max = ns.getServerMaxRam(s);
+    if (s === "home") {
+      max = Math.max(0, max - HOME_RAM_RESERVE);
+    }
+
+    const used = ns.getServerUsedRam(s);
+    // Wichtig: Nur das reale Delta berechnen, das dem Batcher zur Verfügung steht
+    const free = max - used;
+
+    if (free > 0) {
+      totalFreeRam += free;
+    }
+  }
+  return totalFreeRam;
+}
+
+/**
+ * Berechnet, wie viel RAM die bereits geplanten, aber noch nicht
+ * geschossenen Events in der Zukunft blockieren werden.
+ */
+function getQueueRam(ns: NS, queue: any[]): number {
+  let totalRam = 0;
+  for (const ev of queue) {
+    // Ermittelt dynamisch die RAM-Kosten des jeweiligen Skripts (Hack, Grow, Weaken)
+    const scriptCost = ns.getScriptRam(ev.script);
+    totalRam += ev.threads * scriptCost;
+  }
+  return totalRam;
+}
+
+/**
+ * Berechnet die absolute Max-Kapazität des Netzwerks (statisch),
+ * damit der Planer stabile Ziel-Batch-Größen berechnen kann.
+ */
+function getNetworkMaxRam(ns: NS, servers: string[]): number {
+  let totalMax = 0;
+  for (const s of servers) {
+    if (!ns.hasRootAccess(s)) continue;
+    let max = ns.getServerMaxRam(s);
+    if (s === "home") max = Math.max(0, max - HOME_RAM_RESERVE);
+    totalMax += max;
+  }
+  return totalMax;
 }

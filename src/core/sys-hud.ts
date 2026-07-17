@@ -24,12 +24,12 @@ export async function main(ns: NS): Promise<void> {
     const state = loadState(ns);
 
     if (!state) {
-      ns.print("╔══════════════════════════════════════════╗");
-      ns.print("║ ⏳ WARTE AUF OS-KERNEL...                ║");
-      ns.print("╠══════════════════════════════════════════╣");
-      ns.print("║ Bitte starte sys-kernel.ts, um das       ║");
-      ns.print("║ System vollständig zu initialisieren.    ║");
-      ns.print("╚══════════════════════════════════════════╝");
+      ns.print("==========================================");
+      ns.print(" ⏳ WARTE AUF OS-KERNEL...                ");
+      ns.print("==========================================");
+      ns.print(" Bitte starte sys-kernel.ts, um das       ");
+      ns.print(" System vollständig zu initialisieren.    ");
+      ns.print("==========================================");
     } else {
       // 4. Die formatierte Karte aus der UI-Bibliothek anzeigen
       ns.print(renderStatusCard(ns, state));

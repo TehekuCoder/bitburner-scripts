@@ -1,13 +1,18 @@
 import { NS, Player, FactionName, CompanyName } from "@ns";
 import { loadState, patchState, BotStrategy } from "./state-manager.js";
-import { breakAndInfectNetwork, getAllServers, findBestFallbackTarget, dispatchSimpleTask } from "../lib/network.js";
+import {
+  breakAndInfectNetwork,
+  getAllServers,
+  findBestFallbackTarget,
+  dispatchSimpleTask,
+} from "../lib/network.js";
 import { findNextRoadmapFaction, applyToAllMegacorps } from "/lib/player.js";
 import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
 import { Logger } from "./logger.js";
-import { 
-  REFRESH_INTERVALS, 
-  BATCHER_MIN_RAM, 
-  COMBAT_STATS
+import {
+  REFRESH_INTERVALS,
+  BATCHER_MIN_RAM,
+  COMBAT_STATS,
 } from "../lib/constants.js";
 
 // --- EXTERNE MODULE ---
@@ -21,7 +26,9 @@ export async function main(ns: NS): Promise<void> {
 
   if (ns.singularity === undefined) {
     logger.error("Kritischer Systemfehler: Singularity-API (SF4) fehlt!");
-    ns.tprint("🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!");
+    ns.tprint(
+      "🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!",
+    );
     return;
   }
 
@@ -39,7 +46,8 @@ export async function main(ns: NS): Promise<void> {
   let lastNetworkScan = 0;
 
   // 🟢 ÄNDERUNG: Auf den neuen JIT-Batcher umgewiesen
-  const sysBatcherScript = "core/sys-jit-batcher.js"; 
+  const sysBatcherScript = "core/sys-jit-batcher.js";
+  const sysDashboardScript = "core/sys-jit-batcher-dashboard.js"; // 🟢 Pfad anpassen!
   const fillRamScript = "utils/fill-ram.js";
 
   while (true) {
@@ -55,7 +63,9 @@ export async function main(ns: NS): Promise<void> {
     }
 
     const currentState = loadState(ns);
-    const factionTargets = (currentState?.factionTargets ?? {}) as Partial<Record<FactionName, number>>;
+    const factionTargets = (currentState?.factionTargets ?? {}) as Partial<
+      Record<FactionName, number>
+    >;
 
     const p = ns.getPlayer();
     const homeMaxRam = ns.getServerMaxRam("home");
@@ -85,7 +95,7 @@ export async function main(ns: NS): Promise<void> {
 
     const playerMoney = p.money;
     const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
-    const crimeMoneyMult = bnMults.CrimeMoney ?? 1; 
+    const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
 
     const BASE_MONEY_THRESHOLD = factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
     const lastStrategy = currentState?.strategy || "MONEY";
@@ -107,9 +117,12 @@ export async function main(ns: NS): Promise<void> {
       factionTargets as Record<FactionName, number>,
     );
 
-    const roadmapFactionName = nextRoadmapFaction ? nextRoadmapFaction.name : null;
+    const roadmapFactionName = nextRoadmapFaction
+      ? nextRoadmapFaction.name
+      : null;
     const factionToWorkFor = factionRepMult > 0.1 ? nextRoadmapFaction : null;
-    const hasSavingTarget = factionToWorkFor !== null && !isReadyForFactionGrind;
+    const hasSavingTarget =
+      factionToWorkFor !== null && !isReadyForFactionGrind;
 
     const maxPservers = ns.cloud.getServerLimit();
     const lacksPservers =
@@ -128,7 +141,7 @@ export async function main(ns: NS): Promise<void> {
       factionTargets as Record<FactionName, number>,
       nextRoadmapFaction,
       factionToWorkFor,
-      isReadyForFactionGrind
+      isReadyForFactionGrind,
     );
 
     let { mode, targetFaction, targetCompany, targetStat } = strategy;
@@ -151,8 +164,12 @@ export async function main(ns: NS): Promise<void> {
 
     if (mode !== previousStrategy) {
       const isOscillating =
-        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(mode) &&
-        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(previousStrategy);
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(
+          mode,
+        ) &&
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(
+          previousStrategy,
+        );
 
       if (
         isOscillating &&
@@ -172,7 +189,9 @@ export async function main(ns: NS): Promise<void> {
     let label = "";
 
     if (mode === "REP" && targetFaction) {
-      currentVal = currentFactionReps[targetFaction] ?? ns.singularity.getFactionRep(targetFaction);
+      currentVal =
+        currentFactionReps[targetFaction] ??
+        ns.singularity.getFactionRep(targetFaction);
       targetVal = factionTargets[targetFaction] ?? 0;
       label = `Fraktion: ${targetFaction}`;
     } else if (mode === "CORP" && targetCompany) {
@@ -240,15 +259,17 @@ export async function main(ns: NS): Promise<void> {
       targetStat: mode === "TRAIN" ? targetStat : undefined,
       targetKills: mode === "KILLS" ? targetStat : undefined,
       progressBar: finalBar,
-      
-      batcherActive: isBatcherRunning, 
-      
+
+      batcherActive: isBatcherRunning,
+
       // Wenn er läuft, lassen wir die Keys unberührt, damit der JIT-Batcher ungestört in den Port schreiben kann!
-      ...(isBatcherRunning ? {} : { 
-        batcherProgress: "Inaktiv", 
-        batcherTarget: undefined,
-        batcherRamNeeded: 0 
-      }),
+      ...(isBatcherRunning
+        ? {}
+        : {
+            batcherProgress: "Inaktiv",
+            batcherTarget: undefined,
+            batcherRamNeeded: 0,
+          }),
 
       fillerConfig: {
         shareMaxRamPercent: sharePercent,
@@ -277,8 +298,10 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    const workerScript = mode === "XP_SPRINT" ? "tasks/xp-grind.js" : "tasks/work.js";
-    const obsoleteScript = mode === "XP_SPRINT" ? "tasks/work.js" : "tasks/xp-grind.js";
+    const workerScript =
+      mode === "XP_SPRINT" ? "tasks/xp-grind.js" : "tasks/work.js";
+    const obsoleteScript =
+      mode === "XP_SPRINT" ? "tasks/work.js" : "tasks/xp-grind.js";
 
     const infectedServers = allNetworkServers.filter(
       (s) =>
@@ -298,6 +321,16 @@ export async function main(ns: NS): Promise<void> {
         );
       }
 
+      // 🟢 NEU: Dashboard automatisch starten/wiederbeleben, wenn der Batcher aktiv ist
+      if (
+        ns.isRunning(sysBatcherScript, "home") &&
+        !ns.isRunning(sysDashboardScript, "home") &&
+        getFreeRam() > 5
+      ) {
+        ns.run(sysDashboardScript, 1);
+        logger.info(`📊 JIT-Dashboard automatisch gestartet.`);
+      }
+
       const allAvailableHosts = [...infectedServers, ...pServers];
       for (const server of allAvailableHosts) {
         if (ns.isRunning(workerScript, server))
@@ -306,6 +339,12 @@ export async function main(ns: NS): Promise<void> {
           ns.scriptKill(obsoleteScript, server);
       }
     } else {
+      // 🟢 NEU: Wenn der Batcher nicht laufen kann, Dashboard sauber beenden
+      if (ns.isRunning(sysDashboardScript, "home")) {
+        ns.scriptKill(sysDashboardScript, "home");
+        logger.info(`⏹️ Dashboard beendet, da Batcher inaktiv.`);
+      }
+
       workerFleet = [...infectedServers, ...pServers];
 
       for (const server of workerFleet) {
@@ -388,7 +427,14 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // 🟢 Übergebe hier den korrekten Skriptnamen, um Race-Conditions im Microservice-Manager zu fixen
-    manageMicroservices(ns, mode, hasSavingTarget, logger, sysBatcherScript, targetStat);
+    manageMicroservices(
+      ns,
+      mode,
+      hasSavingTarget,
+      logger,
+      sysBatcherScript,
+      targetStat,
+    );
 
     await ns.sleep(2000);
   }
