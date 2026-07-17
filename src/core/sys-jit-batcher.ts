@@ -286,10 +286,12 @@ function internalPlanner(
 
     if (!testPlan || testPlan.totalRam > currentFreeRamPool) continue;
 
+    // 🟢 DURCH DIESE REINE GELD-BEWERTUNG:
     const idealExecutionTime = testPlan.executionTime;
     if (idealExecutionTime > DYNAMIC_MAX_WEAKEN_TIME) continue;
 
-    const score = ns.getServerMaxMoney(s) / idealExecutionTime;
+    // Der Server mit dem höchsten maximalen Geld gewinnt das Rennen
+    const score = ns.getServerMaxMoney(s);
 
     if (score > highestScore) {
       highestScore = score;
