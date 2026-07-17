@@ -347,7 +347,7 @@ export function manageSingleSleeve(
     }
 
     case "COMPANY": {
-      const isRushActive = currentState?.strategy === "PSERV_RUSH";
+      const isRushActive = currentState?.strategy === "MONEY";
       if (!isRushActive && p.skills.hacking >= 250) {
         const employedCorps = Object.keys(p.jobs).filter((job) =>
           MEGACORPS.includes(job),
