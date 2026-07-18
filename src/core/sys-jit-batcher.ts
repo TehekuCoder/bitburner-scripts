@@ -201,6 +201,15 @@ export async function main(ns: NS): Promise<void> {
         patchState(ns, {
           batcherProgress: `Sättigung erreicht | Queue: ${eventQueue.length} Events`,
         });
+
+        // 🟢 FIX: Verhindert die 50ms-Dauerschleife bei RAM-Mangel und leerer Queue
+        if (eventQueue.length === 0) {
+          logger.warn(
+            `⏳ RAM gesättigt (Frei: ${Math.round(virtualFreeRam)} GB, Benötigt: ${Math.round(activePlan.totalRam)} GB) bei lehrer Queue. Drossle Planungs-Taktung.`,
+          );
+          await ns.sleep(2000);
+          continue;
+        }
       }
     }
 
@@ -255,14 +264,11 @@ export async function main(ns: NS): Promise<void> {
       const timeToNextEvent = eventQueue[0].startTime - Date.now();
       
       if (timeToNextEvent > 40) {
-        // Noch viel Zeit: Grob heranpirschen, stoppe 20ms vor dem Event
         await ns.sleep(timeToNextEvent - 20);
       } else {
-        // Kritische Phase: In den 1ms-Hochpräzisionsmodus schalten
         await ns.sleep(1);
       }
     } else {
-      // Keine Events in der Queue: CPU-Schonmodus
       await ns.sleep(50);
     }
   }
@@ -346,7 +352,7 @@ function internalPlanner(
 
   if (lockPlan && lockPlan.totalRam > maxAllowedBatchRam && lastValidPlan) lockPlan = lastValidPlan;
 
-  if (!lockPlan || lockPlan.totalRam > currentFreeRamPool) {
+  if (!lockPlan || lockPlan.totalRam > maxAllowedBatchRam) {
     currentGreedFactor = 0.4;
     lockPlan = calculateBatch(ns, bestTarget, bnMults, currentGreedFactor, SPACER) as BatchPlan | null;
     lastValidPlan = lockPlan;
@@ -379,7 +385,11 @@ function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
     if (s === "home") max = Math.max(0, max - HOME_RAM_RESERVE);
     const used = ns.getServerUsedRam(s);
     const free = max - used;
-    if (free > 0) workers.push({ hostname: s, maxRam: max, freeRam: free });
+    
+    // 🎯 FIX: Server gar nicht erst als Worker listen, wenn sie keinen vollen Thread mehr packen
+    if (Math.floor(free / SCRIPT_RAM_BASE) > 0) {
+      workers.push({ hostname: s, maxRam: max, freeRam: free });
+    }
   }
   return workers.sort((a, b) => b.freeRam - a.freeRam);
 }
@@ -421,7 +431,12 @@ function getNetworkRealFreeRam(ns: NS, servers: string[]): number {
     if (s === "home") max = Math.max(0, max - HOME_RAM_RESERVE);
     const used = ns.getServerUsedRam(s);
     const free = max - used;
-    if (free > 0) totalFreeRam += free;
+    
+    // 🎯 FIX: Nur RAM zählen, der physisch Hacking-Threads (1.75 GB) aufnehmen kann
+    const usableThreads = Math.floor(free / SCRIPT_RAM_BASE);
+    if (usableThreads > 0) {
+      totalFreeRam += usableThreads * SCRIPT_RAM_BASE;
+    }
   }
   return totalFreeRam;
 }
@@ -440,7 +455,10 @@ function getNetworkMaxRam(ns: NS, servers: string[]): number {
     if (!ns.hasRootAccess(s)) continue;
     let max = ns.getServerMaxRam(s);
     if (s === "home") max = Math.max(0, max - HOME_RAM_RESERVE);
-    totalMax += max;
+    
+    // 🎯 FIX: Auch das Maximum an den Thread-Grid ausrichten (z.B. 4GB Server können nur 2 Threads = 3.5GB nutzen)
+    const maxUsableThreads = Math.floor(max / SCRIPT_RAM_BASE);
+    totalMax += maxUsableThreads * SCRIPT_RAM_BASE;
   }
   return totalMax;
 }

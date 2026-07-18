@@ -6,7 +6,7 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   
   // 1. Öffnet das separate Log-Fenster als unser "OS-Widget"
-  ns.ui.openTail();
+  // ns.ui.openTail();
   
   // v3 API Feature: Setzt einen professionellen Fenstertitel
   ns.ui.setTailTitle("📟 BitOS - Core Dashboard v3.0");
