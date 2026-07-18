@@ -28,7 +28,9 @@ export async function main(ns: NS): Promise<void> {
   logger.info("Initiiere System-Boot...");
   const initPid = ns.run("core/sys-initializer.js", 1);
   if (initPid === 0) {
-    logger.error("Kritischer Boot-Fehler: Initializer konnte nicht gestartet werden!");
+    logger.error(
+      "Kritischer Boot-Fehler: Initializer konnte nicht gestartet werden!",
+    );
     return;
   }
   while (ns.isRunning(initPid)) {
@@ -45,8 +47,12 @@ export async function main(ns: NS): Promise<void> {
   });
 
   // --- 🖥️ CORE UI BOOT ---
-  if (!ns.scriptRunning("core/sys-hud.js", "home")) ns.run("core/sys-hud.js", 1);
-  if (ns.fileExists(scripts.dashboard, "home") && !ns.scriptRunning(scripts.dashboard, "home")) {
+  if (!ns.scriptRunning("core/sys-hud.js", "home"))
+    ns.run("core/sys-hud.js", 1);
+  if (
+    ns.fileExists(scripts.dashboard, "home") &&
+    !ns.scriptRunning(scripts.dashboard, "home")
+  ) {
     ns.run(scripts.dashboard, 1);
   }
 
@@ -62,31 +68,46 @@ export async function main(ns: NS): Promise<void> {
 
     // 1. Suite-Manager Daemon (Ab 16GB)
     if (homeMax >= 16 && !ns.isRunning("core/sys-suites.js", "home")) {
-      if ((homeMax - ns.getServerUsedRam("home")) >= 12.0) {
+      if (homeMax - ns.getServerUsedRam("home") >= 12.0) {
         ns.run("core/sys-suites.js", 1);
       }
     }
 
     // 2. Infrastruktur-Manager (Immer aktiv für P-Server/Upgrades)
-    if (ns.fileExists(scripts.infra, "home") && !ns.isRunning(scripts.infra, "home")) {
+    if (
+      ns.fileExists(scripts.infra, "home") &&
+      !ns.isRunning(scripts.infra, "home")
+    ) {
       ns.run(scripts.infra, 1);
     }
 
     // 3. Darknet- / Crawler-Daemons (Nur wenn Navigator vorhanden)
     if (hasNavigator) {
-      if (ns.fileExists(scripts.dnet, "home") && !ns.isRunning(scripts.dnet, "home")) ns.run(scripts.dnet, 1);
-      if (ns.fileExists(scripts.crawler, "home") && !ns.isRunning(scripts.crawler, "home")) ns.run(scripts.crawler, 1);
+      if (
+        ns.fileExists(scripts.dnet, "home") &&
+        !ns.isRunning(scripts.dnet, "home")
+      )
+        ns.run(scripts.dnet, 1);
+      if (
+        ns.fileExists(scripts.crawler, "home") &&
+        !ns.isRunning(scripts.crawler, "home")
+      )
+        ns.run(scripts.crawler, 1);
     }
 
     // 4. 🟢 NEU: Automatischer Backdoor-Manager
     // Läuft als Hintergrund-Daemon oder Single-Shot (wird reaktiviert, falls beendet)
-    if (ns.fileExists(scripts.backdoor, "home") && !ns.isRunning(scripts.backdoor, "home")) {
+    if (
+      ns.fileExists(scripts.backdoor, "home") &&
+      !ns.isRunning(scripts.backdoor, "home")
+    ) {
       logger.info("Starte Backdoor-Manager für Netzwerk-Penetration...");
       ns.run(scripts.backdoor, 1);
     }
 
     // --- ⚡ DYNAMISCHER FLOTTEN-MODUS SHIFT ---
-    const isDispatcherReady = homeMax >= 64 && ns.fileExists(scripts.dispatcher, "home");
+    const isDispatcherReady =
+      homeMax >= 64 && ns.fileExists(scripts.dispatcher, "home");
 
     if (isDispatcherReady) {
       // Modus: Advanced Batching
@@ -100,9 +121,29 @@ export async function main(ns: NS): Promise<void> {
       }
     } else {
       // Modus: Early-Game Basic Hacking / XP Grind
-      if (!ns.isRunning(earlyFleetScript, "home") && ns.fileExists(earlyFleetScript, "home")) {
-        logger.info("Dispatcher nicht bereit (<64GB). Starte Early-Fleet Manager...");
+      if (
+        !ns.isRunning(earlyFleetScript, "home") &&
+        ns.fileExists(earlyFleetScript, "home")
+      ) {
+        logger.info(
+          "Dispatcher nicht bereit (<64GB). Starte Early-Fleet Manager...",
+        );
         ns.run(earlyFleetScript, 1);
+      }
+    }
+
+    // 5. 💥 Automatischer End-Game Trigger (Wenn w0r1d_d43m0n bereit ist)
+    const targetNode = "w0r1d_d43m0n";
+    if (ns.serverExists(targetNode) && ns.hasRootAccess(targetNode)) {
+      const reqSkill = ns.getServerRequiredHackingLevel(targetNode);
+      if (
+        ns.getHackingLevel() >= reqSkill &&
+        !ns.scriptRunning("core/sys-apocalypse-ui.js", "home")
+      ) {
+        logger.success(
+          "!!! KRITISCHER SCHWELLENWERT ERREICHT: W0R1D_D43M0N BEREIT !!!",
+        );
+        ns.run("core/sys-apocalypse-ui.js", 1);
       }
     }
 
