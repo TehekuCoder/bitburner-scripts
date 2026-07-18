@@ -222,10 +222,11 @@ export async function main(ns: NS): Promise<void> {
         );
         eventQueue.length = 0;
         target = null;
-        
-        patchState(ns, { batcherProgress: "Kollaps-Sicherheits-Cooldown (5s)" });
-        // 🟢 FIX: 5 Sekunden Zwangspause, um den Panic-Loop zu durchbrechen und RAM freizugeben
-        await ns.sleep(5000); 
+
+        patchState(ns, {
+          batcherProgress: "Kollaps-Sicherheits-Cooldown (5s)",
+        });
+        await ns.sleep(5000);
         break;
       }
     }
@@ -261,7 +262,6 @@ function internalPlanner(
 
   let bestTarget: string | null = null;
   let highestScore = 0;
-  let optimalPlan: BatchPlan | null = null;
 
   if (currentFreeRamPool <= 0) return null;
 
@@ -305,13 +305,14 @@ function internalPlanner(
   const maxConcurrentBatches = Math.max(1, Math.floor(weakenTime / SPACER));
   const idealBatchRam = totalUsableMaxRam / maxConcurrentBatches;
 
+  // 🟢 KORREKTUR HIER: Ermittle den real existierenden größten freien RAM-Block im Netzwerk
   let largestSingleServerRam = 0;
   for (const s of servers) {
     if (!ns.hasRootAccess(s)) continue;
-    let max = ns.getServerMaxRam(s);
-    if (s === "home") max = Math.max(0, max - HOME_RAM_RESERVE);
-    if (max > largestSingleServerRam) {
-      largestSingleServerRam = max;
+    let free = ns.getServerMaxRam(s) - ns.getServerUsedRam(s);
+    if (s === "home") free = Math.max(0, free - HOME_RAM_RESERVE);
+    if (free > largestSingleServerRam) {
+      largestSingleServerRam = free;
     }
   }
 
@@ -399,11 +400,13 @@ function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   const workers: WorkerNode[] = [];
   for (const s of servers) {
     if (!ns.hasRootAccess(s)) continue;
+    // 🟢 REPARIERT: max bleibt die physische Obergrenze des Workers
     let max = ns.getServerMaxRam(s);
     if (s === "home") max = Math.max(0, max - HOME_RAM_RESERVE);
     const used = ns.getServerUsedRam(s);
-    if (max - used > 0) {
-      workers.push({ hostname: s, maxRam: max, freeRam: max - used });
+    const free = max - used;
+    if (free > 0) {
+      workers.push({ hostname: s, maxRam: max, freeRam: free });
     }
   }
   return workers.sort((a, b) => b.freeRam - a.freeRam);

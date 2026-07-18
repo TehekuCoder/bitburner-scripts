@@ -78,6 +78,13 @@ export async function main(ns: NS): Promise<void> {
       if (ns.fileExists(scripts.crawler, "home") && !ns.isRunning(scripts.crawler, "home")) ns.run(scripts.crawler, 1);
     }
 
+    // 4. 🟢 NEU: Automatischer Backdoor-Manager
+    // Läuft als Hintergrund-Daemon oder Single-Shot (wird reaktiviert, falls beendet)
+    if (ns.fileExists(scripts.backdoor, "home") && !ns.isRunning(scripts.backdoor, "home")) {
+      logger.info("Starte Backdoor-Manager für Netzwerk-Penetration...");
+      ns.run(scripts.backdoor, 1);
+    }
+
     // --- ⚡ DYNAMISCHER FLOTTEN-MODUS SHIFT ---
     const isDispatcherReady = homeMax >= 64 && ns.fileExists(scripts.dispatcher, "home");
 
