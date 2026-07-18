@@ -129,10 +129,10 @@ export function determineStrategy(
         mode = "CORP";
         targetCompany = MEGACORPS[missingCorpFaction.name];
       } else {
-        mode = "MONEY";
+        mode = canRunBatcher ? "MONEY" : "CRIME";
       }
     }
-  } else if (homeMaxRam < 256 || (crimeMoneyMult > 5 && !canRunBatcher)) {
+  } else if (homeMaxRam < 256 || !canRunBatcher || (crimeMoneyMult > 5)) {
     mode = "CRIME";
   } else {
     mode = "MONEY";

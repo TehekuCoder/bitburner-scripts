@@ -16,7 +16,7 @@ export const REFRESH_INTERVALS = {
 };
 
 // --- CONFIGURATION CONSTANTS ---
-export const BATCHER_MIN_RAM = 256;
+export const BATCHER_MIN_RAM = 1024;
 
 export const COMBAT_STATS: (keyof Player["skills"])[] = [
   "strength",

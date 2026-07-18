@@ -4,7 +4,6 @@ import {
   breakAndInfectNetwork,
   getAllServers,
   findBestFallbackTarget,
-  dispatchSimpleTask,
 } from "../lib/network.js";
 import { findNextRoadmapFaction, applyToAllMegacorps } from "/lib/player.js";
 import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
@@ -15,10 +14,12 @@ import {
   COMBAT_STATS,
 } from "../lib/constants.js";
 
-// --- EXTERNE MODULE ---
+// --- EXTERNE MODULE & UTILITIES ---
 import { determineStrategy } from "../lib/strategy.js";
 import { MetricTracker } from "../lib/metrics.js";
 import { generateProgressBar } from "../lib/ui-helper.js";
+import { deployWorker } from "../utils/deployment.js"; // 🟢 NEU: Zentrales Deployment importiert
+import { ScriptList } from "./types.js"; // 🟢 NEU: Type-Safety Import
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -26,9 +27,7 @@ export async function main(ns: NS): Promise<void> {
 
   if (ns.singularity === undefined) {
     logger.error("Kritischer Systemfehler: Singularity-API (SF4) fehlt!");
-    ns.tprint(
-      "🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!",
-    );
+    ns.tprint("🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!");
     return;
   }
 
@@ -45,9 +44,26 @@ export async function main(ns: NS): Promise<void> {
   let allNetworkServers: string[] = [];
   let lastNetworkScan = 0;
 
-  // 🟢 ÄNDERUNG: Auf den neuen JIT-Batcher umgewiesen
+  // 🟢 Skript-Pfade zentral als typisierte ScriptList definieren (analog zu early-fleet)
+  const scriptsList: ScriptList = {
+    worker: "tasks/work.js",
+    dispatcher: "core/sys-dispatcher.js",
+    infra: "core/sys-infra.js",
+    backdoor: "tasks/backdoor.js",
+    xpfarm: "tasks/xp-grind.js",
+    trade: "systems/finance.js",
+    hacknet: "systems/hacknet-early.js",
+    dnet: "core/dnet-master.js",
+    crawler: "tasks/dnet-crawler.js",
+    hack: "tasks/hack.js",
+    grow: "tasks/grow.js",
+    weaken: "tasks/weaken.js",
+    sleeve: "core/sys-sleeve.js",
+    dashboard: "core/sys-dashboard.js",
+  };
+
   const sysBatcherScript = "core/sys-jit-batcher.js";
-  const sysDashboardScript = "core/sys-jit-batcher-dashboard.js"; // 🟢 Pfad anpassen!
+  const sysDashboardScript = "core/sys-jit-batcher-dashboard.js"; 
   const fillRamScript = "utils/fill-ram.js";
 
   while (true) {
@@ -83,15 +99,7 @@ export async function main(ns: NS): Promise<void> {
     const pServers = ns.cloud.getServerNames();
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-    const maxNetworkRam = allNetworkServers.reduce((max, s) => {
-      if (!ns.hasRootAccess(s) || pServers.includes(s) || s === "home")
-        return max;
-      const ram = ns.getServerMaxRam(s);
-      return ram > max ? ram : max;
-    }, 0);
-
-    const canRunBatcher =
-      hasFormulas && (homeMaxRam >= BATCHER_MIN_RAM || maxNetworkRam >= 32);
+    const canRunBatcher = hasFormulas && (homeMaxRam >= BATCHER_MIN_RAM);
 
     const playerMoney = p.money;
     const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
@@ -117,9 +125,6 @@ export async function main(ns: NS): Promise<void> {
       factionTargets as Record<FactionName, number>,
     );
 
-    const roadmapFactionName = nextRoadmapFaction
-      ? nextRoadmapFaction.name
-      : null;
     const factionToWorkFor = factionRepMult > 0.1 ? nextRoadmapFaction : null;
     const hasSavingTarget =
       factionToWorkFor !== null && !isReadyForFactionGrind;
@@ -164,12 +169,8 @@ export async function main(ns: NS): Promise<void> {
 
     if (mode !== previousStrategy) {
       const isOscillating =
-        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(
-          mode,
-        ) &&
-        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(
-          previousStrategy,
-        );
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(mode) &&
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(previousStrategy);
 
       if (
         isOscillating &&
@@ -189,9 +190,7 @@ export async function main(ns: NS): Promise<void> {
     let label = "";
 
     if (mode === "REP" && targetFaction) {
-      currentVal =
-        currentFactionReps[targetFaction] ??
-        ns.singularity.getFactionRep(targetFaction);
+      currentVal = currentFactionReps[targetFaction] ?? ns.singularity.getFactionRep(targetFaction);
       targetVal = factionTargets[targetFaction] ?? 0;
       label = `Fraktion: ${targetFaction}`;
     } else if (mode === "CORP" && targetCompany) {
@@ -259,10 +258,8 @@ export async function main(ns: NS): Promise<void> {
       targetStat: mode === "TRAIN" ? targetStat : undefined,
       targetKills: mode === "KILLS" ? targetStat : undefined,
       progressBar: finalBar,
-
       batcherActive: isBatcherRunning,
 
-      // Wenn er läuft, lassen wir die Keys unberührt, damit der JIT-Batcher ungestört in den Port schreiben kann!
       ...(isBatcherRunning
         ? {}
         : {
@@ -298,10 +295,9 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    const workerScript =
-      mode === "XP_SPRINT" ? "tasks/xp-grind.js" : "tasks/work.js";
-    const obsoleteScript =
-      mode === "XP_SPRINT" ? "tasks/work.js" : "tasks/xp-grind.js";
+    // Bestimme aktives und obsoletes Skript
+    const workerScript = mode === "XP_SPRINT" ? scriptsList.xpfarm : scriptsList.worker;
+    const obsoleteScript = mode === "XP_SPRINT" ? scriptsList.worker : scriptsList.xpfarm;
 
     const infectedServers = allNetworkServers.filter(
       (s) =>
@@ -311,17 +307,13 @@ export async function main(ns: NS): Promise<void> {
         ns.getServerMaxRam(s) > 0,
     );
 
-    let workerFleet: string[] = [];
-
+    // --- 🚀 NEUE VEREINHEITLICHTE DEPLOYMENT LOGIK VIA DEPLOYWORKER ---
     if (canRunBatcher) {
       if (!ns.isRunning(sysBatcherScript, "home") && getFreeRam() > 15) {
         ns.run(sysBatcherScript, 1);
-        logger.success(
-          `🔥 System-Voraussetzungen erfüllt: '${sysBatcherScript}' gestartet.`,
-        );
+        logger.success(`🔥 System-Voraussetzungen erfüllt: '${sysBatcherScript}' gestartet.`);
       }
 
-      // 🟢 NEU: Dashboard automatisch starten/wiederbeleben, wenn der Batcher aktiv ist
       if (
         ns.isRunning(sysBatcherScript, "home") &&
         !ns.isRunning(sysDashboardScript, "home") &&
@@ -331,90 +323,39 @@ export async function main(ns: NS): Promise<void> {
         logger.info(`📊 JIT-Dashboard automatisch gestartet.`);
       }
 
-      const allAvailableHosts = [...infectedServers, ...pServers];
+      // Wenn der High-End Batcher läuft, säubern wir alle Worker auf externen Hosts & Home
+      const allAvailableHosts = [...infectedServers, ...pServers, "home"];
       for (const server of allAvailableHosts) {
-        if (ns.isRunning(workerScript, server))
-          ns.scriptKill(workerScript, server);
-        if (ns.isRunning(obsoleteScript, server))
-          ns.scriptKill(obsoleteScript, server);
+        if (ns.isRunning(workerScript, server)) ns.scriptKill(workerScript, server);
+        if (ns.isRunning(obsoleteScript, server)) ns.scriptKill(obsoleteScript, server);
       }
     } else {
-      // 🟢 NEU: Wenn der Batcher nicht laufen kann, Dashboard sauber beenden
       if (ns.isRunning(sysDashboardScript, "home")) {
         ns.scriptKill(sysDashboardScript, "home");
         logger.info(`⏹️ Dashboard beendet, da Batcher inaktiv.`);
       }
 
-      workerFleet = [...infectedServers, ...pServers];
-
+      // 1. Externe Flotte (Infected + Purchased Servers) vollständig via deployWorker steuern
+      const workerFleet = [...infectedServers, ...pServers];
       for (const server of workerFleet) {
-        if (ns.isRunning(obsoleteScript, server)) {
-          ns.scriptKill(obsoleteScript, server);
-        }
-
-        if (ns.isRunning(workerScript, server)) {
-          const runningProc = ns
-            .ps(server)
-            .find((proc) => proc.filename === workerScript);
-          if (runningProc && runningProc.args[0] !== cachedFallbackTarget) {
-            ns.scriptKill(workerScript, server);
-          }
-        }
+        deployWorker(ns, server, workerScript, cachedFallbackTarget, 0, scriptsList);
       }
 
-      dispatchSimpleTask(
-        ns,
-        workerFleet,
-        workerScript,
-        cachedFallbackTarget,
-        Infinity,
-        bnMults,
-      );
-    }
-
-    const homeShouldRunWorker =
-      !["REP", "TRAIN", "CORP", "CRIME"].includes(mode) && !canRunBatcher;
-    if (!homeShouldRunWorker) {
-      if (ns.isRunning(workerScript, "home")) {
-        ns.scriptKill(workerScript, "home");
-      }
-    } else {
-      let isWorkerRunningWithCorrectTarget = false;
-      if (ns.isRunning(workerScript, "home")) {
-        const homeProc = ns
-          .ps("home")
-          .find((proc) => proc.filename === workerScript);
-        if (homeProc && homeProc.args[0] !== cachedFallbackTarget) {
-          ns.scriptKill(workerScript, "home");
-        } else {
-          isWorkerRunningWithCorrectTarget = true;
-        }
-      }
-
-      const homeFreeRam = getFreeRam();
-      const reservedRam =
-        bnMults.ServerWeakenRate < 1.0
-          ? Math.ceil(20 / bnMults.ServerWeakenRate)
-          : 20;
-      const workerRam = ns.getScriptRam(workerScript);
-
-      if (
-        homeFreeRam > reservedRam + workerRam &&
-        !isWorkerRunningWithCorrectTarget
-      ) {
-        const homeThreads = Math.floor((homeFreeRam - reservedRam) / workerRam);
-        if (homeThreads > 0) {
-          ns.run(workerScript, homeThreads, cachedFallbackTarget);
-        }
+      // 2. Home-Server dynamisch als Worker zuschalten (falls der Spieler nicht manuell beschäftigt ist)
+      const homeShouldRunWorker = !["REP", "TRAIN", "CORP", "CRIME"].includes(mode);
+      if (homeShouldRunWorker) {
+        const reservedRam = bnMults.ServerWeakenRate < 1.0 ? Math.ceil(20 / bnMults.ServerWeakenRate) : 20;
+        deployWorker(ns, "home", workerScript, cachedFallbackTarget, reservedRam, scriptsList);
+      } else {
+        if (ns.isRunning(workerScript, "home")) ns.scriptKill(workerScript, "home");
+        if (ns.isRunning(obsoleteScript, "home")) ns.scriptKill(obsoleteScript, "home");
       }
     }
 
     const isRamReady =
       homeMaxRam >= 256 ||
-      (pServers.length > 0 &&
-        Math.max(...pServers.map((s) => ns.getServerMaxRam(s))) >= 64);
-    const executionAllowed =
-      !hasFormulas || ns.isRunning(sysBatcherScript, "home");
+      (pServers.length > 0 && Math.max(...pServers.map((s) => ns.getServerMaxRam(s))) >= 64);
+    const executionAllowed = !hasFormulas || ns.isRunning(sysBatcherScript, "home");
 
     if (
       isRamReady &&
@@ -426,7 +367,6 @@ export async function main(ns: NS): Promise<void> {
       ns.run(fillRamScript, 1);
     }
 
-    // 🟢 Übergebe hier den korrekten Skriptnamen, um Race-Conditions im Microservice-Manager zu fixen
     manageMicroservices(
       ns,
       mode,
@@ -445,7 +385,7 @@ function manageMicroservices(
   currentMode: string,
   hasSavingTarget: boolean,
   logger: Logger,
-  sysBatcherScript: string, // 🟢 Parameter hinzugefügt
+  sysBatcherScript: string, 
   targetStat?: number,
 ): void {
   const modeToScript: Record<string, string> = {
@@ -460,7 +400,6 @@ function manageMicroservices(
 
   let targetScript = modeToScript[currentMode];
 
-  // 🟢 ÄNDERUNG: Nutzt jetzt den dynamischen JIT-Pfad statt des hartcodierten alten Namens
   if (
     currentMode === "MONEY" &&
     (hasSavingTarget || !ns.isRunning(sysBatcherScript, "home"))

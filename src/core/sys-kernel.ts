@@ -63,6 +63,7 @@ export async function main(ns: NS): Promise<void> {
     const homeMax = ns.getServerMaxRam("home");
     const currentState = loadState(ns);
     const hasNavigator = ns.fileExists("DarkscapeNavigator.exe", "home");
+    const hasFormulas = ns.fileExists("Formulas.exe", "home"); // 🎯 Detektiere Formulas-Besitz
 
     // --- 🤖 SUBSYSTEM ORCHESTRATION ---
 
@@ -95,8 +96,7 @@ export async function main(ns: NS): Promise<void> {
         ns.run(scripts.crawler, 1);
     }
 
-    // 4. 🟢 NEU: Automatischer Backdoor-Manager
-    // Läuft als Hintergrund-Daemon oder Single-Shot (wird reaktiviert, falls beendet)
+    // 4. 🟢 Automatischer Backdoor-Manager
     if (
       ns.fileExists(scripts.backdoor, "home") &&
       !ns.isRunning(scripts.backdoor, "home")
@@ -106,13 +106,17 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // --- ⚡ DYNAMISCHER FLOTTEN-MODUS SHIFT ---
+    // 🧠 Der Dispatcher steuert das gesamte Imperium (Singularity, Crimes, Factions).
+    // Er darf ab 64 GB laufen und entscheidet intern selbstständig, ob er Simple-Tasks oder den JIT-Batcher nutzt.
     const isDispatcherReady =
       homeMax >= 64 && ns.fileExists(scripts.dispatcher, "home");
 
     if (isDispatcherReady) {
-      // Modus: Advanced Batching
+      // Modus: Dispatcher-Kontrolle (Simple Fleet ODER JIT-Batcher)
       if (ns.isRunning(earlyFleetScript, "home")) {
-        logger.info("Upgrade auf Advanced Batcher. Stoppe Early-Fleet...");
+        logger.warn(
+          "64 GB+ RAM erreicht! Übergebe Kontrolle an das Hauptgehirn. Stoppe Early-Fleet...",
+        );
         ns.scriptKill(earlyFleetScript, "home");
       }
       if (!ns.isRunning(scripts.dispatcher, "home")) {
@@ -120,13 +124,13 @@ export async function main(ns: NS): Promise<void> {
         ns.run(scripts.dispatcher, 1);
       }
     } else {
-      // Modus: Early-Game Basic Hacking / XP Grind
+      // Modus: Ultra-Early Game / Boot-Phase (RAM < 64GB)
       if (
         !ns.isRunning(earlyFleetScript, "home") &&
         ns.fileExists(earlyFleetScript, "home")
       ) {
         logger.info(
-          "Dispatcher nicht bereit (<64GB). Starte Early-Fleet Manager...",
+          "Zentraler Dispatcher benötigt mindestens 64GB RAM. Aktiviere temporäre Early-Fleet...",
         );
         ns.run(earlyFleetScript, 1);
       }
@@ -153,6 +157,6 @@ export async function main(ns: NS): Promise<void> {
       totalNodes: currentState?.allServers?.length || 0,
     });
 
-    await ns.sleep(5000); // 5 Sekunden Intervall reicht für die reine Prozessüberwachung völlig aus
+    await ns.sleep(5000);
   }
 }

@@ -12,6 +12,7 @@ const BATCH_GAP = 4 * SPACER;
 const HOME_RAM_RESERVE = 64;
 const SCRIPT_RAM_BASE = 1.75;
 const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000; // 60 Minuten
+const BLACKLIST_DURATION = 30000; // 30 Sekunden Sperre nach Kollaps
 
 // Skript-Pfade
 const PATH_HACK = "/tasks/hack.js";
@@ -41,15 +42,13 @@ export async function main(ns: NS): Promise<void> {
   const servers = getAllServers(ns);
   for (const s of servers) {
     if (s !== "home" && ns.hasRootAccess(s)) {
-      // 1. Alte Prozesse stoppen
       ns.killall(s, true);
-
-      // 2. Frische JIT-Skripte von 'home' auf den Server schieben
       ns.scp([PATH_HACK, PATH_GROW, PATH_WEAKEN], s, "home");
     }
   }
 
   const eventQueue: JitEvent[] = [];
+  const targetBlacklist = new Map<string, number>();
   let nextAvailableLandTime = 0;
   let batchIdCounter = 0;
 
@@ -77,6 +76,10 @@ export async function main(ns: NS): Promise<void> {
       batchesSentForTarget >= dynamicMaxBatchesForTarget ||
       eventQueue.length === 0
     ) {
+      for (const [key, expiry] of targetBlacklist.entries()) {
+        if (now > expiry) targetBlacklist.delete(key);
+      }
+
       logger.info(
         "🔍 Pipeline leer oder Target-Limit erreicht. Berechne optimales Ziel...",
       );
@@ -88,6 +91,7 @@ export async function main(ns: NS): Promise<void> {
         getNetworkMaxRam(ns, servers),
         virtualFreeRam,
         bnMults,
+        targetBlacklist
       );
 
       if (planning && planning.target !== target) {
@@ -110,7 +114,7 @@ export async function main(ns: NS): Promise<void> {
         logger.warn(
           "⚠️ Kein valide hackbares Ziel mit ausreichend freiem RAM gefunden. Schlafe...",
         );
-        patchState(ns, { batcherProgress: "Kein RAM-Slot frei" });
+        patchState(ns, { batcherProgress: "Kein RAM-Slot frei / Blacklisted" });
         await ns.sleep(5000);
         continue;
       }
@@ -208,7 +212,7 @@ export async function main(ns: NS): Promise<void> {
 
       if (Date.now() - event.startTime > 30) {
         logger.warn(
-          `⏳ Event ${event.id} um ${Date.now() - event.startTime}ms verzögert! Drop zur Desync-Vermeidung.`,
+          `⏳ Event ${event.id} um ${Math.round(Date.now() - event.startTime)}ms verzögert! Drop zur Desync-Vermeidung.`,
         );
         continue;
       }
@@ -218,8 +222,13 @@ export async function main(ns: NS): Promise<void> {
 
       if (!dispatched) {
         logger.error(
-          `🛑 JIT-Kollaps! Realer RAM-Mangel bei ${event.id}. Breche Pipeline ab und starte Cooldown...`,
+          `🛑 JIT-Kollaps! Realer RAM-Mangel bei ${event.id}. Setze ${event.target} auf Blacklist.`,
         );
+        
+        if (event.target) {
+          targetBlacklist.set(event.target, Date.now() + BLACKLIST_DURATION);
+        }
+
         eventQueue.length = 0;
         target = null;
 
@@ -239,7 +248,23 @@ export async function main(ns: NS): Promise<void> {
       lastStateUpdate = now;
     }
 
-    await ns.sleep(15);
+    // -------------------------------------------------------------------------
+    // ⚡ ADAPTIVER HOCHPRÄZISIONS-SCHLEIFEN-TAKT
+    // -------------------------------------------------------------------------
+    if (eventQueue.length > 0) {
+      const timeToNextEvent = eventQueue[0].startTime - Date.now();
+      
+      if (timeToNextEvent > 40) {
+        // Noch viel Zeit: Grob heranpirschen, stoppe 20ms vor dem Event
+        await ns.sleep(timeToNextEvent - 20);
+      } else {
+        // Kritische Phase: In den 1ms-Hochpräzisionsmodus schalten
+        await ns.sleep(1);
+      }
+    } else {
+      // Keine Events in der Queue: CPU-Schonmodus
+      await ns.sleep(50);
+    }
   }
 }
 
@@ -249,15 +274,16 @@ function internalPlanner(
   totalUsableMaxRam: number,
   currentFreeRamPool: number,
   bnMults: any,
+  targetBlacklist: Map<string, number>
 ): { target: string; plan: BatchPlan; maxBatches: number } | null {
-  const currentState = loadState(ns);
   const playerHackLevel = ns.getHackingLevel();
 
   const targets = servers.filter(
     (s) =>
       ns.hasRootAccess(s) &&
       ns.getServerMaxMoney(s) > 0 &&
-      ns.getServerRequiredHackingLevel(s) <= playerHackLevel,
+      ns.getServerRequiredHackingLevel(s) <= playerHackLevel &&
+      !targetBlacklist.has(s)
   );
 
   let bestTarget: string | null = null;
@@ -270,23 +296,14 @@ function internalPlanner(
     let testPlan: BatchPlan | null = null;
 
     for (let greed = startGreed; greed <= 0.95; greed += 0.05) {
-      testPlan = calculateBatch(
-        ns,
-        s,
-        bnMults,
-        greed,
-        SPACER,
-      ) as BatchPlan | null;
+      testPlan = calculateBatch(ns, s, bnMults, greed, SPACER) as BatchPlan | null;
       if (testPlan !== null) break;
     }
 
     if (!testPlan || testPlan.totalRam > currentFreeRamPool) continue;
-
-    const idealExecutionTime = testPlan.executionTime;
-    if (idealExecutionTime > DYNAMIC_MAX_WEAKEN_TIME) continue;
+    if (testPlan.executionTime > DYNAMIC_MAX_WEAKEN_TIME) continue;
 
     const score = ns.getServerMaxMoney(s);
-
     if (score > highestScore) {
       highestScore = score;
       bestTarget = s;
@@ -297,100 +314,58 @@ function internalPlanner(
 
   const serverMock = ns.getServer(bestTarget);
   serverMock.hackDifficulty = serverMock.minDifficulty;
-  const weakenTime = ns.formulas!.hacking.weakenTime(
-    serverMock,
-    ns.getPlayer(),
-  );
+  const weakenTime = ns.formulas!.hacking.weakenTime(serverMock, ns.getPlayer());
 
   const maxConcurrentBatches = Math.max(1, Math.floor(weakenTime / SPACER));
   const idealBatchRam = totalUsableMaxRam / maxConcurrentBatches;
 
-  // 🟢 KORREKTUR HIER: Ermittle den real existierenden größten freien RAM-Block im Netzwerk
   let largestSingleServerRam = 0;
   for (const s of servers) {
     if (!ns.hasRootAccess(s)) continue;
     let free = ns.getServerMaxRam(s) - ns.getServerUsedRam(s);
     if (s === "home") free = Math.max(0, free - HOME_RAM_RESERVE);
-    if (free > largestSingleServerRam) {
-      largestSingleServerRam = free;
-    }
+    if (free > largestSingleServerRam) largestSingleServerRam = free;
   }
 
-  const maxAllowedBatchRam = Math.min(
-    idealBatchRam,
-    largestSingleServerRam,
-    currentFreeRamPool,
-  );
+  const maxAllowedBatchRam = Math.min(idealBatchRam, largestSingleServerRam, currentFreeRamPool);
   const dynamicMaxBatchesForTarget = Math.max(500, maxConcurrentBatches * 2);
 
   let currentGreedFactor = 0.9;
-  let lockPlan = calculateBatch(
-    ns,
-    bestTarget,
-    bnMults,
-    currentGreedFactor,
-    SPACER,
-  ) as BatchPlan | null;
+  let lockPlan = calculateBatch(ns, bestTarget, bnMults, currentGreedFactor, SPACER) as BatchPlan | null;
   let lastValidPlan = lockPlan;
 
   while (currentGreedFactor > 0.005) {
     currentGreedFactor -= 0.01;
-    const nextPlan = calculateBatch(
-      ns,
-      bestTarget,
-      bnMults,
-      currentGreedFactor,
-      SPACER,
-    ) as BatchPlan | null;
+    const nextPlan = calculateBatch(ns, bestTarget, bnMults, currentGreedFactor, SPACER) as BatchPlan | null;
     if (nextPlan === null) break;
 
     lockPlan = nextPlan;
     lastValidPlan = nextPlan;
-
     if (lockPlan.totalRam <= maxAllowedBatchRam) break;
   }
 
-  if (lockPlan && lockPlan.totalRam > maxAllowedBatchRam && lastValidPlan)
-    lockPlan = lastValidPlan;
+  if (lockPlan && lockPlan.totalRam > maxAllowedBatchRam && lastValidPlan) lockPlan = lastValidPlan;
 
   if (!lockPlan || lockPlan.totalRam > currentFreeRamPool) {
     currentGreedFactor = 0.4;
-    lockPlan = calculateBatch(
-      ns,
-      bestTarget,
-      bnMults,
-      currentGreedFactor,
-      SPACER,
-    ) as BatchPlan | null;
+    lockPlan = calculateBatch(ns, bestTarget, bnMults, currentGreedFactor, SPACER) as BatchPlan | null;
     lastValidPlan = lockPlan;
 
     while (currentGreedFactor > 0.005) {
       currentGreedFactor -= 0.01;
-      const nextPlan = calculateBatch(
-        ns,
-        bestTarget,
-        bnMults,
-        currentGreedFactor,
-        SPACER,
-      ) as BatchPlan | null;
+      const nextPlan = calculateBatch(ns, bestTarget, bnMults, currentGreedFactor, SPACER) as BatchPlan | null;
       if (nextPlan === null) break;
 
       lockPlan = nextPlan;
       lastValidPlan = nextPlan;
-
       if (lockPlan.totalRam <= currentFreeRamPool) break;
     }
 
-    if (lockPlan && lockPlan.totalRam > currentFreeRamPool && lastValidPlan)
-      lockPlan = lastValidPlan;
+    if (lockPlan && lockPlan.totalRam > currentFreeRamPool && lastValidPlan) lockPlan = lastValidPlan;
   }
 
   if (lockPlan && lockPlan.totalRam <= currentFreeRamPool) {
-    return {
-      target: bestTarget,
-      plan: lockPlan,
-      maxBatches: dynamicMaxBatchesForTarget,
-    };
+    return { target: bestTarget, plan: lockPlan, maxBatches: dynamicMaxBatchesForTarget };
   }
 
   return null;
@@ -400,48 +375,42 @@ function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   const workers: WorkerNode[] = [];
   for (const s of servers) {
     if (!ns.hasRootAccess(s)) continue;
-    // 🟢 REPARIERT: max bleibt die physische Obergrenze des Workers
     let max = ns.getServerMaxRam(s);
     if (s === "home") max = Math.max(0, max - HOME_RAM_RESERVE);
     const used = ns.getServerUsedRam(s);
     const free = max - used;
-    if (free > 0) {
-      workers.push({ hostname: s, maxRam: max, freeRam: free });
-    }
+    if (free > 0) workers.push({ hostname: s, maxRam: max, freeRam: free });
   }
   return workers.sort((a, b) => b.freeRam - a.freeRam);
 }
 
-function executeOnWorkers(
-  ns: NS,
-  event: JitEvent,
-  workers: WorkerNode[],
-): boolean {
+function executeOnWorkers(ns: NS, event: JitEvent, workers: WorkerNode[]): boolean {
   if (event.threads <= 0) return true;
 
   let threadsLeft = event.threads;
   const scriptRam = ns.getScriptRam(event.script);
+  const spawnedPids: number[] = [];
 
   for (const worker of workers) {
     const maxThreadsOnWorker = Math.floor(worker.freeRam / scriptRam);
     if (maxThreadsOnWorker <= 0) continue;
 
     const threadsToRun = Math.min(threadsLeft, maxThreadsOnWorker);
-    const pid = ns.exec(
-      event.script,
-      worker.hostname,
-      threadsToRun,
-      event.target,
-      event.landTime,
-      event.id,
-    );
+    const pid = ns.exec(event.script, worker.hostname, threadsToRun, event.target, event.landTime, event.id);
 
     if (pid > 0) {
+      spawnedPids.push(pid);
       threadsLeft -= threadsToRun;
+      worker.freeRam -= threadsToRun * scriptRam;
       if (threadsLeft <= 0) return true;
     }
   }
-  return threadsLeft === 0;
+
+  if (threadsLeft > 0) {
+    for (const pid of spawnedPids) ns.kill(pid);
+    return false;
+  }
+  return true;
 }
 
 function getNetworkRealFreeRam(ns: NS, servers: string[]): number {
@@ -460,8 +429,7 @@ function getNetworkRealFreeRam(ns: NS, servers: string[]): number {
 function getQueueRam(ns: NS, queue: any[]): number {
   let totalRam = 0;
   for (const ev of queue) {
-    const scriptCost = ns.getScriptRam(ev.script);
-    totalRam += ev.threads * scriptCost;
+    totalRam += ev.threads * ns.getScriptRam(ev.script);
   }
   return totalRam;
 }

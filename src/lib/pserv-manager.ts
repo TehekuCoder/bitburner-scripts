@@ -1,63 +1,69 @@
 // src/lib/pserv-manager.ts
 
 import { NS } from "@ns";
-import { provisionServer } from "../utils/provision.js"; 
+import { provisionServer } from "../utils/provision.js";
 import { Logger } from "../core/logger.js";
 
 export async function handleServerPurchases(
   ns: NS,
   bnMults: any,
   freezePservers: boolean,
-  moneyReserve: number, // 🟢 Neu eingepflegt
+  moneyReserve: number,
   logger: Logger,
 ): Promise<void> {
   const maxServers = ns.cloud.getServerLimit();
   if (maxServers === 0 || bnMults.PurchasedServerLimit === 0) return;
 
   const currentServers = ns.cloud.getServerNames();
-  const homeMaxRam = ns.getServerMaxRam("home");
-  const hasFormulas = ns.fileExists("Formulas.exe", "home");
-
-  const hasEligiblePserv = currentServers.some(
-    (s) => ns.getServerMaxRam(s) >= 64,
-  );
-  const rushSinglePserv =
-    hasFormulas &&
-    homeMaxRam >= 256 &&
-    !hasEligiblePserv &&
-    currentServers.length > 0;
-
-  // Wenn P-Server eingefroren sind und wir nicht im lategame "Rush" sind, sofort stoppen
-  if (freezePservers && !rushSinglePserv) return;
-
   const maxRam = ns.cloud.getRamLimit();
   const playerMoney = ns.getPlayer().money;
 
-  // 🛑 CRITICAL FIX: Absoluter finanzieller Schutzwall
-  if (playerMoney <= moneyReserve) return; 
-  
-  // Das Budget ist 90% von dem Geld, das uns nach Abzug der Reserve FREI zur Verfügung steht
-  let currentBudget = (playerMoney - moneyReserve) * 0.9;
-  if (currentBudget < 50_000) return;
-
+  // --- 1. DYNAMISCHES RAM-LIMIT ERMITTELN (Zuerst ausführen!) ---
   let allowedMaxRam = 64;
-  if (hasFormulas) allowedMaxRam = maxRam;
+  if (ns.fileExists("Formulas.exe", "home")) allowedMaxRam = maxRam;
   else if (ns.fileExists("SQLInject.exe", "home"))
     allowedMaxRam = Math.min(2048, maxRam);
   else if (ns.fileExists("HTTPWorm.exe", "home")) allowedMaxRam = 512;
 
+  // --- 2. INTELLIGENTER FREEZE-CHECK (SCHNÄPPCHEN-FINDER) ---
+  if (freezePservers) {
+    // Wenn ein Upgrade weniger als 2% des Gesamtvermögens kostet, ignorieren wir den Freeze.
+    // Das treibt den Home-Server-Sprint durch mehr Netzwerkleistung sogar an!
+    let hasCheapUpgrade = false;
+
+    for (const server of currentServers) {
+      const currentRam = ns.getServerMaxRam(server);
+      if (currentRam * 2 <= allowedMaxRam) {
+        const cost =
+          ns.cloud.getServerCost(currentRam * 2) -
+          ns.cloud.getServerCost(currentRam);
+        if (cost < playerMoney * 0.02) {
+          hasCheapUpgrade = true;
+          break;
+        }
+      }
+    }
+    // Wenn kein Schnäppchen existiert und wir eingefroren sind -> Abbruch
+    if (!hasCheapUpgrade) return;
+  }
+
+  // --- 3. FINANZIELLER SCHUTZWALL & BUDGET ---
+  if (playerMoney <= moneyReserve) return;
+
+  // Das Budget beträgt 90% des Kapitals, das NACH Abzug der Reserve frei verfügbar ist
+  let currentBudget = (playerMoney - moneyReserve) * 0.9;
+  if (currentBudget < 50_000) return;
+
+  // --- 4. EXPANSIONS- UND UPGRADE-SCHLEIFE ---
   let actionOccurred = true;
 
   while (actionOccurred) {
     actionOccurred = false;
 
+    // Frische Serverliste innerhalb der Schleife abfragen, falls Server gekauft/aufgerüstet wurden
+    const updatedServers = ns.cloud.getServerNames();
     let minRam = maxRam;
     let worstServer = "";
-    let maxPservRam = 0;
-    let bestServer = "";
-
-    // Frische Serverliste innerhalb der Schleife abfragen, falls sich Daten geändert haben
-    const updatedServers = ns.cloud.getServerNames();
 
     for (const server of updatedServers) {
       const ram = ns.getServerMaxRam(server);
@@ -65,12 +71,9 @@ export async function handleServerPurchases(
         minRam = ram;
         worstServer = server;
       }
-      if (ram > maxPservRam) {
-        maxPservRam = ram;
-        bestServer = server;
-      }
     }
 
+    // Berechnen, welches maximale RAM wir uns leisten können
     let affordableNewRam = 8;
     while (
       affordableNewRam * 2 <= allowedMaxRam &&
@@ -78,31 +81,21 @@ export async function handleServerPurchases(
     ) {
       affordableNewRam *= 2;
     }
-    if (ns.cloud.getServerCost(affordableNewRam) > currentBudget)
+    if (ns.cloud.getServerCost(affordableNewRam) > currentBudget) {
       affordableNewRam = 0;
+    }
 
+    // Fall A: Wir besitzen noch überhaupt keine Server
     if (updatedServers.length === 0 && affordableNewRam >= 8) {
       const initialRam = Math.min(affordableNewRam, 64);
       if (await buyNewServer(ns, initialRam, maxServers, logger)) {
         currentBudget -= ns.cloud.getServerCost(initialRam);
         actionOccurred = true;
       }
-    } else if (rushSinglePserv && bestServer !== "") {
-      const nextRam = maxPservRam * 2;
-      if (nextRam <= allowedMaxRam) {
-        const upgradeCost =
-          ns.cloud.getServerCost(nextRam) - ns.cloud.getServerCost(maxPservRam);
-        if (currentBudget >= upgradeCost) {
-          if (ns.cloud.upgradeServer(bestServer, nextRam)) {
-            logger.success(
-              `🚀 RUSH-MODUS: ${bestServer} gezielt auf ${ns.format.ram(nextRam)} aufgerüstet.`,
-            );
-            currentBudget -= upgradeCost;
-            actionOccurred = true;
-          }
-        }
-      }
-    } else if (updatedServers.length < maxServers) {
+    }
+    // Fall B: Wir haben das Server-Limit noch nicht erreicht
+    else if (updatedServers.length < maxServers) {
+      // Wenn ein Upgrade des schlechtesten Servers sinnvoller ist als ein kleiner Neukauf
       if (worstServer !== "" && minRam < affordableNewRam) {
         const nextRam = minRam * 2;
         const upgradeCost =
@@ -117,13 +110,17 @@ export async function handleServerPurchases(
             actionOccurred = true;
           }
         }
-      } else if (affordableNewRam >= 8) {
+      }
+      // Ansonsten einen neuen Server hinstellen
+      else if (affordableNewRam >= 8) {
         if (await buyNewServer(ns, affordableNewRam, maxServers, logger)) {
           currentBudget -= ns.cloud.getServerCost(affordableNewRam);
           actionOccurred = true;
         }
       }
-    } else if (worstServer !== "") {
+    }
+    // Fall C: Das Server-Limit ist voll. Wir rüsten den schwächsten Server auf.
+    else if (worstServer !== "") {
       const nextRam = minRam * 2;
       if (nextRam <= allowedMaxRam) {
         const upgradeCost =
