@@ -1,17 +1,19 @@
 import { NS, Player, FactionName, CompanyName } from "@ns";
-import { loadState, patchState, BotStrategy } from "./state-manager.js";
+import { loadState, patchState } from "./state-manager.js";
+import { BotStrategy } from "./types.js";
 import {
   breakAndInfectNetwork,
   getAllServers,
   findBestFallbackTarget,
 } from "../lib/network.js";
 import { findNextRoadmapFaction, applyToAllMegacorps } from "/lib/player.js";
-import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
+import { loadBnMults } from "../lib/state.js";
 import { Logger } from "./logger.js";
 import {
   REFRESH_INTERVALS,
   BATCHER_MIN_RAM,
   COMBAT_STATS,
+  DEFAULT_MULTIPLIERS
 } from "../lib/constants.js";
 
 // --- EXTERNE MODULE & UTILITIES ---

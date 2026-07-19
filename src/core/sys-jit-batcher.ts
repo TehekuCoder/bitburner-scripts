@@ -4,7 +4,8 @@ import { patchState, loadState } from "./state-manager.js";
 import { loadBnMults } from "../lib/state.js";
 import { Logger } from "./logger.js";
 import { JitEvent, WorkerNode } from "core/types";
-import { calculateBatch, BatchPlan } from "../utils/batch-calculator.js";
+import { calculateBatch } from "../utils/batch-calculator.js";
+import { BatchPlan } from "core/types";
 
 // Konfigurationen
 const SPACER = 80;

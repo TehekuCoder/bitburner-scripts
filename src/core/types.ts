@@ -1,6 +1,6 @@
 // src/core/types.ts
 
-import { FactionName, CompanyName, JobField } from "@ns";
+import { NS, FactionName, CompanyName, JobField } from "@ns";
 
 export interface ScriptList {
   worker: string;
@@ -164,7 +164,6 @@ export interface StrategyResult {
   targetStat: number;
 }
 
-
 export interface UIProgressBarParams {
   mode: BotStrategy;
   label: string;
@@ -230,13 +229,10 @@ export interface BatchPlan {
   executionTime: number;
 }
 
-
-
-
-
-
 // find-path.ts
 export interface NetworkInfo {
   nodes: string[];
   parentMap: Record<string, string>;
 }
+
+export type SolverFunction = (ns: NS, host: string, details: any) => Promise<string | null>;

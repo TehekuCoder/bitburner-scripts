@@ -1,7 +1,7 @@
 import { NS } from "@ns";
-import { DEFAULT_MULTIPLIERS } from "../lib/state.js"; 
 import { loadState, patchState } from "./state-manager.js"; // 🟢 Importiert zur State-Vorbereitung
 import { Logger } from "./logger.js";
+import { DEFAULT_MULTIPLIERS } from "/lib/constants.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

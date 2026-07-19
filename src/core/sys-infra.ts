@@ -1,9 +1,10 @@
 import { NS } from "@ns";
-import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
+import { loadBnMults } from "../lib/state.js";
 import { loadState } from "./state-manager.js";
 import { Logger } from "./logger.js";
 import { handleServerPurchases } from "../lib/pserv-manager.js"; 
-import { printDashboard } from "../lib/infra-ui.js";            
+import { printDashboard } from "../lib/infra-ui.js";  
+import { DEFAULT_MULTIPLIERS } from "/lib/constants.js";          
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

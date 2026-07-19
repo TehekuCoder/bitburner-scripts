@@ -6,6 +6,8 @@ import {
   BitNodeMultipliers,
 } from "@ns";
 
+import { SolverFunction } from "/core/types";
+
 // --- INTERFACES ---
 export interface FactionConfig {
   name: FactionName;
@@ -209,3 +211,4 @@ export const DISPLAY_MAP: Record<CombatStat, string> = {
   dexterity: "Dex",
   agility: "Agi",
 };
+

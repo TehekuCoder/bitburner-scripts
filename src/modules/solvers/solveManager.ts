@@ -1,6 +1,6 @@
 import { NS } from "@ns";
+import { SolverFunction } from "/core/types";
 
-// 1. Alle Solver-Module importieren
 import { solveAccountsManager } from "/modules/solvers/solveAccountsManager";
 import { solveAnagram } from "/modules/solvers/solveAnagram";
 import { solveBaseConversion } from "/modules/solvers/solveBaseConversion";
@@ -16,10 +16,8 @@ import { solvePr0verFl0 } from "/modules/solvers/solvePr0verFl0";
 import { solveRoman } from "/modules/solvers/solveRoman";
 import { solveZeroLogon } from "/modules/solvers/solveZeroLogon";
 
-// Definition der einheitlichen Solver-Signatur
-type SolverFunction = (ns: NS, host: string, details: any) => Promise<string | null>;
 
-// 2. Das zentrale Registrierungs-Mapping
+
 // Die Keys entsprechen exakt den Server-Typen, wie sie im Spiel definiert sind
 const SOLVER_REGISTRY: Record<string, SolverFunction> = {
   "accountsmanager": solveAccountsManager,
