@@ -2,12 +2,7 @@ import { NS, NodeStats } from "@ns";
 import { loadBnMults } from "../lib/state.js";
 import { loadState, patchState } from "../core/state-manager.js";
 import { Logger } from "../core/logger.js";
-
-interface HacknetUpgrade {
-  type: "Level" | "RAM" | "Core" | "Neuer Node";
-  cost: number;
-  index?: number;
-}
+import { HacknetUpgrade } from "/core/types.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

@@ -1,27 +1,7 @@
 import { NS, Server, Player } from "@ns";
-import { DEFAULT_MULTIPLIERS } from "../lib/state.js";
+import { DEFAULT_MULTIPLIERS, PATH_GROW,PATH_HACK,PATH_WEAKEN } from "/lib/constants";
+import { BatchPlan } from "/core/types";
 
-export interface BatchPlan {
-  target: string;
-  hackThreads: number;
-  weaken1Threads: number;
-  growThreads: number;
-  weaken2Threads: number;
-  hackDelay: number;
-  weaken1Delay: number;
-  growDelay: number;
-  weaken2Delay: number;
-  // 🟢 NEU FÜR JIT: Puren Laufzeiten für die absolute Terminplanung
-  hackTime: number;
-  growTime: number;
-  weakenTime: number;
-  totalRam: number;
-  executionTime: number;
-}
-
-const PATH_HACK = "/tasks/hack.js";
-const PATH_GROW = "/tasks/grow.js";
-const PATH_WEAKEN = "/tasks/weaken.js";
 
 /**
  * Berechnet einen mathematisch präzisen HWGW-Batch-Plan unter Idealbedingungen.

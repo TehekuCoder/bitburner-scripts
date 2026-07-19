@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { patchState, loadState } from "./state-manager.js";
+import { patchState } from "./state-manager.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

@@ -1,5 +1,6 @@
 import { NS } from "@ns";
-import { BotState } from "../core/state-manager.js";
+import { BotState } from "/core/types";
+
 
 /**
  * Erstellt einen visuelle Ladebalken.

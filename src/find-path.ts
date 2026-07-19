@@ -1,9 +1,5 @@
 import { NS, Server } from "@ns";
-
-interface NetworkInfo {
-  nodes: string[];
-  parentMap: Record<string, string>;
-}
+import { NetworkInfo } from "./core/types";
 
 export async function main(ns: NS): Promise<void> {
   const network: NetworkInfo = scanNetworkFull(ns);

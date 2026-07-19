@@ -1,9 +1,9 @@
 import { NS } from "@ns";
 // 1. Importiere BotStrategy hier hinzu:
-import { loadState, patchState, BotStrategy } from "./state-manager.js"; 
+import { loadState, patchState} from "./state-manager.js"; 
 import { getAllServers, breakAndInfectNetwork } from "../lib/network.js";
 import { deployWorker } from "../utils/deployment.js";
-import { ScriptList } from "./types.js";
+import { ScriptList,BotStrategy } from "./types.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

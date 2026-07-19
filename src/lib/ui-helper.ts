@@ -1,23 +1,5 @@
-import { NS, FactionName } from "@ns";
-import { BotStrategy } from "../core/state-manager.js";
-
-export interface UIProgressBarParams {
-  mode: BotStrategy;
-  label: string;
-  currentVal: number;
-  targetVal: number;
-  etaStr: string;
-  targetFaction: FactionName | null;
-  playerMoney: number;
-  effectiveThreshold: number;
-  cachedFallbackTarget: string;
-  hasFormulas: boolean;
-  canRunBatcher: boolean;
-  factionToWorkFor: { name: FactionName } | null;
-  isReadyForFactionGrind: boolean;
-  crimeMoneyMult: number;
-  currentState: any;
-}
+import { NS} from "@ns";
+import { UIProgressBarParams } from "/core/types";
 
 /**
  * Generiert den formatierten Statusbalken (Progress Bar) für das Dashboard.

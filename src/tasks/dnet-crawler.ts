@@ -1,11 +1,8 @@
 import { NS } from "@ns";
 import { Logger } from "../core/logger.js";
+import { processedServers, COOLDOWN_MS, COOLDOWN_FILE, LOOT_INTERVAL_MS } from "/lib/constants.js";
 
-const processedServers = new Set<string>();
-const COOLDOWN_FILE = "/dnet-cooldowns.txt";
-const COOLDOWN_MS = 5 * 60 * 1000;
 let lastLootTime = 0;
-const LOOT_INTERVAL_MS = 3 * 60 * 1000;
 
 function isServerInCooldown(ns: NS, host: string): boolean {
   if (!ns.fileExists(COOLDOWN_FILE)) return false;

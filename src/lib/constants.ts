@@ -1,4 +1,10 @@
-import { FactionName, CompanyName, Player, GymType } from "@ns";
+import {
+  FactionName,
+  CompanyName,
+  Player,
+  GymType,
+  BitNodeMultipliers,
+} from "@ns";
 
 // --- INTERFACES ---
 export interface FactionConfig {
@@ -9,21 +15,14 @@ export interface FactionConfig {
 
 // --- REFRESH INTERVALLS ---
 export const REFRESH_INTERVALS = {
-  MEGACORP_APPLY: 600_000,    // 10 Min.
-  FALLBACK_TARGET: 300_000,   // 5 Min.
-  STRATEGY_COOLDOWN: 60_000,  // 1 Min. Schonfrist für Oszillation
-  NETWORK_SCAN: 20_000,       // Nur alle 20 Sek. das Netzwerk scannen/infizieren
+  MEGACORP_APPLY: 600_000, // 10 Min.
+  FALLBACK_TARGET: 300_000, // 5 Min.
+  STRATEGY_COOLDOWN: 60_000, // 1 Min. Schonfrist für Oszillation
+  NETWORK_SCAN: 20_000, // Nur alle 20 Sek. das Netzwerk scannen/infizieren
 };
 
 // --- CONFIGURATION CONSTANTS ---
 export const BATCHER_MIN_RAM = 1024;
-
-export const COMBAT_STATS: (keyof Player["skills"])[] = [
-  "strength",
-  "defense",
-  "dexterity",
-  "agility",
-];
 
 // --- MEGACORPS DEFINITION ---
 export const MEGACORPS: Record<string, CompanyName> = {
@@ -83,10 +82,130 @@ export const CITY_FACTIONS: FactionName[] = [
   "Volhaven" as FactionName,
 ];
 
-export const COMBAT_KEYS = ["strength", "defense", "dexterity", "agility"] as const;
+export const COMBAT_KEYS = [
+  "strength",
+  "defense",
+  "dexterity",
+  "agility",
+] as const;
 export const GYM_STAT_MAP: Record<string, GymType> = {
   strength: "str" as GymType,
   defense: "def" as GymType,
   dexterity: "dex" as GymType,
   agility: "agi" as GymType,
+};
+
+export const TARGET_PROGRAMS = [
+  "BruteSSH.exe",
+  "FTPCrack.exe",
+  "relaySMTP.exe",
+  "HTTPWorm.exe",
+  "DarkscapeNavigator.exe",
+  "SQLInject.exe",
+  "Formulas.exe",
+] as const;
+
+export const DEFAULT_MULTIPLIERS: Record<keyof BitNodeMultipliers, number> = {
+  HackingLevelMultiplier: 1.0,
+  StrengthLevelMultiplier: 1.0,
+  DefenseLevelMultiplier: 1.0,
+  DexterityLevelMultiplier: 1.0,
+  AgilityLevelMultiplier: 1.0,
+  CharismaLevelMultiplier: 1.0,
+  ServerMaxMoney: 1.0,
+  ServerStartingMoney: 1.0,
+  ServerGrowthRate: 1.0,
+  ServerWeakenRate: 1.0,
+  HackingSpeedMultiplier: 1.0,
+  CrimeMoney: 1.0,
+  CrimeSuccessRate: 1.0,
+  CompanyWorkMoney: 1.0,
+  CompanyWorkRepGain: 1.0,
+  FactionWorkRepGain: 1.0,
+  FourSigmaMarketDataCost: 1.0,
+  FourSigmaMarketDataApiCost: 1.0,
+  CorporationValuation: 1.0,
+  CorporationSoftcap: 1.0,
+  BladeburnerRank: 1.0,
+  BladeburnerSkillCost: 1.0,
+  GangSoftcap: 1.0,
+  DaedalusAugsRequirement: 1.0,
+  StaneksGiftPowerMultiplier: 1.0,
+  AugmentationMoneyCost: 1.0,
+  AugmentationRepCost: 1.0,
+  ClassGymExpGain: 1.0,
+  CodingContractMoney: 1.0,
+  CompanyWorkExpGain: 1.0,
+  CorporationDivisions: 1.0,
+  CrimeExpGain: 1.0,
+  FactionPassiveRepGain: 1.0,
+  FactionWorkExpGain: 1.0,
+  GangUniqueAugs: 1.0,
+  GoPower: 1.0,
+  HackExpGain: 1.0,
+  HacknetNodeMoney: 1.0,
+  HomeComputerRamCost: 1.0,
+  InfiltrationMoney: 1.0,
+  InfiltrationRep: 1.0,
+  ManualHackMoney: 1.0,
+  CloudServerCost: 1.0,
+  CloudServerSoftcap: 1.0,
+  CloudServerLimit: 1.0,
+  CloudServerMaxRam: 1.0,
+  FavorToDonateToFaction: 1.0,
+  ScriptHackMoney: 1.0,
+  ServerStartingSecurity: 1.0,
+  StaneksGiftExtraSize: 1.0,
+  WorldDaemonDifficulty: 1.0,
+  ScriptHackMoneyGain: 1.0,
+};
+
+//systems/finance.ts
+export const TRANSACTION_FEE = 100_000;
+export const MIN_INVESTMENT = 5_000_000;
+export const CASH_BUFFER = 2_000_000;
+
+//tasks/dnet-crawler.ts
+export const processedServers = new Set<string>();
+export const COOLDOWN_FILE = "/dnet-cooldowns.txt";
+export const COOLDOWN_MS = 5 * 60 * 1000;
+export const LOOT_INTERVAL_MS = 3 * 60 * 1000;
+
+// 📦 DEFINITION DER KERN-WORKER (utils/provision.ts)
+export const PAYLOADS = [
+  "tasks/hack.js",
+  "tasks/grow.js",
+  "tasks/weaken.js",
+  "tasks/share.js",
+  "tasks/work.js", // WICHTIG: Haupt-Worker hinzugefügt!
+  "tasks/xp-grind.js", // WICHTIG: XP-Farmer hinzugefügt!
+];
+
+export const PATH_GROW = "/tasks/grow.js";
+export const PATH_HACK = "/tasks/hack.js";
+export const PATH_WEAKEN = "/tasks/weaken.js";
+
+// "as const" macht daraus ein Readonly-Tuple aus exakten Literalen statt string[]
+export const COMBAT_STATS = [
+  "strength",
+  "defense",
+  "dexterity",
+  "agility",
+] as const;
+
+// Erstellt den Union-Type: "strength" | "defense" | "dexterity" | "agility"
+export type CombatStat = (typeof COMBAT_STATS)[number];
+
+export const STAT_MAP: Record<CombatStat, GymType> = {
+  strength: "str",
+  defense: "def",
+  dexterity: "dex",
+  agility: "agi",
+};
+
+export const DISPLAY_MAP: Record<CombatStat, string> = {
+  strength: "Str",
+  defense: "Def",
+  dexterity: "Dex",
+  agility: "Agi",
 };

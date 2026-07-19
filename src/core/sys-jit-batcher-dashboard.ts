@@ -1,7 +1,8 @@
 import { NS } from "@ns";
 import { loadState } from "./state-manager.js";
-import { drawBatcherDashboard, DashboardData } from "./batcher-ui.js";
+import { drawBatcherDashboard } from "./batcher-ui.js";
 import { getAllServers } from "../lib/network.js";
+import { DashboardData } from "./types.js";
 
 const HOME_RAM_RESERVE = 64;
 

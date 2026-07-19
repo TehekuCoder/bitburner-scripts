@@ -1,25 +1,8 @@
 import { NS } from "@ns";
 import { Logger } from "../core/logger.js";
 import { runSolver } from "/modules/solvers/solveManager";
-
-export interface ServerAuthDetails {
-  isConnectedToCurrentServer: boolean;
-  hasSession: boolean;
-  modelId: string;
-  passwordHint: string;
-  data: string;
-  logTrafficInterval: number;
-  passwordLength: number;
-  passwordFormat:
-    | "numeric"
-    | "alphabetic"
-    | "alphanumeric"
-    | "ASCII"
-    | "unicode";
-}
-
-const COOLDOWN_FILE = "/dnet-cooldowns.txt";
-const COOLDOWN_MS = 5 * 60 * 1000;
+import { ServerAuthDetails } from "/core/types.js";
+import { COOLDOWN_FILE, COOLDOWN_MS } from "/lib/constants.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

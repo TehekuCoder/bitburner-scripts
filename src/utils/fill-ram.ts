@@ -1,5 +1,6 @@
 import { NS } from "@ns";
-import { loadState, BotState } from "../core/state-manager.js";
+import { loadState } from "../core/state-manager.js";
+import { BotState } from "/core/types.js";
 
 export async function main(ns: NS): Promise<void> {
   const target = ns.getHostname();

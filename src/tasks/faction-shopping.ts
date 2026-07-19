@@ -1,11 +1,6 @@
 import { NS, FactionName } from "@ns";
+import { AugShoppingItem } from "/core/types";
 
-interface AugShoppingItem {
-  faction: FactionName;
-  name: string;
-  price: number;
-  repReq: number;
-}
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

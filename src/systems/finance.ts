@@ -3,10 +3,9 @@
 import { NS } from "@ns";
 import { patchState } from "../core/state-manager.js";
 import { Logger } from "../core/logger.js";
+import {TRANSACTION_FEE , MIN_INVESTMENT, CASH_BUFFER} from "lib/constants.js"
 
-const TRANSACTION_FEE = 100_000;
-const MIN_INVESTMENT = 5_000_000;
-const CASH_BUFFER = 2_000_000; 
+
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

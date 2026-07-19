@@ -1,19 +1,10 @@
 // src/utils/infra-sing-executor.ts
 
 import { NS, ProgramName } from "@ns";
-import { loadBnMults, DEFAULT_MULTIPLIERS } from "../lib/state.js";
+import { loadBnMults } from "../lib/state.js";
 import { patchState } from "../core/state-manager.js";
 import { Logger } from "../core/logger.js";
-
-const TARGET_PROGRAMS = [
-  "BruteSSH.exe",
-  "FTPCrack.exe",
-  "relaySMTP.exe",
-  "HTTPWorm.exe",
-  "DarkscapeNavigator.exe",
-  "SQLInject.exe",
-  "Formulas.exe",
-] as const;
+import { DEFAULT_MULTIPLIERS,TARGET_PROGRAMS } from "/lib/constants.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

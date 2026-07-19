@@ -1,6 +1,5 @@
 import { NS } from "@ns";
-
-export type LogLevel = "DEBUG" | "INFO" | "SUCCESS" | "WARN" | "ERROR";
+import { LogLevel } from "/core/types";
 
 export class Logger {
   private ns: NS;

@@ -1,7 +1,6 @@
-import { NS, Player, FactionName } from "@ns";
+import { NS, Player } from "@ns";
 import {
   FactionConfig,
-  CITY_FACTIONS,
   HACKING_FACTIONS,
   MEGACORPS,
 } from "./constants.js";

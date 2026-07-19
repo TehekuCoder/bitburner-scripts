@@ -1,19 +1,5 @@
 import { NS } from "@ns";
-
-export interface DashboardData {
-  status: string;
-  target: string;
-  progress: number;
-  progressText: string;
-  greed: number;
-  ramNeeded: number;
-  ramFree: number;
-  ramTotal: number;
-  batchesSent: number;
-  batchesMax: number;
-  eventLog: string[];
-  lastWaveProfit: number;
-}
+import { DashboardData } from "./types";
 
 function makeProgressBar(progress: number, width = 20): string {
   const filledLength = Math.round(Math.max(0, Math.min(1, progress)) * width);

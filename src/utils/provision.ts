@@ -1,14 +1,7 @@
 import { NS } from "@ns";
+import { PAYLOADS } from "/lib/constants";
 
-// 📦 DEFINITION DER KERN-WORKER (utils/provision.ts)
-const PAYLOADS = [
-  "tasks/hack.js",
-  "tasks/grow.js",
-  "tasks/weaken.js",
-  "tasks/share.js",
-  "tasks/work.js",       // WICHTIG: Haupt-Worker hinzugefügt!
-  "tasks/xp-grind.js"    // WICHTIG: XP-Farmer hinzugefügt!
-];
+
 
 /**
  * Kopiert alle benötigten Worker-Skripte auf den Zielserver, falls sie fehlen.

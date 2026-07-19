@@ -1,6 +1,8 @@
 import { NS, FactionName, FactionWorkType, CompanyName, GymType } from "@ns";
 import { Logger } from "../core/logger.js";
-import { BotState } from "../core/state-manager.js";
+import { BotState } from "/core/types.js";
+import { COMBAT_KEYS, GYM_STAT_MAP } from "./constants.js";
+import { SleeveMode } from "/core/types.js";
 
 export const MEGACORPS = [
   "ECorp",
@@ -15,26 +17,6 @@ export const MEGACORPS = [
   "Fulcrum Technologies",
 ];
 
-export const COMBAT_KEYS = [
-  "strength",
-  "defense",
-  "dexterity",
-  "agility",
-] as const;
-export const GYM_STAT_MAP: Record<string, GymType> = {
-  strength: "str" as GymType,
-  defense: "def" as GymType,
-  dexterity: "dex" as GymType,
-  agility: "agi" as GymType,
-};
-
-export type SleeveMode =
-  | "RECOVERY"
-  | "SYNCHRO"
-  | "TRAIN"
-  | "FACTION"
-  | "COMPANY"
-  | "CRIME";
 
 /**
  * Ermittelt, bei welchen Fraktionen noch Ruf für fehlende Augmentations benötigt wird.

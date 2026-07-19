@@ -1,13 +1,8 @@
 import { NS, Player, FactionName, CompanyName } from "@ns";
-import { BotStrategy } from "../core/state-manager.js";
+import { BotStrategy,StrategyResult } from "/core/types.js";
 import { COMBAT_STATS, MEGACORPS, HACKING_FACTIONS } from "./constants.js";
 
-export interface StrategyResult {
-  mode: BotStrategy;
-  targetFaction: FactionName | null;
-  targetCompany: CompanyName | undefined;
-  targetStat: number;
-}
+
 
 export function determineStrategy(
   ns: NS,
