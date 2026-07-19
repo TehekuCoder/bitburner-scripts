@@ -10,7 +10,12 @@ function makeProgressBar(progress: number, width = 20): string {
 export function drawBatcherDashboard(ns: NS, data: DashboardData): void {
   ns.clearLog();
 
-  const hasValidTarget = data.target !== "Keines" && data.target !== "";
+  // 🟢 FIX: "Suche..." explizit von den API-Abfragen ausschließen
+  const hasValidTarget =
+    data.target !== "Keines" &&
+    data.target !== "Suche..." &&
+    data.target !== "";
+
   const curSec = hasValidTarget ? ns.getServerSecurityLevel(data.target) : 0;
   const minSec = hasValidTarget ? ns.getServerMinSecurityLevel(data.target) : 0;
   const curMoney = hasValidTarget ? ns.getServerMoneyAvailable(data.target) : 0;
@@ -22,19 +27,27 @@ export function drawBatcherDashboard(ns: NS, data: DashboardData): void {
   const bar = makeProgressBar(data.progress, 20);
 
   ns.print(`============================================================`);
-  ns.print(`⚡ BIT-OS DYNAMIC BATCHER v2.2     |  Gewinn/Welle: +$${ns.format.number(data.lastWaveProfit)}`);
+  ns.print(
+    `⚡ BIT-OS DYNAMIC BATCHER v2.2     |  Gewinn/Welle: +$${ns.format.number(data.lastWaveProfit)}`,
+  );
   ns.print(`============================================================`);
   ns.print(`FOKUS-ZIEL:      ${data.target}`);
   ns.print(`STATUS:          [${bar}] ${data.status}`);
   ns.print(`DETAILS:         ${data.progressText}`);
   ns.print(`------------------------------------------------------------`);
   ns.print(`NETZWERK-ALLOKATION:`);
-  ns.print(`RAM Pool:    ${ns.format.ram(ramUsed)} / ${ns.format.ram(data.ramTotal)} (${ramPercent.toFixed(1)}%)`);
-  ns.print(`Wellen-Ram:  ${ns.format.ram(data.ramNeeded)} Benötigt | Frei gepoolt: ${ns.format.ram(data.ramFree)}`);
+  ns.print(
+    `RAM Pool:    ${ns.format.ram(ramUsed)} / ${ns.format.ram(data.ramTotal)} (${ramPercent.toFixed(1)}%)`,
+  );
+  ns.print(
+    `Wellen-Ram:  ${ns.format.ram(data.ramNeeded)} Benötigt | Frei gepoolt: ${ns.format.ram(data.ramFree)}`,
+  );
   ns.print(`------------------------------------------------------------`);
   ns.print(`ZIELSERVER-ZUSTAND:`);
   ns.print(`Sicherheit:  ${curSec.toFixed(2)} / ${minSec.toFixed(2)} (Min)`);
-  ns.print(`Finanzen:    $${ns.format.number(curMoney)} / $${ns.format.number(maxMoney)} (${moneyPercent.toFixed(1)}%)`);
+  ns.print(
+    `Finanzen:    $${ns.format.number(curMoney)} / $${ns.format.number(maxMoney)} (${moneyPercent.toFixed(1)}%)`,
+  );
   ns.print(`------------------------------------------------------------`);
   ns.print(`EREIGNIS-PROTOKOLL:`);
   if (data.eventLog.length === 0) {

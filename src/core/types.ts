@@ -30,6 +30,7 @@ export interface BatchPlan {
   growDelay: number;
   weaken2Delay: number;
   // 🟢 Synchronisiert mit utils/batch-calculator.ts
+  // 🟢 NEU FÜR JIT: Pure Laufzeiten für die absolute Terminplanung
   hackTime: number;
   growTime: number;
   weakenTime: number;
@@ -209,24 +210,6 @@ export interface AugShoppingItem {
   name: string;
   price: number;
   repReq: number;
-}
-
-export interface BatchPlan {
-  target: string;
-  hackThreads: number;
-  weaken1Threads: number;
-  growThreads: number;
-  weaken2Threads: number;
-  hackDelay: number;
-  weaken1Delay: number;
-  growDelay: number;
-  weaken2Delay: number;
-  // 🟢 NEU FÜR JIT: Puren Laufzeiten für die absolute Terminplanung
-  hackTime: number;
-  growTime: number;
-  weakenTime: number;
-  totalRam: number;
-  executionTime: number;
 }
 
 // find-path.ts

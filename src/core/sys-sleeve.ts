@@ -9,6 +9,8 @@ import { printSleeveDashboard } from "../lib/sleeve-ui.js";
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
+  ns.ui.openTail();
+
   const logger = new Logger(ns, "SLEEVE", "INFO", "/logs/sleeve.txt");
   logger.info("🦾 Sleeve-Subsystem aktiv. Kontrolliere Klone...");
 

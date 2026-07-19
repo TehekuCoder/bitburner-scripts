@@ -9,7 +9,7 @@ const HOME_RAM_RESERVE = 64;
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
-  ns.ui.resizeTail(630, 420); 
+  ns.ui.resizeTail(630, 420);
 
   const eventLog: string[] = [];
   let lastTarget = "";
@@ -38,9 +38,13 @@ export async function main(ns: NS): Promise<void> {
     // 1. Dynamic Event-Logging für Zustandsänderungen
     if (currentTarget !== lastTarget && currentTarget !== "Suche...") {
       if (lastTarget) {
-        eventLog.push(`[${new Date().toLocaleTimeString()}] 🎯 Target: ${lastTarget} ➡️ ${currentTarget}`);
+        eventLog.push(
+          `[${new Date().toLocaleTimeString()}] 🎯 Target: ${lastTarget} ➡️ ${currentTarget}`,
+        );
       } else {
-        eventLog.push(`[${new Date().toLocaleTimeString()}] 🚀 JIT-Zündung auf Ziel: ${currentTarget}`);
+        eventLog.push(
+          `[${new Date().toLocaleTimeString()}] 🚀 JIT-Zündung auf Ziel: ${currentTarget}`,
+        );
       }
       lastTarget = currentTarget;
     }
@@ -92,28 +96,41 @@ export async function main(ns: NS): Promise<void> {
       progressPercent = 1.0;
       // Versuche die aktuelle Queue-Größe als gesendete Wellen zu mappen
       const qMatch = progressStr.match(/Queue:\s*(\d+)/);
-      if (qMatch) batchesSent = Math.floor(parseInt(qMatch[1], 10) / 4); 
+      if (qMatch) batchesSent = Math.floor(parseInt(qMatch[1], 10) / 4);
     }
 
     // 4. Gewinn-Schätzung pro Welle via Formulas-API
     let waveProfit = 0;
-    if (state.batcherPlan && currentTarget !== "Keines" && currentTarget !== "Suche...") {
+    if (
+      state.batcherPlan &&
+      currentTarget !== "Keines" &&
+      currentTarget !== "Suche..."
+    ) {
       const plan = state.batcherPlan;
       if (ns.formulas && ns.formulas.hacking) {
         const serverObj = ns.getServer(currentTarget);
         const playerObj = ns.getPlayer();
-        const pctPerThread = ns.formulas.hacking.hackPercent(serverObj, playerObj);
-        waveProfit = (serverObj.moneyMax ?? 0) * (plan.hackThreads * pctPerThread);
+        const pctPerThread = ns.formulas.hacking.hackPercent(
+          serverObj,
+          playerObj,
+        );
+        waveProfit =
+          (serverObj.moneyMax ?? 0) * (plan.hackThreads * pctPerThread);
       }
     }
 
-    // 5. UI-Daten-Objekt füttern (Keine Hardcoded Placeholders mehr!)
+    // 5. UI-Daten-Objekt füttern (Mit Serverschutz-Validierung)
     const uiData: DashboardData = {
       status: statusText,
-      target: currentTarget,
+      // 🟢 FIX: Nur wenn das Target ein echter Server oder eine bekannte UI-Ausnahme ist, durchlassen
+      target:
+        servers.includes(currentTarget) ||
+        currentTarget === "Suche..." ||
+        currentTarget === "Keines"
+          ? currentTarget
+          : "Suche...",
       progress: progressPercent,
       progressText: subText || statusText,
-      // Holt sich den dynamischen Greed-Wert direkt aus dem berechneten Plan
       greed: state.batcherPlan?.greedFactor ?? state.batcherPlan?.greed ?? 0.0,
       ramNeeded: state.batcherRamNeeded ?? 0,
       ramFree: ramFree,
@@ -121,11 +138,11 @@ export async function main(ns: NS): Promise<void> {
       batchesSent: batchesSent,
       batchesMax: state.batcherDynamicMaxBatches ?? 100,
       eventLog: eventLog,
-      lastWaveProfit: waveProfit
+      lastWaveProfit: waveProfit,
     };
 
     drawBatcherDashboard(ns, uiData);
-    
+
     // 🛑 Auf 500ms erhöht, um dem JIT-Batcher Luft zum Atmen zu geben (weniger Engine-Lags!)
     await ns.sleep(500);
   }

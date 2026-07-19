@@ -8,6 +8,8 @@ import { DEFAULT_MULTIPLIERS } from "/lib/constants.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
+
+  ns.ui.openTail();
   const logger = new Logger(ns, "Infra", "INFO");
   logger.info("Schlanker Infrastruktur-Manager gestartet.");
 
