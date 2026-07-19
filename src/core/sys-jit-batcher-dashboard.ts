@@ -103,8 +103,7 @@ export async function main(ns: NS): Promise<void> {
     let waveProfit = 0;
     if (
       state.batcherPlan &&
-      currentTarget !== "Keines" &&
-      currentTarget !== "Suche..."
+      servers.includes(currentTarget) // 🟢 FIX: Verhindert Abstürze durch Status-Strings wie "Standby"
     ) {
       const plan = state.batcherPlan;
       if (ns.formulas && ns.formulas.hacking) {

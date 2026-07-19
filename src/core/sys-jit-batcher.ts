@@ -518,9 +518,21 @@ function internalPlanner(
     currentFreeRamPool > 0 ? currentFreeRamPool : totalUsableMaxRam,
   );
 
-  const dynamicMaxBatchesForTarget = Math.max(500, maxConcurrentBatches * 2);
+  // 🟢 DYNAMISCHE RAM-DROSSELUNG (Sicherheitsbremse für < 2 TB)
+  let maxGreed = 0.9;
+  let dynamicMaxBatchesForTarget = Math.max(500, maxConcurrentBatches * 2);
 
-  let currentGreedFactor = 0.9;
+  if (totalUsableMaxRam <= 1100) {
+    // 🚨 1 TB Todeszone
+    maxGreed = 0.05; // Nur 5% Geld stehlen = winzige Batches
+    dynamicMaxBatchesForTarget = 30; // Maximal 30 Wellen gleichzeitig in der Pipeline
+  } else if (totalUsableMaxRam <= 2200) {
+    // ⚠️ 2 TB Übergangszone
+    maxGreed = 0.3; // Moderate 30% Gier
+    dynamicMaxBatchesForTarget = 100; // Maximal 100 Wellen parallel
+  }
+
+  let currentGreedFactor = maxGreed;
   let lockPlan = calculateBatch(
     ns,
     bestTarget,
@@ -538,6 +550,7 @@ function internalPlanner(
       currentGreedFactor,
       SPACER,
     ) as BatchPlan | null;
+
     if (nextPlan === null) break;
 
     lockPlan = nextPlan;
