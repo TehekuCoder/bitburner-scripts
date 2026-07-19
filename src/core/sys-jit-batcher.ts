@@ -1,4 +1,4 @@
-import { NS } from "@ns";
+import { NS, Server } from "@ns";
 import { getAllServers } from "../lib/network.js";
 import { patchState } from "./state-manager.js";
 import { loadBnMults } from "../lib/state.js";
@@ -49,6 +49,9 @@ export async function main(ns: NS): Promise<void> {
   const targetBlacklist = new Map<string, number>();
   let nextAvailableLandTime = 0;
   let batchIdCounter = 0;
+  
+  // 🟢 NEU: Verhindert das endlose Spammen von Prep-Skripten
+  let prepEndTime = 0; 
 
   let target: string | null = null;
   let dynamicMaxBatchesForTarget = 100;
@@ -56,7 +59,7 @@ export async function main(ns: NS): Promise<void> {
   let lastStateUpdate = 0;
   let activePlan: BatchPlan | null = null;
 
-  const launchedBatchParts = new Set<string>(); // Format: "batchId-scriptPath"
+  const launchedBatchParts = new Set<string>();
 
   logger.success(
     "🚀 Autarke JIT-Engine läuft ohne externe Planer-Abhängigkeit.",
@@ -65,12 +68,26 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     const now = Date.now();
 
-    // 🧹 Blacklist-Hausputz direkt hier oben ausführen, damit er jeden Frame läuft
+    // 🧹 Blacklist-Hausputz
     for (const [key, expiry] of targetBlacklist.entries()) {
       if (now > expiry) {
         targetBlacklist.delete(key);
         logger.info(`🔓 Cooldown abgelaufen: ${key} ist wieder im Pool.`);
       }
+    }
+
+    // 🟢 NEU: Sicherheits-Bremse für die Prep-Phase
+    // Wenn die Queue leer ist, aber noch ein Prep-Batch auf dem Netzwerk reift,
+    // warten wir einfach ab, anstatt den Server mit neuen Prep-Skripten zu fluten.
+    if (eventQueue.length === 0 && now < prepEndTime) {
+      if (now - lastStateUpdate > 1000) {
+        patchState(ns, {
+          batcherProgress: `Warte auf Prep-Effekt (${Math.round((prepEndTime - now) / 1000)}s)`,
+        });
+        lastStateUpdate = now;
+      }
+      await ns.sleep(250);
+      continue;
     }
 
     const realFreeRam = getNetworkRealFreeRam(ns, servers);
@@ -97,7 +114,7 @@ export async function main(ns: NS): Promise<void> {
         virtualFreeRam,
         bnMults,
         targetBlacklist,
-        eventQueue.length, // 🟢 FIX: Queue-Länge an Planer übergeben
+        eventQueue.length,
       );
 
       if (planning) {
@@ -107,19 +124,19 @@ export async function main(ns: NS): Promise<void> {
           );
           eventQueue.length = 0;
           nextAvailableLandTime = 0;
+          prepEndTime = 0; // 🟢 Reset bei Target-Wechsel
           target = planning.target;
         }
         activePlan = planning.plan;
         dynamicMaxBatchesForTarget = planning.maxBatches;
         batchesSentForTarget = 0;
       } else {
-        // 🟢 FIX: Nur wenn noch alte Batches laufen, lassen wir das Target aktiv ausklingen.
-        // Ist die Pipeline komplett leer, nullen wir das Target, um den 5s-Sleep zu triggern.
         if (target && eventQueue.length > 0) {
           batchesSentForTarget = 0;
         } else {
           target = null;
           activePlan = null;
+          prepEndTime = 0; // 🟢 Reset
         }
       }
 
@@ -202,30 +219,30 @@ export async function main(ns: NS): Promise<void> {
           },
         ].filter((ev) => ev.threads > 0);
 
-        // ... (Hier drüber stehen deine validEvents und das eventQueue.push)
         eventQueue.push(...validEvents);
         eventQueue.sort((a, b) => a.startTime - b.startTime);
 
         batchesSentForTarget++;
         nextAvailableLandTime += BATCH_GAP;
 
-        // =========================================================================
-        // 🛡️ CODE-ADDITION: DAS SICHERHEITSVENTIL HIER EINFÜGEN
-        // =========================================================================
+        // 🟢 NEU: Erkennung eines reinen Prep-Batches. 
+        // Wenn keine Hack-Threads geplant wurden, sperren wir das System, bis die Weaken-Laufzeit durch ist (+ 1 Sekunde Puffer).
+        if (activePlan.hackThreads === 0) {
+          prepEndTime = now + activePlan.weakenTime + 1000;
+          logger.info(`🚨 Prep-Welle für ${target} abgefeuert. Reifezeit: ${Math.round(activePlan.weakenTime / 1000)}s`);
+        }
+
         if (target && eventQueue.length === 0) {
           logger.warn(
             `⚠️ Target ${target} gewählt, aber es konnten 0 Batches generiert werden (RAM blockiert). Setze Cooldown.`,
           );
-
           targetBlacklist.set(target, now + 30000);
-
           target = null;
           activePlan = null;
           batchesSentForTarget = 0;
-
+          prepEndTime = 0; // 🟢 Reset
           continue;
         }
-        // =========================================================================
 
         patchState(ns, {
           batcherPlan: activePlan,
@@ -234,20 +251,18 @@ export async function main(ns: NS): Promise<void> {
           batcherProgress: `Pipelines gefüllt (${batchesSentForTarget}/${dynamicMaxBatchesForTarget})`,
         });
       } else {
-        // 🛑 CRITICAL FIX: Wenn die Queue leer ist und der Plan nicht passt...
-        // haben wir chronischen RAM-Mangel durch externe Skripte.
         if (eventQueue.length === 0) {
           logger.warn(
             `⚠️ RAM-Deadlock verhindert: Plan benötigt ${ns.format.ram(activePlan.totalRam)}, aber nur ${ns.format.ram(virtualFreeRam)} frei. Starte Backoff...`,
           );
           target = null;
           activePlan = null;
+          prepEndTime = 0; // 🟢 Reset
           patchState(ns, {
-            batcherProgress:
-              "Warte auf RAM... | Blockiert durch externe Skripte",
+            batcherProgress: "Warte auf RAM... | Blockiert durch externe Skripte",
             batcherTarget: "Standby",
           });
-          await ns.sleep(5000); // 5 Sekunden tief schlafen statt 500ms Spam
+          await ns.sleep(5000);
           continue;
         }
 
@@ -258,84 +273,56 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // -------------------------------------------------------------------------
-    // 2. TIMING-TICKER: SKRIPTE JUST-IN-TIME ABSCHIEẞEN (MIT DESYNC-PROTECTION)
+    // 2. TIMING-TICKER: SKRIPTE JUST-IN-TIME ABSCHIEẞEN
     // -------------------------------------------------------------------------
     while (eventQueue.length > 0 && Date.now() >= eventQueue[0].startTime) {
       const event = eventQueue.shift()!;
       const lag = Date.now() - event.startTime;
 
-      // 1. VERZÖGERUNGS-PRÜFUNG (LAG-DETECTION)
       if (lag > 30) {
-        logger.warn(
-          `⏳ Lag erkannt! Event ${event.id} um ${Math.round(lag)}ms verzögert.`,
-        );
-
-        // Prüfen, ob bereits andere Teile DIESES Batches laufen
+        logger.warn(`⏳ Lag erkannt! Event ${event.id} um ${Math.round(lag)}ms verzögert.`);
         const siblingRan = [PATH_HACK, PATH_GROW, PATH_WEAKEN].some((script) =>
           launchedBatchParts.has(`${event.batchId}-${script}`),
         );
 
         if (!siblingRan) {
-          // Szenario 1: Sauberer Prune. Nichts aus diesem Batch läuft bisher.
-          logger.info(
-            `🧹 Sicherer Prune: Entferne restliche Events für Batch #${event.batchId}.`,
-          );
+          logger.info(`🧹 Sicherer Prune: Entferne restliche Events für Batch #${event.batchId}.`);
           pruneBatch(eventQueue, event.batchId);
         } else {
-          // Szenario 2: Status-Vergiftung. Ein Teil läuft schon, die Balance bricht.
-          logger.error(
-            `💥 Kaskaden-Gefahr! Batch #${event.batchId} unvollständig gestartet. Bereinige Pipeline für ${event.target}.`,
-          );
-
-          // Nur die Events DIESES Targets löschen, falls du später Multi-Targeting nutzt
-          const keepOtherTargets = eventQueue.filter(
-            (ev) => ev.target !== event.target,
-          );
+          logger.error(`💥 Kaskaden-Gefahr! Batch #${event.batchId} unvollständig gestartet. Bereinige Pipeline für ${event.target}.`);
+          const keepOtherTargets = eventQueue.filter((ev) => ev.target !== event.target);
           eventQueue.length = 0;
           eventQueue.push(...keepOtherTargets);
-
-          // Target resetten, damit der Planer im nächsten Frame sofort reagiert
           target = null;
+          prepEndTime = 0; // 🟢 Reset
         }
         continue;
       }
 
-      // 2. ARBEITER-ZUWEISUNG & ABSCHUSS
       const workers = getAvailableWorkers(ns, servers);
       const dispatched = executeOnWorkers(ns, event, workers);
 
       if (!dispatched) {
-        logger.error(
-          `🛑 RAM-Engpass/Fragmentierung bei ${event.target} (Welle: ${event.id}). Leite Recovery ein...`,
-        );
+        logger.error(`🛑 RAM-Engpass bei ${event.target} (Welle: ${event.id}). Leite Recovery ein...`);
         ns.toast(`RAM-Engpass bei ${event.target}!`, "warning", 3000);
 
-        // 1. Nutzt direkt eure vorhandene Map für 45 Sekunden Sperre
         targetBlacklist.set(event.target, now + 45000);
-
-        // 2. Chirurgische Amputation: Nur diesen einen Batch löschen
         const failedBatchId = event.batchId;
-        const filteredQueue = eventQueue.filter(
-          (ev) => ev.batchId !== failedBatchId,
-        );
+        const filteredQueue = eventQueue.filter((ev) => ev.batchId !== failedBatchId);
         eventQueue.length = 0;
         eventQueue.push(...filteredQueue);
 
-        // 3. Zustand zurücksetzen, um im nächsten Frame neu zu evaluieren
         if (target === event.target) {
           target = null;
           activePlan = null;
           batchesSentForTarget = 0;
+          prepEndTime = 0; // 🟢 Reset
         }
-
-        // 4. Frame abbrechen, um in die neue Planung zu gehen
         break;
       }
 
-      // Registriere den erfolgreichen Teil-Abschuss
       launchedBatchParts.add(`${event.batchId}-${event.script}`);
 
-      // Speicher-Bereinigung für das Set (alte Batch-IDs entfernen)
       if (launchedBatchParts.size > 200) {
         const iterator = launchedBatchParts.values();
         for (let i = 0; i < 20; i++) {
@@ -354,12 +341,8 @@ export async function main(ns: NS): Promise<void> {
       lastStateUpdate = now;
     }
 
-    // -------------------------------------------------------------------------
-    // ⚡ OPTIMIERTER HOCHPRÄZISIONS-SCHLEIFEN-TAKT
-    // -------------------------------------------------------------------------
     if (eventQueue.length > 0) {
       const timeToNextEvent = eventQueue[0].startTime - Date.now();
-
       if (timeToNextEvent > 0) {
         await ns.sleep(timeToNextEvent);
       } else {
@@ -371,338 +354,225 @@ export async function main(ns: NS): Promise<void> {
   }
 }
 
+// =========================================================================
+// 🛠️ HILFSFUNKTIONEN & JIT-PLANER (Typensicher für Strict-Mode)
+// =========================================================================
+
 function internalPlanner(
   ns: NS,
   servers: string[],
-  totalUsableMaxRam: number,
-  currentFreeRamPool: number,
+  maxRam: number,
+  virtualFreeRam: number,
   bnMults: any,
   targetBlacklist: Map<string, number>,
-  queueLength: number,
+  queueLength: number
 ): { target: string; plan: BatchPlan; maxBatches: number } | null {
-  const playerHackLevel = ns.getHackingLevel();
-
-  const targets = servers.filter(
-    (s) =>
-      ns.hasRootAccess(s) &&
-      ns.getServerMaxMoney(s) > 0 &&
-      ns.getServerRequiredHackingLevel(s) <= playerHackLevel &&
-      !targetBlacklist.has(s),
-  );
-
+  const player = ns.getPlayer();
   let bestTarget: string | null = null;
-  let highestScore = 0;
+  let bestScore = -1;
+  let bestPlan: BatchPlan | null = null;
+  let maxBatches = 100;
 
-  const evaluationRam =
-    currentFreeRamPool <= 0 ? totalUsableMaxRam : currentFreeRamPool;
+  // 1. Filtere alle validen, hackbaren Server
+  const targets = servers.filter((s) => {
+    if (targetBlacklist.has(s)) return false;
+    if (!ns.hasRootAccess(s)) return false;
+    const sObj = ns.getServer(s);
+    if (!sObj.moneyMax || sObj.moneyMax <= 0) return false;
+    if ((sObj.requiredHackingSkill ?? 0) > player.skills.hacking) return false;
+    return true;
+  });
 
-  for (const s of targets) {
-    const startGreed = evaluationRam < 256 ? 0.01 : 0.1;
-    let testPlan: BatchPlan | null = null;
+  for (const t of targets) {
+    const server = ns.getServer(t);
+    
+    // 🛡️ Sicheres Entpacken optionaler Werte für den TS-Compiler
+    const minDifficulty = server.minDifficulty ?? 1;
+    const hackDifficulty = server.hackDifficulty ?? 1;
+    const moneyMax = server.moneyMax ?? 0;
+    const moneyAvailable = server.moneyAvailable ?? 0;
 
-    for (let greed = startGreed; greed <= 0.95; greed += 0.05) {
-      testPlan = calculateBatch(
-        ns,
-        s,
-        bnMults,
-        greed,
-        SPACER,
-      ) as BatchPlan | null;
-      if (testPlan !== null) break;
-    }
+    if (moneyMax <= 0) continue; // Absicherung für Divisionen
 
-    if (!testPlan || testPlan.totalRam > totalUsableMaxRam) continue;
-    if (testPlan.executionTime > DYNAMIC_MAX_WEAKEN_TIME) continue;
+    // Check, ob der Server bereits im Idealzustand ist
+    const isPrepped = 
+      hackDifficulty <= minDifficulty + 0.01 && 
+      moneyAvailable >= moneyMax * 0.99;
 
-    const score = ns.getServerMaxMoney(s);
-    if (score > highestScore) {
-      highestScore = score;
-      bestTarget = s;
-    }
-  }
+    if (!isPrepped) {
+      // 🛠️ FALL A: PREP-PHASE (Server korrigieren)
+      const weakenPotency = 0.05 * (bnMults.ServerWeakenRate ?? 1.0);
+      let weaken1Threads = 0;
+      let growThreads = 0;
+      let weaken2Threads = 0;
 
-  if (!bestTarget) return null;
+      const diffAmt = hackDifficulty - minDifficulty;
+      if (diffAmt > 0) {
+        weaken1Threads = Math.ceil(diffAmt / weakenPotency);
+      }
 
-  // -------------------------------------------------------------------------
-  // 🛡️ EMERGENCY RECOVERY- & PREPARATION-MODUS (Anti-Deadlock)
-  // -------------------------------------------------------------------------
-  const curSec = ns.getServerSecurityLevel(bestTarget);
-  const minSec = ns.getServerMinSecurityLevel(bestTarget);
-  const curMoney = ns.getServerMoneyAvailable(bestTarget);
-  const maxMoney = ns.getServerMaxMoney(bestTarget);
-  const weakenScriptRam = ns.getScriptRam(PATH_WEAKEN);
-  const growScriptRam = ns.getScriptRam(PATH_GROW);
+      if (moneyAvailable < moneyMax) {
+        // Virtuellen Server klonen und für TS sauber typisieren
+        const virtualServer: Server = { 
+          ...server,
+          hackDifficulty: minDifficulty,
+          moneyAvailable: Math.max(1, moneyAvailable)
+        };
+        
+        if (ns.formulas && ns.formulas.hacking) {
+          growThreads = Math.ceil(ns.formulas.hacking.growThreads(virtualServer, player, moneyMax));
+        } else {
+          growThreads = Math.ceil(ns.getServerGrowth(t) / 10); 
+        }
+        const growSec = ns.growthAnalyzeSecurity(growThreads, t);
+        weaken2Threads = Math.ceil(growSec / weakenPotency);
+      }
 
-  if (curSec > minSec + 0.5 || curMoney < maxMoney * 0.9) {
-    let w1Threads = 0;
-    let gThreads = 0;
-    let w2Threads = 0;
+      if (weaken1Threads === 0 && growThreads === 0) continue;
 
-    // Wenn die Queue leer ist, MÜSSEN wir uns am aktuell freien RAM orientieren,
-    // da keine eigenen Wellen mehr auslaufen, die Speicher freigeben!
-    const availableRamForPrep =
-      queueLength === 0 ? currentFreeRamPool : totalUsableMaxRam;
+      const tW = ns.formulas?.hacking?.weakenTime(server, player) ?? ns.getWeakenTime(t);
+      const tG = ns.formulas?.hacking?.growTime(server, player) ?? ns.getGrowTime(t);
 
-    if (curSec > minSec + 0.5) {
-      const secDeficit = curSec - minSec;
-      const targetWThreads = Math.ceil(secDeficit / 0.05);
-      const maxWThreads = Math.floor(availableRamForPrep / weakenScriptRam);
-      w1Threads = Math.max(1, Math.min(targetWThreads, maxWThreads));
+      const ramGrow = ns.getScriptRam(PATH_GROW);
+      const ramWeaken = ns.getScriptRam(PATH_WEAKEN);
+      const totalRam = (weaken1Threads + weaken2Threads) * ramWeaken + growThreads * ramGrow;
+
+      // Sicherheits-Check: Passt die Prep-Welle überhaupt ins RAM?
+      if (totalRam > virtualFreeRam && ramWeaken > virtualFreeRam) continue;
+
+      const prepPlan: BatchPlan = {
+        target: t,
+        hackThreads: 0,
+        weaken1Threads,
+        growThreads,
+        weaken2Threads,
+        hackDelay: 0,
+        weaken1Delay: 0,
+        growDelay: 0,
+        weaken2Delay: 0,
+        hackTime: 0,
+        growTime: tG,
+        weakenTime: tW,
+        totalRam,
+        executionTime: tW,
+      };
+
+      // Score für Priorisierung berechnen
+      const score = moneyMax / tW;
+      if (score > bestScore) {
+        bestScore = score;
+        bestTarget = t;
+        bestPlan = prepPlan;
+        maxBatches = 1; 
+      }
     } else {
-      const unitRam = 12 * growScriptRam + weakenScriptRam;
-      const maxUnits = Math.floor(availableRamForPrep / unitRam);
+      // 💰 FALL B: HWGW-BATCHING (Server melken)
+      let optimalPlan: BatchPlan | null = null;
+      const startGreed = virtualFreeRam < 256 ? 0.01 : 0.1;
 
-      if (maxUnits > 0) {
-        gThreads = maxUnits * 12;
-        w2Threads = maxUnits;
-      } else {
-        gThreads = Math.max(1, Math.floor(availableRamForPrep / growScriptRam));
+      for (let greed = 0.95; greed >= startGreed; greed -= 0.05) {
+        const p = calculateBatch(ns, t, bnMults, greed, SPACER);
+        if (p && p.totalRam <= virtualFreeRam) {
+          optimalPlan = p;
+          break;
+        }
+      }
+
+      if (optimalPlan) {
+        const pctPerThread = ns.formulas.hacking.hackPercent(server, player);
+        const revenue = optimalPlan.hackThreads * pctPerThread * moneyMax;
+        const score = revenue / (optimalPlan.weakenTime / 1000);
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestTarget = t;
+          bestPlan = optimalPlan;
+          maxBatches = Math.floor(virtualFreeRam / optimalPlan.totalRam);
+          if (maxBatches > 100) maxBatches = 100;
+          if (maxBatches < 1) maxBatches = 1;
+        }
       }
     }
-
-    const totalPrepRam =
-      (w1Threads + w2Threads) * weakenScriptRam + gThreads * growScriptRam;
-
-    // Wenn selbst für 1 Thread kein RAM da ist und die Queue leer ist -> Abort, sauber schlafen.
-    if (
-      totalPrepRam <= 0 ||
-      (queueLength === 0 && totalPrepRam > currentFreeRamPool)
-    ) {
-      return null;
-    }
-
-    const serverMock = ns.getServer(bestTarget);
-    serverMock.hackDifficulty = serverMock.minDifficulty;
-    const wTime = ns.formulas!.hacking.weakenTime(serverMock, ns.getPlayer());
-    const gTime = ns.formulas!.hacking.growTime(serverMock, ns.getPlayer());
-
-    const prepPlan: BatchPlan = {
-      target: bestTarget,
-      hackThreads: 0,
-      weaken1Threads: w1Threads,
-      growThreads: gThreads,
-      weaken2Threads: w2Threads,
-      hackDelay: 0,
-      weaken1Delay: 0,
-      growDelay: 0,
-      weaken2Delay: 0,
-      hackTime: 0,
-      growTime: gTime,
-      weakenTime: wTime,
-      totalRam: totalPrepRam,
-      executionTime: wTime,
-    };
-
-    return {
-      target: bestTarget,
-      plan: prepPlan,
-      maxBatches: 1,
-    };
   }
 
-  // -------------------------------------------------------------------------
-  // 🚀 STANDARD HWGW-PLANUNG (Server ist im optimalen Zustand)
-  // -------------------------------------------------------------------------
-  const serverMock = ns.getServer(bestTarget);
-  serverMock.hackDifficulty = serverMock.minDifficulty;
-  const weakenTime = ns.formulas!.hacking.weakenTime(
-    serverMock,
-    ns.getPlayer(),
-  );
-
-  const maxConcurrentBatches = Math.max(1, Math.floor(weakenTime / SPACER));
-  const idealBatchRam = totalUsableMaxRam / maxConcurrentBatches;
-
-  const maxAllowedBatchRam = Math.min(
-    idealBatchRam,
-    currentFreeRamPool > 0 ? currentFreeRamPool : totalUsableMaxRam,
-  );
-
-  // 🟢 DYNAMISCHE RAM-DROSSELUNG (Sicherheitsbremse für < 2 TB)
-  let maxGreed = 0.9;
-  let dynamicMaxBatchesForTarget = Math.max(500, maxConcurrentBatches * 2);
-
-  if (totalUsableMaxRam <= 1100) {
-    // 🚨 1 TB Todeszone
-    maxGreed = 0.05; // Nur 5% Geld stehlen = winzige Batches
-    dynamicMaxBatchesForTarget = 30; // Maximal 30 Wellen gleichzeitig in der Pipeline
-  } else if (totalUsableMaxRam <= 2200) {
-    // ⚠️ 2 TB Übergangszone
-    maxGreed = 0.3; // Moderate 30% Gier
-    dynamicMaxBatchesForTarget = 100; // Maximal 100 Wellen parallel
-  }
-
-  let currentGreedFactor = maxGreed;
-  let lockPlan = calculateBatch(
-    ns,
-    bestTarget,
-    bnMults,
-    currentGreedFactor,
-    SPACER,
-  ) as BatchPlan | null;
-
-  while (currentGreedFactor > 0.005) {
-    currentGreedFactor -= 0.01;
-    const nextPlan = calculateBatch(
-      ns,
-      bestTarget,
-      bnMults,
-      currentGreedFactor,
-      SPACER,
-    ) as BatchPlan | null;
-
-    if (nextPlan === null) break;
-
-    lockPlan = nextPlan;
-    if (lockPlan.totalRam <= maxAllowedBatchRam) break;
-  }
-
-  // Fall A: Plan passt perfekt in den aktuellen RAM-Pool
-  if (lockPlan && lockPlan.totalRam <= currentFreeRamPool) {
-    return {
-      target: bestTarget,
-      plan: lockPlan,
-      maxBatches: dynamicMaxBatchesForTarget,
-    };
-  }
-
-  // Fall B: Plan ist zu groß, aber alte Wellen fliegen noch (RAM wird bald frei)
-  if (lockPlan && lockPlan.totalRam > currentFreeRamPool && queueLength > 0) {
-    return {
-      target: bestTarget,
-      plan: lockPlan,
-      maxBatches: dynamicMaxBatchesForTarget,
-    };
-  }
-
-  // Fall C: Pipeline leer UND minimaler Batch blockiert wegen chronischem RAM-Mangel.
-  // Wir werfen ein minimales Weaken-Event ein, um den Takt zu halten, statt einzuschlafen!
-  if (lockPlan && queueLength === 0) {
-    const fallbackPlan: BatchPlan = {
-      target: bestTarget,
-      hackThreads: 0,
-      weaken1Threads: 1,
-      growThreads: 0,
-      weaken2Threads: 0,
-      hackDelay: 0,
-      weaken1Delay: 0,
-      growDelay: 0,
-      weaken2Delay: 0,
-      hackTime: 0,
-      growTime: 0,
-      weakenTime: weakenTime,
-      totalRam: weakenScriptRam,
-      executionTime: weakenTime,
-    };
-
-    if (fallbackPlan.totalRam <= currentFreeRamPool) {
-      return {
-        target: bestTarget,
-        plan: fallbackPlan,
-        maxBatches: 1,
-      };
-    }
-  }
-
-  return null;
-}
-function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
-  const workers: WorkerNode[] = [];
-  for (const s of servers) {
-    if (!ns.hasRootAccess(s)) continue;
-    let max = ns.getServerMaxRam(s);
-    if (s === "home") max = Math.max(0, max - HOME_RAM_RESERVE);
-    const used = ns.getServerUsedRam(s);
-    const free = max - used;
-
-    if (Math.floor(free / SCRIPT_RAM_BASE) > 0) {
-      workers.push({ hostname: s, maxRam: max, freeRam: free });
-    }
-  }
-  return workers.sort((a, b) => b.freeRam - a.freeRam);
-}
-
-function executeOnWorkers(
-  ns: NS,
-  event: JitEvent,
-  workers: WorkerNode[],
-): boolean {
-  if (event.threads <= 0) return true;
-
-  let threadsLeft = event.threads;
-  const scriptRam = ns.getScriptRam(event.script);
-  const spawnedPids: number[] = [];
-
-  for (const worker of workers) {
-    const maxThreadsOnWorker = Math.floor(worker.freeRam / scriptRam);
-    if (maxThreadsOnWorker <= 0) continue;
-
-    const threadsToRun = Math.min(threadsLeft, maxThreadsOnWorker);
-    const pid = ns.exec(
-      event.script,
-      worker.hostname,
-      threadsToRun,
-      event.target,
-      event.landTime,
-      event.id,
-    );
-
-    if (pid > 0) {
-      spawnedPids.push(pid);
-      threadsLeft -= threadsToRun;
-      worker.freeRam -= threadsToRun * scriptRam;
-      if (threadsLeft <= 0) return true;
-    }
-  }
-
-  if (threadsLeft > 0) {
-    for (const pid of spawnedPids) ns.kill(pid);
-    return false;
-  }
-  return true;
-}
-
-function getNetworkRealFreeRam(ns: NS, servers: string[]): number {
-  let totalFreeRam = 0;
-  for (const s of servers) {
-    if (!ns.hasRootAccess(s)) continue;
-    let max = ns.getServerMaxRam(s);
-    if (s === "home") max = Math.max(0, max - HOME_RAM_RESERVE);
-    const used = ns.getServerUsedRam(s);
-    const free = max - used;
-
-    const usableThreads = Math.floor(free / SCRIPT_RAM_BASE);
-    if (usableThreads > 0) {
-      totalFreeRam += usableThreads * SCRIPT_RAM_BASE;
-    }
-  }
-  return totalFreeRam;
-}
-
-function getQueueRam(ns: NS, queue: any[]): number {
-  let totalRam = 0;
-  for (const ev of queue) {
-    totalRam += ev.threads * ns.getScriptRam(ev.script);
-  }
-  return totalRam;
+  if (!bestTarget || !bestPlan) return null;
+  return { target: bestTarget, plan: bestPlan, maxBatches };
 }
 
 function getNetworkMaxRam(ns: NS, servers: string[]): number {
-  let totalMax = 0;
-  for (const s of servers) {
-    if (!ns.hasRootAccess(s)) continue;
-    let max = ns.getServerMaxRam(s);
-    if (s === "home") max = Math.max(0, max - HOME_RAM_RESERVE);
+  let total = servers
+    .filter((s) => ns.hasRootAccess(s) && s !== "home")
+    .reduce((sum, s) => sum + ns.getServerMaxRam(s), 0);
+  
+  total += Math.max(0, ns.getServerMaxRam("home") - HOME_RAM_RESERVE);
+  return total;
+}
 
-    const maxUsableThreads = Math.floor(max / SCRIPT_RAM_BASE);
-    totalMax += maxUsableThreads * SCRIPT_RAM_BASE;
+function getNetworkRealFreeRam(ns: NS, servers: string[]): number {
+  let free = servers
+    .filter((s) => ns.hasRootAccess(s) && s !== "home")
+    .reduce((sum, s) => sum + (ns.getServerMaxRam(s) - ns.getServerUsedRam(s)), 0);
+
+  free += Math.max(0, ns.getServerMaxRam("home") - ns.getServerUsedRam("home") - HOME_RAM_RESERVE);
+  return free;
+}
+
+function getQueueRam(ns: NS, queue: JitEvent[]): number {
+  let sum = 0;
+  for (const ev of queue) {
+    sum += ev.threads * ns.getScriptRam(ev.script);
   }
-  return totalMax;
+  return sum;
 }
 
 function pruneBatch(queue: JitEvent[], batchId: number): void {
   const filtered = queue.filter((ev) => ev.batchId !== batchId);
-  // Leert die originale Const-Queue und füllt sie ohne die betroffenen Batch-Events
   queue.length = 0;
   queue.push(...filtered);
+}
+
+function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
+  const nodes: WorkerNode[] = [];
+  for (const s of servers) {
+    if (!ns.hasRootAccess(s)) continue;
+    let free = ns.getServerMaxRam(s) - ns.getServerUsedRam(s);
+    if (s === "home") free -= HOME_RAM_RESERVE;
+    
+    if (free > 0) {
+      // 💡 Nutzt 'hostname' passend zu deinem Template-Interface
+      nodes.push({ hostname: s, freeRam: free } as WorkerNode);
+    }
+  }
+  return nodes.sort((a, b) => b.freeRam - a.freeRam);
+}
+
+function executeOnWorkers(ns: NS, event: JitEvent, workers: WorkerNode[]): boolean {
+  const scriptRam = ns.getScriptRam(event.script);
+  let threadsLeft = event.threads;
+
+  for (const w of workers) {
+    const maxThreadsOnWorker = Math.floor(w.freeRam / scriptRam);
+    if (maxThreadsOnWorker <= 0) continue;
+
+    const threadsToRun = Math.min(threadsLeft, maxThreadsOnWorker);
+    
+    // 💡 Nutzt w.hostname statt w.name
+    const pid = ns.exec(
+      event.script, 
+      w.hostname, 
+      threadsToRun, 
+      event.target, 
+      event.landTime.toString(), 
+      event.batchId.toString()
+    );
+
+    if (pid > 0) {
+      threadsLeft -= threadsToRun;
+      w.freeRam -= threadsToRun * scriptRam;
+    }
+
+    if (threadsLeft <= 0) return true;
+  }
+  
+  return false; 
 }

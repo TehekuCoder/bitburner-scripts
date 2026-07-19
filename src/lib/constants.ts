@@ -173,19 +173,19 @@ export const COOLDOWN_FILE = "/dnet-cooldowns.txt";
 export const COOLDOWN_MS = 5 * 60 * 1000;
 export const LOOT_INTERVAL_MS = 3 * 60 * 1000;
 
+export const PATH_GROW = "/tasks/grow.js";
+export const PATH_HACK = "/tasks/hack.js";
+export const PATH_WEAKEN = "/tasks/weaken.js";
+
 // 📦 DEFINITION DER KERN-WORKER (utils/provision.ts)
 export const PAYLOADS = [
-  "tasks/hack.js",
-  "tasks/grow.js",
-  "tasks/weaken.js",
+  PATH_HACK,
+  PATH_GROW,
+  PATH_WEAKEN,
   "tasks/share.js",
   "tasks/work.js", // WICHTIG: Haupt-Worker hinzugefügt!
   "tasks/xp-grind.js", // WICHTIG: XP-Farmer hinzugefügt!
 ];
-
-export const PATH_GROW = "/tasks/grow.js";
-export const PATH_HACK = "/tasks/hack.js";
-export const PATH_WEAKEN = "/tasks/weaken.js";
 
 // "as const" macht daraus ein Readonly-Tuple aus exakten Literalen statt string[]
 export const COMBAT_STATS = [
@@ -219,4 +219,3 @@ export const HOME_RAM_RESERVE = 64;
 export const SCRIPT_RAM_BASE = 1.75;
 export const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000; // 60 Minuten
 export const BLACKLIST_DURATION = 30000; // 30 Sekunden Sperre nach Kollaps
-

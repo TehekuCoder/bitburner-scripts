@@ -13,7 +13,7 @@ import {
   REFRESH_INTERVALS,
   BATCHER_MIN_RAM,
   COMBAT_STATS,
-  DEFAULT_MULTIPLIERS
+  DEFAULT_MULTIPLIERS,
 } from "../lib/constants.js";
 
 // --- EXTERNE MODULE & UTILITIES ---
@@ -193,6 +193,11 @@ export async function main(ns: NS): Promise<void> {
     const previousStrategy = currentState?.strategy || "MONEY";
 
     if (mode !== previousStrategy) {
+      if (!canRunBatcher && ns.isRunning("utils/fill-ram.js", "home")) {
+        ns.scriptKill("utils/fill-ram.js", "home");
+        logger.info("Batcher nicht ausführbar. 'fill-ram.js' beendet.");
+      }
+
       const isOscillating =
         ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(
           mode,
@@ -410,6 +415,15 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    manageMicroservices(
+      ns,
+      mode,
+      hasSavingTarget,
+      logger,
+      sysBatcherScript,
+      targetStat,
+    );
+
     const isRamReady =
       homeMaxRam >= 256 ||
       (pServers.length > 0 &&
@@ -426,15 +440,6 @@ export async function main(ns: NS): Promise<void> {
     ) {
       ns.run(fillRamScript, 1);
     }
-
-    manageMicroservices(
-      ns,
-      mode,
-      hasSavingTarget,
-      logger,
-      sysBatcherScript,
-      targetStat,
-    );
 
     await ns.sleep(2000);
   }
