@@ -3,14 +3,7 @@ import { getAllServers } from "../lib/network.js";
 import { getNetworkMaxRam } from "../lib/ram-utils.js";
 import { Logger } from "./logger.js";
 import { patchState } from "./state-manager.js";
-
-export enum Strategy {
-  XP_GRIND = "XP_GRIND", // Fokus auf Hacking XP
-  PREP = "PREP", // Server auf S_min / M_max bringen
-  PROTO_BATCH = "PROTO_BATCH", // Single-Batch HWGW
-  SHOTGUN_HWGW = "SHOTGUN_HWGW", // Multi-Batch statisch
-  JIT_HWGW = "JIT_HWGW", // Dynamische JIT-Queue
-}
+import { BatchStrategy } from "./types.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -23,7 +16,7 @@ export async function main(ns: NS): Promise<void> {
 
   const DASHBOARD_SCRIPT = "core/sys-jit-batcher-dashboard.js";
 
-  let activeStrategy: Strategy | null = null;
+  let activeStrategy: BatchStrategy | null = null;
   let activeTarget: string | null = null;
   let activeProcessId = 0;
 
@@ -67,9 +60,8 @@ export async function main(ns: NS): Promise<void> {
       });
     }
 
-    // 🟢 3. DASHBOARD LIFECYCLE MANAGEMENT
-    if (activeStrategy === Strategy.JIT_HWGW) {
-      // Dashboard starten, falls es noch nicht läuft und genug RAM da ist
+    // 3. DASHBOARD LIFECYCLE MANAGEMENT
+    if (activeStrategy === "JIT_HWGW") {
       if (
         ns.fileExists(DASHBOARD_SCRIPT, "home") &&
         !ns.isRunning(DASHBOARD_SCRIPT, "home")
@@ -84,14 +76,13 @@ export async function main(ns: NS): Promise<void> {
         }
       }
     } else {
-      // Dashboard beenden, wenn wir in einer anderen Strategie (wie PREP oder SHOTGUN) sind
       if (ns.isRunning(DASHBOARD_SCRIPT, "home")) {
         ns.scriptKill(DASHBOARD_SCRIPT, "home");
         logger.info(`⏹️ JIT-Batcher Dashboard beendet (Inaktive Strategie).`);
       }
     }
 
-    await ns.sleep(5000); // Evaluierungs-Intervall (5s ist etwas reaktiver als 10s)
+    await ns.sleep(5000); // Evaluierungs-Intervall
   }
 }
 
@@ -102,12 +93,27 @@ function determineStrategy(
   ns: NS,
   totalRam: number,
   target: string | null,
-  currentStrategy: Strategy | null, // 👈 Aktuelle Strategie mit übergeben!
-): Strategy {
-  const homeRam = ns.getServerMaxRam("home");
-  const hasFormulas = ns.fileExists("Formulas.exe", "home");
+  currentStrategy: BatchStrategy | null,
+): BatchStrategy {
+  // 1. Extrem wenig RAM (Frisch nach Augmentation Reset)
+  if (totalRam < 64) {
+    return "BOOTSTRAP";
+  }
 
-  if (!target) return Strategy.PREP;
+  if (!target) return "PREP";
+
+  // 🧠 SHOTGUN & JIT REGEL: Kontinuierliche Engines nicht grundlos unterbrechen
+  if (currentStrategy === "SHOTGUN_HWGW" || currentStrategy === "JIT_HWGW") {
+    const sObj = ns.getServer(target);
+    const curDiff = sObj.hackDifficulty ?? 99;
+    const minDiff = sObj.minDifficulty ?? 1;
+
+    // Nur abbrechen, wenn die Security völlig aus dem Ruder läuft (z.B. +20 über Min)
+    const isTotallyNuked = curDiff - minDiff > 20.0;
+    if (!isTotallyNuked) {
+      return currentStrategy;
+    }
+  }
 
   const sObj = ns.getServer(target);
   const currentDiff = sObj.hackDifficulty ?? 99;
@@ -115,58 +121,54 @@ function determineStrategy(
   const currentMoney = sObj.moneyAvailable ?? 0;
   const maxMoney = sObj.moneyMax ?? 1;
 
-  // 🧠 HYSTERESE-LOGIK:
-  // Wenn wir SCHON im Batch-Betrieb sind, sind wir toleranter!
-  const isBatching = [
-    Strategy.PROTO_BATCH,
-    Strategy.SHOTGUN_HWGW,
-    Strategy.JIT_HWGW,
-  ].includes(currentStrategy!);
-
-  const secThreshold = isBatching ? minDiff + 2.0 : minDiff + 0.05; // Batcher darf bis +2.0 Sec arbeiten
-  const moneyThreshold = isBatching ? maxMoney * 0.8 : maxMoney * 0.98; // Batcher darf bis 80% Geld arbeiten
-
   const isPrepped =
-    currentDiff <= secThreshold && currentMoney >= moneyThreshold;
+    currentDiff - minDiff <= 0.05 &&
+    (maxMoney > 0 ? currentMoney / maxMoney >= 0.98 : true);
 
-  // 1. Ziel ausserhalb der Toleranz -> PREP Mode
   if (!isPrepped) {
-    return Strategy.PREP;
+    return "PREP";
   }
 
-  // 2. Ziel bereit -> Wahl des Batchers
+  const homeRam = ns.getServerMaxRam("home");
+  const hasFormulas = ns.fileExists("Formulas.exe", "home");
+
   if (totalRam < 1024) {
-    return Strategy.PROTO_BATCH;
+    return "PROTO_BATCH";
   } else if (totalRam < 16384 || homeRam < 4096 || !hasFormulas) {
-    return Strategy.SHOTGUN_HWGW;
+    return "SHOTGUN_HWGW";
   } else {
-    return Strategy.JIT_HWGW;
+    return "JIT_HWGW";
   }
 }
+
 /**
  * Startet das jeweilige Sub-System als isolierten Prozess.
  */
 function switchExecutionEngine(
   ns: NS,
-  strategy: Strategy,
+  strategy: BatchStrategy,
   target: string | null,
 ): number {
   const targetArg = target ?? "n00dles";
 
   switch (strategy) {
-    case Strategy.XP_GRIND:
+    case "BOOTSTRAP":
+      // Nutzt im Bootstrap-Fall vorerst die Prep-Engine auf n00dles
+      return ns.run("core/engine-prep.js", 1, "n00dles");
+
+    case "XP_GRIND":
       return ns.run("core/engine-xp-grind.js", 1, "joesguns");
 
-    case Strategy.PREP:
+    case "PREP":
       return ns.run("core/engine-prep.js", 1, targetArg);
 
-    case Strategy.PROTO_BATCH:
+    case "PROTO_BATCH":
       return ns.run("core/engine-proto.js", 1, targetArg);
 
-    case Strategy.SHOTGUN_HWGW:
+    case "SHOTGUN_HWGW":
       return ns.run("core/engine-shotgun.js", 1, targetArg);
 
-    case Strategy.JIT_HWGW:
+    case "JIT_HWGW":
       return ns.run("core/sys-jit-batcher.js", 1, targetArg);
 
     default:

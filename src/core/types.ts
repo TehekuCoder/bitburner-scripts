@@ -97,7 +97,7 @@ export interface SourceFileProgress {
 }
 
 export type BatchStrategy = 
-  | "EHT_LOOP" 
+  | "BOOTSTRAP"
   | "XP_GRIND" 
   | "PREP" 
   | "PROTO_BATCH" 

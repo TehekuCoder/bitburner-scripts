@@ -44,7 +44,7 @@ export async function main(ns: NS): Promise<void> {
     // 🟢 ZIEL IST PREPPED!
     if (isSecMin && isMoneyMax) {
       logger.success(`✅ Ziel [${target}] ist vollständig PREPPED!`);
-      
+
       patchState(ns, {
         batcherTarget: target,
         batcherProgress: "PREPPED 100%",
@@ -52,14 +52,15 @@ export async function main(ns: NS): Promise<void> {
 
       // Sauber aufräumen
       stopAllWorkers(ns, workerNodes, [weakenScript, growScript]);
-      
+
       // Kurz warten, damit der Orchestrator auf Shotgun/Batcher umschalten kann
       await ns.sleep(3000);
       continue;
     }
 
     // Status ins Dashboard / State schreiben
-    const moneyPct = maxMoney > 0 ? ((curMoney / maxMoney) * 100).toFixed(1) : "100";
+    const moneyPct =
+      maxMoney > 0 ? ((curMoney / maxMoney) * 100).toFixed(1) : "100";
     const secStatus = `+${secDelta.toFixed(2)}`;
     patchState(ns, {
       batcherTarget: target,
@@ -96,14 +97,19 @@ function deployPrepWorkers(
   for (const node of workerNodes) {
     // Skripte auf Zielknoten kopieren falls nötig
     if (node !== "home") {
-      if (!ns.fileExists(weakenScript, node)) ns.scp(weakenScript, node, "home");
+      if (!ns.fileExists(weakenScript, node))
+        ns.scp(weakenScript, node, "home");
       if (!ns.fileExists(growScript, node)) ns.scp(growScript, node, "home");
     }
 
     // Reservierter RAM für Home (damit System-Skripte nicht blockiert werden)
-    const reservedRam = node === "home" ? 20 : 0;
+    // 🟢 DYNAMISCHER PUFFER:
     const maxRam = ns.getServerMaxRam(node);
     const usedRam = ns.getServerUsedRam(node);
+
+    const reservedRam = node === "home" ? Math.min(20, maxRam * 0.2) : 0;
+
+
     const freeRam = Math.max(0, maxRam - usedRam - reservedRam);
 
     if (freeRam < Math.min(weakenCost, growCost)) continue;
@@ -134,7 +140,11 @@ function deployPrepWorkers(
 /**
  * Beendet laufende Prep-Worker auf allen Knoten.
  */
-function stopAllWorkers(ns: NS, workerNodes: string[], scripts: string[]): void {
+function stopAllWorkers(
+  ns: NS,
+  workerNodes: string[],
+  scripts: string[],
+): void {
   for (const node of workerNodes) {
     for (const proc of ns.ps(node)) {
       if (scripts.includes(proc.filename)) {
