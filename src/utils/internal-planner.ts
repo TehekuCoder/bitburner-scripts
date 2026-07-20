@@ -13,6 +13,7 @@ export function internalPlanner(
   targetBlacklist: Map<string, number>,
   queueLength: number,
   logger?: Logger,
+  currentTarget?: string | null,
 ): { target: string; plan: BatchPlan; maxBatches: number } | null {
   const player = ns.getPlayer();
   let bestTarget: string | null = null;
@@ -52,11 +53,13 @@ export function internalPlanner(
     if (moneyMax <= 0) continue;
 
     const isPrepped =
-      hackDifficulty <= minDifficulty + 0.01 &&
+      hackDifficulty <= minDifficulty + 0.1 &&
       moneyAvailable >= moneyMax * 0.99;
 
     if (!isPrepped) {
+      // ==========================================
       // PREP-PHASE
+      // ==========================================
       const weakenPotency = 0.05 * (bnMults.ServerWeakenRate ?? 1.0);
       const ramGrow = ns.getScriptRam(PATH_GROW);
       const ramWeaken = ns.getScriptRam(PATH_WEAKEN);
@@ -93,7 +96,8 @@ export function internalPlanner(
 
         if (growThreads <= 0) continue;
 
-        const growSec = ns.growthAnalyzeSecurity(growThreads, t);
+        // 🛠️ FIX: String `t` als Core-Parameter vermeiden -> direkt x 0.004
+        const growSec = growThreads * 0.004;
         weaken2Threads = Math.ceil(growSec / weakenPotency);
       }
 
@@ -123,7 +127,25 @@ export function internalPlanner(
         executionTime: tW,
       };
 
-      const score = (moneyMax / (tW || 1)) * 0.1;
+      // 🧠 POTENTIAL-SCORING:
+      // Berechne, was das Ziel NACH dem Prep in HWGW leisten wird.
+      const potHwgwPlan = calculateBatch(ns, t, bnMults, 0.2, SPACER);
+      let score = (moneyMax / (tW || 1)) * 0.1; // Fallback
+
+      if (potHwgwPlan) {
+        const pctPerThread = ns.formulas?.hacking
+          ? ns.formulas.hacking.hackPercent(server, player)
+          : ns.hackAnalyze(t);
+        const potRevenue = potHwgwPlan.hackThreads * pctPerThread * moneyMax;
+        // 80% des HWGW-Potenzials vergeben
+        score = (potRevenue / (potHwgwPlan.weakenTime / 1000)) * 0.8;
+      }
+
+      // 🎯 TARGET LOCK-IN (Bonus ERST NACH der Potenzial-Berechnung anwenden!):
+      if (t === currentTarget) {
+        score *= 1.5;
+      }
+
       if (score > bestScore) {
         bestScore = score;
         bestTarget = t;
@@ -131,11 +153,18 @@ export function internalPlanner(
         maxBatches = 1;
       }
     } else {
+      // ==========================================
       // HWGW-PHASE (Greed-Optimierung)
+      // ==========================================
       let optimalPlan: BatchPlan | null = null;
       const startGreed = virtualFreeRam < 256 ? 0.01 : 0.1;
 
-      for (let greed = 0.95; greed >= startGreed; greed -= 0.05) {
+      // 🛡️ DYNAMISCHER MAX-GREED:
+      // Wenn wir viel RAM haben (> 8 TB), begrenzen wir den Greed auf max. 25%.
+      // Tiefe Pipelines mit z.B. 20 Batches laufen bei 20% Greed absolut bombensicher.
+      const maxGreed = safeHwgwRam > 8000 ? 0.25 : 0.7;
+
+      for (let greed = maxGreed; greed >= startGreed; greed -= 0.05) {
         const p = calculateBatch(ns, t, bnMults, greed, SPACER);
         if (p && p.totalRam <= safeHwgwRam) {
           optimalPlan = p;
@@ -154,10 +183,11 @@ export function internalPlanner(
           bestScore = score;
           bestTarget = t;
           bestPlan = optimalPlan;
-          maxBatches = Math.min(
-            100,
-            Math.max(1, Math.floor(safeHwgwRam / optimalPlan.totalRam)),
+
+          const maxSimultaneousBatches = Math.floor(
+            safeHwgwRam / optimalPlan.totalRam,
           );
+          maxBatches = Math.max(1, Math.min(25, maxSimultaneousBatches));
         }
       }
     }

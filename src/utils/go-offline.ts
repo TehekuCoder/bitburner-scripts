@@ -25,7 +25,7 @@ export async function main(ns: NS): Promise<void> {
       (s) =>
         ns.hasRootAccess(s) &&
         ns.getServerMaxMoney(s) > 0 &&
-        ns.getServerRequiredHackingLevel(s) <= playerHacking,
+        ns.getServerRequiredHackingLevel(s) <= playerHacking / 2,
     )
     .sort((a, b) => ns.getServerMaxMoney(b) - ns.getServerMaxMoney(a));
 

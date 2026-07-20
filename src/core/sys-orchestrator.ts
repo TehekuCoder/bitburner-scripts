@@ -23,7 +23,7 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     const servers = getAllServers(ns);
     const totalMaxRam = getNetworkMaxRam(ns, servers);
-    const target = selectBestTarget(ns, servers);
+    const target = selectBestTarget(ns, servers,activeTarget);
 
     // 1. Strategie evaluieren
     const desiredStrategy = determineStrategy(
@@ -95,26 +95,28 @@ function determineStrategy(
   target: string | null,
   currentStrategy: BatchStrategy | null,
 ): BatchStrategy {
-  // 1. Extrem wenig RAM (Frisch nach Augmentation Reset)
   if (totalRam < 64) {
     return "BOOTSTRAP";
   }
 
   if (!target) return "PREP";
 
-  // 🧠 SHOTGUN & JIT REGEL: Kontinuierliche Engines nicht grundlos unterbrechen
-  if (currentStrategy === "SHOTGUN_HWGW" || currentStrategy === "JIT_HWGW") {
+  // 🧠 LAUFENDE ENGINES NICHT ABBRECHEN
+  if (
+    currentStrategy === "SHOTGUN_HWGW" ||
+    currentStrategy === "JIT_HWGW"
+  ) {
     const sObj = ns.getServer(target);
     const curDiff = sObj.hackDifficulty ?? 99;
     const minDiff = sObj.minDifficulty ?? 1;
 
-    // Nur abbrechen, wenn die Security völlig aus dem Ruder läuft (z.B. +20 über Min)
-    const isTotallyNuked = curDiff - minDiff > 20.0;
-    if (!isTotallyNuked) {
+    // Nur abbrechen, wenn Security stark entgleist (> +20)
+    if (curDiff - minDiff <= 20.0) {
       return currentStrategy;
     }
   }
 
+  // Prep-Check
   const sObj = ns.getServer(target);
   const currentDiff = sObj.hackDifficulty ?? 99;
   const minDiff = sObj.minDifficulty ?? 1;
@@ -132,15 +134,15 @@ function determineStrategy(
   const homeRam = ns.getServerMaxRam("home");
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  if (totalRam < 1024) {
+  // Mit 2 TB Home-RAM (2048 GB) + Formulas.exe bereit für JIT!
+  if (totalRam < 512) {
     return "PROTO_BATCH";
-  } else if (totalRam < 16384 || homeRam < 4096 || !hasFormulas) {
+  } else if (homeRam < 2048 || !hasFormulas) {
     return "SHOTGUN_HWGW";
   } else {
     return "JIT_HWGW";
   }
 }
-
 /**
  * Startet das jeweilige Sub-System als isolierten Prozess.
  */
@@ -176,20 +178,37 @@ function switchExecutionEngine(
   }
 }
 
-function selectBestTarget(ns: NS, servers: string[]): string | null {
+function selectBestTarget(
+  ns: NS,
+  servers: string[],
+  currentTarget: string | null,
+): string | null {
   const playerSkill = ns.getPlayer().skills.hacking;
 
-  return (
-    servers
-      .filter(
-        (s) =>
-          ns.hasRootAccess(s) &&
-          ns.getServerMaxMoney(s) > 0 &&
-          (ns.getServerRequiredHackingLevel(s) ?? 0) <= playerSkill / 2,
-      )
-      .sort(
-        (a, b) =>
-          (ns.getServerMaxMoney(b) ?? 0) - (ns.getServerMaxMoney(a) ?? 0),
-      )[0] ?? "n00dles"
-  );
+  const candidates = servers
+    .filter(
+      (s) =>
+        ns.hasRootAccess(s) &&
+        ns.getServerMaxMoney(s) > 0 &&
+        (ns.getServerRequiredHackingLevel(s) ?? 0) <= playerSkill / 2,
+    )
+    .sort(
+      (a, b) =>
+        (ns.getServerMaxMoney(b) ?? 0) - (ns.getServerMaxMoney(a) ?? 0),
+    );
+
+  const bestCandidate = candidates[0] ?? "n00dles";
+
+  // 🧠 STICKINESS: Wenn wir bereits ein Ziel haben, wechseln wir nur, 
+  // wenn das neue Ziel VIEL mehr Geld bringt (mind. 2.5x so viel).
+  if (currentTarget && ns.serverExists(currentTarget)) {
+    const currentMaxMoney = ns.getServerMaxMoney(currentTarget);
+    const bestMaxMoney = ns.getServerMaxMoney(bestCandidate);
+
+    if (bestMaxMoney < currentMaxMoney * 2.5) {
+      return currentTarget; // Bleibe beim alten Ziel!
+    }
+  }
+
+  return bestCandidate;
 }

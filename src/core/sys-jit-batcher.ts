@@ -82,13 +82,19 @@ export async function main(ns: NS): Promise<void> {
     const queueRam = getQueueRam(ns, eventQueue);
     const virtualFreeRam = realFreeRam - queueRam;
 
-    // Targeting & Re-Planning
-    if (
-      (!target ||
-        batchesSentForTarget >= dynamicMaxBatchesForTarget ||
-        eventQueue.length === 0) &&
-      !isPrepping
-    ) {
+  // 🧠 PRÜFUNG: Wie viele aktive Events / Batches laufen gerade für unser Ziel?
+    const activeEventsForTarget = eventQueue.filter((ev) => ev.target === target).length;
+
+    // Re-Planning NUR auslösen, wenn:
+    // 1. Kein Ziel vorhanden ist OR
+    // 2. Keine Events mehr in der Queue sind (Ziel ist "leer-gelaufen") OR
+    // 3. Wir im Pipelining-Modus sind UND noch Platz für weitere Batches haben
+    const needsNewPlan =
+      !target ||
+      eventQueue.length === 0 ||
+      (activeEventsForTarget === 0 && batchesSentForTarget >= dynamicMaxBatchesForTarget);
+
+    if (needsNewPlan && !isPrepping) {
       const planning = internalPlanner(
         ns,
         servers,
@@ -98,10 +104,17 @@ export async function main(ns: NS): Promise<void> {
         targetBlacklist,
         eventQueue.length,
         logger,
+        target
       );
 
       if (planning) {
         if (planning.target !== target) {
+          // 🛡️ ZIEL-SCHUTZ: Erst wechseln, wenn die Queue des alten Targets leer ist!
+          if (eventQueue.length > 0) {
+            // Warten bis alte Events abgearbeitet sind
+            await ns.sleep(250);
+            continue;
+          }
           nextAvailableLandTime = 0;
           logger.info(`🚀 JIT Wechsel auf Ziel: ${planning.target}`);
         }
@@ -118,11 +131,11 @@ export async function main(ns: NS): Promise<void> {
 
       if (!target || !activePlan) {
         patchState(ns, {
-          batcherProgress: "Suche opimale Target...",
+          batcherProgress: "Suche optimales Target...",
           batcherTarget: "Suche...",
           batcherPlan: null,
         });
-        await ns.sleep(3000);
+        await ns.sleep(1000);
         continue;
       }
     }
@@ -189,7 +202,10 @@ export async function main(ns: NS): Promise<void> {
         eventQueue.sort((a, b) => a.startTime - b.startTime);
 
         batchesSentForTarget++;
-        nextAvailableLandTime += BATCH_GAP;
+
+        // 🎯 SAUBERES PIPELINING: 
+        // 4 * SPACER verhindert, dass Hack von Batch N+1 in Weaken1 von Batch N krachte!
+        nextAvailableLandTime += Math.max(BATCH_GAP, SPACER * 4);
 
         if (activePlan.hackThreads === 0) {
           prepEndTime = now + activePlan.weakenTime + 1000;
@@ -218,7 +234,7 @@ export async function main(ns: NS): Promise<void> {
       const event = eventQueue.shift()!;
       const lag = Date.now() - event.startTime;
 
-      if (lag > 30) {
+      if (lag > 60) {
         logger.warn(`⏳ Lag (${Math.round(lag)}ms) bei Event ${event.id}. Batch verworfen.`);
         pruneBatch(eventQueue, event.batchId);
         continue;

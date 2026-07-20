@@ -3,8 +3,8 @@ import { loadState } from "./state-manager.js";
 import { drawBatcherDashboard } from "./batcher-ui.js";
 import { getAllServers } from "../lib/network.js";
 import { DashboardData } from "./types.js";
+import { HOME_RAM_RESERVE } from "/lib/constants.js";
 
-const HOME_RAM_RESERVE = 64;
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

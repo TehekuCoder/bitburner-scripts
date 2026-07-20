@@ -1,5 +1,5 @@
 import { NS, Server, Player } from "@ns";
-import { DEFAULT_MULTIPLIERS, PATH_GROW, PATH_HACK, PATH_WEAKEN } from "../lib/constants.js";
+import { DEFAULT_MULTIPLIERS, PATH_GROW, PATH_HACK, PATH_WEAKEN, SPACER } from "../lib/constants.js";
 import { BatchPlan } from "../core/types";
 
 /**
@@ -10,7 +10,7 @@ export function calculateBatch(
   targetName: string,
   bnMults: any = DEFAULT_MULTIPLIERS,
   hackPercent = 0.04,
-  spacer = 80,
+  spacer = SPACER,
 ): BatchPlan | null {
   if (!ns.formulas || !ns.formulas.hacking) return null;
 
@@ -32,19 +32,28 @@ export function calculateBatch(
 
   const weakenPotency = 0.05 * (bnMults.ServerWeakenRate ?? 1.0);
 
-  // 3. Weaken 1 Phase
-  const hackSecIncrease = ns.hackAnalyzeSecurity(hackThreads);
-  const weaken1Threads = Math.ceil(hackSecIncrease / weakenPotency);
+  // 3. Weaken 1 Phase (Hack-Security ausgleichen)
+  const hackSecIncrease = hackThreads * 0.002;
+  // +1 Thread Puffer gegen Rundungsfehler
+  const weaken1Threads = Math.ceil(hackSecIncrease / weakenPotency) + 1;
 
   // 4. Server-Zustand für Grow-Simulation modifizieren
-  server.moneyAvailable = Math.max(1, server.moneyMax * (1 - hackThreads * pctPerThread));
+  const moneyAfterHack = Math.max(1, server.moneyMax * (1 - hackThreads * pctPerThread));
+  server.moneyAvailable = moneyAfterHack;
 
   // 5. Grow- & Weaken 2 Phase
-  const growThreads = Math.ceil(ns.formulas.hacking.growThreads(server, player, server.moneyMax));
-  const growSecIncrease = ns.growthAnalyzeSecurity(growThreads, targetName);
-  const weaken2Threads = Math.ceil(growSecIncrease / weakenPotency);
+  const rawGrowThreads = ns.formulas.hacking.growThreads(server, player, server.moneyMax);
+  if (rawGrowThreads === Infinity || isNaN(rawGrowThreads)) return null;
 
-  // 6. Basislaufzeiten ermitteln
+  // 🛡️ PUFFER: +2 Extra-Threads garantieren, dass der Server WIRKLICH wieder bei 100% landet
+  const growThreads = Math.ceil(rawGrowThreads) + 2;
+
+  const growSecIncrease = growThreads * 0.004;
+  // +1 Thread Puffer gegen Rundungsfehler
+  const weaken2Threads = Math.ceil(growSecIncrease / weakenPotency) + 1;
+
+  // 6. Basislaufzeiten ermitteln (bei minSec!)
+  server.hackDifficulty = server.minDifficulty;
   const tW = ns.formulas.hacking.weakenTime(server, player);
   const tG = ns.formulas.hacking.growTime(server, player);
   const tH = ns.formulas.hacking.hackTime(server, player);
@@ -55,7 +64,7 @@ export function calculateBatch(
   const growDelay = tW + spacer - tG;
   const weaken2Delay = spacer * 2;
 
-  if (growDelay < 0 || tW <= 0) return null;
+  if (hackDelay < 0 || growDelay < 0 || tW <= 0) return null;
 
   // 8. RAM-Kosten
   const ramHack = ns.getScriptRam(PATH_HACK);
