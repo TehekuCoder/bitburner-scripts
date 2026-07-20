@@ -96,8 +96,17 @@ export interface SourceFileProgress {
   [sourceFileNumber: number]: number;
 }
 
+export type BatchStrategy = 
+  | "EHT_LOOP" 
+  | "XP_GRIND" 
+  | "PREP" 
+  | "PROTO_BATCH" 
+  | "SHOTGUN_HWGW" 
+  | "JIT_HWGW";
+
 export interface BotState {
   strategy: BotStrategy;
+  batchStrategy?: BatchStrategy;
   progressBar: string;
   targetFaction?: FactionName;
   targetCompany?: CompanyName;

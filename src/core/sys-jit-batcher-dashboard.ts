@@ -9,7 +9,7 @@ const HOME_RAM_RESERVE = 64;
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
-  ns.ui.resizeTail(630, 420);
+  ns.ui.resizeTail(579, 492);
 
   const eventLog: string[] = [];
   let lastTarget = "";
@@ -36,8 +36,13 @@ export async function main(ns: NS): Promise<void> {
     const progressStr = state.batcherProgress ?? "";
 
     // 1. Dynamic Event-Logging für Zustandsänderungen
-    if (currentTarget !== lastTarget && currentTarget !== "Suche...") {
-      if (lastTarget) {
+    if (
+      currentTarget !== lastTarget &&
+      currentTarget !== "Suche..." &&
+      currentTarget !== "Keines" &&
+      currentTarget !== "Standby"
+    ) {
+      if (lastTarget && lastTarget !== "Keines" && lastTarget !== "Suche...") {
         eventLog.push(
           `[${new Date().toLocaleTimeString()}] 🎯 Target: ${lastTarget} ➡️ ${currentTarget}`,
         );

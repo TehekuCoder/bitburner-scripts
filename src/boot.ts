@@ -6,6 +6,9 @@ export async function main(ns: NS): Promise<void> {
   ns.clearLog();
   ns.ui.openTail();
 
+  ns.ui.setTailTitle("Bootsequenz eingeleitet");
+  ns.ui.resizeTail(349, 440);
+
   ns.print("====================================");
   ns.print("    BitOS v3.0 - BOOT SEQUENCE      ");
   ns.print("====================================");
@@ -26,7 +29,9 @@ export async function main(ns: NS): Promise<void> {
     }
   }
   if (killedHomeCount > 0) {
-    ns.print(`[ OK ] Terminated ${killedHomeCount} active processes on 'home'.`);
+    ns.print(
+      `[ OK ] Terminated ${killedHomeCount} active processes on 'home'.`,
+    );
   }
 
   // 🟢 Optimierung: Das GESAMTE infizierte Netzwerk leeren
@@ -42,9 +47,13 @@ export async function main(ns: NS): Promise<void> {
         }
       }
     }
-    ns.print(`[ OK ] Network swept clean (${clearedHostsCount} active servers stopped).`);
+    ns.print(
+      `[ OK ] Network swept clean (${clearedHostsCount} active servers stopped).`,
+    );
   } catch (error) {
-    ns.print("[WARN] Full network sweep failed. Falling back to cloud-only clear.");
+    ns.print(
+      "[WARN] Full network sweep failed. Falling back to cloud-only clear.",
+    );
     try {
       const pServers = ns.cloud.getServerNames();
       for (const server of pServers) {

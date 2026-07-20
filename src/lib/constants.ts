@@ -219,3 +219,5 @@ export const HOME_RAM_RESERVE = 64;
 export const SCRIPT_RAM_BASE = 1.75;
 export const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000; // 60 Minuten
 export const BLACKLIST_DURATION = 30000; // 30 Sekunden Sperre nach Kollaps
+
+export const SWITCH_THRESHOLD = 1.25;

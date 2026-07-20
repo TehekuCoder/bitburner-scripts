@@ -12,7 +12,7 @@ export async function main(ns: NS): Promise<void> {
   ns.ui.setTailTitle("📟 BitOS - Core Dashboard v3.0");
   
   // Perfekte Fenstergröße für unsere Render-Card (42 Zeichen Breite)
-  ns.ui.resizeTail(390, 260);
+  ns.ui.resizeTail(409, 319);
   
   ns.print("🖥️ [HUD] Initialisiere BitOS-Anzeige...");
 

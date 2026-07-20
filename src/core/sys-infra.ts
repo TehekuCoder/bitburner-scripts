@@ -10,6 +10,9 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
   ns.ui.openTail();
+  ns.ui.setTailTitle("Infrastruktur");
+  ns.ui.resizeTail(580, 500);
+
   const logger = new Logger(ns, "Infra", "INFO");
   logger.info("Schlanker Infrastruktur-Manager gestartet.");
 

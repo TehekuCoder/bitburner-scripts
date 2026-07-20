@@ -3,13 +3,20 @@
 import { NS, FactionName } from "@ns";
 import { loadState, patchState } from "./state-manager.js"; // 🟢 patchState importiert
 import { Logger } from "./logger.js";
-import { getFactionsNeedingRep, manageAllSleeves } from "../lib/sleeve-manager.js";
+import {
+  getFactionsNeedingRep,
+  manageAllSleeves,
+} from "../lib/sleeve-manager.js";
 import { printSleeveDashboard } from "../lib/sleeve-ui.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
   ns.ui.openTail();
+
+  ns.ui.setTailTitle("Zentrale Sleeve-Verwaltung");
+
+  ns.ui.resizeTail(767,298);
 
   const logger = new Logger(ns, "SLEEVE", "INFO", "/logs/sleeve.txt");
   logger.info("🦾 Sleeve-Subsystem aktiv. Kontrolliere Klone...");
@@ -51,7 +58,7 @@ export async function main(ns: NS): Promise<void> {
       ownedAugs,
       factionsNeedingRep,
       logger,
-      addLocalLog
+      addLocalLog,
     );
 
     // 🟢 NEU: Schreibe den berechneten Fortschritt aktiv zurück in das System-State!
