@@ -5,12 +5,11 @@ import { Logger } from "./logger.js";
 import { patchState } from "./state-manager.js";
 
 export enum Strategy {
-  EHT_LOOP = "EHT_LOOP",           // Early Game monolithisch
-  XP_GRIND = "XP_GRIND",           // Fokus auf Hacking XP
-  PREP = "PREP",                   // Server auf S_min / M_max bringen
-  PROTO_BATCH = "PROTO_BATCH",     // Single-Batch HWGW
-  SHOTGUN_HWGW = "SHOTGUN_HWGW",   // Multi-Batch statisch
-  JIT_HWGW = "JIT_HWGW",           // Dynamische JIT-Queue
+  XP_GRIND = "XP_GRIND", // Fokus auf Hacking XP
+  PREP = "PREP", // Server auf S_min / M_max bringen
+  PROTO_BATCH = "PROTO_BATCH", // Single-Batch HWGW
+  SHOTGUN_HWGW = "SHOTGUN_HWGW", // Multi-Batch statisch
+  JIT_HWGW = "JIT_HWGW", // Dynamische JIT-Queue
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -66,10 +65,14 @@ export async function main(ns: NS): Promise<void> {
     // 🟢 3. DASHBOARD LIFECYCLE MANAGEMENT
     if (activeStrategy === Strategy.JIT_HWGW) {
       // Dashboard starten, falls es noch nicht läuft und genug RAM da ist
-      if (ns.fileExists(DASHBOARD_SCRIPT, "home") && !ns.isRunning(DASHBOARD_SCRIPT, "home")) {
-        const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+      if (
+        ns.fileExists(DASHBOARD_SCRIPT, "home") &&
+        !ns.isRunning(DASHBOARD_SCRIPT, "home")
+      ) {
+        const freeRam =
+          ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
         const reqRam = ns.getScriptRam(DASHBOARD_SCRIPT, "home");
-        
+
         if (freeRam >= reqRam) {
           ns.run(DASHBOARD_SCRIPT, 1);
           logger.info(`📊 JIT-Batcher Dashboard gestartet.`);
@@ -88,40 +91,40 @@ export async function main(ns: NS): Promise<void> {
 }
 
 /**
- * Kernlogik: Wählt die richtige Strategie basierend auf Netzwerk-Metriken.
+ * Kernlogik: Wählt die richtige Batch/Prep-Strategie basierend auf Netzwerk- und Home-Metriken.
  */
 function determineStrategy(
   ns: NS,
   totalRam: number,
   target: string | null,
 ): Strategy {
-  // 1. Frühes Spiel (< 64 GB RAM)
-  if (totalRam < 64) {
-    return Strategy.EHT_LOOP;
-  }
+  const homeRam = ns.getServerMaxRam("home");
+  const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  if (!target) return Strategy.EHT_LOOP;
+  // Falls kein Ziel vorhanden ist (z. B. extrem frühes Spiel oder Skill zu niedrig)
+  if (!target) {
+    return Strategy.PREP;
+  }
 
   const sObj = ns.getServer(target);
   const isPrepped =
     (sObj.hackDifficulty ?? 99) <= (sObj.minDifficulty ?? 1) + 0.05 &&
     (sObj.moneyAvailable ?? 0) >= (sObj.moneyMax ?? 1) * 0.98;
 
-  // 2. Ziel nicht bereit -> Prep Mode
+  // 1. Ziel noch nicht geschwächt/aufgefüllt -> PREP Mode
   if (!isPrepped) {
     return Strategy.PREP;
   }
 
-  // 3. Ziel bereit -> Wahl des Batchers nach RAM-Klasse
+  // 2. Ziel ist prepped -> Wahl des Batchers nach RAM & Formulas-Besitz
   if (totalRam < 1024) {
     return Strategy.PROTO_BATCH;
-  } else if (totalRam < 16384) {
+  } else if (totalRam < 16384 || homeRam < 4096 || !hasFormulas) {
     return Strategy.SHOTGUN_HWGW;
   } else {
     return Strategy.JIT_HWGW;
   }
 }
-
 /**
  * Startet das jeweilige Sub-System als isolierten Prozess.
  */
@@ -133,8 +136,6 @@ function switchExecutionEngine(
   const targetArg = target ?? "n00dles";
 
   switch (strategy) {
-    case Strategy.EHT_LOOP:
-      return ns.run("core/engine-eht.js", 1, targetArg);
 
     case Strategy.XP_GRIND:
       return ns.run("core/engine-xp-grind.js", 1, "joesguns");
