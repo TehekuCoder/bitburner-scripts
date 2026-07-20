@@ -33,7 +33,12 @@ export async function main(ns: NS): Promise<void> {
     const target = selectBestTarget(ns, servers);
 
     // 1. Strategie evaluieren
-    const desiredStrategy = determineStrategy(ns, totalMaxRam, target);
+    const desiredStrategy = determineStrategy(
+      ns,
+      totalMaxRam,
+      target,
+      activeStrategy,
+    );
 
     // 2. Prüfen, ob ein Wechsel erforderlich ist (Strategiewechsel, Zielwechsel ODER Prozess abgestürzt)
     const strategyChanged = desiredStrategy !== activeStrategy;
@@ -97,26 +102,39 @@ function determineStrategy(
   ns: NS,
   totalRam: number,
   target: string | null,
+  currentStrategy: Strategy | null, // 👈 Aktuelle Strategie mit übergeben!
 ): Strategy {
   const homeRam = ns.getServerMaxRam("home");
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  // Falls kein Ziel vorhanden ist (z. B. extrem frühes Spiel oder Skill zu niedrig)
-  if (!target) {
-    return Strategy.PREP;
-  }
+  if (!target) return Strategy.PREP;
 
   const sObj = ns.getServer(target);
-  const isPrepped =
-    (sObj.hackDifficulty ?? 99) <= (sObj.minDifficulty ?? 1) + 0.05 &&
-    (sObj.moneyAvailable ?? 0) >= (sObj.moneyMax ?? 1) * 0.98;
+  const currentDiff = sObj.hackDifficulty ?? 99;
+  const minDiff = sObj.minDifficulty ?? 1;
+  const currentMoney = sObj.moneyAvailable ?? 0;
+  const maxMoney = sObj.moneyMax ?? 1;
 
-  // 1. Ziel noch nicht geschwächt/aufgefüllt -> PREP Mode
+  // 🧠 HYSTERESE-LOGIK:
+  // Wenn wir SCHON im Batch-Betrieb sind, sind wir toleranter!
+  const isBatching = [
+    Strategy.PROTO_BATCH,
+    Strategy.SHOTGUN_HWGW,
+    Strategy.JIT_HWGW,
+  ].includes(currentStrategy!);
+
+  const secThreshold = isBatching ? minDiff + 2.0 : minDiff + 0.05; // Batcher darf bis +2.0 Sec arbeiten
+  const moneyThreshold = isBatching ? maxMoney * 0.8 : maxMoney * 0.98; // Batcher darf bis 80% Geld arbeiten
+
+  const isPrepped =
+    currentDiff <= secThreshold && currentMoney >= moneyThreshold;
+
+  // 1. Ziel ausserhalb der Toleranz -> PREP Mode
   if (!isPrepped) {
     return Strategy.PREP;
   }
 
-  // 2. Ziel ist prepped -> Wahl des Batchers nach RAM & Formulas-Besitz
+  // 2. Ziel bereit -> Wahl des Batchers
   if (totalRam < 1024) {
     return Strategy.PROTO_BATCH;
   } else if (totalRam < 16384 || homeRam < 4096 || !hasFormulas) {
@@ -136,7 +154,6 @@ function switchExecutionEngine(
   const targetArg = target ?? "n00dles";
 
   switch (strategy) {
-
     case Strategy.XP_GRIND:
       return ns.run("core/engine-xp-grind.js", 1, "joesguns");
 
