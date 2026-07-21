@@ -20,7 +20,6 @@ export function deployWorker(
   const procs = ns.ps(targetNode);
   const allWorkerScripts = [
     scripts.worker,
-    scripts.xpfarm,
     scripts.hack,
     scripts.grow,
     scripts.weaken,

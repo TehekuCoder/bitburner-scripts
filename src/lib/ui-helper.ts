@@ -35,10 +35,6 @@ export function generateProgressBar(ns: NS, params: UIProgressBarParams): string
     generatedBar = `🥷 ${targetFaction} | Karma/Gang Grind aktiv`;
   } 
   
-  else if (mode === "XP_SPRINT") {
-    generatedBar = "👶 Early Game: XP SPRINT (Hacking < 50)";
-  } 
-  
   else if (mode === "CRIME") {
     generatedBar =
       crimeMoneyMult > 5
@@ -74,7 +70,7 @@ export function generateProgressBar(ns: NS, params: UIProgressBarParams): string
   // --- SPEZIALFALL: AKTIVER CRIME-WORKER ÜBERSCHREIBT STATUS ---
   let finalBar = generatedBar;
   if (
-    (mode === "CRIME" || mode === "XP_SPRINT") &&
+    (mode === "CRIME") &&
     ns.isRunning("/tasks/crime.js", "home")
   ) {
     if (currentState?.progressBar?.startsWith("🥷")) {

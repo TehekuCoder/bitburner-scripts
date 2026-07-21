@@ -34,7 +34,7 @@ export function determineStrategy(
 
   // --- ENTSCHEIDUNGSBAUM ---
   if (p.skills.hacking < 50) {
-    mode = "XP_SPRINT";
+    mode = "MONEY";
   } else if (nextRoadmapFaction && roadmapFactionName) {
     const isMember = p.factions.includes(roadmapFactionName);
     const isCombatFaction =

@@ -45,13 +45,13 @@ export const HACKING_FACTIONS: FactionConfig[] = [
   { name: "CyberSec", minStat: 0, priority: 1 },
   { name: "Tian Di Hui", minStat: 0, priority: 2 },
   { name: "Netburners", minStat: 0, priority: 3 },
-  { name: "NiteSec", minStat: 0, priority: 4 },
-  { name: "Slum Snakes", minStat: 30, priority: 5 },
+  { name: "Slum Snakes", minStat: 30, priority: 4 },
+  { name: "Tetrads", minStat: 75, priority: 5 },
   { name: "Sector-12", minStat: 0, priority: 6 },
-  { name: "Chongqing", minStat: 0, priority: 7 },
-  { name: "Ishima", minStat: 0, priority: 8 },
-  { name: "New Tokyo", minStat: 0, priority: 9 },
-  { name: "Tetrads", minStat: 75, priority: 10 },
+  { name: "NiteSec", minStat: 0, priority: 7 },
+  { name: "Chongqing", minStat: 0, priority: 8 },
+  { name: "Ishima", minStat: 0, priority: 9 },
+  { name: "New Tokyo", minStat: 0, priority: 10 },
   { name: "The Black Hand", minStat: 0, priority: 11 },
   { name: "Aevum", minStat: 0, priority: 12 },
   { name: "Volhaven", minStat: 0, priority: 13 },
@@ -90,6 +90,7 @@ export const COMBAT_KEYS = [
   "dexterity",
   "agility",
 ] as const;
+
 export const GYM_STAT_MAP: Record<string, GymType> = {
   strength: "str" as GymType,
   defense: "def" as GymType,
@@ -221,5 +222,3 @@ export const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000; // 60 Minuten
 export const BLACKLIST_DURATION = 30000; // 30 Sekunden Sperre nach Kollaps
 
 export const SWITCH_THRESHOLD = 1.25;
-
-

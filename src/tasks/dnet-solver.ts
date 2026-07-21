@@ -65,8 +65,9 @@ export async function main(ns: NS): Promise<void> {
   // 2. Haupt-Solver ausführen
   let password = await runSolver(ns, host, details.modelId || "Unknown", details);
 
-  // 3. Fallbacks ausführen, falls der Solver kein Passwort fand
-  if (!password) {
+// 3. Fallbacks ausführen, falls der Solver explizit null zurückgibt
+  // WICHTIG: Strikt auf null prüfen, da "" (ZeroLogon) ein gültiges Passwort ist!
+  if (password === null) {
     logger.warn(`⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`);
     password = (await dictionaryAttack(ns, host, details)) || (await fileLootAttack(ns, host, details));
   }
