@@ -260,15 +260,22 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // 🚀 1. Orchestrator & Dashboard Steuerung
+
+    // 1a. Orchestrator starten, falls er nicht läuft und genug RAM da ist
     if (
-      isOrchestratorRunning && // ...
-      getFreeRam() >= ns.getScriptRam(sysDashboardScript, "home") // <- RAM vom Orchestrator ist hier noch nicht abgezogen!
+      !isOrchestratorRunning &&
+      ns.fileExists(sysOrchestratorScript, "home") &&
+      getFreeRam() >= ns.getScriptRam(sysOrchestratorScript, "home")
     ) {
-      ns.run(sysDashboardScript, 1);
+      const pid = ns.run(sysOrchestratorScript, 1);
+      if (pid > 0) {
+        logger.success(`🚀 Orchestrator gestartet (${sysOrchestratorScript})`);
+      }
     }
 
+    // 1b. Dashboard nur starten, wenn der Orchestrator aktiv ist
     if (
-      isOrchestratorRunning &&
+      ns.isRunning(sysOrchestratorScript, "home") &&
       ns.fileExists(sysDashboardScript, "home") &&
       !ns.isRunning(sysDashboardScript, "home") &&
       getFreeRam() >= ns.getScriptRam(sysDashboardScript, "home")
