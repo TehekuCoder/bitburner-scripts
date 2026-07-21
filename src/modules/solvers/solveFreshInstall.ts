@@ -1,15 +1,21 @@
+// solveFreshInstall.ts
 import { NS } from "@ns";
 
 export async function solveFreshInstall(ns: NS, host: string, details: any): Promise<string | null> {
-  const len = details.passwordLength;
-  const isNumeric = details.isNumeric || details.passwordFormat === "numeric"; 
+  const len = details?.passwordLength;
+  // Typische Standard-Passwörter
+  const candidates = ["0000", "12345", "admin", "password", "guest", "root", "1234"];
 
-  if (isNumeric) {
-    if (len === 4) return "0000";
-    if (len === 5) return "12345";
-  } else {
-    if (len === 5) return "admin";
-    if (len === 8) return "password";
+  for (const guess of candidates) {
+    // Falls Länge bekannt ist, nur passende Längen testen
+    if (len && guess.length !== len) continue;
+
+    const result = (await ns.dnet.authenticate(host, guess)) as any;
+    if (result?.success) {
+      ns.print(`[FreshInstall] Erfolg mit: ${guess}`);
+      return guess;
+    }
   }
+
   return null;
 }

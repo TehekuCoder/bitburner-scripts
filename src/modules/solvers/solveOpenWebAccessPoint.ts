@@ -1,74 +1,62 @@
 import { NS } from "@ns";
 
-/**
- * Dynamischer Solver für OpenWebAccessPoint.
- * Nutzt die server-spezifische Datenlecksicherheitslücke [hostname]:[password].
- */
-export async function solveOpenWebAccessPoint(ns: NS, hostname: string, details: any): Promise<string | null> {
-  
-  // Da Hostnames Sonderzeichen wie % oder @ enthalten können (siehe dark%matrix),
-  // müssen wir sie für die RegEx-Engine sicherheitshalber eskapieren.
-  const escapedHost = hostname.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-  
-  // 🔥 STRATEGIE 0: Der dynamische Detektor
-  // Erstellt live eine Suchmaske für "hostname:PASSWORT"
-  const leakRegex = new RegExp(`${escapedHost}:(\\w+)`);
+export async function solveOpenWebAccessPoint(
+  ns: NS,
+  hostname: string,
+  details: any,
+): Promise<string | null> {
+  const escapedHost = hostname.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+  const leakRegex = new RegExp(`${escapedHost}:(\\w+)`, "i");
+
+  // Speichert bereits getestete Wörter, um Mehrfachprüfungen zu vermeiden
+  const testedCandidates = new Set<string>();
 
   for (let i = 0; i < 5; i++) {
-    const bleed = await ns.dnet.heartbleed(hostname);
+    const bleed = (await ns.dnet.heartbleed(hostname)) as any;
     const bleedStr = typeof bleed === "string" ? bleed : JSON.stringify(bleed);
 
-    // Versuche das dynamische Passwort-Muster aus dem Speicher-Dump zu fischen
+    // 1. Direktes Leak-Muster (hostname:PASSWORT)
     const leakMatch = bleedStr.match(leakRegex);
-    
     if (leakMatch && leakMatch[1]) {
       const candidate = leakMatch[1];
-      ns.print(`[OpenWebAccessPoint] Leak erkannt! Gefundener Key: ${candidate}`);
-      
-      const resLeak = await ns.dnet.authenticate(hostname, candidate);
-      if (resLeak.success) {
-        ns.print(`🎯 [OpenWebAccessPoint] OWAP-Exploit erfolgreich bei ${hostname} (Versuch ${i + 1})! Passwort: ${candidate}`);
-        return candidate; 
+      if (!testedCandidates.has(candidate)) {
+        testedCandidates.add(candidate);
+        ns.print(`[OWAP] Leak erkannt: ${candidate}`);
+
+        const res = (await ns.dnet.authenticate(hostname, candidate)) as any;
+        if (res?.success) return candidate;
       }
     }
 
-    // ======================================================================
-    // 🛡️ FALLBACK-ZONE: Falls das spezifische Muster im Dump mal verschoben ist
-    // ======================================================================
-    
-    // 1. Alternativ-Muster: Explizite Zuweisungen (z.B. password is: XYZ)
+    // 2. Freitext-Muster (password is: XYZ)
     const exactMatch = bleedStr.match(/password\s*is\s*[:=]\s*(\w+)/i);
-    if (exactMatch) {
+    if (exactMatch && exactMatch[1]) {
       const candidate = exactMatch[1];
-      const resExact = await ns.dnet.authenticate(hostname, candidate);
-      if (resExact.success) {
-        ns.print(`[OpenWebAccessPoint] Volltreffer via Freitext-Analyse bei Versuch ${i + 1}: ${candidate}`);
-        return candidate;
+      if (!testedCandidates.has(candidate)) {
+        testedCandidates.add(candidate);
+
+        const res = (await ns.dnet.authenticate(hostname, candidate)) as any;
+        if (res?.success) return candidate;
       }
     }
 
-    // 2. Letzter Ausweg: Kompletter Speicher-Crawl
-    const allCandidates = bleedStr.match(/\b\w+\b/g) || [];
-    const uniqueCandidates = [...new Set(allCandidates)];
+    // 3. Fallback: Speicher-Crawl ohne Duplikate
+    const allWords = bleedStr.match(/\b\w+\b/g) || [];
+    for (const word of allWords) {
+      if (testedCandidates.has(word)) continue;
+      if (details?.passwordLength && word.length !== details.passwordLength) continue;
 
-    for (const candidate of uniqueCandidates) {
-      if (details.passwordLength && candidate.length !== details.passwordLength) {
-        continue;
-      }
-      if (leakMatch && candidate === leakMatch[1]) {
-        continue;
-      }
-
-      const resCand = await ns.dnet.authenticate(hostname, candidate);
-      if (resCand.success) {
-        ns.print(`[OpenWebAccessPoint] Failsafe-Erfolg via Speicher-Crawl bei Versuch ${i + 1}: ${candidate}`);
-        return candidate;
+      testedCandidates.add(word);
+      const res = (await ns.dnet.authenticate(hostname, word)) as any;
+      if (res?.success) {
+        ns.print(`🎉 [OWAP] Failsafe-Erfolg: ${word}`);
+        return word;
       }
     }
 
     await ns.sleep(200);
   }
 
-  ns.print(`🔴 [OpenWebAccessPoint] Fehlgeschlagen. Kein Passwort auf ${hostname} isoliert.`);
+  ns.print(`🔴 [OWAP] Kein Passwort auf ${hostname} isoliert.`);
   return null;
 }

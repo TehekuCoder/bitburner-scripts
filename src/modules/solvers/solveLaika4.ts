@@ -1,18 +1,21 @@
+// solveLaika4.ts
 import { NS } from "@ns";
 
 export async function solveLaika4(ns: NS, host: string, details: any): Promise<string | null> {
-  const len = details.passwordLength;
-  let candidates: string[] = [];
+  const len = details?.passwordLength;
+  
+  const dict: Record<number, string[]> = {
+    3: ["max", "dog"],
+    4: ["fido", "spot", "bark"],
+    5: ["rover", "laika"],
+  };
 
-  if (len === 3) candidates = ["max"];
-  else if (len === 5) candidates = ["rover"];
-  else if (len === 4) candidates = ["fido", "spot"];
+  const candidates = dict[len] || ["rover", "fido", "spot", "max", "laika"];
 
-  // Teste die Kandidaten direkt selbst durch
   for (const guess of candidates) {
-    const result = await ns.dnet.authenticate(host, guess);
-    if (result && result.success) {
-      ns.print(`[Laika4] Erfolg mit Passwort: ${guess}`);
+    const result = (await ns.dnet.authenticate(host, guess)) as any;
+    if (result?.success) {
+      ns.print(`[Laika4] Erfolg mit: ${guess}`);
       return guess;
     }
   }

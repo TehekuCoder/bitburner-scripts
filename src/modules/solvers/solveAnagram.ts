@@ -1,45 +1,61 @@
 import { NS } from "@ns";
 
 /**
- * Interne Hilfsfunktion: Generiert alle eindeutigen Permutationen (Anagramme) eines Strings.
+ * Generator für eindeutige Permutationen (spart Speicher & vermeidet Duplikate)
  */
-function getPermutations(str: string): string[] {
-  if (str.length <= 1) return [str];
-  const perms = new Set<string>();
-  
+function* permute(str: string): Generator<string> {
+  if (str.length <= 1) {
+    yield str;
+    return;
+  }
+  const used = new Set<string>();
   for (let i = 0; i < str.length; i++) {
     const char = str[i];
-    const remaining = str.slice(0, i) + str.slice(i + 1);
+    if (used.has(char)) continue; // Duplikate überspringen
+    used.add(char);
     
-    for (const p of getPermutations(remaining)) {
-      perms.add(char + p);
+    const remaining = str.slice(0, i) + str.slice(i + 1);
+    for (const p of permute(remaining)) {
+      yield char + p;
     }
   }
-  return Array.from(perms);
 }
 
-/**
- * Solver für Anagramme (solvePHP) - Testet alle Permutationen des übergebenen Strings.
- */
-export async function solveAnagram(ns: NS, hostname: string, details: any): Promise<string | null> {
-  if (!details.data) {
-    ns.print("🔴 [Anagram] Fehler: Keine Daten (Buchstabensalat) in den Serverdetails gefunden.");
+export async function solveAnagram(
+  ns: NS,
+  hostname: string,
+  details: any
+): Promise<string | null> {
+  const rawData = String(details?.data || "").trim();
+  if (!rawData) {
+    ns.print("🔴 [Anagram] Fehler: Keine Daten in Serverdetails gefunden.");
     return null;
   }
 
-  // Alle möglichen Kombinationen berechnen
-  const candidates = getPermutations(details.data);
+  // Schutz vor extrem langen Worten (9! = 362.880 -> würde zu lange dauern)
+  if (rawData.length > 8) {
+    ns.print(`⚠️ [Anagram] Wort '${rawData}' ist zu lang (${rawData.length} Zeichen). Abbruch.`);
+    return null;
+  }
 
-  // Alle Kombinationen nacheinander durchtesten
-  for (const guess of candidates) {
-    const result = await ns.dnet.authenticate(hostname, guess);
-    
-    if (result.success) {
-      ns.print(`[Anagram] Erfolgreich authentifiziert mit Passwort: ${guess}`);
-      return guess; // Gefundenes Passwort für das Hauptskript/Loot zurückgeben
+  ns.print(`🔤 [Anagram] Teste Kombinationen für: "${rawData}"`);
+
+  let count = 0;
+  for (const guess of permute(rawData)) {
+    count++;
+
+    // Alle 100 Versuche kurz die UI/Event-Loop entlasten
+    if (count % 100 === 0) {
+      await ns.asleep(1);
+    }
+
+    const result = (await ns.dnet.authenticate(hostname, guess)) as any;
+    if (result?.success) {
+      ns.print(`🎉 [Anagram] Erfolg nach ${count} Versuchen! Passwort: ${guess}`);
+      return guess;
     }
   }
 
-  ns.print(`🔴 [Anagram] Fehlgeschlagen. Kein Anagramm von '${details.data}' war korrekt.`);
+  ns.print(`🔴 [Anagram] Fehlgeschlagen. Kein Anagramm war korrekt.`);
   return null;
 }

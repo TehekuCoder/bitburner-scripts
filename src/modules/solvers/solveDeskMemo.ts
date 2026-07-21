@@ -1,41 +1,55 @@
 import { NS } from "@ns";
 
-/**
- * Solver für DeskMemo - Extrahiert und testet Zahlenmuster aus dem Text-Hinweis.
- */
 export async function solveDeskMemo(
   ns: NS,
-  hostname: string,
-  details: any,
+  host: string,
+  details: any
 ): Promise<string | null> {
-  const hint = details.passwordHint || "";
+  const hint = String(details?.passwordHint || details?.data || "").trim();
+  const targetLen = details?.passwordLength;
 
-  // 1. Strategie: Alle Ziffern zusammenschreiben (Nicht-Ziffern \D werden gelöscht)
-  const combined = hint.replace(/\D/g, "");
-  if (combined) {
-    const resCombined = await ns.dnet.authenticate(hostname, combined);
-    if (resCombined.success) {
-      ns.print(
-        `[DeskMemo] Erfolgreich authentifiziert mit kombinierter Zahl: ${combined}`,
-      );
-      return combined; // Passwort für das Hauptskript/Loot zurückgeben
-    }
+  if (!hint) {
+    ns.print("🔴 [DeskMemo] Fehler: Kein passwordHint oder data vorhanden.");
+    return null;
   }
 
-  // 2. Strategie: Einzelne Zahlenblöcke nacheinander durchtesten
+  // Kandidaten sammeln
+  const candidates: string[] = [];
+
+  // 1. Alle Ziffern am Stück
+  const allDigits = hint.replace(/\D/g, "");
+  if (allDigits) candidates.push(allDigits);
+
+  // 2. Einzelne Zahlenblöcke
   const sequences = hint.match(/\d+/g) || [];
-  for (const seq of sequences) {
-    const resSeq = await ns.dnet.authenticate(hostname, seq);
-    if (resSeq.success) {
-      ns.print(
-        `[DeskMemo] Erfolgreich authentifiziert mit Zahlenblock: ${seq}`,
-      );
-      return seq; // Passwort zurückgeben
+  candidates.push(...sequences);
+
+  // 3. Fallback: Wörter aus dem Hinweis (falls das Passwort Text ist)
+  const words = hint.match(/\b\w+\b/g) || [];
+  candidates.push(...words);
+
+  // Nach Dubletten filtern
+  const uniqueCandidates = [...new Set(candidates)];
+
+  // Falls targetLen bekannt ist, nach passender Länge sortieren
+  if (targetLen) {
+    uniqueCandidates.sort((a, b) => {
+      const aMatch = a.length === targetLen ? -1 : 1;
+      const bMatch = b.length === targetLen ? -1 : 1;
+      return aMatch - bMatch;
+    });
+  }
+
+  ns.print(`📝 [DeskMemo] Teste ${uniqueCandidates.length} Kandidaten aus Hint: "${hint}"`);
+
+  for (const guess of uniqueCandidates) {
+    const res = (await ns.dnet.authenticate(host, guess)) as any;
+    if (res?.success) {
+      ns.print(`🎉 [DeskMemo] Erfolgreich authentifiziert mit: "${guess}"`);
+      return guess;
     }
   }
 
-  ns.print(
-    `🔴 [DeskMemo] Fehlgeschlagen. Keine Zahlenkombination aus dem Hinweis war korrekt.`,
-  );
+  ns.print("🔴 [DeskMemo] Fehlgeschlagen. Kein Kandidat war korrekt.");
   return null;
 }

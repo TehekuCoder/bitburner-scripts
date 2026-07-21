@@ -16,39 +16,37 @@ import { solvePr0verFl0 } from "/modules/solvers/solvePr0verFl0";
 import { solveRoman } from "/modules/solvers/solveRoman";
 import { solveZeroLogon } from "/modules/solvers/solveZeroLogon";
 
-
-
 // Die Keys entsprechen exakt den Server-Typen, wie sie im Spiel definiert sind
 const SOLVER_REGISTRY: Record<string, SolverFunction> = {
-  "accountsmanager": solveAccountsManager,
-  "anagram": solveAnagram,
-  "baseconversion": solveBaseConversion,
-  "cloudblare": solveCloudBlare,
-  "cloudblare(tm)": solveCloudBlare, // Falls das (tm) im Typnamen steht
-  "deepgreen": solveDeepGreen,
-  "deskmemo": solveDeskMemo,
-  "factorios": solveFactoriOs,
-  "factori-os": solveFactoriOs,     // Alias für alternative Schreibweisen
-  "freshinstall": solveFreshInstall,
-  "laika4": solveLaika4,
-  "nil": solveNIL,
-  "openwebaccesspoint": solveOpenWebAccessPoint,
-  "pr0verfl0": solvePr0verFl0,
-  "roman": solveRoman,
-  "zerologon": solveZeroLogon
+  accountsmanager: solveAccountsManager,
+  anagram: solveAnagram,
+  baseconversion: solveBaseConversion,
+  cloudblare: solveCloudBlare,
+  cloudblaretm: solveCloudBlare,
+  deepgreen: solveDeepGreen,
+  deskmemo: solveDeskMemo,
+  factorios: solveFactoriOs,
+  freshinstall: solveFreshInstall,
+  laika4: solveLaika4,
+  nil: solveNIL,
+  openwebaccesspoint: solveOpenWebAccessPoint,
+  pr0verfl0: solvePr0verFl0,
+  roman: solveRoman,
+  zerologon: solveZeroLogon,
 };
 
 /**
  * Normalisiert den Server-Typnamen, um Schreibfehler und Sonderzeichen abzufangen.
+ * Null-Safe: Verhindert TypeError, falls 'type' undefined ist.
  */
-function normalizeType(type: string): string {
-  return type.toLowerCase().replace(/\s+/g, "").trim();
+function normalizeType(type?: string): string {
+  return (type || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
 }
 
 /**
  * Der zentrale Manager. Holt sich den passenden Solver für den Server-Typ
  * und führt ihn sicher aus.
- * 
+ *
  * @returns Das erfolgreiche Passwort (string) oder null bei Fehlschlag.
  */
 export async function runSolver(
@@ -58,7 +56,24 @@ export async function runSolver(
   details: any
 ): Promise<string | null> {
   const cleanType = normalizeType(serverType);
-  const solver = SOLVER_REGISTRY[cleanType];
+  if (!cleanType) {
+    ns.print(`🔴 [Manager] Kein gültiger serverType für Host '${host}' übergeben.`);
+    return null;
+  }
+
+  // 1. Exakter Match
+  let solver = SOLVER_REGISTRY[cleanType];
+
+  // 2. Fuzzy Match: Falls Modellnamen Versionen enthalten (z. B. "accountsmanagerv2")
+  if (!solver) {
+    const matchedKey = Object.keys(SOLVER_REGISTRY).find((key) =>
+      cleanType.includes(key)
+    );
+    if (matchedKey) {
+      solver = SOLVER_REGISTRY[matchedKey];
+      ns.print(`ℹ️ [Manager] Unscharfer Match für '${serverType}': Nutze '${matchedKey}'.`);
+    }
+  }
 
   if (!solver) {
     ns.print(`⚠️ Kein passender Solver für Typ '${serverType}' (normalisiert: '${cleanType}') registriert.`);
@@ -66,10 +81,10 @@ export async function runSolver(
   }
 
   ns.print(`🚀 Starte Solver '${cleanType}' für Host '${host}'...`);
-  
+
   try {
     const password = await solver(ns, host, details);
-    
+
     if (password !== null) {
       ns.print(`🎉 [Success] ${host} geknackt! Passwort: ${password}`);
       return password;
@@ -77,7 +92,7 @@ export async function runSolver(
       ns.print(`❌ [Failed] Solver für ${host} lief durch, konnte aber kein Passwort ermitteln.`);
     }
   } catch (error: any) {
-    ns.print(`🔴 [Error] Schwerer Fehler im Solver für ${host}: ${error.message || error}`);
+    ns.print(`🔴 [Error] Schwerer Fehler im Solver für ${host}: ${error?.message || error}`);
   }
 
   return null;

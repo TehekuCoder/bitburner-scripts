@@ -1,73 +1,82 @@
 import { NS } from "@ns";
 import { drawProgress } from "/utils/progress";
 
-/**
- * Solver für DeepGreen - Knackt das Passwort rückwärts (von hinten nach vorne) via Heartbleed-Log-Zähler.
- */
-export async function solveDeepGreen(ns: NS, hostname: string, details: any): Promise<string | null> {
-  const len = details.passwordLength || 3;
-  const currentGuess = new Array(len).fill("x");
+export async function solveDeepGreen(
+  ns: NS,
+  hostname: string,
+  details: any,
+): Promise<string | null> {
+  const len = details?.passwordLength || 3;
+  const currentGuess = new Array(len).fill("0");
 
   for (let pos = len - 1; pos >= 0; pos--) {
-    // Fortschritt anzeigen (wieviele Stellen von hinten gelöst wurden)
     drawProgress(ns, hostname, len - 1 - pos, len, "DeepGreen");
-
     const targetCorrectCount = len - pos;
+
+    let posSolved = false;
 
     for (let digit = 0; digit <= 9; digit++) {
       currentGuess[pos] = String(digit);
       const guess = currentGuess.join("");
 
-      const result = await ns.dnet.authenticate(hostname, guess);
-      if (result.success) {
-        ns.print(`[DeepGreen] Erfolgreich authentifiziert mit Passwort: ${guess}`);
-        return guess; // Direktes Passwort-Looting triggern
+      const result = (await ns.dnet.authenticate(hostname, guess)) as any;
+      if (result?.success) {
+        ns.print(`🎉 [DeepGreen] Volltreffer bei Zwischenprüfung: ${guess}`);
+        return guess;
       }
 
-      await ns.sleep(100);
+      await ns.sleep(50);
 
-      let logObj = null;
-      for (let check = 0; check < 10; check++) {
+      // Heartbleed-Logs mit Retry-Limit abfragen
+      let logObj: any = null;
+      for (let retry = 0; retry < 5; retry++) {
         const bleed = (await ns.dnet.heartbleed(hostname)) as any;
-        if (bleed && bleed.logs && bleed.logs.length > 0) {
-          for (let i = bleed.logs.length - 1; i >= 0; i--) {
-            try {
-              const parsed = JSON.parse(bleed.logs[i]);
-              if (parsed && String(parsed.passwordAttempted) === guess) {
-                logObj = parsed;
-                break;
-              }
-            } catch (e) {}
+        const logs: string[] = bleed?.logs || [];
+
+        for (let i = logs.length - 1; i >= 0; i--) {
+          try {
+            const parsed = JSON.parse(logs[i]);
+            if (parsed && String(parsed.passwordAttempted) === guess) {
+              logObj = parsed;
+              break;
+            }
+          } catch {
+            /* Ignoriere unvollständige JSONs */
           }
         }
+
         if (logObj) break;
-        await ns.sleep(50);
+        await ns.sleep(30);
       }
 
       if (!logObj || !logObj.data) {
-        digit--; // Versuch wiederholen, falls Heartbleed leer war
+        ns.print(`⚠️ [DeepGreen] Kein passender Log für Versuch '${guess}' gefunden.`);
         continue;
       }
 
-      const matches = logObj.data.match(/\d+/g);
+      const matches = String(logObj.data).match(/\d+/g);
       if (!matches) continue;
 
-      // Wenn die Anzahl korrekter Zeichen im Log mit unserem Target übereinstimmt,
-      // steht die aktuelle Ziffer fest und wir gehen zur nächsten Position über.
+      // Wenn die Anzahl korrekter Stellen mit unserer Zielanzahl übereinstimmt:
       if (parseInt(matches[0], 10) === targetCorrectCount) {
-        break;
+        posSolved = true;
+        break; // Ziffer für diese Position steht fest!
       }
+    }
+
+    if (!posSolved) {
+      ns.print(`🔴 [DeepGreen] Kaskade fehlgeschlagen an Position ${pos}.`);
     }
   }
 
-  // Finaler Testlauf des komplett rekonstruierten Passworts
+  // Finaler Check
   const finalGuess = currentGuess.join("");
-  const finalResult = await ns.dnet.authenticate(hostname, finalGuess);
-  if (finalResult.success) {
-    ns.print(`[DeepGreen] Erfolgreich authentifiziert mit finalem Passwort: ${finalGuess}`);
+  const finalResult = (await ns.dnet.authenticate(hostname, finalGuess)) as any;
+  if (finalResult?.success) {
+    ns.print(`🎉 [DeepGreen] Erfolgreich geknackt: ${finalGuess}`);
     return finalGuess;
   }
 
-  ns.print(`🔴 [DeepGreen] Fehler: Das rekonstruierte Passwort '${finalGuess}' wurde abgelehnt.`);
+  ns.print(`🔴 [DeepGreen] Rekonstruiertes Passwort '${finalGuess}' wurde abgelehnt.`);
   return null;
 }

@@ -8,77 +8,79 @@ export async function main(ns: NS): Promise<void> {
   const SHARE_SCRIPT = "tasks/share.js";
   const GLOBAL_SHARE_POWER_CAP = 1.42;
 
-  // Wenn der Server zu klein ist, gar nicht erst ausführen
   const maxRam = ns.getServerMaxRam(target);
-  if (maxRam < 32) {
-    ns.scriptKill(SHARE_SCRIPT, target);
-    return;
-  }
+  const scriptRam = ns.getScriptRam(SHARE_SCRIPT, target);
+
+  // Abbruch, wenn der Server zu klein für mindestens 1 Thread ist
+  if (maxRam < scriptRam || scriptRam === 0) return;
 
   while (true) {
     const state = loadState(ns);
 
-    // 🛑 1. HARD STOP: Wenn JIT-Batcher oder MONEY-Sprint aktiv ist
-    // Sofort Share killen, um RAM und CPU-Cycles für präzises HWGW freizugeben!
-    if (state?.batcherActive === true || state?.strategy === "MONEY") {
-      if (ns.scriptRunning(SHARE_SCRIPT, target)) {
-        ns.scriptKill(SHARE_SCRIPT, target);
-        ns.print(`⚠️ JIT/MONEY aktiv: Share-Filler gestoppt.`);
-      }
-      await ns.sleep(2000);
-      continue;
+    // 🛡️ 1. DYNAMISCHES RESERVE-RAM (Sicherheitspuffer)
+    // Home braucht etwas Puffer für Orchestrator/Dispatcher/JIT-Batcher,
+    // um neue Prozesse ohne "Out of RAM"-Fehler zu starten.
+    let systemReserve = 0;
+    if (target === "home") {
+      // Zwischen 32 GB und 128 GB (max 5% des Home-RAMs)
+      systemReserve = Math.min(128, Math.max(32, maxRam * 0.05));
+    } else {
+      // Externe Nodes benötigen kaum Puffer (max 2% oder 4 GB)
+      systemReserve = Math.min(4, maxRam * 0.02);
     }
 
-    // 📊 2. Share-Budget ermitteln
+    // 📊 2. PROZENTUALES CAP ERMITTELN
     const currentSharePower = ns.getSharePower();
-    let allowedSharePercent = 0.0;
+    let maxAllowedPercent = 0.95; // Standard: Nutze bis zu 95% des freien RAMs
 
     if (state?.fillerConfig?.shareMaxRamPercent !== undefined) {
-      allowedSharePercent = state.fillerConfig.shareMaxRamPercent;
+      maxAllowedPercent = state.fillerConfig.shareMaxRamPercent;
     } else if (state?.strategy === "REP") {
-      allowedSharePercent = 0.85; // Hohe Prio bei Rep-Grind
-    } else {
-      allowedSharePercent = 0.20; // Standard-Hintergrund-Share im Midgame
+      maxAllowedPercent = 0.98; // Im REP-Grind maximal aggressiv
+    } else if (currentSharePower >= GLOBAL_SHARE_POWER_CAP) {
+      // Soft-Cap erreicht: RAM/CPU schonen, außer wir grindet Reputitation
+      maxAllowedPercent = 0.20;
     }
 
-    // Cap-Schutz: Wenn Share Power bereits hoch genug ist und wir nicht im REP-Modus sind
-    if (currentSharePower >= GLOBAL_SHARE_POWER_CAP && state?.strategy !== "REP") {
-      allowedSharePercent = 0.05;
-    }
+    // 💡 3. ECHTES FREIES RAM BERECHNEN (Schwamm-Logik)
+    const totalUsedRam = ns.getServerUsedRam(target);
 
-    // 🛡️ 3. Dynamische RAM-Berechnung
-    const baseReserve = target === "home" ? Math.min(64, maxRam * 0.15) : 2;
-    const scriptRam = ns.getScriptRam(SHARE_SCRIPT, target);
-    const usedRam = ns.getServerUsedRam(target);
-
-    // Threads ermitteln, die aktuell von share.js belegt werden
-    const currentThreads = ns
+    // Threads und RAM-Verbrauch von laufenden share.js-Instanzen ermitteln
+    const currentShareThreads = ns
       .ps(target)
       .filter((proc) => proc.filename.replace(/^\//, "") === SHARE_SCRIPT)
       .reduce((acc, proc) => acc + proc.threads, 0);
 
-    // Verfügbares RAM berechnen (aktuell freies RAM + bereits genutztes Share-RAM - Reserve)
-    const virtualFreeRam = maxRam - usedRam + currentThreads * scriptRam - baseReserve;
+    const currentShareRam = currentShareThreads * scriptRam;
+    
+    // RAM, das von ALLEN ANDEREN Skripten belegt wird (Batcher, Prepper, etc.)
+    const nonShareUsedRam = totalUsedRam - currentShareRam;
 
-    let targetThreads = Math.max(0, Math.floor(virtualFreeRam / scriptRam));
+    // Für Share verfügbar = Gesamt-RAM - Fremd-RAM - Reserve
+    const realFreeRamForShare = maxRam - nonShareUsedRam - systemReserve;
 
-    // Auf prozentuales Limit drosseln
-    const maxAllowedShareRam = maxRam * allowedSharePercent;
-    const threadCapByPercent = Math.floor(maxAllowedShareRam / scriptRam);
-    targetThreads = Math.min(targetThreads, threadCapByPercent);
+    // Auf das max. prozentuale Limit des Gesamtsystems deckeln
+    const maxShareRamByCap = maxRam * maxAllowedPercent;
+    const targetShareRam = Math.max(0, Math.min(realFreeRamForShare, maxShareRamByCap));
 
-    // 🚀 4. Prozess-Anpassung (nur skalieren, wenn Abweichung > 10% oder Threads == 0)
-    const threadDiff = Math.abs(targetThreads - currentThreads);
-    if (
-      targetThreads < currentThreads ||
-      (targetThreads > currentThreads && (threadDiff > currentThreads * 0.10 || currentThreads === 0))
-    ) {
-      if (currentThreads > 0) ns.scriptKill(SHARE_SCRIPT, target);
+    const targetThreads = Math.floor(targetShareRam / scriptRam);
+
+    // 🚀 4. PROZESS-ANPASSUNG
+    // Nur neu starten, wenn sich die Thread-Anzahl um >5% unterscheidet oder von/auf 0 fällt
+    const threadDiff = Math.abs(targetThreads - currentShareThreads);
+    const shouldUpdate =
+      targetThreads !== currentShareThreads &&
+      (threadDiff > currentShareThreads * 0.05 || currentShareThreads === 0 || targetThreads === 0);
+
+    if (shouldUpdate) {
+      if (currentShareThreads > 0) {
+        ns.scriptKill(SHARE_SCRIPT, target);
+      }
       if (targetThreads > 0) {
         ns.exec(SHARE_SCRIPT, target, targetThreads);
       }
     }
 
-    await ns.sleep(2000); // 2 Sek Intervall reicht völlig aus
+    await ns.sleep(1000); // 1 Sekunde Intervall für schnelle Reaktion auf den Batcher
   }
 }
