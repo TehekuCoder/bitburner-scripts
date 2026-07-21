@@ -1,3 +1,5 @@
+// tasks/dnet-solver.ts
+
 import { NS } from "@ns";
 import { Logger } from "../core/logger.js";
 import { runSolver } from "/modules/solvers/solveManager";
@@ -30,6 +32,32 @@ export async function main(ns: NS): Promise<void> {
   if (!details) {
     logger.error(`❌ Konnte ServerDetails für '${host}' nicht abrufen.`, false);
     return;
+  }
+
+  // NEU: 1.1 Prüfen, ob der Server bereits geknackt wurde (Session existiert)
+  if (details.hasSession) {
+    logger.info(`✅ Session auf '${host}' existiert bereits. Solver wird vorzeitig beendet.`);
+    return;
+  }
+
+  // NEU: 1.2 Prüfen, ob das Passwort bereits in der Master-DB steht, bevor der Solver startet
+  const jsonDbFile = "/dnet-master-db.json";
+  if (ns.fileExists(jsonDbFile)) {
+    try {
+      const db = JSON.parse(ns.read(jsonDbFile));
+      if (db[host]) {
+        logger.info(`🔍 Bekanntes Passwort für '${host}' in DB gefunden. Teste Login...`);
+        const auth = await ns.dnet.authenticate(host, db[host]);
+        if (auth.success) {
+          logger.success(`🎉 [SUCCESS] Direkt-Login erfolgreich! Überspringe rechenintensiven Solver.`);
+          // Wir führen handleSuccess aus, um das Passwort via Port zu pushen, falls andere Knoten lauschen
+          handleSuccess(ns, host, db[host], logger);
+          return;
+        } else {
+          logger.warn(`⚠️ Gespeichertes Passwort war inkorrekt. Starte regulären Angriff.`);
+        }
+      }
+    } catch {}
   }
 
   logger.info(`🔨 Krypto-Angriff auf Modell [${details.modelId}] gestartet...`);

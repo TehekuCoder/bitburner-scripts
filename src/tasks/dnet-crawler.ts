@@ -1,3 +1,5 @@
+// tasks/dnet-crawler.ts
+
 import { NS } from "@ns";
 import { Logger } from "../core/logger.js";
 import { processedServers, COOLDOWN_MS, COOLDOWN_FILE, LOOT_INTERVAL_MS } from "/lib/constants.js";
@@ -56,6 +58,9 @@ export async function main(ns: NS): Promise<void> {
     await ns.dnet.memoryReallocation();
   }
 
+  // NEU: Tracker für Topologie-Änderungen
+  let lastKnownConnections: string[] = [];
+
   while (true) {
     const now = Date.now();
     const solverScript = "/tasks/dnet-solver.js";
@@ -72,6 +77,18 @@ export async function main(ns: NS): Promise<void> {
     const isLootDue = now - lastLootTime > LOOT_INTERVAL_MS && currentHost !== "home";
 
     const nearbyServers = ns.dnet.probe();
+
+    // NEU: Überprüfen, ob sich die Verbindungen geändert haben
+    const currentTopology = nearbyServers.slice().sort().join(",");
+    const lastTopology = lastKnownConnections.slice().sort().join(",");
+
+    if (currentTopology !== lastTopology && lastKnownConnections.length > 0) {
+      logger.info(`🔄 Topologie-Wechsel erkannt! Vorher: ${lastKnownConnections.length} Nachbarn | Jetzt: ${nearbyServers.length} Nachbarn.`);
+      // Hier könntest du z.B. Cooldowns ignorieren oder processedServers bereinigen, 
+      // falls neue Verbindungen zu alten Knoten auftauchen.
+    }
+    lastKnownConnections = nearbyServers;
+
     let targetToCrack: string | null = null;
     let targetDetails: any = null;
 
