@@ -55,7 +55,7 @@ export async function main(ns: NS): Promise<void> {
   let batchesSentForTarget = 0;
   let lastStateUpdate = 0;
   let activePlan: BatchPlan | null = null;
-  
+
   // 🛡️ LEVEL-GUARD: Speichert das aktuelle Hacking-Level zur Laufzeit-Überwachung
   let lastHackingLevel = ns.getHackingLevel();
 
@@ -69,7 +69,7 @@ export async function main(ns: NS): Promise<void> {
     const currentLevel = ns.getHackingLevel();
     if (currentLevel !== lastHackingLevel) {
       logger.warn(
-        `⬆️ Level-Up erkannt! (${lastHackingLevel} -> ${currentLevel}). Verwerfe desynchronisierte Queue...`
+        `⬆️ Level-Up erkannt! (${lastHackingLevel} -> ${currentLevel}). Verwerfe desynchronisierte Queue...`,
       );
       lastHackingLevel = currentLevel;
 
@@ -116,17 +116,13 @@ export async function main(ns: NS): Promise<void> {
     const queueRam = getQueueRam(ns, eventQueue);
     const virtualFreeRam = realFreeRam - queueRam;
 
-    // 🧠 PRÜFUNG: Wie viele aktive Events / Batches laufen gerade für unser Ziel?
-    const activeEventsForTarget = eventQueue.filter((ev) => ev.target === target).length;
+    // 🧠 PRÜFUNG: Wie viele aktive Batches laufen gerade für unser Ziel?
+    const activeBatchesCount = new Set(
+      eventQueue.filter((ev) => ev.target === target).map((ev) => ev.batchId),
+    ).size;
 
-    // Re-Planning NUR auslösen, wenn:
-    // 1. Kein Ziel vorhanden ist OR
-    // 2. Keine Events mehr in der Queue sind (Ziel ist "leer-gelaufen") OR
-    // 3. Wir im Pipelining-Modus sind UND noch Platz für weitere Batches haben
-    const needsNewPlan =
-      !target ||
-      eventQueue.length === 0 ||
-      (activeEventsForTarget === 0 && batchesSentForTarget >= dynamicMaxBatchesForTarget);
+    // Re-Planning NUR auslösen, wenn wir kein Ziel haben oder die Queue leer ist
+    const needsNewPlan = !target || (eventQueue.length === 0 && !isPrepping);
 
     if (needsNewPlan && !isPrepping) {
       const planning = internalPlanner(
@@ -138,7 +134,7 @@ export async function main(ns: NS): Promise<void> {
         targetBlacklist,
         eventQueue.length,
         logger,
-        target
+        target,
       );
 
       if (planning) {
@@ -178,7 +174,7 @@ export async function main(ns: NS): Promise<void> {
     if (
       target &&
       activePlan &&
-      batchesSentForTarget < dynamicMaxBatchesForTarget
+      activeBatchesCount < dynamicMaxBatchesForTarget
     ) {
       const isPrepBatch = activePlan.hackThreads === 0;
       const safeVirtualRam = isPrepBatch
@@ -237,7 +233,7 @@ export async function main(ns: NS): Promise<void> {
 
         batchesSentForTarget++;
 
-        // 🎯 SAUBERES PIPELINING: 
+        // 🎯 SAUBERES PIPELINING:
         // 4 * SPACER verhindert, dass Hack von Batch N+1 in Weaken1 von Batch N krachte!
         nextAvailableLandTime += Math.max(BATCH_GAP, SPACER * 4);
 
@@ -247,7 +243,7 @@ export async function main(ns: NS): Promise<void> {
 
         patchState(ns, {
           batcherTarget: target,
-          batcherProgress: `JIT-HWGW Active (${eventQueue.length} Events in Queue)`,
+          batcherProgress: `JIT-HWGW Active (${activeBatchesCount + 1}/${dynamicMaxBatchesForTarget} Batches)`,
           batcherPlan: activePlan,
         });
       } else if (eventQueue.length === 0) {
@@ -269,7 +265,9 @@ export async function main(ns: NS): Promise<void> {
       const lag = Date.now() - event.startTime;
 
       if (lag > 60) {
-        logger.warn(`⏳ Lag (${Math.round(lag)}ms) bei Event ${event.id}. Batch verworfen.`);
+        logger.warn(
+          `⏳ Lag (${Math.round(lag)}ms) bei Event ${event.id}. Batch verworfen.`,
+        );
         pruneBatch(eventQueue, event.batchId);
         continue;
       }

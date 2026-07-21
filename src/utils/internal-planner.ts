@@ -1,7 +1,7 @@
 import { NS, Server } from "@ns";
 import { BatchPlan } from "../core/types";
 import { calculateBatch } from "./batch-calculator.js";
-import { PATH_GROW, PATH_WEAKEN, SPACER } from "../lib/constants.js";
+import { PATH_GROW, PATH_WEAKEN, SPACER, BATCH_GAP } from "../lib/constants.js";
 import { Logger } from "../core/logger.js";
 
 export function internalPlanner(
@@ -184,10 +184,15 @@ export function internalPlanner(
           bestTarget = t;
           bestPlan = optimalPlan;
 
-          const maxSimultaneousBatches = Math.floor(
-            safeHwgwRam / optimalPlan.totalRam,
-          );
-          maxBatches = Math.max(1, Math.min(25, maxSimultaneousBatches));
+          // 🚀 Dynamische Berechnung der Pipeline-Tiefe:
+          const gap = Math.max(BATCH_GAP, SPACER * 4);
+          // Wie viele Batches passen zeitlich in eine Weaken-Laufzeit?
+          const timeMaxBatches = Math.floor(optimalPlan.weakenTime / gap);
+          // Wie viele Batches passen in unser freies RAM?
+          const ramMaxBatches = Math.floor(safeHwgwRam / optimalPlan.totalRam);
+
+          // Nimm das Maximum aus beiden Schranken (ohne künstliches 25er-Limit!)
+          maxBatches = Math.max(1, Math.min(ramMaxBatches, timeMaxBatches));
         }
       }
     }

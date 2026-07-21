@@ -121,6 +121,11 @@ export async function main(ns: NS): Promise<void> {
     const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
     const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
 
+    const activeBatchStrategy = currentState?.batchStrategy;
+    const isBatcherActive =
+      activeBatchStrategy === "SHOTGUN_HWGW" ||
+      activeBatchStrategy === "JIT_HWGW";
+
     let BASE_MONEY_THRESHOLD = factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
 
     if (
@@ -137,7 +142,8 @@ export async function main(ns: NS): Promise<void> {
         ? BASE_MONEY_THRESHOLD * 0.7
         : BASE_MONEY_THRESHOLD;
 
-    const isReadyForFactionGrind = playerMoney > effectiveThreshold;
+    const isReadyForFactionGrind =
+      isBatcherActive || playerMoney > effectiveThreshold;
 
     const factionToWorkFor = factionRepMult > 0.1 ? nextRoadmapFaction : null;
     const hasSavingTarget =
@@ -326,6 +332,7 @@ export async function main(ns: NS): Promise<void> {
       logger,
       sysOrchestratorScript,
       targetStat,
+      isBatcherActive,
     );
 
     // 🔋 4. RAM-Filler managen
@@ -355,6 +362,7 @@ function manageMicroservices(
   logger: Logger,
   sysOrchestratorScript: string,
   targetStat?: number,
+  isBatcherActive?: boolean,
 ): void {
   const modeToScript: Record<string, string> = {
     REP: "tasks/faction-grind.js",
@@ -368,7 +376,8 @@ function manageMicroservices(
 
   if (
     currentMode === "MONEY" &&
-    (hasSavingTarget || !ns.isRunning(sysOrchestratorScript, "home"))
+    (hasSavingTarget || !ns.isRunning(sysOrchestratorScript, "home")) &&
+    !isBatcherActive // 👈 Mache Crime nur, wenn KEIN Batcher aktiv ist
   ) {
     targetScript = "tasks/crime.js";
   }
