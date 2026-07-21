@@ -17,7 +17,6 @@ export async function main(ns: NS): Promise<void> {
     dispatcher: "core/sys-dispatcher.js",
     infra: "core/sys-infra.js",
     backdoor: "tasks/backdoor.js",
-    xpfarm: "tasks/xp-grind.js",
     trade: "systems/finance.js",
     hacknet: "systems/hacknet-early.js",
     dnet: "core/dnet-master.js",
@@ -27,6 +26,7 @@ export async function main(ns: NS): Promise<void> {
     weaken: "tasks/weaken.js",
     sleeve: "core/sys-sleeve.js",
     dashboard: "core/sys-dashboard.js",
+    fillShare: "core/fill-share.js"
   };
 
   while (true) {

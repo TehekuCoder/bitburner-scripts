@@ -1,11 +1,11 @@
 // src/modules/suite-manager.ts
 
 import { NS } from "@ns";
-import { BotState } from "/core/types";
+import { BotState, ScriptList } from "/core/types"; // Importiere hier deine ScriptList
 
 export function manageSuites(
   ns: NS,
-  scripts: { backdoor: string; trade: string; sleeve: string }, 
+  scripts: ScriptList, // 👈 Typsicherheit für alle Skripte nutzen
   state: BotState,
   bnMults: any,
   logger: any
@@ -59,7 +59,7 @@ export function manageSuites(
     }
   }
 
-  // --- 🚪 Intelligente Backdoor Logik (Zustandsbasiert) ---
+  // --- 🚪 Intelligente Backdoor Logik ---
   let backdoorIsNeeded = false;
   const networkNodes = state.allServers || [];
   const currentHackingLevel = ns.getHackingLevel();
@@ -85,13 +85,12 @@ export function manageSuites(
     });
   }
 
-  // --- 📈 Finance Logik (Sperre unter 512GB RAM) ---
+  // --- 📈 Finance Logik ---
   if (homeMaxRam >= 512) {
     tryLaunch(scripts.trade, [], () => {
       logger.success("Initialisiere Finanz-Subsystem...");
     });
   } else if (ns.isRunning(scripts.trade, "home")) {
-    // 🛑 DEFENSIVER GEGEN-KILLSWITCH: Schützt den RAM, falls manuell gestartet
     logger.warn(`Erzwinge Stopp von finance.js. Home-RAM (${ns.format.ram(homeMaxRam)}) unter 512GB.`);
     ns.scriptKill(scripts.trade, "home");
   }
@@ -100,6 +99,15 @@ export function manageSuites(
   if (ns.sleeve !== undefined) {
     tryLaunch(scripts.sleeve, [], () => {
       logger.info("Sleeve-API detektiert. Initialisiere Klon-Automatisierung...");
+    });
+  }
+
+  // --- 🔄 Share-Filler Logik (Neu) ---
+  // Da fill-share.ts sich selbst stoppt/drosselt, wenn MONEY/JIT aktiv ist,
+  // reicht ein einfacher RAM-Check (mindestens 32GB auf home) zum Starten.
+  if (homeMaxRam >= 32) {
+    tryLaunch(scripts.fillShare, [], () => {
+      logger.info("Initialisiere Hintergrund-Share-Filler auf home...");
     });
   }
 }

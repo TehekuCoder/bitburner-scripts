@@ -20,20 +20,28 @@ export async function main(ns: NS): Promise<void> {
   let activeTarget: string | null = null;
   let activeProcessId = 0;
 
+  // Multiplikatoren einmalig laden
+  let bnMults: Record<string, number> = {};
+  try {
+    const fileContent = ns.read("/bn-multipliers.txt");
+    if (fileContent) bnMults = JSON.parse(fileContent);
+  } catch (_) {}
+
   while (true) {
     const servers = getAllServers(ns);
     const totalMaxRam = getNetworkMaxRam(ns, servers);
-    const target = selectBestTarget(ns, servers,activeTarget);
+    const target = selectBestTarget(ns, servers, activeTarget);
 
-    // 1. Strategie evaluieren
+    // 1. Strategie evaluieren (inkl. XP-Grind & BN-Sonderregeln)
     const desiredStrategy = determineStrategy(
       ns,
       totalMaxRam,
       target,
       activeStrategy,
+      bnMults,
     );
 
-    // 2. Prüfen, ob ein Wechsel erforderlich ist (Strategiewechsel, Zielwechsel ODER Prozess abgestürzt)
+    // 2. Prüfen, ob ein Wechsel erforderlich ist
     const strategyChanged = desiredStrategy !== activeStrategy;
     const targetChanged = target !== activeTarget;
     const processDied = activeProcessId > 0 && !ns.isRunning(activeProcessId);
@@ -43,12 +51,12 @@ export async function main(ns: NS): Promise<void> {
         `🔄 Statuswechsel: Strategie [${activeStrategy ?? "NONE"} ➡️ ${desiredStrategy}] | Ziel [${activeTarget ?? "NONE"} ➡️ ${target ?? "NONE"}]`,
       );
 
-      // Laufende Alt-Prozesse sauber beenden
+      // Laufende Alt-Prozesse beenden
       if (activeProcessId > 0 && ns.isRunning(activeProcessId)) {
         ns.kill(activeProcessId);
       }
 
-      // Ziel-Skript starten
+      // Neue Execution Engine starten
       activeProcessId = switchExecutionEngine(ns, desiredStrategy, target);
       activeStrategy = desiredStrategy;
       activeTarget = target;
@@ -82,35 +90,46 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    await ns.sleep(5000); // Evaluierungs-Intervall
+    await ns.sleep(5000);
   }
 }
 
 /**
- * Kernlogik: Wählt die richtige Batch/Prep-Strategie basierend auf Netzwerk- und Home-Metriken.
+ * Kernlogik: Wählt die richtige Batch/Prep/XP-Strategie.
  */
 function determineStrategy(
   ns: NS,
   totalRam: number,
   target: string | null,
   currentStrategy: BatchStrategy | null,
+  bnMults: Record<string, number>,
 ): BatchStrategy {
+  const hackingEfficiency =
+    (bnMults.ServerMaxMoney ?? 1.0) * (bnMults.ScriptHackMoneyGain ?? 1.0);
+
+  // 1. BitNode-Sonderregel: Wenn Hacking kein Geld bringt -> XP_GRIND
+  if (hackingEfficiency === 0) {
+    return "XP_GRIND";
+  }
+
+  // 2. Niedriges Hacking-Level -> XP_GRIND
+  if (ns.getPlayer().skills.hacking < 30) {
+    return "XP_GRIND";
+  }
+
+  // 3. Sehr wenig RAM -> BOOTSTRAP
   if (totalRam < 64) {
     return "BOOTSTRAP";
   }
 
   if (!target) return "PREP";
 
-  // 🧠 LAUFENDE ENGINES NICHT ABBRECHEN
-  if (
-    currentStrategy === "SHOTGUN_HWGW" ||
-    currentStrategy === "JIT_HWGW"
-  ) {
+  // 🧠 LAUFENDE BATCH-ENGINES NICHT VORZEITIG ABBRECHEN
+  if (currentStrategy === "SHOTGUN_HWGW" || currentStrategy === "JIT_HWGW") {
     const sObj = ns.getServer(target);
     const curDiff = sObj.hackDifficulty ?? 99;
     const minDiff = sObj.minDifficulty ?? 1;
 
-    // Nur abbrechen, wenn Security stark entgleist (> +20)
     if (curDiff - minDiff <= 20.0) {
       return currentStrategy;
     }
@@ -134,7 +153,6 @@ function determineStrategy(
   const homeRam = ns.getServerMaxRam("home");
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  // Mit 2 TB Home-RAM (2048 GB) + Formulas.exe bereit für JIT!
   if (totalRam < 512) {
     return "PROTO_BATCH";
   } else if (homeRam < 2048 || !hasFormulas) {
@@ -143,6 +161,7 @@ function determineStrategy(
     return "JIT_HWGW";
   }
 }
+
 /**
  * Startet das jeweilige Sub-System als isolierten Prozess.
  */
@@ -155,10 +174,10 @@ function switchExecutionEngine(
 
   switch (strategy) {
     case "BOOTSTRAP":
-      // Nutzt im Bootstrap-Fall vorerst die Prep-Engine auf n00dles
       return ns.run("core/engine-prep.js", 1, "n00dles");
 
     case "XP_GRIND":
+      // joesguns ist eines der besten Ziele für schnellen XP-Gain
       return ns.run("core/engine-xp-grind.js", 1, "joesguns");
 
     case "PREP":
@@ -193,20 +212,18 @@ function selectBestTarget(
         (ns.getServerRequiredHackingLevel(s) ?? 0) <= playerSkill / 2,
     )
     .sort(
-      (a, b) =>
-        (ns.getServerMaxMoney(b) ?? 0) - (ns.getServerMaxMoney(a) ?? 0),
+      (a, b) => (ns.getServerMaxMoney(b) ?? 0) - (ns.getServerMaxMoney(a) ?? 0),
     );
 
   const bestCandidate = candidates[0] ?? "n00dles";
 
-  // 🧠 STICKINESS: Wenn wir bereits ein Ziel haben, wechseln wir nur, 
-  // wenn das neue Ziel VIEL mehr Geld bringt (mind. 2.5x so viel).
+  // Stickiness: Wechselt nur, wenn das neue Ziel deutlich mehr bringt (2.5x)
   if (currentTarget && ns.serverExists(currentTarget)) {
     const currentMaxMoney = ns.getServerMaxMoney(currentTarget);
     const bestMaxMoney = ns.getServerMaxMoney(bestCandidate);
 
     if (bestMaxMoney < currentMaxMoney * 2.5) {
-      return currentTarget; // Bleibe beim alten Ziel!
+      return currentTarget;
     }
   }
 

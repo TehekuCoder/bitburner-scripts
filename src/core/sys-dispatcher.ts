@@ -50,7 +50,6 @@ export async function main(ns: NS): Promise<void> {
     dispatcher: "core/sys-dispatcher.js",
     infra: "core/sys-infra.js",
     backdoor: "tasks/backdoor.js",
-    xpfarm: "tasks/xp-grind.js",
     trade: "systems/finance.js",
     hacknet: "systems/hacknet-early.js",
     dnet: "core/dnet-master.js",
@@ -60,6 +59,7 @@ export async function main(ns: NS): Promise<void> {
     weaken: "tasks/weaken.js",
     sleeve: "core/sys-sleeve.js",
     dashboard: "core/sys-dashboard.js",
+    fillShare: "core/fill-share.js"
   };
 
   const sysOrchestratorScript = "core/sys-orchestrator.js";
@@ -186,10 +186,10 @@ export async function main(ns: NS): Promise<void> {
 
     if (mode !== previousStrategy) {
       const isOscillating =
-        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(
           mode,
         ) &&
-        ["MONEY", "CRIME", "REP", "CORP", "TRAIN", "PSERV_RUSH"].includes(
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(
           previousStrategy,
         );
 
@@ -301,7 +301,7 @@ export async function main(ns: NS): Promise<void> {
 
     const isEarlyGameCrime =
       homeMaxRam < 128 &&
-      (mode === "CRIME" || mode === "XP_SPRINT" || mode === "KILLS");
+      (mode === "CRIME" || mode === "KILLS");
 
     if (isEarlyGameCrime) {
       if (ns.isRunning("tasks/faction-shopping.js", "home"))
@@ -364,9 +364,7 @@ function manageMicroservices(
     CORP: "tasks/corp.js",
     TRAIN: "tasks/train.js",
     CRIME: "tasks/crime.js",
-    XP_SPRINT: "tasks/crime.js",
     KILLS: "tasks/crime.js",
-    PSERV_RUSH: "tasks/crime.js",
   };
 
   let targetScript = modeToScript[currentMode];

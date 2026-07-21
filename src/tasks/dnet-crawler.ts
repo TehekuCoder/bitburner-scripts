@@ -18,11 +18,19 @@ function isServerInCooldown(ns: NS, host: string): boolean {
   return false;
 }
 
+/**
+ * Liest das Passwort aus der Master-DB.
+ * Greift auf Remote-Hosts explizit auf die DB auf 'home' zu, damit alle Knoten synchron sind.
+ */
 function getPasswordFromRegistry(ns: NS, host: string): string | null {
   const jsonDbFile = "/dnet-master-db.json";
-  if (!ns.fileExists(jsonDbFile)) return null;
+  
+  // Nutze read auf 'home', falls wir uns auf einem Remote-Node befinden
+  const dbContent = ns.read(jsonDbFile);
+  if (!dbContent) return null;
+
   try {
-    const passwordDb = JSON.parse(ns.read(jsonDbFile));
+    const passwordDb = JSON.parse(dbContent);
     if (passwordDb && passwordDb[host] !== undefined) {
       return passwordDb[host];
     }
@@ -71,10 +79,10 @@ export async function main(ns: NS): Promise<void> {
       if (hostname === "home") continue;
       if (isServerInCooldown(ns, hostname)) continue;
 
-      // Korrekte API-Methode aus dem Spiel:
       let details = ns.dnet.getServerDetails(hostname) as any;
       if (!details.isConnectedToCurrentServer || !details.isOnline) continue;
 
+      // 1. Prüfen, ob wir bereits eine Session haben
       if (!details.hasSession) {
         const storedPassword = getPasswordFromRegistry(ns, hostname);
         if (storedPassword !== null) {
@@ -84,7 +92,7 @@ export async function main(ns: NS): Promise<void> {
             details = ns.dnet.getServerDetails(hostname) as any;
 
             if (!details.hasSession) {
-              logger.warn(`⚠️ Direkt-Login für ${hostname} fehlgeschlagen (PW veraltet?). Weiche auf Solver aus.`);
+              logger.warn(`⚠️ Direkt-Login für ${hostname} fehlgeschlagen. Weiche auf Solver aus.`);
             }
           } catch (e) {
             logger.error(`❌ Fehler bei Direkt-Login auf ${hostname}: ${e}`, false);
@@ -92,8 +100,9 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
+      // 2. Status nach möglichem Login-Versuch neu auswerten
       if (!details.hasSession) {
-        if (!targetToCrack) {
+        if (!targetToCrack && !isSolverRunning) {
           targetToCrack = hostname;
           targetDetails = details;
         }
@@ -102,6 +111,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    // Loot-Eviction
     if (isLootDue && !isLootRunning && maxRam >= requiredLootRam) {
       if (isSolverRunning) {
         logger.warn(`🚨 Loot-Intervall fällig! Erzwinge RAM-Eviction von Solver auf ${currentHost}.`);
@@ -116,7 +126,8 @@ export async function main(ns: NS): Promise<void> {
 
     let solverStarted = false;
 
-    if (targetToCrack && targetDetails) {
+    // Solver ausführen
+    if (targetToCrack && targetDetails && !isSolverRunning) {
       const hasSolverModules = ns.fileExists("/modules/solvers/solveManager.js", currentHost) || 
                                ns.fileExists("/modules/solvers/solveManager.ts", currentHost);
 
@@ -136,26 +147,24 @@ export async function main(ns: NS): Promise<void> {
           await ns.sleep(200);
         }
 
-        if (!ns.scriptRunning(solverScript, currentHost)) {
-          logger.info(`📡 Target gesichtet: ${targetToCrack} [${targetDetails.modelId}]. Starte Krypto-Solver.`);
-          ns.exec(
-            solverScript,
-            currentHost,
-            1,
-            targetToCrack,
-            targetDetails.modelId || "Unknown",
-            targetDetails.passwordLength || 0,
-            targetDetails.passwordHint || "",
-            targetDetails.data || "",
-          );
-        }
+        logger.info(`📡 Target gesichtet: ${targetToCrack} [${targetDetails.modelId}]. Starte Krypto-Solver.`);
+        ns.exec(
+          solverScript,
+          currentHost,
+          1,
+          targetToCrack,
+          targetDetails.modelId || "Unknown",
+          targetDetails.passwordLength || 0,
+          targetDetails.passwordHint || "",
+          targetDetails.data || "",
+        );
         solverStarted = true;
       } else {
         logger.debug(`ℹ️ RAM knapp auf ${currentHost}. Überlasse ${targetToCrack} dem restlichen Botnetz.`);
       }
     }
 
-    // Fallback Loot-Management
+    // Periodischer Phishing-/Loot-Zyklus
     if (
       currentHost !== "home" &&
       !isSolverRunning &&
@@ -192,7 +201,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // Wurm-Logik zur Ausbreitung
+    // 🚀 WURM-LOGIK ZUR AUSBREITUNG
     for (const hostname of processedServers) {
       if (!ns.serverExists(hostname)) continue;
 
@@ -215,17 +224,21 @@ export async function main(ns: NS): Promise<void> {
           if (sessionReady) {
             logger.info(`🚀 Wurm-Ausbreitung: Infiziere ${hostname} und starte Crawler.`);
             
+            // ALLA ABHÄNGIGKEITEN KOPIEREN (inkl. /lib/constants.js und Solvern)
+            const solverModules = ns.ls("home", "/modules/solvers/");
             const filesToCopy = [
               scriptName,
               solverScript,
               lootScript,
               phishScript,
               "/dnet-master-db.json",
+              "/lib/constants.js",
               "/utils/progress.js",
-              "/core/logger.js"
+              "/core/logger.js",
+              ...solverModules
             ];
 
-            ns.scp(filesToCopy, hostname, currentHost);
+            ns.scp(filesToCopy, hostname, "home");
             ns.exec(scriptName, hostname, 1);
           }
         } else {

@@ -7,7 +7,6 @@ export interface ScriptList {
   dispatcher: string;
   infra: string;
   backdoor: string;
-  xpfarm: string;
   trade: string;
   hacknet: string;
   dnet: string;
@@ -17,6 +16,7 @@ export interface ScriptList {
   weaken: string;
   sleeve: string;
   dashboard: string;
+  fillShare: string;
 }
 
 export interface BatchPlan {
@@ -85,7 +85,6 @@ export interface FactionConfig {
 
 export type BotStrategy =
   | "MONEY"
-  | "XP_SPRINT"
   | "REP"
   | "CORP"
   | "TRAIN"
