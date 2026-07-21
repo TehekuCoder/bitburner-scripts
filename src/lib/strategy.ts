@@ -1,8 +1,6 @@
 import { NS, Player, FactionName, CompanyName } from "@ns";
-import { BotStrategy,StrategyResult } from "/core/types.js";
+import { BotStrategy, StrategyResult } from "../core/types.js";
 import { COMBAT_STATS, MEGACORPS, HACKING_FACTIONS } from "./constants.js";
-
-
 
 export function determineStrategy(
   ns: NS,
@@ -10,7 +8,6 @@ export function determineStrategy(
   currentState: any,
   bnMults: any,
   currentKarma: number,
-  isRushActive: boolean,
   canRunBatcher: boolean,
   factionTargets: Record<FactionName, number>,
   nextRoadmapFaction: { name: FactionName; minStat: number } | null,
@@ -68,8 +65,6 @@ export function determineStrategy(
       ) {
         mode = "TRAIN";
         targetStat = nextRoadmapFaction.minStat;
-      } else if (isRushActive) {
-        mode = "MONEY";
       } else {
         mode = "MONEY";
       }
@@ -78,14 +73,10 @@ export function determineStrategy(
         mode = "REP";
         targetFaction = roadmapFactionName;
         targetStat = nextRoadmapFaction.minStat;
-      } else if (isRushActive) {
-        mode = "MONEY";
       } else {
         mode = "MONEY";
       }
     }
-  } else if (isRushActive) {
-    mode = "MONEY";
   } else if (p.skills.hacking >= 250 && companyRepMult > 0.1) {
     const needsSilhouette =
       !p.factions.includes("Silhouette" as FactionName) &&
@@ -127,41 +118,10 @@ export function determineStrategy(
         mode = canRunBatcher ? "MONEY" : "CRIME";
       }
     }
-  } else if (homeMaxRam < 256 || !canRunBatcher || (crimeMoneyMult > 5)) {
+  } else if (homeMaxRam < 256 || !canRunBatcher || crimeMoneyMult > 5) {
     mode = "CRIME";
   } else {
     mode = "MONEY";
-  }
-
-  // Fallback-Prüfung für Combat Faction Fokus
-  if (mode === "MONEY" && ns.cloud.getServerNames().length > 0) {
-    const FOCUS_ON_COMBAT_FACTIONS = false; // Kann dynamisch gesteuert werden
-
-    if (FOCUS_ON_COMBAT_FACTIONS) {
-      const nextLockedCombatFaction = HACKING_FACTIONS.find(
-        (f) => !p.factions.includes(f.name) && f.minStat > 0
-      );
-
-      if (nextLockedCombatFaction) {
-        let requiredKills = 0;
-        if (nextLockedCombatFaction.name === "The Dark Army") requiredKills = 5;
-        if (nextLockedCombatFaction.name === "Speakers for the Dead") requiredKills = 30;
-
-        const currentLowestCombatStat = Math.min(
-          ...COMBAT_STATS.map((s) => p.skills[s])
-        );
-
-        if (p.numPeopleKilled < requiredKills) {
-          mode = "KILLS";
-          targetStat = requiredKills;
-          targetFaction = nextLockedCombatFaction.name;
-        } else if (currentLowestCombatStat < nextLockedCombatFaction.minStat) {
-          mode = "TRAIN";
-          targetStat = nextLockedCombatFaction.minStat;
-          targetFaction = nextLockedCombatFaction.name;
-        }
-      }
-    }
   }
 
   return { mode, targetFaction, targetCompany, targetStat };

@@ -59,7 +59,7 @@ export async function main(ns: NS): Promise<void> {
     weaken: "tasks/weaken.js",
     sleeve: "core/sys-sleeve.js",
     dashboard: "core/sys-dashboard.js",
-    fillShare: "core/fill-share.js"
+    fillShare: "core/fill-share.js",
   };
 
   const sysOrchestratorScript = "core/sys-orchestrator.js";
@@ -99,7 +99,9 @@ export async function main(ns: NS): Promise<void> {
     );
 
     const homeMaxRam = ns.getServerMaxRam("home");
-    const getFreeRam = () => homeMaxRam - ns.getServerUsedRam("home");
+    // ✅ NEU: getFreeRam als dynamischer Getter
+    const getFreeRam = () =>
+      ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
     const currentKarma = (ns as any).heart?.break() ?? 0;
 
     // 3. Megacorp-Bewerbungen prüfen
@@ -141,22 +143,15 @@ export async function main(ns: NS): Promise<void> {
     const hasSavingTarget =
       factionToWorkFor !== null && !isReadyForFactionGrind;
 
-    const maxPservers = ns.cloud.getServerLimit();
-    const lacksPservers =
-      pServers.length < maxPservers ||
-      pServers.some((s) => ns.getServerMaxRam(s) < 64);
-    const isRushActive = hasFormulas && homeMaxRam >= 256 && lacksPservers;
-
     const isOrchestratorRunning = ns.isRunning(sysOrchestratorScript, "home");
 
-    // 5. Strategie ermitteln
+    // 5. Strategie ermitteln (ohne isRushActive)
     const strategy = determineStrategy(
       ns,
       p,
       currentState,
       bnMults,
       currentKarma,
-      isRushActive,
       isOrchestratorRunning,
       factionTargets as Record<FactionName, number>,
       nextRoadmapFaction,
@@ -186,12 +181,8 @@ export async function main(ns: NS): Promise<void> {
 
     if (mode !== previousStrategy) {
       const isOscillating =
-        ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(
-          mode,
-        ) &&
-        ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(
-          previousStrategy,
-        );
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(mode) &&
+        ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(previousStrategy);
 
       if (
         isOscillating &&
@@ -269,11 +260,11 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // 🚀 1. Orchestrator & Dashboard Steuerung
-    if (!isOrchestratorRunning && getFreeRam() >= ns.getScriptRam(sysOrchestratorScript, "home")) {
-      ns.run(sysOrchestratorScript, 1);
-      logger.success(
-        `🚀 Batch-Orchestrator gestartet: '${sysOrchestratorScript}'`,
-      );
+    if (
+      isOrchestratorRunning && // ...
+      getFreeRam() >= ns.getScriptRam(sysDashboardScript, "home") // <- RAM vom Orchestrator ist hier noch nicht abgezogen!
+    ) {
+      ns.run(sysDashboardScript, 1);
     }
 
     if (
@@ -300,8 +291,7 @@ export async function main(ns: NS): Promise<void> {
     });
 
     const isEarlyGameCrime =
-      homeMaxRam < 128 &&
-      (mode === "CRIME" || mode === "KILLS");
+      homeMaxRam < 128 && (mode === "CRIME" || mode === "KILLS");
 
     if (isEarlyGameCrime) {
       if (ns.isRunning("tasks/faction-shopping.js", "home"))

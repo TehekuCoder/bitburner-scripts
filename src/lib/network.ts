@@ -60,7 +60,6 @@ export function breakAndInfectNetwork(ns: NS): void {
     sql: { has: ns.fileExists("SQLInject.exe", "home"), run: ns.sqlinject },
   };
 
-  // Zählen, wie viele Ports wir INSGESAMT öffnen können
   const maxPossiblePorts = Object.values(cricks).filter((c) => c.has).length;
   const playerHackingLevel = ns.getPlayer().skills.hacking;
 
@@ -70,41 +69,17 @@ export function breakAndInfectNetwork(ns: NS): void {
     const portsRequired = ns.getServerNumPortsRequired(server);
     const hackingLevelRequired = ns.getServerRequiredHackingLevel(server);
 
-    // Prüfen, ob der Server aktuell überhaupt knackbar ist
-    if (
-      playerHackingLevel >= hackingLevelRequired &&
-      maxPossiblePorts >= portsRequired
-    ) {
+    if (playerHackingLevel >= hackingLevelRequired && maxPossiblePorts >= portsRequired) {
       let portsOpened = 0;
 
-      // Gezieltes Cracken: Nur so viele Ports öffnen, wie wirklich benötigt werden!
-      if (portsOpened < portsRequired && cricks.ssh.has) {
-        cricks.ssh.run(server);
-        portsOpened++;
-      }
-      if (portsOpened < portsRequired && cricks.ftp.has) {
-        cricks.ftp.run(server);
-        portsOpened++;
-      }
-      if (portsOpened < portsRequired && cricks.smtp.has) {
-        cricks.smtp.run(server);
-        portsOpened++;
-      }
-      if (portsOpened < portsRequired && cricks.http.has) {
-        cricks.http.run(server);
-        portsOpened++;
-      }
-      if (portsOpened < portsRequired && cricks.sql.has) {
-        cricks.sql.run(server);
-        portsOpened++;
-      }
+      if (portsOpened < portsRequired && cricks.ssh.has) { cricks.ssh.run(server); portsOpened++; }
+      if (portsOpened < portsRequired && cricks.ftp.has) { cricks.ftp.run(server); portsOpened++; }
+      if (portsOpened < portsRequired && cricks.smtp.has) { cricks.smtp.run(server); portsOpened++; }
+      if (portsOpened < portsRequired && cricks.http.has) { cricks.http.run(server); portsOpened++; }
+      if (portsOpened < portsRequired && cricks.sql.has) { cricks.sql.run(server); portsOpened++; }
 
-      if (
-        !ns.hasRootAccess(server) &&
-        portsOpened >= ns.getServerNumPortsRequired(server)
-      ) {
+      if (portsOpened >= portsRequired) {
         ns.nuke(server);
-        // Server wurde soeben gerootet -> Einmalig alles rüberschieben, was das System jemals braucht!
         ns.scp(
           [
             "tasks/work.js",
@@ -114,17 +89,13 @@ export function breakAndInfectNetwork(ns: NS): void {
             "tasks/hack.js",
           ],
           server,
-          "home",
+          "home"
         );
+        ns.print(`🔓 Server erfolgreich gehackt: ${server}`);
       }
-
-      // Admin-Rechte zünden
-      ns.nuke(server);
-      ns.print(`🔓 Server erfolgreich gehackt: ${server}`);
     }
   }
 }
-
 /**
  * Findet das profitabelste Ziel für einfache Hack/Grow/Weaken-Worker.
  */

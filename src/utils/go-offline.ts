@@ -124,6 +124,8 @@ export async function main(ns: NS): Promise<void> {
   // ====================================================================
   ns.tprint("⏳ [BitOS] Multi-Zyklen gestartet. Kalibrierung läuft...");
   ns.ui.openTail();
+  ns.ui.setTailTitle("Offline-Modus");
+  ns.ui.resizeTail(583,312);
 
   let stableTicks = 0;
   let lastTotalIncome = 0;

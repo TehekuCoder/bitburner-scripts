@@ -16,7 +16,7 @@ export async function main(ns: NS): Promise<void> {
     ns,
     `SOLVER-${host}`,
     "INFO",
-    "/logs/dnet_system.txt"
+    "/logs/dnet_system.txt",
   );
 
   if (isServerInCooldown(ns, host)) return;
@@ -36,7 +36,9 @@ export async function main(ns: NS): Promise<void> {
 
   // NEU: 1.1 Prüfen, ob der Server bereits geknackt wurde (Session existiert)
   if (details.hasSession) {
-    logger.info(`✅ Session auf '${host}' existiert bereits. Solver wird vorzeitig beendet.`);
+    logger.info(
+      `✅ Session auf '${host}' existiert bereits. Solver wird vorzeitig beendet.`,
+    );
     return;
   }
 
@@ -46,15 +48,21 @@ export async function main(ns: NS): Promise<void> {
     try {
       const db = JSON.parse(ns.read(jsonDbFile));
       if (db[host]) {
-        logger.info(`🔍 Bekanntes Passwort für '${host}' in DB gefunden. Teste Login...`);
+        logger.info(
+          `🔍 Bekanntes Passwort für '${host}' in DB gefunden. Teste Login...`,
+        );
         const auth = await ns.dnet.authenticate(host, db[host]);
         if (auth.success) {
-          logger.success(`🎉 [SUCCESS] Direkt-Login erfolgreich! Überspringe rechenintensiven Solver.`);
+          logger.success(
+            `🎉 [SUCCESS] Direkt-Login erfolgreich! Überspringe rechenintensiven Solver.`,
+          );
           // Wir führen handleSuccess aus, um das Passwort via Port zu pushen, falls andere Knoten lauschen
           handleSuccess(ns, host, db[host], logger);
           return;
         } else {
-          logger.warn(`⚠️ Gespeichertes Passwort war inkorrekt. Starte regulären Angriff.`);
+          logger.warn(
+            `⚠️ Gespeichertes Passwort war inkorrekt. Starte regulären Angriff.`,
+          );
         }
       }
     } catch {}
@@ -63,20 +71,33 @@ export async function main(ns: NS): Promise<void> {
   logger.info(`🔨 Krypto-Angriff auf Modell [${details.modelId}] gestartet...`);
 
   // 2. Haupt-Solver ausführen
-  let password = await runSolver(ns, host, details.modelId || "Unknown", details);
+  let password = await runSolver(
+    ns,
+    host,
+    details.modelId || "Unknown",
+    details,
+  );
 
-// 3. Fallbacks ausführen, falls der Solver explizit null zurückgibt
+  // 3. Fallbacks ausführen, falls der Solver explizit null zurückgibt
   // WICHTIG: Strikt auf null prüfen, da "" (ZeroLogon) ein gültiges Passwort ist!
   if (password === null) {
-    logger.warn(`⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`);
-    password = (await dictionaryAttack(ns, host, details)) || (await fileLootAttack(ns, host, details));
+    logger.warn(
+      `⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`,
+    );
+    password =
+      (await dictionaryAttack(ns, host, details)) ||
+      (await fileLootAttack(ns, host, details));
   }
 
   // 4. Zentraler Abschluss
-  if (password) {
+  if (password !== null) {
+    // <-- GEÄNDERT: Strikt auf null prüfen
     handleSuccess(ns, host, password, logger);
   } else {
-    logger.error(`❌ Krypto-Angriff auf ${host} (${details.modelId}) fehlgeschlagen. Cooldown aktiviert.`, false);
+    logger.error(
+      `❌ Krypto-Angriff auf ${host} (${details.modelId}) fehlgeschlagen. Cooldown aktiviert.`,
+      false,
+    );
     setServerCooldown(ns, host);
   }
 }
@@ -128,16 +149,24 @@ function updateJsonDatabase(ns: NS, host: string, newPw: string): void {
   ns.write(file, JSON.stringify(db, null, 2), "w");
 }
 
-async function dictionaryAttack(ns: NS, host: string, details: ServerAuthDetails): Promise<string | null> {
+async function dictionaryAttack(
+  ns: NS,
+  host: string,
+  details: ServerAuthDetails,
+): Promise<string | null> {
   const jsonDbFile = "/dnet-master-db.json";
   if (!ns.fileExists(jsonDbFile)) return null;
   try {
     const db = JSON.parse(ns.read(jsonDbFile));
     const list = [...new Set(Object.values(db) as string[])].filter(
-      (pw) => pw !== undefined && !pw.includes("You have discovered") && pw.length < 30
+      (pw) =>
+        pw !== undefined &&
+        !pw.includes("You have discovered") &&
+        pw.length < 30,
     );
     for (const pw of list) {
-      if (details.passwordLength && pw.length !== details.passwordLength) continue;
+      if (details.passwordLength && pw.length !== details.passwordLength)
+        continue;
       if ((await ns.dnet.authenticate(host, pw)).success) {
         return pw;
       }
@@ -146,7 +175,11 @@ async function dictionaryAttack(ns: NS, host: string, details: ServerAuthDetails
   return null;
 }
 
-async function fileLootAttack(ns: NS, host: string, details: ServerAuthDetails): Promise<string | null> {
+async function fileLootAttack(
+  ns: NS,
+  host: string,
+  details: ServerAuthDetails,
+): Promise<string | null> {
   try {
     const files = ns.ls(host, ".txt");
     for (const file of files) {
