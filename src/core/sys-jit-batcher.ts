@@ -55,10 +55,44 @@ export async function main(ns: NS): Promise<void> {
   let batchesSentForTarget = 0;
   let lastStateUpdate = 0;
   let activePlan: BatchPlan | null = null;
+  
+  // 🛡️ LEVEL-GUARD: Speichert das aktuelle Hacking-Level zur Laufzeit-Überwachung
+  let lastHackingLevel = ns.getHackingLevel();
 
   while (true) {
     const servers = getAllServers(ns);
     const now = Date.now();
+
+    // ----------------------------------------------------------------------
+    // 🛡️ 0. LEVEL-UP PRÜFUNG & QUEUE-FLUSH
+    // ----------------------------------------------------------------------
+    const currentLevel = ns.getHackingLevel();
+    if (currentLevel !== lastHackingLevel) {
+      logger.warn(
+        `⬆️ Level-Up erkannt! (${lastHackingLevel} -> ${currentLevel}). Verwerfe desynchronisierte Queue...`
+      );
+      lastHackingLevel = currentLevel;
+
+      // 1. Noch nicht abgefeuerte Events löschen (ihre vorberechneten Startzeiten passen nicht mehr zu den neuen Skriptlaufzeiten)
+      eventQueue.length = 0;
+
+      // 2. Target & Plan zurücksetzen, damit der Planner sofort neu berechnet
+      target = null;
+      activePlan = null;
+      batchesSentForTarget = 0;
+      nextAvailableLandTime = 0;
+      prepEndTime = 0;
+
+      patchState(ns, {
+        batcherProgress: `Level-Up auf ${currentLevel}! Neuberechnung...`,
+        batcherTarget: "Re-Planning",
+      });
+
+      // Kurze Pause zum Durchatmen & Stabilisieren
+      await ns.sleep(500);
+      continue;
+    }
+
     const isPrepping = now < prepEndTime;
 
     // Blacklist bereinigen
@@ -82,7 +116,7 @@ export async function main(ns: NS): Promise<void> {
     const queueRam = getQueueRam(ns, eventQueue);
     const virtualFreeRam = realFreeRam - queueRam;
 
-  // 🧠 PRÜFUNG: Wie viele aktive Events / Batches laufen gerade für unser Ziel?
+    // 🧠 PRÜFUNG: Wie viele aktive Events / Batches laufen gerade für unser Ziel?
     const activeEventsForTarget = eventQueue.filter((ev) => ev.target === target).length;
 
     // Re-Planning NUR auslösen, wenn:
