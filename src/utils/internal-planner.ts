@@ -181,23 +181,30 @@ export function internalPlanner(
           ? ns.formulas.hacking.hackPercent(server, player)
           : ns.hackAnalyze(t);
         const revenue = optimalPlan.hackThreads * pctPerThread * moneyMax;
-        const score = revenue / (optimalPlan.weakenTime / 1000);
+
+        // Pipeline-Schranken berechnen
+        const gap = Math.max(BATCH_GAP, SPACER * 4);
+        const timeMaxBatches = Math.floor(optimalPlan.weakenTime / gap);
+        const ramMaxBatches = Math.floor(safeHwgwRam / optimalPlan.totalRam);
+        const calcMaxBatches = Math.max(
+          1,
+          Math.min(ramMaxBatches, timeMaxBatches, 80),
+        );
+
+        // FIX 1: Score skaliert mit der Pipeline-Dichte (Gesamtertrag pro Sekunde)
+        let score =
+          (revenue * calcMaxBatches) / (optimalPlan.weakenTime / 1000);
+
+        // FIX 2: Target Lock-in Bonus auch für HWGW anwenden (verhindert Target-Jittering)
+        if (t === currentTarget) {
+          score *= 1.25;
+        }
 
         if (score > bestScore) {
           bestScore = score;
           bestTarget = t;
           bestPlan = optimalPlan;
-
-          // 🚀 Dynamische Berechnung der Pipeline-Tiefe:
-          const gap = Math.max(BATCH_GAP, SPACER * 4);
-          // Wie viele Batches passen zeitlich in eine Weaken-Laufzeit?
-          const timeMaxBatches = Math.floor(optimalPlan.weakenTime / gap);
-          // Wie viele Batches passen in unser freies RAM?
-          const ramMaxBatches = Math.floor(safeHwgwRam / optimalPlan.totalRam);
-
-          // Nimm das Maximum aus beiden Schranken (ohne künstliches 25er-Limit!)
-          // Cap bei max. 80 Batches – mehr erzeugt in Bitburner nur Engine-Lag ohne nennenswerten Mehrgewinn
-          maxBatches = Math.max(1, Math.min(ramMaxBatches, timeMaxBatches, 80));
+          maxBatches = calcMaxBatches;
         }
       }
     }

@@ -80,25 +80,31 @@ export async function main(ns: NS): Promise<void> {
     const currentLevel = ns.getHackingLevel();
     const levelDelta = currentLevel - lastHackingLevel;
 
-    // Erst ab +5 Leveln ODER relativem Sprung von > 2% flushen
     if (
       levelDelta >= 5 ||
       (lastHackingLevel > 0 && levelDelta / lastHackingLevel > 0.02)
     ) {
       logger.warn(
-        `⬆️ Signifikanter Level-Up erkannt! (${lastHackingLevel} -> ${currentLevel}). Re-Planning...`,
+        `⬆️ Signifikanter Level-Up! (${lastHackingLevel} -> ${currentLevel}). Flushe Queue & Planer-Reset...`,
       );
       lastHackingLevel = currentLevel;
 
-      // Reset-Logik...
+      // FIX: Vollständiger Reset bei Level-Up
+      target = null;
+      activePlan = null;
+      eventQueue.length = 0;
+      activeBatchIds.clear();
+      batchEventCounts.clear();
+      nextAvailableLandTime = 0;
     } else if (levelDelta > 0) {
-      // Kleines Level-Up: Nur meilenstein-artig mitloggen, Queue weiterlaufen lassen
       lastHackingLevel = currentLevel;
     }
+
     // ----------------------------------------------------------------------
     // 🩺 1. KONTINUIERLICHER HEALTH-CHECK
     // ----------------------------------------------------------------------
-    if (target && !isPrepping && eventQueue.length === 0) {
+    // FIX: eventQueue.length === 0 entfernt, damit Desyncs SOFORT erkannt werden
+    if (target && !isPrepping) {
       const currentSec = ns.getServerSecurityLevel(target);
       const minSec = ns.getServerMinSecurityLevel(target);
       const currentMoney = ns.getServerMoneyAvailable(target);
@@ -106,10 +112,13 @@ export async function main(ns: NS): Promise<void> {
 
       if (currentSec > minSec + 0.1 || currentMoney < maxMoney * 0.98) {
         logger.warn(
-          `⚠️ Target ${target} ist desynchronisiert! (Sec: ${currentSec.toFixed(1)}/${minSec}, $:${(currentMoney / 1e6).toFixed(1)}M/${(maxMoney / 1e6).toFixed(1)}M). Initiere Re-Prep...`,
+          `⚠️ Target ${target} desynchronisiert! (Sec: ${currentSec.toFixed(1)}/${minSec}, $:${(currentMoney / 1e6).toFixed(1)}M/${(maxMoney / 1e6).toFixed(1)}M). Abbruch & Re-Prep...`,
         );
         target = null;
         activePlan = null;
+        eventQueue.length = 0; // Fliehende Events sofort verwerfen!
+        activeBatchIds.clear();
+        batchEventCounts.clear();
         nextAvailableLandTime = 0;
       }
     }

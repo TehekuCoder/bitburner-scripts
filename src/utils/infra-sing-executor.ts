@@ -51,10 +51,10 @@ function handleProgramPurchases(
       "BruteSSH.exe": 50,
       "FTPCrack.exe": 150,
       "relaySMTP.exe": 250,
-      "HTTPWorm.exe": 400,
+      "HTTPWorm.exe": 350,
       "DarkscapeNavigator.exe": 0,
-      "SQLInject.exe": 800,
-      "Formulas.exe": 1000,
+      "SQLInject.exe": 500,
+      "Formulas.exe": 0,
     };
 
     for (const prog of TARGET_PROGRAMS) {

@@ -83,7 +83,6 @@ export function breakAndInfectNetwork(ns: NS): void {
         ns.scp(
           [
             "tasks/work.js",
-            "tasks/xp-grind.js",
             "tasks/weaken.js",
             "tasks/grow.js",
             "tasks/hack.js",
