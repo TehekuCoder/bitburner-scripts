@@ -1,6 +1,6 @@
-import { NS, FactionName, CompanyName, JobField } from "@ns";
+import { NS } from "@ns";
 import { Logger } from "./logger.js";
-import {BotState} from "core/types.js"
+import { BotState } from "core/types.js";
 
 const STATE_PORT = 1;
 
@@ -15,7 +15,7 @@ function getCallerName(ns: NS): string {
   return path.split("/").pop() || "unknown";
 }
 
-function isPortEmpty(data: any): boolean {
+function isPortEmpty(data: unknown): boolean {
   return (
     data === undefined ||
     data === null ||
@@ -74,7 +74,6 @@ export function patchState(
     ...cleanedCurrentState
   } = currentState || {};
 
-  // Default-Werte für Progression, damit keine "undefined"-Fehler auftreten
   const baseState: Omit<BotState, "lastUpdate" | "playerHacking" | "sources"> =
     {
       strategy: "MONEY",
@@ -84,9 +83,8 @@ export function patchState(
       financeProgress: "Berechne Budget...",
       traderProgress: "Kein Depot",
       hacknetProgress: "Inaktiv",
-      sleeveProgress: "Inaktiv", // 🟢 NEU: Verhindert undefined-Fehler beim ersten Start
+      sleeveProgress: "Inaktiv",
 
-      // Standatmuster für Progression
       currentBitNode: 1,
       currentBitNodeLevel: 1,
       sourceFiles: {},
@@ -113,6 +111,7 @@ export function patchState(
     playerHacking: ns.getHackingLevel(),
   };
 
+  // Atomares Überschreiben: erst leeren, wenn wir schreibbereit sind
   port.clear();
   port.write(fullState);
 }

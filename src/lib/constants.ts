@@ -6,8 +6,6 @@ import {
   BitNodeMultipliers,
 } from "@ns";
 
-import { SolverFunction } from "/core/types";
-
 // --- INTERFACES ---
 export interface FactionConfig {
   name: FactionName;

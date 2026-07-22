@@ -36,8 +36,10 @@ export async function main(ns: NS): Promise<void> {
   patchState(ns, { batcherActive: true, batcherProgress: "Initialisiere..." });
 
   // 1. Initialisierung aller Nodes im Netzwerk
-  const initServers = getAllServers(ns);
-  for (const s of initServers) {
+  let servers = getAllServers(ns);
+  let lastServerScan = Date.now();
+
+  for (const s of servers) {
     if (s !== "home" && ns.hasRootAccess(s)) {
       ns.killall(s, true);
       ns.scp([PATH_HACK, PATH_GROW, PATH_WEAKEN], s, "home");
@@ -53,15 +55,23 @@ export async function main(ns: NS): Promise<void> {
   let target: string | null = null;
   let dynamicMaxBatchesForTarget = 100;
   let batchesSentForTarget = 0;
-  let lastStateUpdate = 0;
   let activePlan: BatchPlan | null = null;
 
-  // 🛡️ LEVEL-GUARD: Speichert das aktuelle Hacking-Level zur Laufzeit-Überwachung
+  // Tracke aktive Batch-IDs direkt als Set, um teures .filter() in der Schleife zu vermeiden
+  const activeBatchIds = new Set<number>();
+
   let lastHackingLevel = ns.getHackingLevel();
 
   while (true) {
-    const servers = getAllServers(ns);
     const now = Date.now();
+
+    // 🚀 CACHING: Server-Netzwerk nur alle 10 Sekunden neu scannen
+    if (now - lastServerScan > 10000) {
+      servers = getAllServers(ns);
+      lastServerScan = now;
+    }
+
+    const isPrepping = now < prepEndTime;
 
     // ----------------------------------------------------------------------
     // 🛡️ 0. LEVEL-UP PRÜFUNG & QUEUE-FLUSH
@@ -73,11 +83,9 @@ export async function main(ns: NS): Promise<void> {
       );
       lastHackingLevel = currentLevel;
 
-      // 1. Noch nicht abgefeuerte Events löschen (ihre vorberechneten Startzeiten passen nicht mehr zu den neuen Skriptlaufzeiten)
       eventQueue.length = 0;
+      activeBatchIds.clear();
 
-      // 2. Target & Plan zurücksetzen, damit der Planner sofort neu berechnet
-      target = null;
       activePlan = null;
       batchesSentForTarget = 0;
       nextAvailableLandTime = 0;
@@ -85,43 +93,44 @@ export async function main(ns: NS): Promise<void> {
 
       patchState(ns, {
         batcherProgress: `Level-Up auf ${currentLevel}! Neuberechnung...`,
-        batcherTarget: "Re-Planning",
+        batcherTarget: target ?? "Re-Planning",
       });
 
-      // Kurze Pause zum Durchatmen & Stabilisieren
-      await ns.sleep(500);
-      continue;
-    }
-
-    const isPrepping = now < prepEndTime;
-
-    // Blacklist bereinigen
-    for (const [key, expiry] of targetBlacklist.entries()) {
-      if (now > expiry) targetBlacklist.delete(key);
-    }
-
-    // Warten auf Prep-Laufzeit
-    if (eventQueue.length === 0 && isPrepping) {
-      if (now - lastStateUpdate > 1000) {
-        patchState(ns, {
-          batcherProgress: `Warte auf Prep-Effekt (${Math.round((prepEndTime - now) / 1000)}s)`,
-        });
-        lastStateUpdate = now;
-      }
       await ns.sleep(250);
       continue;
+    }
+
+    // ----------------------------------------------------------------------
+    // 🩺 1. KONTINUIERLICHER HEALTH-CHECK
+    // ----------------------------------------------------------------------
+    if (target && !isPrepping && eventQueue.length === 0) {
+      const currentSec = ns.getServerSecurityLevel(target);
+      const minSec = ns.getServerMinSecurityLevel(target);
+      const currentMoney = ns.getServerMoneyAvailable(target);
+      const maxMoney = ns.getServerMaxMoney(target);
+
+      if (currentSec > minSec + 0.1 || currentMoney < maxMoney * 0.98) {
+        logger.warn(
+          `⚠️ Target ${target} ist desynchronisiert! (Sec: ${currentSec.toFixed(1)}/${minSec}, $:${(currentMoney / 1e6).toFixed(1)}M/${(maxMoney / 1e6).toFixed(1)}M). Initiere Re-Prep...`,
+        );
+        target = null;
+        activePlan = null;
+        nextAvailableLandTime = 0;
+      }
+    }
+
+    // Abgelaufene Blacklist-Einträge aufräumen
+    for (const [t, exp] of targetBlacklist.entries()) {
+      if (now > exp) targetBlacklist.delete(t);
     }
 
     const realFreeRam = getNetworkRealFreeRam(ns, servers);
     const queueRam = getQueueRam(ns, eventQueue);
     const virtualFreeRam = realFreeRam - queueRam;
 
-    // 🧠 PRÜFUNG: Wie viele aktive Batches laufen gerade für unser Ziel?
-    const activeBatchesCount = new Set(
-      eventQueue.filter((ev) => ev.target === target).map((ev) => ev.batchId),
-    ).size;
+    // 🚀 FAST-CHECK: Aktive Batches via Set-Größe ermitteln (O(1) statt O(N))
+    const activeBatchesCount = activeBatchIds.size;
 
-    // Re-Planning NUR auslösen, wenn wir kein Ziel haben oder die Queue leer ist
     const needsNewPlan = !target || (eventQueue.length === 0 && !isPrepping);
 
     if (needsNewPlan && !isPrepping) {
@@ -139,9 +148,7 @@ export async function main(ns: NS): Promise<void> {
 
       if (planning) {
         if (planning.target !== target) {
-          // 🛡️ ZIEL-SCHUTZ: Erst wechseln, wenn die Queue des alten Targets leer ist!
           if (eventQueue.length > 0) {
-            // Warten bis alte Events abgearbeitet sind
             await ns.sleep(250);
             continue;
           }
@@ -231,10 +238,10 @@ export async function main(ns: NS): Promise<void> {
         eventQueue.push(...validEvents);
         eventQueue.sort((a, b) => a.startTime - b.startTime);
 
+        // Tracke neue Batch-ID
+        activeBatchIds.add(bId);
         batchesSentForTarget++;
 
-        // 🎯 SAUBERES PIPELINING:
-        // 4 * SPACER verhindert, dass Hack von Batch N+1 in Weaken1 von Batch N krachte!
         nextAvailableLandTime += Math.max(BATCH_GAP, SPACER * 4);
 
         if (activePlan.hackThreads === 0) {
@@ -259,7 +266,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // JIT Dispatch Loop (Just-in-Time Abfeuern)
+    // JIT Dispatch Loop
     while (eventQueue.length > 0 && Date.now() >= eventQueue[0].startTime) {
       const event = eventQueue.shift()!;
       const lag = Date.now() - event.startTime;
@@ -269,6 +276,7 @@ export async function main(ns: NS): Promise<void> {
           `⏳ Lag (${Math.round(lag)}ms) bei Event ${event.id}. Batch verworfen.`,
         );
         pruneBatch(eventQueue, event.batchId);
+        activeBatchIds.delete(event.batchId); // Aus Tracking entfernen
         continue;
       }
 
@@ -283,12 +291,12 @@ export async function main(ns: NS): Promise<void> {
 
         targetBlacklist.set(event.target, now + 45000);
 
-        // Events des fehlgeschlagenen Targets aus Queue entfernen
         const filteredQueue = eventQueue.filter(
           (ev) => ev.target !== event.target,
         );
         eventQueue.length = 0;
         eventQueue.push(...filteredQueue);
+        activeBatchIds.clear();
 
         if (target === event.target) {
           target = null;
@@ -304,6 +312,14 @@ export async function main(ns: NS): Promise<void> {
         });
         await ns.sleep(3000);
         break;
+      }
+
+      // Wenn das letzte Event eines Batches (w2) abgefeuert wurde, lösche Batch-ID aus dem Tracking
+      const hasMoreEventsForBatch = eventQueue.some(
+        (e) => e.batchId === event.batchId,
+      );
+      if (!hasMoreEventsForBatch) {
+        activeBatchIds.delete(event.batchId);
       }
     }
 

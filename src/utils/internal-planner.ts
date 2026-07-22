@@ -192,7 +192,8 @@ export function internalPlanner(
           const ramMaxBatches = Math.floor(safeHwgwRam / optimalPlan.totalRam);
 
           // Nimm das Maximum aus beiden Schranken (ohne künstliches 25er-Limit!)
-          maxBatches = Math.max(1, Math.min(ramMaxBatches, timeMaxBatches));
+          // Cap bei max. 80 Batches – mehr erzeugt in Bitburner nur Engine-Lag ohne nennenswerten Mehrgewinn
+          maxBatches = Math.max(1, Math.min(ramMaxBatches, timeMaxBatches, 80));
         }
       }
     }

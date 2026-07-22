@@ -1,10 +1,9 @@
-import { NS, FactionName, FactionWorkType, CompanyName, GymType } from "@ns";
+import { NS, FactionName, FactionWorkType, CompanyName, SleevePerson, SleeveTask, Player} from "@ns";
 import { Logger } from "../core/logger.js";
-import { BotState } from "/core/types.js";
+import { BotState, SleeveMode } from "/core/types.js";
 import { COMBAT_KEYS, GYM_STAT_MAP } from "./constants.js";
-import { SleeveMode } from "/core/types.js";
 
-export const MEGACORPS = [
+export const MEGACORPS: CompanyName[] = [
   "ECorp",
   "MegaCorp",
   "KuaiGong International",
@@ -17,6 +16,11 @@ export const MEGACORPS = [
   "Fulcrum Technologies",
 ];
 
+interface SleeveData {
+  index: number;
+  stats: SleevePerson;
+  task: SleeveTask | null;
+}
 
 /**
  * Ermittelt, bei welchen Fraktionen noch Ruf für fehlende Augmentations benötigt wird.
@@ -26,26 +30,27 @@ export function getFactionsNeedingRep(
   playerFactions: string[],
   ownedAugs: string[],
 ): FactionName[] {
+  const ownedAugsSet = new Set(ownedAugs);
   const factionsNeedingRep: FactionName[] = [];
+
   for (const faction of playerFactions) {
-    let maxRepNeeded = 0;
     try {
-      const factionAugs = ns.singularity.getAugmentationsFromFaction(
-        faction as FactionName,
-      );
+      const factionAugs = ns.singularity.getAugmentationsFromFaction(faction as FactionName);
+      let maxRepNeeded = 0;
+
       for (const aug of factionAugs) {
-        if (aug !== "NeuroFlux Governor" && !ownedAugs.includes(aug)) {
+        if (aug !== "NeuroFlux Governor" && !ownedAugsSet.has(aug)) {
           const req = ns.singularity.getAugmentationRepReq(aug);
           if (req > maxRepNeeded) maxRepNeeded = req;
         }
       }
+
+      const currentRep = ns.singularity.getFactionRep(faction as FactionName);
+      if (currentRep < maxRepNeeded) {
+        factionsNeedingRep.push(faction as FactionName);
+      }
     } catch {
       continue;
-    }
-
-    const currentRep = ns.singularity.getFactionRep(faction as FactionName);
-    if (currentRep < maxRepNeeded) {
-      factionsNeedingRep.push(faction as FactionName);
     }
   }
   return factionsNeedingRep;
@@ -55,37 +60,28 @@ export function getFactionsNeedingRep(
  * Entscheidet rein strategisch, in welchem Modus sich ein Sleeve befinden sollte.
  */
 export function determineSleeveMode(
-  ns: NS,
-  stats: any,
+  stats: SleevePerson,
   currentState: BotState | null,
   factionsNeedingRep: FactionName[],
 ): SleeveMode {
-  // Grundbedürfnisse haben absolute Priorität
   if (stats.shock > 0) return "RECOVERY";
   if (stats.sync < 100) return "SYNCHRO";
 
-  // 1. Priorität: Globaler Override aus dem State-Manager
   if (currentState?.sleeveGlobalMode) {
     return currentState.sleeveGlobalMode as SleeveMode;
   }
 
-  // 2. Priorität: Roadmap-Strategien
-  if (
-    currentState?.strategy === "CRIME" ||
-    currentState?.strategy === "KILLS"
-  ) {
+  if (currentState?.strategy === "CRIME" || currentState?.strategy === "KILLS") {
     return "CRIME";
   }
   if (currentState?.strategy === "TRAIN") {
     return "TRAIN";
   }
 
-  // 3. Priorität: Fraktionsarbeit (wenn Ruf benötigt wird)
   if (factionsNeedingRep.length > 0) {
     return "FACTION";
   }
 
-  // 4. Priorität: Firmen-Arbeit (wenn Hacking hoch genug ist)
   return "COMPANY";
 }
 
@@ -94,7 +90,7 @@ export function determineSleeveMode(
  */
 export function manageAllSleeves(
   ns: NS,
-  p: any,
+  p: Player,
   currentState: BotState | null,
   ownedAugs: string[],
   factionsNeedingRep: FactionName[],
@@ -103,84 +99,63 @@ export function manageAllSleeves(
 ): void {
   const numSleeves = ns.sleeve.getNumSleeves();
 
-  // Falls keine Sleeves vorhanden sind (z. B. im frühen Spiel / bestimmten BitNodes)
   if (numSleeves === 0) {
     if (currentState) currentState.sleeveProgress = "Keine";
     return;
   }
 
-  // Variablen für die Fortschritts-Berechnung
+  // Single-Pass Data Fetching (Reduziert API-Aufrufe)
+  const sleeves: SleeveData[] = Array.from({ length: numSleeves }, (_, i) => ({
+    index: i,
+    stats: ns.sleeve.getSleeve(i),
+    task: ns.sleeve.getTask(i),
+  }));
+
   let totalShock = 0;
   let totalSync = 0;
   let activeWorkers = 0;
-
-  // 1. PRE-SCAN: Welche Fraktionen sind bereits besetzt?
   const occupiedFactions: FactionName[] = [];
-  for (let i = 0; i < numSleeves; i++) {
-    const task = ns.sleeve.getTask(i);
-    const stats = ns.sleeve.getSleeve(i);
 
-    // Daten für Dashboard-Progress sammeln
+  for (const { stats, task } of sleeves) {
     totalShock += stats.shock;
     totalSync += stats.sync;
 
-    // Wenn task nicht null/undefined ist, arbeitet der Sleeve aktiv!
-    if (task) {
-      activeWorkers++;
-    }
+    if (task) activeWorkers++;
 
     if (stats.shock === 0 && stats.sync === 100 && task?.type === "FACTION") {
       const fName = task.factionName as FactionName;
-      if (
-        factionsNeedingRep.includes(fName) &&
-        !occupiedFactions.includes(fName)
-      ) {
+      if (factionsNeedingRep.includes(fName) && !occupiedFactions.includes(fName)) {
         occupiedFactions.push(fName);
       }
     }
   }
 
-  // --- NEU: SLEEVE PROGRESS FÜR DASHBOARD BERECHNEN ---
+  // Dashboard Progress Update
   if (currentState) {
     const avgShock = totalShock / numSleeves;
     const avgSync = totalSync / numSleeves;
 
     if (avgShock > 0) {
-      // Phase 1: Schock-Therapie läuft noch
       currentState.sleeveProgress = `Shock: ${avgShock.toFixed(1)}%`;
     } else if (avgSync < 100) {
-      // Phase 2: Synchronisation läuft noch
       currentState.sleeveProgress = `Sync: ${avgSync.toFixed(1)}%`;
     } else {
-      // Phase 3: Volle Produktivität
       currentState.sleeveProgress = `${activeWorkers}/${numSleeves} Aktiv`;
     }
   }
-  // ----------------------------------------------------
 
-  // 2. Individuelle Zuweisung pro Klon
-  for (let i = 0; i < numSleeves; i++) {
-    const stats = ns.sleeve.getSleeve(i);
-    const currentTask = ns.sleeve.getTask(i);
+  // Individuelle Zuweisung
+  for (const sleeve of sleeves) {
+    handleSleeveShopping(ns, sleeve.index, p, logger, addLocalLog);
 
-    // Automatisches Augment-Shopping vorab erledigen
-    handleSleeveShopping(ns, i, p, logger, addLocalLog);
+    const mode = determineSleeveMode(sleeve.stats, currentState, factionsNeedingRep);
 
-    // Modus bestimmen
-    const mode = determineSleeveMode(
-      ns,
-      stats,
-      currentState,
-      factionsNeedingRep,
-    );
-
-    // Modus operativ ausführen
     manageSingleSleeve(
       ns,
-      i,
+      sleeve.index,
       mode,
-      stats,
-      currentTask,
+      sleeve.stats,
+      sleeve.task,
       currentState,
       factionsNeedingRep,
       occupiedFactions,
@@ -190,23 +165,25 @@ export function manageAllSleeves(
     );
   }
 }
+
 /**
- * Führt die eigentliche Zuweisungs-Logik für einen einzelnen Klon aus.
+ * Führt die Zuweisungs-Logik für einen einzelnen Klon aus.
  */
 export function manageSingleSleeve(
   ns: NS,
   i: number,
   mode: SleeveMode,
-  stats: any,
-  currentTask: any,
+  stats: SleevePerson,
+  currentTask: SleeveTask | null,
   currentState: BotState | null,
   factionsNeedingRep: FactionName[],
   occupiedFactions: FactionName[],
-  p: any,
+  p: Player,
   logger: Logger,
   addLocalLog: (msg: string) => void,
 ): void {
   const minRequiredStat = currentState?.targetStat || 0;
+  
   const lowestStatName = COMBAT_KEYS.reduce((a, b) =>
     stats.skills[a] < stats.skills[b] ? a : b,
   );
@@ -248,7 +225,6 @@ export function manageSingleSleeve(
     }
 
     case "FACTION": {
-      // Fraktions-Zuweisung ermitteln
       let targetFaction: FactionName | null = null;
       if (currentTask?.type === "FACTION") {
         const currentFaction = currentTask.factionName as FactionName;
@@ -258,16 +234,12 @@ export function manageSingleSleeve(
       }
 
       if (!targetFaction) {
-        const availableFactions = factionsNeedingRep.filter(
-          (f) => !occupiedFactions.includes(f),
-        );
+        const availableFactions = factionsNeedingRep.filter((f) => !occupiedFactions.includes(f));
         if (availableFactions.length > 0) {
           if (
             i === 0 &&
             currentState?.targetFaction &&
-            availableFactions.includes(
-              currentState.targetFaction as FactionName,
-            )
+            availableFactions.includes(currentState.targetFaction as FactionName)
           ) {
             targetFaction = currentState.targetFaction as FactionName;
           } else {
@@ -277,10 +249,8 @@ export function manageSingleSleeve(
       }
 
       if (targetFaction) {
-        // Live-Bootcamp-Check vor der Fraktionsarbeit
         if (minRequiredStat > 0 && lowestSleeveCombatStat < minRequiredStat) {
-          const gymName =
-            stats.city === "Volhaven" ? "Powerhouse Gym" : "Iron Gym";
+          const gymName = stats.city === "Volhaven" ? "Powerhouse Gym" : "Iron Gym";
           const targetGymStat = GYM_STAT_MAP[lowestStatName];
 
           if (
@@ -296,7 +266,6 @@ export function manageSingleSleeve(
           return;
         }
 
-        // Ab zur Fraktionsarbeit
         const workTypes: FactionWorkType[] = ["hacking", "field", "security"];
         let assigned = false;
         for (const work of workTypes) {
@@ -323,36 +292,33 @@ export function manageSingleSleeve(
         if (assigned) return;
       }
 
-      // Wenn Fraktionsarbeit fehlschlägt, ins Fallback (Crime) rutschen:
       executeFallbackCrime(ns, i, currentTask, p, logger, addLocalLog);
       break;
     }
 
     case "COMPANY": {
       const isRushActive = currentState?.strategy === "MONEY";
-      if (!isRushActive && p.skills.hacking >= 250) {
+      // Korrektur: Prüft jetzt die Hacking-Skill des Sleeves!
+      if (!isRushActive && stats.skills.hacking >= 250) {
         const employedCorps = Object.keys(p.jobs).filter((job) =>
-          MEGACORPS.includes(job),
+          MEGACORPS.includes(job as CompanyName),
         ) as CompanyName[];
 
         if (employedCorps.length > 0) {
           const targetCorp = employedCorps[i % employedCorps.length];
           const currentCompanyRep = ns.singularity.getCompanyRep(targetCorp);
-          const requiredRep =
-            targetCorp === "Fulcrum Technologies" ? 400_000 : 200_000;
+          const requiredRep = targetCorp === "Fulcrum Technologies" ? 400_000 : 200_000;
 
           if (currentCompanyRep < requiredRep) {
             const targetStatThreshold = 300;
             const targetCity = p.money >= 200_000 ? "Volhaven" : "Sector-12";
             const bestUniversity =
-              targetCity === "Volhaven"
-                ? "ZB Institute of Technology"
-                : "Rothman University";
+              targetCity === "Volhaven" ? "ZB Institute of Technology" : "Rothman University";
 
             // Reiselogik
             if (
-              p.skills.hacking < targetStatThreshold ||
-              p.skills.charisma < targetStatThreshold
+              stats.skills.hacking < targetStatThreshold ||
+              stats.skills.charisma < targetStatThreshold
             ) {
               if (stats.city !== targetCity) {
                 if (p.money >= 200_000) {
@@ -369,8 +335,8 @@ export function manageSingleSleeve(
               }
             }
 
-            // Hacking lernen
-            if (p.skills.hacking < targetStatThreshold) {
+            // Korrektur: Sleeve-Stats prüfen statt Player-Stats
+            if (stats.skills.hacking < targetStatThreshold) {
               if (
                 currentTask?.type === "CLASS" &&
                 currentTask?.classType === "Algorithms" &&
@@ -383,10 +349,7 @@ export function manageSingleSleeve(
               logger.info(msg);
               addLocalLog(msg);
               return;
-            }
-
-            // Charisma lernen
-            else if (p.skills.charisma < targetStatThreshold) {
+            } else if (stats.skills.charisma < targetStatThreshold) {
               if (
                 currentTask?.type === "CLASS" &&
                 currentTask?.classType === "Leadership" &&
@@ -399,14 +362,8 @@ export function manageSingleSleeve(
               logger.info(msg);
               addLocalLog(msg);
               return;
-            }
-
-            // Firmenarbeit ausführen
-            else {
-              if (
-                currentTask?.type === "COMPANY" &&
-                currentTask?.companyName === targetCorp
-              ) {
+            } else {
+              if (currentTask?.type === "COMPANY" && currentTask?.companyName === targetCorp) {
                 return;
               }
               if (ns.sleeve.setToCompanyWork(i, targetCorp)) {
@@ -420,7 +377,6 @@ export function manageSingleSleeve(
         }
       }
 
-      // Falls kein Megacorp-Job vorhanden oder fertig -> Fallback
       executeFallbackCrime(ns, i, currentTask, p, logger, addLocalLog);
       break;
     }
@@ -433,31 +389,36 @@ export function manageSingleSleeve(
 }
 
 /**
- * Hilfsfunktion zum automatischen Kauf von Sleeve-Augmentations.
+ * Automatisches Kaufen aller bezahlbaren Sleeve-Augmentations pro Tick.
  */
 function handleSleeveShopping(
   ns: NS,
   i: number,
-  p: any,
+  p: Player,
   logger: Logger,
   addLocalLog: (msg: string) => void,
 ): void {
   const BUDGET_MULTIPLIER = 10;
   try {
     const purchasableAugs = ns.sleeve.getSleevePurchasableAugs(i);
-    if (purchasableAugs.length > 0) {
-      purchasableAugs.sort((a, b) => a.cost - b.cost);
-      const cheapestAug = purchasableAugs[0];
-      if (p.money > cheapestAug.cost * BUDGET_MULTIPLIER) {
-        if (ns.sleeve.purchaseSleeveAug(i, cheapestAug.name)) {
-          const msg = `🛒 Klon #${i}: Augment erworben -> ${cheapestAug.name}`;
+    if (purchasableAugs.length === 0) return;
+
+    // Günstigste zuerst
+    purchasableAugs.sort((a, b) => a.cost - b.cost);
+
+    for (const aug of purchasableAugs) {
+      if (p.money > aug.cost * BUDGET_MULTIPLIER) {
+        if (ns.sleeve.purchaseSleeveAug(i, aug.name)) {
+          const msg = `🛒 Klon #${i}: Augment erworben -> ${aug.name}`;
           logger.success(msg);
           addLocalLog(msg);
         }
+      } else {
+        break; // Sobald eines zu teuer ist, abbrechen
       }
     }
   } catch {
-    /* Failsafe */
+    /* Safe ignore if API missing */
   }
 }
 
@@ -467,13 +428,13 @@ function handleSleeveShopping(
 function executeFallbackCrime(
   ns: NS,
   i: number,
-  currentTask: any,
-  p: any,
+  currentTask: SleeveTask | null,
+  p: Player,
   logger: Logger,
   addLocalLog: (msg: string) => void,
 ): void {
-  const targetCrime =
-    ns.heart.break() > -22 || p.numPeopleKilled < 30 ? "Homicide" : "Mug";
+  // Wenn Gang-Gründung Ziel ist (-54k Karma), dauerhaft Homicide nutzen:
+  const targetCrime = ns.heart.break() > -54000 ? "Homicide" : "Mug";
 
   if (currentTask?.type === "CRIME" && currentTask?.crimeType === targetCrime) {
     return;
