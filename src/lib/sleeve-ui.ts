@@ -2,17 +2,23 @@ import { NS } from "@ns";
 
 export function printSleeveDashboard(ns: NS, numSleeves: number, localLogBuffer: string[]): void {
   ns.clearLog();
-  ns.print("╔════════╤═════════╤═════════╤════════════════════════════════════════════════╗");
-  ns.print("║ Sleeve │ Schock  │ Sync    │ Aktuelle Beschäftigung                         ║");
-  ns.print("╠════════╪═════════╪═════════╪════════════════════════════════════════════════╣");
+
+  const dividerHeader = "==============================================================================";
+  const dividerSub    = "------------------------------------------------------------------------------";
+
+  ns.print(dividerHeader);
+  ns.print(" 🧠 BitOS SLEEVE CONTROL SYSTEM");
+  ns.print(dividerHeader);
+  ns.print(" ID     | SCHOCK   | SYNC     | AKTUELLE BESCHÄFTIGUNG");
+  ns.print(dividerSub);
 
   for (let i = 0; i < numSleeves; i++) {
     const stats = ns.sleeve.getSleeve(i);
     const task = ns.sleeve.getTask(i);
 
     const idStr = `#${i}`.padEnd(6);
-    const shockStr = `${stats.shock.toFixed(1)}%`.padEnd(7);
-    const syncStr = `${stats.sync.toFixed(1)}%`.padEnd(7);
+    const shockStr = `${stats.shock.toFixed(1)}%`.padEnd(8);
+    const syncStr = `${stats.sync.toFixed(1)}%`.padEnd(8);
 
     let taskDesc = "IDLE";
     if (task) {
@@ -43,16 +49,17 @@ export function printSleeveDashboard(ns: NS, numSleeves: number, localLogBuffer:
       }
     }
 
-    const taskStr = taskDesc.padEnd(46);
-    ns.print(`║ ${idStr} │ ${shockStr} │ ${syncStr} │ ${taskStr} ║`);
+    const taskStr = taskDesc.padEnd(42);
+    ns.print(` ${idStr} | ${shockStr} | ${syncStr} | ${taskStr}`);
   }
 
-  ns.print("╚════════╧═════════╧═════════╧════════════════════════════════════════════════╝");
+  ns.print(dividerHeader);
 
   if (localLogBuffer.length > 0) {
-    ns.print("\n Letzte Aktionen:");
+    ns.print(" LETZTE AKTIONEN:");
     for (const logLine of localLogBuffer) {
-      ns.print(`  ${logLine}`);
+      ns.print(`   ${logLine}`);
     }
+    ns.print(dividerSub);
   }
 }

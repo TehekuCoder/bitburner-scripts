@@ -1,6 +1,6 @@
 // src/core/types.ts
 
-import { NS, FactionName, CompanyName, JobField } from "@ns";
+import { NS, FactionName, CompanyName, JobField, SleevePerson,SleeveTask } from "@ns";
 
 export interface ScriptList {
   worker: string;
@@ -227,3 +227,9 @@ export interface NetworkInfo {
 }
 
 export type SolverFunction = (ns: NS, host: string, details: any) => Promise<string | null>;
+
+export interface SleeveData {
+  index: number;
+  stats: SleevePerson;
+  task: SleeveTask | null;
+}

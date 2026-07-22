@@ -61,6 +61,7 @@ export async function main(ns: NS): Promise<void> {
   const activeBatchIds = new Set<number>();
 
   let lastHackingLevel = ns.getHackingLevel();
+  const batchEventCounts = new Map<number, number>();
 
   while (true) {
     const now = Date.now();
@@ -77,29 +78,23 @@ export async function main(ns: NS): Promise<void> {
     // 🛡️ 0. LEVEL-UP PRÜFUNG & QUEUE-FLUSH
     // ----------------------------------------------------------------------
     const currentLevel = ns.getHackingLevel();
-    if (currentLevel !== lastHackingLevel) {
+    const levelDelta = currentLevel - lastHackingLevel;
+
+    // Erst ab +5 Leveln ODER relativem Sprung von > 2% flushen
+    if (
+      levelDelta >= 5 ||
+      (lastHackingLevel > 0 && levelDelta / lastHackingLevel > 0.02)
+    ) {
       logger.warn(
-        `⬆️ Level-Up erkannt! (${lastHackingLevel} -> ${currentLevel}). Verwerfe desynchronisierte Queue...`,
+        `⬆️ Signifikanter Level-Up erkannt! (${lastHackingLevel} -> ${currentLevel}). Re-Planning...`,
       );
       lastHackingLevel = currentLevel;
 
-      eventQueue.length = 0;
-      activeBatchIds.clear();
-
-      activePlan = null;
-      batchesSentForTarget = 0;
-      nextAvailableLandTime = 0;
-      prepEndTime = 0;
-
-      patchState(ns, {
-        batcherProgress: `Level-Up auf ${currentLevel}! Neuberechnung...`,
-        batcherTarget: target ?? "Re-Planning",
-      });
-
-      await ns.sleep(250);
-      continue;
+      // Reset-Logik...
+    } else if (levelDelta > 0) {
+      // Kleines Level-Up: Nur meilenstein-artig mitloggen, Queue weiterlaufen lassen
+      lastHackingLevel = currentLevel;
     }
-
     // ----------------------------------------------------------------------
     // 🩺 1. KONTINUIERLICHER HEALTH-CHECK
     // ----------------------------------------------------------------------
@@ -238,8 +233,9 @@ export async function main(ns: NS): Promise<void> {
         eventQueue.push(...validEvents);
         eventQueue.sort((a, b) => a.startTime - b.startTime);
 
-        // Tracke neue Batch-ID
         activeBatchIds.add(bId);
+        batchEventCounts.set(bId, validEvents.length);
+
         batchesSentForTarget++;
 
         nextAvailableLandTime += Math.max(BATCH_GAP, SPACER * 4);
@@ -252,6 +248,8 @@ export async function main(ns: NS): Promise<void> {
           batcherTarget: target,
           batcherProgress: `JIT-HWGW Active (${activeBatchesCount + 1}/${dynamicMaxBatchesForTarget} Batches)`,
           batcherPlan: activePlan,
+          batcherDynamicMaxBatches: dynamicMaxBatchesForTarget, // 👈 Neu
+          batcherRamNeeded: activePlan.totalRam * dynamicMaxBatchesForTarget, // 👈 Neu
         });
       } else if (eventQueue.length === 0) {
         logger.warn(
@@ -271,12 +269,22 @@ export async function main(ns: NS): Promise<void> {
       const event = eventQueue.shift()!;
       const lag = Date.now() - event.startTime;
 
+      // O(1) Tracking aktualisieren
+      const remaining = (batchEventCounts.get(event.batchId) ?? 1) - 1;
+      if (remaining <= 0) {
+        batchEventCounts.delete(event.batchId);
+        activeBatchIds.delete(event.batchId);
+      } else {
+        batchEventCounts.set(event.batchId, remaining);
+      }
+
       if (lag > 60) {
         logger.warn(
           `⏳ Lag (${Math.round(lag)}ms) bei Event ${event.id}. Batch verworfen.`,
         );
         pruneBatch(eventQueue, event.batchId);
-        activeBatchIds.delete(event.batchId); // Aus Tracking entfernen
+        activeBatchIds.delete(event.batchId);
+        batchEventCounts.delete(event.batchId);
         continue;
       }
 
@@ -297,6 +305,7 @@ export async function main(ns: NS): Promise<void> {
         eventQueue.length = 0;
         eventQueue.push(...filteredQueue);
         activeBatchIds.clear();
+        batchEventCounts.clear();
 
         if (target === event.target) {
           target = null;
@@ -313,16 +322,7 @@ export async function main(ns: NS): Promise<void> {
         await ns.sleep(3000);
         break;
       }
-
-      // Wenn das letzte Event eines Batches (w2) abgefeuert wurde, lösche Batch-ID aus dem Tracking
-      const hasMoreEventsForBatch = eventQueue.some(
-        (e) => e.batchId === event.batchId,
-      );
-      if (!hasMoreEventsForBatch) {
-        activeBatchIds.delete(event.batchId);
-      }
     }
-
     // Precision Sleep Management
     if (eventQueue.length > 0) {
       const timeToNext = eventQueue[0].startTime - Date.now();

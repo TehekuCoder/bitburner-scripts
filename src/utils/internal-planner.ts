@@ -96,9 +96,8 @@ export function internalPlanner(
 
         if (growThreads <= 0) continue;
 
-        // 🛠️ FIX: String `t` als Core-Parameter vermeiden -> direkt x 0.004
-        const growSec = growThreads * 0.004;
-        weaken2Threads = Math.ceil(growSec / weakenPotency);
+        const growSecIncrease = growThreads * 0.004;
+        weaken2Threads = Math.ceil(growSecIncrease / weakenPotency) + 1; // +1 Puffer
       }
 
       const totalRam =
@@ -158,17 +157,22 @@ export function internalPlanner(
       // ==========================================
       let optimalPlan: BatchPlan | null = null;
       const startGreed = virtualFreeRam < 256 ? 0.01 : 0.1;
-
       // 🛡️ DYNAMISCHER MAX-GREED:
       // Wenn wir viel RAM haben (> 8 TB), begrenzen wir den Greed auf max. 25%.
       // Tiefe Pipelines mit z.B. 20 Batches laufen bei 20% Greed absolut bombensicher.
       const maxGreed = safeHwgwRam > 8000 ? 0.25 : 0.7;
 
-      for (let greed = maxGreed; greed >= startGreed; greed -= 0.05) {
-        const p = calculateBatch(ns, t, bnMults, greed, SPACER);
+      let low = startGreed;
+      let high = maxGreed;
+
+      while (high - low > 0.001) {
+        const mid = (low + high) / 2;
+        const p = calculateBatch(ns, t, bnMults, mid, SPACER);
         if (p && p.totalRam <= safeHwgwRam) {
           optimalPlan = p;
-          break;
+          low = mid; // Versuche noch höheren Greed
+        } else {
+          high = mid; // RAM reicht nicht, verringere Greed
         }
       }
 
