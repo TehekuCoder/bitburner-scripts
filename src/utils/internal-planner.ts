@@ -21,8 +21,11 @@ export function internalPlanner(
   let bestPlan: BatchPlan | null = null;
   let maxBatches = 100;
 
+  // Single-Host-Limit: Ein einzelnes Skript (z.B. grow mit N Threads)
+  // MUSS am Stück auf einem einzigen Host Platz finden!
+  const maxSingleScriptRam = maxRam * 0.85;
   const safeHwgwRam = virtualFreeRam * 0.8;
-  const safePrepRam = virtualFreeRam * 0.9;
+  const safePrepRam = Math.min(virtualFreeRam * 0.9, maxSingleScriptRam * 3);
 
   const targets = servers.filter((s) => {
     if (targetBlacklist.has(s) || !ns.hasRootAccess(s)) return false;
@@ -37,7 +40,7 @@ export function internalPlanner(
     const minPlan = calculateBatch(ns, s, bnMults, 0.05, SPACER);
     if (!minPlan) return false;
 
-    if (minPlan.totalRam > maxRam * 0.5) return false;
+    if (minPlan.totalRam > maxRam * 0.8) return false;
     if (minPlan.totalRam > safeHwgwRam) return false;
 
     return true;
@@ -58,7 +61,7 @@ export function internalPlanner(
 
     if (!isPrepped) {
       // ==========================================
-      // PREP-PHASE
+      // PREP-PHASE (Chunking gegen RAM-Fragmentierung)
       // ==========================================
       const weakenPotency = 0.05 * (bnMults.ServerWeakenRate ?? 1.0);
       const ramGrow = ns.getScriptRam(PATH_GROW);
@@ -72,7 +75,10 @@ export function internalPlanner(
 
       if (diffAmt > 0.01) {
         const totalNeededWeaken = Math.ceil(diffAmt / weakenPotency);
-        const maxPossibleWeaken = Math.floor(safePrepRam / ramWeaken);
+        // Begrenze auf das, was auf EINEN Host passt UND in den freien RAM
+        const maxPossibleWeaken = Math.floor(
+          Math.min(safePrepRam, maxSingleScriptRam) / ramWeaken,
+        );
         weaken1Threads = Math.min(totalNeededWeaken, maxPossibleWeaken);
         if (weaken1Threads <= 0) continue;
       } else if (moneyAvailable < moneyMax) {
@@ -91,13 +97,18 @@ export function internalPlanner(
         const secPerGrow = 0.004;
         const ramPerGrowUnit =
           ramGrow + (secPerGrow / weakenPotency) * ramWeaken;
-        const maxGrowUnits = Math.floor(safePrepRam / ramPerGrowUnit);
+
+        // 💥 FIX: Grow-Threads dürfen das Einzelserver-Limit nicht sprengen
+        const maxGrowByHost = Math.floor(maxSingleScriptRam / ramGrow);
+        const maxGrowByRam = Math.floor(safePrepRam / ramPerGrowUnit);
+        const maxGrowUnits = Math.min(maxGrowByHost, maxGrowByRam);
+
         growThreads = Math.min(totalNeededGrow, maxGrowUnits);
 
         if (growThreads <= 0) continue;
 
         const growSecIncrease = growThreads * 0.004;
-        weaken2Threads = Math.ceil(growSecIncrease / weakenPotency) + 1; // +1 Puffer
+        weaken2Threads = Math.ceil(growSecIncrease / weakenPotency) + 1;
       }
 
       const totalRam =
@@ -126,21 +137,19 @@ export function internalPlanner(
         executionTime: tW,
       };
 
-      // 🧠 POTENTIAL-SCORING:
-      // Berechne, was das Ziel NACH dem Prep in HWGW leisten wird.
+      // POTENTIAL-SCORING:
       const potHwgwPlan = calculateBatch(ns, t, bnMults, 0.2, SPACER);
-      let score = (moneyMax / (tW || 1)) * 0.1; // Fallback
+      let score = (moneyMax / (tW || 1)) * 0.1;
 
       if (potHwgwPlan) {
         const pctPerThread = ns.formulas?.hacking
           ? ns.formulas.hacking.hackPercent(server, player)
           : ns.hackAnalyze(t);
         const potRevenue = potHwgwPlan.hackThreads * pctPerThread * moneyMax;
-        // 80% des HWGW-Potenzials vergeben
         score = (potRevenue / (potHwgwPlan.weakenTime / 1000)) * 0.8;
       }
 
-      // 🎯 TARGET LOCK-IN (Bonus ERST NACH der Potenzial-Berechnung anwenden!):
+      // TARGET LOCK-IN BONUS:
       if (t === currentTarget) {
         score *= 1.5;
       }
@@ -157,9 +166,6 @@ export function internalPlanner(
       // ==========================================
       let optimalPlan: BatchPlan | null = null;
       const startGreed = virtualFreeRam < 256 ? 0.01 : 0.1;
-      // 🛡️ DYNAMISCHER MAX-GREED:
-      // Wenn wir viel RAM haben (> 8 TB), begrenzen wir den Greed auf max. 25%.
-      // Tiefe Pipelines mit z.B. 20 Batches laufen bei 20% Greed absolut bombensicher.
       const maxGreed = safeHwgwRam > 8000 ? 0.25 : 0.7;
 
       let low = startGreed;
@@ -170,9 +176,9 @@ export function internalPlanner(
         const p = calculateBatch(ns, t, bnMults, mid, SPACER);
         if (p && p.totalRam <= safeHwgwRam) {
           optimalPlan = p;
-          low = mid; // Versuche noch höheren Greed
+          low = mid;
         } else {
-          high = mid; // RAM reicht nicht, verringere Greed
+          high = mid;
         }
       }
 
@@ -182,7 +188,6 @@ export function internalPlanner(
           : ns.hackAnalyze(t);
         const revenue = optimalPlan.hackThreads * pctPerThread * moneyMax;
 
-        // Pipeline-Schranken berechnen
         const gap = Math.max(BATCH_GAP, SPACER * 4);
         const timeMaxBatches = Math.floor(optimalPlan.weakenTime / gap);
         const ramMaxBatches = Math.floor(safeHwgwRam / optimalPlan.totalRam);
@@ -191,11 +196,9 @@ export function internalPlanner(
           Math.min(ramMaxBatches, timeMaxBatches, 80),
         );
 
-        // FIX 1: Score skaliert mit der Pipeline-Dichte (Gesamtertrag pro Sekunde)
         let score =
           (revenue * calcMaxBatches) / (optimalPlan.weakenTime / 1000);
 
-        // FIX 2: Target Lock-in Bonus auch für HWGW anwenden (verhindert Target-Jittering)
         if (t === currentTarget) {
           score *= 1.25;
         }

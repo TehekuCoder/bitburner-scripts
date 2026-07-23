@@ -40,37 +40,60 @@ export const MEGACORPS: Record<string, CompanyName> = {
 
 // --- ROADMAP LISTS ---
 export const HACKING_FACTIONS: FactionConfig[] = [
+  // ------------------------------------------------------------------
+  // PHASE 1: Early-Game Hacking (Schneller Einstieg & Multiplikatoren)
+  // ------------------------------------------------------------------
   { name: "CyberSec", minStat: 0, priority: 1 },
   { name: "Tian Di Hui", minStat: 0, priority: 2 },
   { name: "Netburners", minStat: 0, priority: 3 },
-  { name: "Slum Snakes", minStat: 30, priority: 4 },
-  { name: "Sector-12", minStat: 0, priority: 5 },
-  { name: "Aevum", minStat: 0, priority: 6 },
-  { name: "NiteSec", minStat: 0, priority: 7 },
-  { name: "Chongqing", minStat: 0, priority: 8 },
-  { name: "Ishima", minStat: 0, priority: 9 },
-  { name: "New Tokyo", minStat: 0, priority: 10 },
-  { name: "Volhaven", minStat: 0, priority: 11 },
-  { name: "Tetrads", minStat: 75, priority: 12 },
-  { name: "The Black Hand", minStat: 0, priority: 13 },
-  { name: "The Syndicate", minStat: 200, priority: 14 },
-  { name: "BitRunners", minStat: 0, priority: 15 },
-  { name: "ECorp", minStat: 0, priority: 16 },
-  { name: "MegaCorp", minStat: 0, priority: 17 },
-  { name: "KuaiGong International", minStat: 0, priority: 18 },
+  { name: "NiteSec", minStat: 0, priority: 4 },
+  { name: "The Black Hand", minStat: 0, priority: 5 },
+
+  // ------------------------------------------------------------------
+  // PHASE 2: Mid-Game Core (Der beste Hacking-Multiplier-Lieferant)
+  // ------------------------------------------------------------------
+  { name: "BitRunners", minStat: 0, priority: 6 },
+
+  // ------------------------------------------------------------------
+  // PHASE 3: Stadt- & Verbrecher-Fraktionen (Falls Stats vorhanden)
+  // ------------------------------------------------------------------
+  { name: "Aevum", minStat: 0, priority: 7 },
+  { name: "Volhaven", minStat: 0, priority: 8 },
+  { name: "Chongqing", minStat: 0, priority: 9 },
+  { name: "Ishima", minStat: 0, priority: 10 },
+  { name: "New Tokyo", minStat: 0, priority: 11 },
+  { name: "Sector-12", minStat: 0, priority: 12 },
+  { name: "Slum Snakes", minStat: 30, priority: 13 },
+  { name: "Tetrads", minStat: 75, priority: 14 },
+  { name: "The Syndicate", minStat: 200, priority: 15 },
+
+  // ------------------------------------------------------------------
+  // PHASE 4: Corporate High-Tier (Fulcrum ZUERST!)
+  // ------------------------------------------------------------------
+  { name: "Fulcrum Secret Technologies", minStat: 0, priority: 16 }, // 💥 NACH OBEN GEHOLT!
+  { name: "ECorp", minStat: 0, priority: 17 },
+  { name: "MegaCorp", minStat: 0, priority: 18 },
   { name: "Four Sigma", minStat: 0, priority: 19 },
-  { name: "NWO", minStat: 0, priority: 20 },
-  { name: "Blade Industries", minStat: 0, priority: 21 },
-  { name: "OmniTek Incorporated", minStat: 0, priority: 22 },
-  { name: "Bachman & Associates", minStat: 0, priority: 23 },
-  { name: "Clarke Incorporated", minStat: 0, priority: 24 },
-  { name: "Fulcrum Secret Technologies", minStat: 0, priority: 25 },
+  { name: "KuaiGong International", minStat: 0, priority: 20 },
+  { name: "NWO", minStat: 0, priority: 21 },
+  { name: "Blade Industries", minStat: 0, priority: 22 },
+  { name: "OmniTek Incorporated", minStat: 0, priority: 23 },
+  { name: "Bachman & Associates", minStat: 0, priority: 24 },
+  { name: "Clarke Incorporated", minStat: 0, priority: 25 },
+
+  // ------------------------------------------------------------------
+  // PHASE 5: Special & High-Combat/Endgame
+  // ------------------------------------------------------------------
   { name: "Silhouette", minStat: 0, priority: 26 },
   { name: "The Dark Army", minStat: 300, priority: 27 },
   { name: "Speakers for the Dead", minStat: 300, priority: 28 },
-  { name: "The Covenant", minStat: 850, priority: 29 },
-  { name: "Illuminati", minStat: 1200, priority: 30 },
-  { name: "Daedalus", minStat: 1500, priority: 31 },
+
+  // ------------------------------------------------------------------
+  // PHASE 6: Endgame Pinnacle
+  // ------------------------------------------------------------------
+  { name: "Daedalus", minStat: 1500, priority: 29 }, // 💥 Höhere Prio als Covenant/Illuminati wegen Red Pill!
+  { name: "The Covenant", minStat: 850, priority: 30 },
+  { name: "Illuminati", minStat: 1200, priority: 31 },
 ];
 
 export const CITY_FACTIONS: FactionName[] = [

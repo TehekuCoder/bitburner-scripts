@@ -110,6 +110,9 @@ export async function main(ns: NS): Promise<void> {
       const currentMoney = ns.getServerMoneyAvailable(target);
       const maxMoney = ns.getServerMaxMoney(target);
 
+      // 💥 FIX: Target für 30 Sek. sperren, um sofortiges Re-Locking zu verhindern!
+      targetBlacklist.set(target, now + 30000);
+
       if (currentSec > minSec + 0.1 || currentMoney < maxMoney * 0.98) {
         logger.warn(
           `⚠️ Target ${target} desynchronisiert! (Sec: ${currentSec.toFixed(1)}/${minSec}, $:${(currentMoney / 1e6).toFixed(1)}M/${(maxMoney / 1e6).toFixed(1)}M). Abbruch & Re-Prep...`,
@@ -264,6 +267,10 @@ export async function main(ns: NS): Promise<void> {
         logger.warn(
           `⚠️ RAM erschöpft für ${target} (Frei: ${virtualFreeRam.toFixed(1)}GB). Target-Reset.`,
         );
+
+        // 💥 FIX: Target kurzzeitig sperren (15 Sek.), damit ein anderes Ziel gewählt werden kann
+        targetBlacklist.set(target, now + 15000);
+
         target = null;
         activePlan = null;
         prepEndTime = 0;
