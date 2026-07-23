@@ -46,7 +46,6 @@ export async function main(ns: NS): Promise<void> {
 
     const p = ns.getPlayer();
     const loaded = loadState(ns);
-    // Erstelle ein Fallback-Objekt, falls loadState noch null liefert
     const currentState = loaded ?? {
       strategy: "MONEY",
       progressBar: "Init...",
@@ -66,7 +65,7 @@ export async function main(ns: NS): Promise<void> {
       hasBladeburner: false,
       sources: {},
       lastUpdate: Date.now(),
-      playerHacking: ns.getHackingLevel(),
+      playerHacking: p.skills.hacking,
     };
 
     // 🛡️ API CHECK 2: Singularity (SF4) für getOwnedAugmentations
@@ -95,7 +94,7 @@ export async function main(ns: NS): Promise<void> {
       addLocalLog,
     );
 
-    // 2. Nur patchen, wenn sich der Fortschritt auch verändert hat
+    // 2. Nur patchen, wenn sich der Fortschritt verändert hat
     if (
       currentState.sleeveProgress &&
       currentState.sleeveProgress !== lastStateProgress

@@ -100,26 +100,32 @@ export async function main(ns: NS): Promise<void> {
       lastHackingLevel = currentLevel;
     }
 
+    const activeBatchesCount = activeBatchIds.size;
     // ----------------------------------------------------------------------
     // 🩺 1. KONTINUIERLICHER HEALTH-CHECK
     // ----------------------------------------------------------------------
-    // FIX: eventQueue.length === 0 entfernt, damit Desyncs SOFORT erkannt werden
     if (target && !isPrepping) {
       const currentSec = ns.getServerSecurityLevel(target);
       const minSec = ns.getServerMinSecurityLevel(target);
       const currentMoney = ns.getServerMoneyAvailable(target);
       const maxMoney = ns.getServerMaxMoney(target);
 
-      // 💥 FIX: Target für 30 Sek. sperren, um sofortiges Re-Locking zu verhindern!
-      targetBlacklist.set(target, now + 30000);
+      const secDesync = currentSec > minSec + 1.0;
+      const moneyDesync =
+        activeBatchesCount === 0 && currentMoney < maxMoney * 0.9;
 
-      if (currentSec > minSec + 0.1 || currentMoney < maxMoney * 0.98) {
+      if (secDesync || moneyDesync) {
+        // 👈 secDesync & moneyDesync nutzen
         logger.warn(
           `⚠️ Target ${target} desynchronisiert! (Sec: ${currentSec.toFixed(1)}/${minSec}, $:${(currentMoney / 1e6).toFixed(1)}M/${(maxMoney / 1e6).toFixed(1)}M). Abbruch & Re-Prep...`,
         );
+
+        // 💥 FIX: Sperren NUR im Fehlerfall aufrufen!
+        targetBlacklist.set(target, now + 30000);
+
         target = null;
         activePlan = null;
-        eventQueue.length = 0; // Fliehende Events sofort verwerfen!
+        eventQueue.length = 0;
         activeBatchIds.clear();
         batchEventCounts.clear();
         nextAvailableLandTime = 0;
@@ -136,7 +142,6 @@ export async function main(ns: NS): Promise<void> {
     const virtualFreeRam = realFreeRam - queueRam;
 
     // 🚀 FAST-CHECK: Aktive Batches via Set-Größe ermitteln (O(1) statt O(N))
-    const activeBatchesCount = activeBatchIds.size;
 
     const needsNewPlan = !target || (eventQueue.length === 0 && !isPrepping);
 

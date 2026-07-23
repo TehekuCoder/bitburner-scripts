@@ -3,13 +3,17 @@ import { Logger } from "../core/logger.js";
 import { BotState, SleeveMode, SleeveData } from "/core/types.js";
 import { COMBAT_KEYS, GYM_STAT_MAP, MEGACORPS } from "./constants.js";
 
-
+let lastShoppingScan = 0;
+const SHOPPING_INTERVAL = 15000; // Augmentations-Einkauf nur alle 15 Sek.
 
 export function getFactionsNeedingRep(
   ns: NS,
   playerFactions: string[],
   ownedAugs: string[],
 ): FactionName[] {
+  // 🛡️ Guard: Singularity API verfügbar?
+  if (!ns.singularity) return [];
+
   const ownedAugsSet = new Set(ownedAugs);
   const factionsNeedingRep: FactionName[] = [];
 
@@ -124,8 +128,13 @@ export function manageAllSleeves(
     }
   }
 
+  // Einkauf gedrosselt ausführen
+  const canShop = Date.now() - lastShoppingScan > SHOPPING_INTERVAL;
+
   for (const sleeve of sleeves) {
-    handleSleeveShopping(ns, sleeve.index, p, logger, addLocalLog);
+    if (canShop) {
+      handleSleeveShopping(ns, sleeve.index, p, logger, addLocalLog);
+    }
 
     const mode = determineSleeveMode(
       sleeve.stats,
@@ -146,6 +155,10 @@ export function manageAllSleeves(
       logger,
       addLocalLog,
     );
+  }
+
+  if (canShop) {
+    lastShoppingScan = Date.now();
   }
 }
 
@@ -200,11 +213,11 @@ export function manageSingleSleeve(
       break;
     }
 
-    case "FACTION":
-    case "COMPANY":
     case "CRIME":
-    default: {
-      // 🚀 Kaskade: Faction -> Company -> Fallback Crime (Homicide)
+      executeFallbackCrime(ns, i, currentTask, p, logger, addLocalLog);
+      break;
+
+    case "FACTION":
       if (
         tryAssignFactionWork(
           ns,
@@ -220,7 +233,6 @@ export function manageSingleSleeve(
       ) {
         return;
       }
-
       if (
         tryAssignCompanyWork(
           ns,
@@ -235,16 +247,33 @@ export function manageSingleSleeve(
       ) {
         return;
       }
-
       executeFallbackCrime(ns, i, currentTask, p, logger, addLocalLog);
       break;
-    }
+
+    case "COMPANY":
+      if (
+        tryAssignCompanyWork(
+          ns,
+          i,
+          stats,
+          currentTask,
+          currentState,
+          p,
+          logger,
+          addLocalLog,
+        )
+      ) {
+        return;
+      }
+      executeFallbackCrime(ns, i, currentTask, p, logger, addLocalLog);
+      break;
+
+    default:
+      executeFallbackCrime(ns, i, currentTask, p, logger, addLocalLog);
+      break;
   }
 }
 
-/**
- * Versucht einen Sleeve einer noch unbesetzten Fraktion zuzuweisen.
- */
 function tryAssignFactionWork(
   ns: NS,
   i: number,
@@ -312,7 +341,8 @@ function tryAssignFactionWork(
     if (
       currentTask?.type === "FACTION" &&
       currentTask.factionName === targetFaction &&
-      (currentTask as any).factionWorkType === work
+      "factionWorkType" in currentTask &&
+      currentTask.factionWorkType === work
     ) {
       return true;
     }
@@ -331,9 +361,6 @@ function tryAssignFactionWork(
   return false;
 }
 
-/**
- * Versucht einen Sleeve Firmenarbeit oder im Notfall Uni-Training für Firmen zuzuweisen.
- */
 function tryAssignCompanyWork(
   ns: NS,
   i: number,
@@ -345,6 +372,7 @@ function tryAssignCompanyWork(
   addLocalLog: (msg: string) => void,
 ): boolean {
   if (currentState?.strategy === "MONEY") return false;
+  if (!ns.singularity) return false; // 🛡️ Guard: Singularity API erforderlich
 
   const companyList = Object.values(MEGACORPS);
 
@@ -354,7 +382,6 @@ function tryAssignCompanyWork(
 
   if (employedCorps.length === 0) return false;
 
-  // Bestimme Ziel-Firma, die noch Ruf benötigt
   let targetCorp: CompanyName | null = null;
   const candidateCorp = employedCorps[i % employedCorps.length];
   const candidateRep = ns.singularity.getCompanyRep(candidateCorp);
@@ -370,9 +397,8 @@ function tryAssignCompanyWork(
       }) ?? null;
   }
 
-  if (!targetCorp) return false; // Alle Firmen haben bereits genug Ruf
+  if (!targetCorp) return false;
 
-  // 1. ZUERST: Direkt Firmenarbeit versuchen!
   if (
     currentTask?.type === "COMPANY" &&
     currentTask?.companyName === targetCorp
@@ -387,7 +413,6 @@ function tryAssignCompanyWork(
     return true;
   }
 
-  // 2. ERST WENN FIRMENARBEIT FEHLSCHLÄGT: Uni-Training zur Anstellungsvorbereitung
   const targetStatThreshold = 300;
   const targetCity = p.money >= 200_000 ? "Volhaven" : "Sector-12";
   const bestUniversity =

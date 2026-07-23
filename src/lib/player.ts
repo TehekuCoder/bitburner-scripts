@@ -1,10 +1,7 @@
 import { NS, Player } from "@ns";
-import {
-  FactionConfig,
-  HACKING_FACTIONS,
-  MEGACORPS,
-} from "./constants.js";
+import { MEGACORPS } from "./constants.js";
 import { Logger } from "../core/logger.js";
+import { TargetFactionResult, AugmentTarget } from "/core/types.js";
 
 /**
  * Evaluiert die nächste Fraktion auf der Roadmap, die noch Rep-Bedarf hat.
@@ -14,33 +11,41 @@ import { Logger } from "../core/logger.js";
  * Berücksichtigt ausschließlich Fraktionen, bei denen wir bereits Mitglied sind.
  */
 export function findNextRoadmapFaction(
-  p: Player,
-  factionReps: Record<string, number>,
-  factionTargets: Record<string, number>,
-): FactionConfig | null {
-  for (const faction of HACKING_FACTIONS) {
-    // 🟢 Fix 1: Wir können nur für Fraktionen arbeiten, bei denen wir bereits Mitglied sind!
-    // Falls wir kein Mitglied sind, überspringen wir sie für das aktive Farming.
-    if (!p.factions.includes(faction.name)) {
-      continue;
-    }
+  ns: NS,
+  augRoadmap: AugmentTarget[] = [],
+): TargetFactionResult | null {
+  const playerFactions = ns.getPlayer().factions;
 
-    // 🟢 Fix 2: Sobald wir Mitglied sind, ist der Stadt-Sperren-Check hinfällig.
-    // Bitburner erlaubt es, für jede beigetretene Fraktion remote zu arbeiten,
-    // ganz ohne Reisekosten oder Standort-Einschränkungen.
-    // Der alte "continue"-Block an dieser Stelle entfällt daher komplett.
+  for (const target of augRoadmap) {
+    // Prüfe nur Fraktionen, bei denen wir bereits Mitglied sind
+    const validFactions = target.factions.filter((f) =>
+      playerFactions.includes(f),
+    );
+    if (validFactions.length === 0) continue;
 
-    const repNeeded = factionTargets[faction.name] ?? 0;
-    if (repNeeded > 0) {
-      const currentRep = factionReps[faction.name] ?? 0;
+    // Finde unter deinen beigetretenen Fraktionen die mit der höchsten Rep
+    let bestFaction = validFactions[0];
+    let maxRep = ns.singularity.getFactionRep(bestFaction);
 
-      // Wenn der aktuelle Rufwert kleiner als das Ziel ist, ist dies unsere Arbeits-Fraktion
-      if (currentRep < repNeeded) {
-        return faction;
+    for (const f of validFactions) {
+      const rep = ns.singularity.getFactionRep(f);
+      if (rep > maxRep) {
+        maxRep = rep;
+        bestFaction = f;
       }
     }
+
+    // Wenn der Ruf für dieses Augment noch NICHT reicht -> Das ist unser nächstes Grind-Ziel!
+    if (maxRep < target.repReq) {
+      return {
+        name: bestFaction,
+        targetRep: target.repReq,
+        augName: target.name,
+      };
+    }
   }
-  return null;
+
+  return null; // Alle erreichbaren Augments der beigetretenen Fraktionen wurden gefarmt!
 }
 /**
  * Bewirbt sich automatisch bei allen Megacorps als Software-Entwickler.

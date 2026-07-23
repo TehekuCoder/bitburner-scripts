@@ -66,6 +66,8 @@ export async function main(ns: NS): Promise<void> {
   const sysDashboardScript = scriptsList.dashboard;
   const fillRamScript = "utils/fill-ram.js";
 
+  let lastAugAnalysis = 0;
+
   while (true) {
     const now = Date.now();
 
@@ -84,6 +86,18 @@ export async function main(ns: NS): Promise<void> {
       Record<FactionName, number>
     >;
 
+    // Periodische Augment-Analyse (alle 5 Minuten oder bei Neustart)
+    if (now - lastAugAnalysis > 300_000 || !currentState?.augRoadmap) {
+      if (ns.fileExists("tasks/analyze-augmentations.js", "home")) {
+        ns.run("tasks/analyze-augmentations.js", 1);
+        lastAugAnalysis = now;
+      }
+    }
+
+    // Fraktions-Ziel über Roadmap ermitteln
+    const augRoadmap = currentState?.augRoadmap ?? [];
+    const nextRoadmapFaction = findNextRoadmapFaction(ns, augRoadmap);
+
     const p = ns.getPlayer();
 
     // 2. Fraktions-Reputationen & Roadmap evaluieren
@@ -91,15 +105,11 @@ export async function main(ns: NS): Promise<void> {
     for (const f of p.factions) {
       currentFactionReps[f] = ns.singularity.getFactionRep(f);
     }
-
-    const nextRoadmapFaction = findNextRoadmapFaction(
-      p,
-      currentFactionReps,
-      factionTargets as Record<string, number>,
-    );
+    if (nextRoadmapFaction) {
+      factionTargets[nextRoadmapFaction.name] = nextRoadmapFaction.targetRep;
+    }
 
     const homeMaxRam = ns.getServerMaxRam("home");
-    // ✅ NEU: getFreeRam als dynamischer Getter
     const getFreeRam = () =>
       ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
     const currentKarma = (ns as any).heart?.break() ?? 0;
@@ -151,7 +161,7 @@ export async function main(ns: NS): Promise<void> {
 
     const isOrchestratorRunning = ns.isRunning(sysOrchestratorScript, "home");
 
-    // 5. Strategie ermitteln (ohne isRushActive)
+    // 5. Strategie ermitteln
     const strategy = determineStrategy(
       ns,
       p,
@@ -160,7 +170,7 @@ export async function main(ns: NS): Promise<void> {
       currentKarma,
       isOrchestratorRunning,
       factionTargets as Record<FactionName, number>,
-      nextRoadmapFaction,
+      nextRoadmapFaction , // 👈 Type-Cast verhindert mismatch mit altem FactionConfig-Interface
       factionToWorkFor,
       isReadyForFactionGrind,
     );
@@ -266,8 +276,6 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // 🚀 1. Orchestrator & Dashboard Steuerung
-
-    // 1a. Orchestrator starten, falls er nicht läuft und genug RAM da ist
     if (
       !isOrchestratorRunning &&
       ns.fileExists(sysOrchestratorScript, "home") &&
@@ -279,7 +287,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 1b. Dashboard nur starten, wenn der Orchestrator aktiv ist
     if (
       ns.isRunning(sysOrchestratorScript, "home") &&
       ns.fileExists(sysDashboardScript, "home") &&
@@ -377,7 +384,7 @@ function manageMicroservices(
   if (
     currentMode === "MONEY" &&
     (hasSavingTarget || !ns.isRunning(sysOrchestratorScript, "home")) &&
-    !isBatcherActive // 👈 Mache Crime nur, wenn KEIN Batcher aktiv ist
+    !isBatcherActive
   ) {
     targetScript = "tasks/crime.js";
   }

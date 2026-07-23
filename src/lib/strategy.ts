@@ -1,6 +1,6 @@
 import { NS, Player, FactionName, CompanyName } from "@ns";
-import { BotStrategy, StrategyResult } from "../core/types.js";
-import { COMBAT_STATS, MEGACORPS, HACKING_FACTIONS } from "./constants.js";
+import { BotStrategy, StrategyResult, TargetFactionResult } from "../core/types.js";
+import { MEGACORPS, HACKING_FACTIONS } from "./constants.js";
 
 export function determineStrategy(
   ns: NS,
@@ -10,8 +10,8 @@ export function determineStrategy(
   currentKarma: number,
   canRunBatcher: boolean,
   factionTargets: Record<FactionName, number>,
-  nextRoadmapFaction: { name: FactionName; minStat: number } | null,
-  factionToWorkFor: any,
+  nextRoadmapFaction: TargetFactionResult | null,
+  factionToWorkFor: TargetFactionResult | null,
   isReadyForFactionGrind: boolean
 ): StrategyResult {
   let mode: BotStrategy = "MONEY";
@@ -34,19 +34,18 @@ export function determineStrategy(
     mode = "MONEY";
   } else if (nextRoadmapFaction && roadmapFactionName) {
     const isMember = p.factions.includes(roadmapFactionName);
-    const isCombatFaction =
-      nextRoadmapFaction.minStat > 0 ||
-      [
-        "Slum Snakes",
-        "Tetrads",
-        "The Syndicate",
-        "The Dark Army",
-        "Speakers for the Dead",
-      ].includes(roadmapFactionName);
+    const isCombatFaction = [
+      "Slum Snakes",
+      "Tetrads",
+      "The Syndicate",
+      "The Dark Army",
+      "Speakers for the Dead",
+    ].includes(roadmapFactionName);
 
     if (!isMember) {
       targetFaction = roadmapFactionName;
 
+      // Ungejointen Factions: Aufnahmebedingungen prüfen
       if (roadmapFactionName === "Slum Snakes" && currentKarma > -9) {
         mode = "CRIME";
       } else if (roadmapFactionName === "Tetrads" && currentKarma > -18) {
@@ -59,20 +58,14 @@ export function determineStrategy(
       } else if (roadmapFactionName === "Speakers for the Dead" && p.numPeopleKilled < 30) {
         mode = "KILLS";
         targetStat = 30;
-      } else if (
-        nextRoadmapFaction.minStat > 0 &&
-        Math.min(...COMBAT_STATS.map((s) => p.skills[s])) < nextRoadmapFaction.minStat
-      ) {
-        mode = "TRAIN";
-        targetStat = nextRoadmapFaction.minStat;
       } else {
         mode = "MONEY";
       }
     } else {
+      // Wenn wir bereits Mitglied sind -> direkt Reputational Grind starten!
       if (isReadyForFactionGrind || isCombatFaction) {
         mode = "REP";
         targetFaction = roadmapFactionName;
-        targetStat = nextRoadmapFaction.minStat;
       } else {
         mode = "MONEY";
       }

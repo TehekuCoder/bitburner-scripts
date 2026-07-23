@@ -1,5 +1,6 @@
 import { NS, FactionName } from "@ns";
-import { AugShoppingItem } from "/core/types";
+import { AugShoppingItem } from "../core/types.js";
+import { patchState } from "../core/state-manager.js";
 
 // ============================================================================
 // KONFIGURATION
@@ -21,7 +22,6 @@ function getIncomePerSecond(ns: NS): number {
 
   try {
     if (ns.gang && ns.gang.inGang()) {
-      // moneyGainRate ist pro Game-Tick (5 Ticks pro Sekunde)
       income += ns.gang.getGangInformation().moneyGainRate * 5;
     }
   } catch {}
@@ -30,7 +30,7 @@ function getIncomePerSecond(ns: NS): number {
 }
 
 /**
- * Hilfsfunktion zur Leserlichen Formatierung von Zeiten.
+ * Hilfsfunktion zur leserlichen Formatierung von Zeiten.
  */
 function formatTime(seconds: number): string {
   if (!isFinite(seconds) || seconds < 0) return "∞";
@@ -45,6 +45,7 @@ export async function main(ns: NS): Promise<void> {
 
   if (ns.singularity === undefined) {
     ns.print("🛑 [SHOP] Singularity API nicht verfügbar.");
+    patchState(ns, { financeProgress: "Shop: Keine Singularity API" });
     return;
   }
 
@@ -99,6 +100,7 @@ export async function main(ns: NS): Promise<void> {
   // 2. INTELLIGENTE EINKAUFSSCHLEIFE (Mit Warte-Formel)
   let keepShopping = true;
   let isWaitingForAug = false;
+  let boughtCount = 0;
 
   while (keepShopping) {
     keepShopping = false;
@@ -106,7 +108,6 @@ export async function main(ns: NS): Promise<void> {
     const currentMoney = ns.getPlayer().money;
     const incomePerSec = getIncomePerSecond(ns);
 
-    // Aktualisiere aktuelle Preise & filtere fehlende Voraussetzungen
     type ValidCandidate = AugShoppingItem & { currentPrice: number };
     let candidateList: ValidCandidate[] = [];
 
@@ -117,7 +118,7 @@ export async function main(ns: NS): Promise<void> {
       if (missingPrereqs.length > 0) {
         const prereqOnList = missingPrereqs.every((p) => shoppingList.some((s) => s.name === p));
         if (!prereqOnList) {
-          logReport(`⚠️ Skip ${item.name}: Voraussetzung fehlt im Besitz (${missingPrereqs.join(", ")})`);
+          logReport(`⚠️ Skip ${item.name}: Voraussetzung fehlt (${missingPrereqs.join(", ")})`);
         }
         continue;
       }
@@ -126,54 +127,47 @@ export async function main(ns: NS): Promise<void> {
       candidateList.push({ ...item, currentPrice });
     }
 
-    // Sortiere TEUERSTE ZUERST für die Entscheidungskette
+    // Teuerste zuerst (Top-Down)
     candidateList.sort((a, b) => b.currentPrice - a.currentPrice);
 
     if (candidateList.length === 0) break;
 
-    // Prüfe Liste von oben nach unten (Top-Down)
     for (const candidate of candidateList) {
       if (currentMoney >= candidate.currentPrice) {
-        // KAUFEN! (Da wir von oben prüfen, ist dies das teuerste bezahlbare Augment)
         logReport(`[SHOP] Versuche Kauf: ${candidate.name} von ${candidate.faction} ($${ns.format.number(candidate.currentPrice)})`);
         const success = sing.purchaseAugmentation(candidate.faction, candidate.name);
 
         if (success) {
           logReport(`✅ ERFOLGREICH GEKAUFT: ${candidate.name} (${candidate.faction})`);
           shoppingList = shoppingList.filter((s) => s.name !== candidate.name);
-          keepShopping = true; // Preise aller anderen Augments haben sich um ~1.9x erhöht -> Neu evaluieren!
+          boughtCount++;
+          keepShopping = true; // Preise aktualisiert -> Neu evaluieren
           break;
         } else {
           logReport(`❌ Interner API-Fehler beim Kauf von ${candidate.name}`);
         }
       } else {
-        // UNBEZAHLBAR -> Prüfe Wartezeit-Formel
         const neededMoney = candidate.currentPrice - currentMoney;
         const timeToWaitSeconds = incomePerSec > 0 ? neededMoney / incomePerSec : Infinity;
 
         if (timeToWaitSeconds <= MAX_WAIT_TIME_SECONDS) {
-          logReport(`⏳ WARTE-STRATEGIE AKTIV:`);
-          logReport(`   Nächstes Ziel: ${candidate.name} (${candidate.faction})`);
-          logReport(`   Preis: $${ns.format.number(candidate.currentPrice)} | Fehlt: $${ns.format.number(neededMoney)}`);
-          logReport(`   Einkommen: $${ns.format.number(incomePerSec)}/s`);
-          logReport(`   Geschätzte Sparzeit: ~${formatTime(timeToWaitSeconds)} (Limit: ${formatTime(MAX_WAIT_TIME_SECONDS)})`);
-          logReport(`   🛑 Kauf günstigerer Augmentations gestoppt, um $1.9x Preisanstieg zu vermeiden.\n`);
-          
+          const waitText = `Spare auf ${candidate.name} (~${formatTime(timeToWaitSeconds)})`;
+          logReport(`⏳ WARTE-STRATEGIE AKTIV: ${waitText}`);
+          patchState(ns, { financeProgress: `Shop: ${waitText}` });
+
           isWaitingForAug = true;
-          keepShopping = false; // Bricht gesamte Shopping-Schleife ab!
+          keepShopping = false;
           break;
         } else {
-          // Wartezeit zu lang -> Überspringen und nächstgünstigeres Augment prüfen
-          logReport(`ℹ️ Wartezeit für ${candidate.name} ($${ns.format.number(candidate.currentPrice)}) zu lang (~${formatTime(timeToWaitSeconds)}). Prüfe günstigere Alternativen...`);
+          logReport(`ℹ️ Wartezeit für ${candidate.name} zu lang (~${formatTime(timeToWaitSeconds)}). Prüfe Alternativen...`);
         }
       }
     }
   }
 
   // 3. LATE-GAME EXTRA-PHASE: NEUROFLUX GOVERNOR DUMP
-  // Wird NUR ausgeführt, wenn wir aktuell NICHT auf ein reguläres Augment sparen!
   if (isWaitingForAug) {
-    logReport("🔄 Phase 2: NeuroFlux Governor Dump übersprungen (Geld wird für reguläres Augment gespart).");
+    logReport("🔄 Phase 2: NeuroFlux Dump übersprungen (Geld wird gespart).");
   } else {
     logReport("\n🔄 Phase 2: NeuroFlux Governor Dump...");
     let boughtNFG = true;
@@ -210,10 +204,19 @@ export async function main(ns: NS): Promise<void> {
     }
 
     if (nfgCount > 0) {
-      logReport(`📈 NEUROFLUX UPGRADES: Insgesamt ${nfgCount} Stufen investiert.`);
-    } else {
-      logReport("ℹ️ Kein NeuroFlux Governor gekauft.");
+      logReport(`📈 NEUROFLUX UPGRADES: ${nfgCount} Stufen gekauft.`);
+      boughtCount += nfgCount;
     }
+  }
+
+  const finalProgress = boughtCount > 0 
+    ? `Shop: ${boughtCount} Augs gekauft` 
+    : isWaitingForAug 
+      ? undefined 
+      : "Shop: Inaktiv (Keine kaufbaren Augs)";
+
+  if (finalProgress) {
+    patchState(ns, { financeProgress: finalProgress });
   }
 
   logReport("\n🏁 Report Ende.");

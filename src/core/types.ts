@@ -153,6 +153,8 @@ export interface BotState {
   isRushModeActive?: boolean;
   batcherPlan?: any | null;
   batcherDynamicMaxBatches?: number;
+  augRoadmap?: AugmentTarget[];
+
 }
 
 // --- LOGGER ---
@@ -232,4 +234,19 @@ export interface SleeveData {
   index: number;
   stats: SleevePerson;
   task: SleeveTask | null;
+}
+
+export interface AugmentTarget {
+  name: string;
+  repReq: number;
+  basePrice: number;
+  prereqs: string[];
+  factions: FactionName[]; // Welche Fraktionen verkaufen dieses Augment?
+  bestFaction: FactionName; // Die Fraktion, bei der wir aktuell die höchste Rep haben
+}
+
+export interface TargetFactionResult {
+  name: FactionName;
+  targetRep: number;
+  augName: string;
 }

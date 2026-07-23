@@ -26,7 +26,7 @@ export const BATCHER_MIN_RAM = 1024;
 
 // --- MEGACORPS DEFINITION ---
 export const MEGACORPS: Record<string, CompanyName> = {
-  "Fulcrum Secret Technologies": "Fulcrum Technologies",
+  "Fulcrum Technologies": "Fulcrum Technologies",
   ECorp: "ECorp",
   MegaCorp: "MegaCorp",
   "Four Sigma": "Four Sigma",
