@@ -1,18 +1,27 @@
-import { NS, FactionName } from "@ns";
+import { NS, FactionName, BitNodeMultipliers } from "@ns";
 import { AugShoppingItem } from "../core/types.js";
 import { patchState } from "../core/state-manager.js";
+import { DEFAULT_MULTIPLIERS, MAX_WAIT_TIME_SECONDS, AUG_PRICE_MULT } from "../lib/constants.js";
 
-// ============================================================================
-// KONFIGURATION
-// ============================================================================
-// Maximal hinnehmbare Wartezeit in Sekunden (z. B. 600s = 10 Minuten).
-// Wenn das nächste teurere Augment in unter dieser Zeit erreichbar ist,
-// pausiert das Skript alle Käufe und spart das Geld an.
-const MAX_WAIT_TIME_SECONDS = 600; 
 
-/**
- * Ermittelt das aktuelle Gesamteinkommen pro Sekunde ($/s) aus Skripten und Gang.
- */
+function getBitNodeMultipliers(ns: NS): BitNodeMultipliers {
+  const multsFilePath = "/bn-multipliers.txt";
+  if (ns.fileExists(multsFilePath, "home")) {
+    try {
+      return JSON.parse(ns.read(multsFilePath)) as BitNodeMultipliers;
+    } catch {}
+  }
+  return DEFAULT_MULTIPLIERS as unknown as BitNodeMultipliers;
+}
+
+function calculateMinBatchSize(augMoneyMult: number): number {
+  const BASE_BATCH_SIZE = 10; // Community-Standard für Augmentation-Installs
+  if (augMoneyMult <= 1.0) return BASE_BATCH_SIZE;
+
+  // Bei schweren BitNodes (hohe Kosten) die Hürde moderat senken (min. 3)
+  return Math.max(3, Math.round(BASE_BATCH_SIZE / Math.sqrt(augMoneyMult)));
+}
+
 function getIncomePerSecond(ns: NS): number {
   let income = 0;
   try {
@@ -29,9 +38,6 @@ function getIncomePerSecond(ns: NS): number {
   return income;
 }
 
-/**
- * Hilfsfunktion zur leserlichen Formatierung von Zeiten.
- */
 function formatTime(seconds: number): string {
   if (!isFinite(seconds) || seconds < 0) return "∞";
   if (seconds < 60) return `${Math.ceil(seconds)}s`;
@@ -54,6 +60,10 @@ export async function main(ns: NS): Promise<void> {
   const myFactions = player.factions;
   const NFG_NAME = "NeuroFlux Governor";
 
+  // BitNode Multiplikatoren laden & dynamischen Batch berechnen
+  const bnMults = getBitNodeMultipliers(ns);
+  const minBatchSize = calculateMinBatchSize(bnMults.AugmentationMoneyCost ?? 1.0);
+
   let gangFaction = "";
   try {
     if (ns.gang && ns.gang.inGang()) {
@@ -68,7 +78,8 @@ export async function main(ns: NS): Promise<void> {
   };
 
   logReport("==================================================");
-  logReport("🛍️ SHOPPING REPORT - " + new Date().toLocaleTimeString());
+  logReport("🛍️ FACTION SHOPPING REPORT - " + new Date().toLocaleTimeString());
+  logReport(`⚙️ AugCostMult: ${bnMults.AugmentationMoneyCost} | Ziel-Batch-Größe: ${minBatchSize}`);
   logReport("==================================================\n");
 
   let shoppingList: AugShoppingItem[] = [];
@@ -97,78 +108,80 @@ export async function main(ns: NS): Promise<void> {
 
   logReport(`📋 Scanner-Ergebnis: ${shoppingList.length} einzigartige Augmentations qualifiziert.`);
 
-  // 2. INTELLIGENTE EINKAUFSSCHLEIFE (Mit Warte-Formel)
-  let keepShopping = true;
-  let isWaitingForAug = false;
+  if (shoppingList.length === 0) {
+    logReport("ℹ️ Keine kaufbaren Augmentations vorhanden.");
+    patchState(ns, { financeProgress: "Shop: Inaktiv (Keine Augs)" });
+    await ns.write("/temp/shop-report.txt", report.join("\n"), "w");
+    return;
+  }
+
+  // Abhängigkeiten prüfen (Prereqs)
+  const validCandidates = shoppingList.filter((item) => {
+    const prereqs = sing.getAugmentationPrereq(item.name);
+    return prereqs.every((p) => ownedAugs.includes(p) || shoppingList.some((s) => s.name === p));
+  });
+
+  // Sortierung: Teuerste zuerst (Top-Down)
+  validCandidates.sort((a, b) => b.price - a.price);
+
+  // 2. SIMULATION: Wie viele können wir JETZT mit 1.9x Preisskalierung kaufen?
+  let tempMoney = player.money;
+  const affordableBatch: AugShoppingItem[] = [];
+  let simulatedMultiplier = 1.0;
+
+  for (const item of validCandidates) {
+    const scaledPrice = item.price * simulatedMultiplier;
+    if (tempMoney >= scaledPrice) {
+      tempMoney -= scaledPrice;
+      affordableBatch.push(item);
+      simulatedMultiplier *= AUG_PRICE_MULT;
+    }
+  }
+
+  const currentIncome = getIncomePerSecond(ns);
+  const canAffordAll = affordableBatch.length === validCandidates.length;
+  const meetsBatchThreshold = affordableBatch.length >= minBatchSize;
+
+  logReport(`💡 Bezahlbar im Batch (mit 1.9x Skalierung): ${affordableBatch.length} / ${validCandidates.length}`);
+
+  // 3. KAUF ODER SPAREN
   let boughtCount = 0;
 
-  while (keepShopping) {
-    keepShopping = false;
-    const currentOwnedAndQueued = sing.getOwnedAugmentations(true);
-    const currentMoney = ns.getPlayer().money;
-    const incomePerSec = getIncomePerSecond(ns);
+  if (meetsBatchThreshold || canAffordAll) {
+    logReport(`🚀 BATCH-KAUF FREIGEGEBEN (${affordableBatch.length} Augs bereit)`);
 
-    type ValidCandidate = AugShoppingItem & { currentPrice: number };
-    let candidateList: ValidCandidate[] = [];
-
-    for (const item of shoppingList) {
-      const prereqs = sing.getAugmentationPrereq(item.name);
-      const missingPrereqs = prereqs.filter((p) => !currentOwnedAndQueued.includes(p));
-
-      if (missingPrereqs.length > 0) {
-        const prereqOnList = missingPrereqs.every((p) => shoppingList.some((s) => s.name === p));
-        if (!prereqOnList) {
-          logReport(`⚠️ Skip ${item.name}: Voraussetzung fehlt (${missingPrereqs.join(", ")})`);
-        }
-        continue;
-      }
-
-      const currentPrice = sing.getAugmentationPrice(item.name);
-      candidateList.push({ ...item, currentPrice });
-    }
-
-    // Teuerste zuerst (Top-Down)
-    candidateList.sort((a, b) => b.currentPrice - a.currentPrice);
-
-    if (candidateList.length === 0) break;
-
-    for (const candidate of candidateList) {
-      if (currentMoney >= candidate.currentPrice) {
-        logReport(`[SHOP] Versuche Kauf: ${candidate.name} von ${candidate.faction} ($${ns.format.number(candidate.currentPrice)})`);
-        const success = sing.purchaseAugmentation(candidate.faction, candidate.name);
-
+    for (const item of affordableBatch) {
+      const actualPrice = sing.getAugmentationPrice(item.name);
+      if (player.money >= actualPrice) {
+        const success = sing.purchaseAugmentation(item.faction, item.name);
         if (success) {
-          logReport(`✅ ERFOLGREICH GEKAUFT: ${candidate.name} (${candidate.faction})`);
-          shoppingList = shoppingList.filter((s) => s.name !== candidate.name);
+          logReport(`✅ GEKAUFT: ${item.name} ($${ns.format.number(actualPrice)})`);
           boughtCount++;
-          keepShopping = true; // Preise aktualisiert -> Neu evaluieren
-          break;
-        } else {
-          logReport(`❌ Interner API-Fehler beim Kauf von ${candidate.name}`);
         }
+      }
+    }
+  } else {
+    // Noch nicht genug für den Batch -> Sparzeit ermitteln
+    const nextTarget = validCandidates.find((item) => !affordableBatch.some((a) => a.name === item.name));
+    
+    if (nextTarget) {
+      const neededMoney = nextTarget.price - player.money;
+      const waitSeconds = currentIncome > 0 ? neededMoney / currentIncome : Infinity;
+
+      if (waitSeconds <= MAX_WAIT_TIME_SECONDS) {
+        const waitText = `Spare auf ${nextTarget.name} (~${formatTime(waitSeconds)}) [Batch: ${affordableBatch.length}/${minBatchSize}]`;
+        logReport(`⏳ SPAR-MODUS: ${waitText}`);
+        patchState(ns, { financeProgress: `Shop: ${waitText}` });
+        await ns.write("/temp/shop-report.txt", report.join("\n"), "w");
+        return;
       } else {
-        const neededMoney = candidate.currentPrice - currentMoney;
-        const timeToWaitSeconds = incomePerSec > 0 ? neededMoney / incomePerSec : Infinity;
-
-        if (timeToWaitSeconds <= MAX_WAIT_TIME_SECONDS) {
-          const waitText = `Spare auf ${candidate.name} (~${formatTime(timeToWaitSeconds)})`;
-          logReport(`⏳ WARTE-STRATEGIE AKTIV: ${waitText}`);
-          patchState(ns, { financeProgress: `Shop: ${waitText}` });
-
-          isWaitingForAug = true;
-          keepShopping = false;
-          break;
-        } else {
-          logReport(`ℹ️ Wartezeit für ${candidate.name} zu lang (~${formatTime(timeToWaitSeconds)}). Prüfe Alternativen...`);
-        }
+        logReport(`ℹ️ Warten auf ${nextTarget.name} dauert zu lange (~${formatTime(waitSeconds)}). Batch-Ziel (${minBatchSize}) noch nicht erreicht.`);
       }
     }
   }
 
-  // 3. LATE-GAME EXTRA-PHASE: NEUROFLUX GOVERNOR DUMP
-  if (isWaitingForAug) {
-    logReport("🔄 Phase 2: NeuroFlux Dump übersprungen (Geld wird gespart).");
-  } else {
+  // 4. LATE-GAME: NEUROFLUX DUMP
+  if (canAffordAll || boughtCount > 0) {
     logReport("\n🔄 Phase 2: NeuroFlux Governor Dump...");
     let boughtNFG = true;
     let nfgCount = 0;
@@ -191,11 +204,8 @@ export async function main(ns: NS): Promise<void> {
 
       if (bestNFGFaction) {
         const nfgPrice = sing.getAugmentationPrice(NFG_NAME);
-        const currentMoney = ns.getPlayer().money;
-
-        if (currentMoney >= nfgPrice) {
-          const success = sing.purchaseAugmentation(bestNFGFaction, NFG_NAME);
-          if (success) {
+        if (ns.getPlayer().money >= nfgPrice) {
+          if (sing.purchaseAugmentation(bestNFGFaction, NFG_NAME)) {
             nfgCount++;
             boughtNFG = true;
           }
@@ -209,15 +219,12 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
-  const finalProgress = boughtCount > 0 
-    ? `Shop: ${boughtCount} Augs gekauft` 
-    : isWaitingForAug 
-      ? undefined 
-      : "Shop: Inaktiv (Keine kaufbaren Augs)";
-
-  if (finalProgress) {
-    patchState(ns, { financeProgress: finalProgress });
-  }
+  // State Patch
+  const finalStatus = boughtCount > 0
+    ? `Shop: ${boughtCount} Augs gekauft`
+    : `Shop: Warten auf Batch (${affordableBatch.length}/${minBatchSize})`;
+    
+  patchState(ns, { financeProgress: finalStatus });
 
   logReport("\n🏁 Report Ende.");
   await ns.write("/temp/shop-report.txt", report.join("\n"), "w");

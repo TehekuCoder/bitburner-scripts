@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { loadState, patchState } from "./state-manager.js"; // 🟢 Importiert zur State-Vorbereitung
+import { loadState, patchState } from "./state-manager.js"; 
 import { Logger } from "./logger.js";
 import { DEFAULT_MULTIPLIERS } from "/lib/constants.js";
 
@@ -8,7 +8,7 @@ export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "Initializer", "INFO");
 
   const multsFilePath = "/bn-multipliers.txt";
-  const analyzeFactionsScript = "/tasks/analyze-factions.js";
+  const analyzeAugmentationsScript = "/tasks/analyze-augmentations.js";
 
   // --- SCHRITT 1: BITNODE MULTIPLIKATOREN ERMITTELN ---
   try {
@@ -40,12 +40,12 @@ export async function main(ns: NS): Promise<void> {
   if (!hasRoadmap) {
     logger.info("Faction-Roadmap Targets fehlen im State. Starte Analyse...");
     
-    if (ns.fileExists(analyzeFactionsScript, "home")) {
-      const analyzeRam = ns.getScriptRam(analyzeFactionsScript, "home");
+    if (ns.fileExists(analyzeAugmentationsScript, "home")) {
+      const analyzeRam = ns.getScriptRam(analyzeAugmentationsScript, "home");
       const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
 
       if (freeRam >= analyzeRam) {
-        const analyzePid = ns.run(analyzeFactionsScript, 1);
+        const analyzePid = ns.run(analyzeAugmentationsScript, 1);
         
         if (analyzePid > 0) {
           // 🟢 Synchrones Warten: Der Initializer blockiert den Bootloader, 
@@ -61,7 +61,7 @@ export async function main(ns: NS): Promise<void> {
         logger.warn(`Zu wenig RAM auf 'home' (${freeRam.toFixed(1)} GB frei). Analyse verzögert.`);
       }
     } else {
-      logger.error(`Kritischer Fehler: '${analyzeFactionsScript}' existiert nicht!`);
+      logger.error(`Kritischer Fehler: '${analyzeAugmentationsScript}' existiert nicht!`);
     }
   } else {
     logger.info("Gültige Faction-Roadmap im State erkannt. Überspringe Analyse.");

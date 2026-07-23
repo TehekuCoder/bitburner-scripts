@@ -1,6 +1,8 @@
 import { NS, Player, FactionName, CompanyName } from "@ns";
 import { BotStrategy, StrategyResult, TargetFactionResult } from "../core/types.js";
-import { MEGACORPS, HACKING_FACTIONS } from "./constants.js";
+import { MEGACORPS, HACKING_FACTIONS, COMBAT_FACTION_REQUIREMENTS } from "./constants.js";
+
+
 
 export function determineStrategy(
   ns: NS,
@@ -24,6 +26,14 @@ export function determineStrategy(
   const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
   const homeMaxRam = ns.getServerMaxRam("home");
 
+  // N niedrigster Kampfwert des Spielers ermitteln (Str, Def, Dex, Agi)
+  const minCombatSkill = Math.min(
+    p.skills.strength,
+    p.skills.defense,
+    p.skills.dexterity,
+    p.skills.agility
+  );
+
   // Default-Zuweisung für Target-Faction, falls im Roadmap-Modus
   if (roadmapFactionName && p.factions.includes(roadmapFactionName)) {
     targetFaction = roadmapFactionName;
@@ -44,9 +54,15 @@ export function determineStrategy(
 
     if (!isMember) {
       targetFaction = roadmapFactionName;
+      const requiredCombatStat = COMBAT_FACTION_REQUIREMENTS[roadmapFactionName] ?? 0;
 
-      // Ungejointen Factions: Aufnahmebedingungen prüfen
-      if (roadmapFactionName === "Slum Snakes" && currentKarma > -9) {
+      // 🏋️ 1. Prüfen, ob Kampfwerte trainiert werden müssen
+      if (requiredCombatStat > 0 && minCombatSkill < requiredCombatStat) {
+        mode = "TRAIN";
+        targetStat = requiredCombatStat;
+      }
+      // 🔫 2. Prüfen, ob Karma oder Kills fehlen
+      else if (roadmapFactionName === "Slum Snakes" && currentKarma > -9) {
         mode = "CRIME";
       } else if (roadmapFactionName === "Tetrads" && currentKarma > -18) {
         mode = "CRIME";

@@ -243,3 +243,20 @@ export const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000; // 60 Minuten
 export const BLACKLIST_DURATION = 30000; // 30 Sekunden Sperre nach Kollaps
 
 export const SWITCH_THRESHOLD = 1.25;
+
+// Mindestanforderungen an ALLE 4 Kampfwerte (Str/Def/Dex/Agi) pro Fraktion
+export const COMBAT_FACTION_REQUIREMENTS: Partial<Record<FactionName, number>> = {
+  "Slum Snakes": 30,
+  "Tetrads": 75,
+  "The Syndicate": 200,
+  "The Dark Army": 300,
+  "Speakers for the Dead": 300,
+  "The Covenant": 850,
+  "Illuminati": 1200,
+};
+
+// ============================================================================
+// KONFIGURATION & MULTIPLIKATOREN FÜR AUGMENTATIONS
+// ============================================================================
+export const MAX_WAIT_TIME_SECONDS = 1800; // Max. 30 Min. auf einzelne Teure sparen
+export const AUG_PRICE_MULT = 1.9;
