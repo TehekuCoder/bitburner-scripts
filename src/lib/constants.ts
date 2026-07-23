@@ -26,16 +26,16 @@ export const BATCHER_MIN_RAM = 1024;
 
 // --- MEGACORPS DEFINITION ---
 export const MEGACORPS: Record<string, CompanyName> = {
+  "Fulcrum Secret Technologies": "Fulcrum Technologies",
   ECorp: "ECorp",
   MegaCorp: "MegaCorp",
-  "KuaiGong International": "KuaiGong International",
   "Four Sigma": "Four Sigma",
+  "KuaiGong International": "KuaiGong International",
   NWO: "NWO",
   "Blade Industries": "Blade Industries",
   "OmniTek Incorporated": "OmniTek Incorporated",
   "Bachman & Associates": "Bachman & Associates",
   "Clarke Incorporated": "Clarke Incorporated",
-  "Fulcrum Secret Technologies": "Fulcrum Technologies",
 };
 
 // --- ROADMAP LISTS ---
