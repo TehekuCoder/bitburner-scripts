@@ -3,13 +3,25 @@ import { internalPlanner } from "utils/internal-planner.js";
 import {
   getAvailableWorkers,
   executeOnWorkers,
-  pruneBatch,
+  insertEventSorted,
+  pruneBatchFromQueue,
 } from "lib/worker-executor.js";
-import { PATH_HACK, PATH_GROW, PATH_WEAKEN, SPACER, BATCH_GAP } from "/lib/constants";
+import {
+  PATH_HACK,
+  PATH_GROW,
+  PATH_WEAKEN,
+  SPACER,
+  BATCH_GAP,
+} from "/lib/constants";
 import { Logger } from "/lib/logger";
-import { getAllServers, getNetworkRealFreeRam, getQueueRam, getNetworkMaxRam } from "/lib/network";
+import {
+  getAllServers,
+  getNetworkRealFreeRam,
+  getQueueRam,
+  getNetworkMaxRam,
+} from "/lib/network";
 import { loadBnMults, patchState } from "/lib/state";
-import { JitEvent, BatchPlan } from "/lib/types";
+import { JitEvent, BatchPlan, ActiveBatch } from "/lib/types";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -19,7 +31,7 @@ export async function main(ns: NS): Promise<void> {
     "INFO",
     "/logs/sys-jit-batcher.txt",
   );
-  
+
   const bnMults = loadBnMults(ns);
 
   patchState(ns, { batcherActive: true, batcherProgress: "Initialisiere..." });
@@ -46,11 +58,11 @@ export async function main(ns: NS): Promise<void> {
   let batchesSentForTarget = 0;
   let activePlan: BatchPlan | null = null;
 
-  // Tracke aktive Batch-IDs direkt als Set, um teures .filter() in der Schleife zu vermeiden
+  // Tracke aktive Batches & IDs außerhalb der Schleife (Persistenz!)
   const activeBatchIds = new Set<number>();
+  const activeBatches = new Map<number, ActiveBatch>();
 
   let lastHackingLevel = ns.getHackingLevel();
-  const batchEventCounts = new Map<number, number>();
 
   while (true) {
     const now = Date.now();
@@ -78,20 +90,18 @@ export async function main(ns: NS): Promise<void> {
       );
       lastHackingLevel = currentLevel;
 
-      // FIX: Vollständiger Reset bei Level-Up
       target = null;
       activePlan = null;
       eventQueue.length = 0;
       activeBatchIds.clear();
-      batchEventCounts.clear();
+      activeBatches.clear();
       nextAvailableLandTime = 0;
     } else if (levelDelta > 0) {
       lastHackingLevel = currentLevel;
     }
 
-    const activeBatchesCount = activeBatchIds.size;
     // ----------------------------------------------------------------------
-    // 🩺 1. KONTINUIERLICHER HEALTH-CHECK
+    // 🩺 1. HEALTH-CHECK (Greift nur, wenn aktuell KEINE Batches in-flight sind)
     // ----------------------------------------------------------------------
     if (target && !isPrepping) {
       const currentSec = ns.getServerSecurityLevel(target);
@@ -99,24 +109,20 @@ export async function main(ns: NS): Promise<void> {
       const currentMoney = ns.getServerMoneyAvailable(target);
       const maxMoney = ns.getServerMaxMoney(target);
 
-      const secDesync = currentSec > minSec + 1.0;
+      // Desync-Check nur bei idle Queue, da laufende Hacks Sec temporär anheben
+      const secDesync = activeBatchIds.size === 0 && currentSec > minSec + 1.0;
       const moneyDesync =
-        activeBatchesCount === 0 && currentMoney < maxMoney * 0.9;
+        activeBatchIds.size === 0 && currentMoney < maxMoney * 0.9;
 
       if (secDesync || moneyDesync) {
-        // 👈 secDesync & moneyDesync nutzen
-        logger.warn(
-          `⚠️ Target ${target} desynchronisiert! (Sec: ${currentSec.toFixed(1)}/${minSec}, $:${(currentMoney / 1e6).toFixed(1)}M/${(maxMoney / 1e6).toFixed(1)}M). Abbruch & Re-Prep...`,
-        );
-
-        // 💥 FIX: Sperren NUR im Fehlerfall aufrufen!
+        logger.warn(`⚠️ Target ${target} desynchronisiert! Reset & Re-Prep...`);
         targetBlacklist.set(target, now + 30000);
 
         target = null;
         activePlan = null;
         eventQueue.length = 0;
         activeBatchIds.clear();
-        batchEventCounts.clear();
+        activeBatches.clear();
         nextAvailableLandTime = 0;
       }
     }
@@ -129,8 +135,6 @@ export async function main(ns: NS): Promise<void> {
     const realFreeRam = getNetworkRealFreeRam(ns, servers);
     const queueRam = getQueueRam(ns, eventQueue);
     const virtualFreeRam = realFreeRam - queueRam;
-
-    // 🚀 FAST-CHECK: Aktive Batches via Set-Größe ermitteln (O(1) statt O(N))
 
     const needsNewPlan = !target || (eventQueue.length === 0 && !isPrepping);
 
@@ -178,11 +182,13 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // Event-Queue befüllen
+    // ----------------------------------------------------------------------
+    // 📥 2. EVENT-QUEUE BEFÜLLEN
+    // ----------------------------------------------------------------------
     if (
       target &&
       activePlan &&
-      activeBatchesCount < dynamicMaxBatchesForTarget
+      activeBatchIds.size < dynamicMaxBatchesForTarget
     ) {
       const isPrepBatch = activePlan.hackThreads === 0;
       const safeVirtualRam = isPrepBatch
@@ -236,14 +242,19 @@ export async function main(ns: NS): Promise<void> {
           },
         ].filter((ev) => ev.threads > 0);
 
-        eventQueue.push(...validEvents);
-        eventQueue.sort((a, b) => a.startTime - b.startTime);
+        // O(log N) Binary Insertion in die sortierte Queue
+        for (const ev of validEvents) {
+          insertEventSorted(eventQueue, ev);
+        }
 
         activeBatchIds.add(bId);
-        batchEventCounts.set(bId, validEvents.length);
+        activeBatches.set(bId, {
+          id: bId,
+          executedEventsCount: 0,
+          totalEventsCount: validEvents.length,
+        });
 
         batchesSentForTarget++;
-
         nextAvailableLandTime += Math.max(BATCH_GAP, SPACER * 4);
 
         if (activePlan.hackThreads === 0) {
@@ -252,17 +263,16 @@ export async function main(ns: NS): Promise<void> {
 
         patchState(ns, {
           batcherTarget: target,
-          batcherProgress: `JIT-HWGW Active (${activeBatchesCount + 1}/${dynamicMaxBatchesForTarget} Batches)`,
+          batcherProgress: `JIT-HWGW Active (${activeBatchIds.size}/${dynamicMaxBatchesForTarget} Batches)`,
           batcherPlan: activePlan,
-          batcherDynamicMaxBatches: dynamicMaxBatchesForTarget, // 👈 Neu
-          batcherRamNeeded: activePlan.totalRam * dynamicMaxBatchesForTarget, // 👈 Neu
+          batcherDynamicMaxBatches: dynamicMaxBatchesForTarget,
+          batcherRamNeeded: activePlan.totalRam * dynamicMaxBatchesForTarget,
         });
       } else if (eventQueue.length === 0) {
         logger.warn(
           `⚠️ RAM erschöpft für ${target} (Frei: ${virtualFreeRam.toFixed(1)}GB). Target-Reset.`,
         );
 
-        // 💥 FIX: Target kurzzeitig sperren (15 Sek.), damit ein anderes Ziel gewählt werden kann
         targetBlacklist.set(target, now + 15000);
 
         target = null;
@@ -274,34 +284,50 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // JIT Dispatch Loop
+    // ----------------------------------------------------------------------
+    // ⚡ 3. JIT DISPATCH LOOP
+    // ----------------------------------------------------------------------
     while (eventQueue.length > 0 && Date.now() >= eventQueue[0].startTime) {
       const event = eventQueue.shift()!;
       const lag = Date.now() - event.startTime;
+      const batchState = activeBatches.get(event.batchId);
 
-      // O(1) Tracking aktualisieren
-      const remaining = (batchEventCounts.get(event.batchId) ?? 1) - 1;
-      if (remaining <= 0) {
-        batchEventCounts.delete(event.batchId);
-        activeBatchIds.delete(event.batchId);
-      } else {
-        batchEventCounts.set(event.batchId, remaining);
-      }
-
+      // LAG-PRUNE CHECK
       if (lag > 60) {
-        logger.warn(
-          `⏳ Lag (${Math.round(lag)}ms) bei Event ${event.id}. Batch verworfen.`,
-        );
-        pruneBatch(eventQueue, event.batchId);
-        activeBatchIds.delete(event.batchId);
-        batchEventCounts.delete(event.batchId);
-        continue;
+        logger.warn(`⏳ Lag (${Math.round(lag)}ms) bei Event ${event.id}.`);
+
+        if (batchState && batchState.executedEventsCount > 0) {
+          logger.error(
+            `💥 Batch ${event.batchId} wurde partiell ausgeführt! Zwangsrücksetzung.`,
+          );
+
+          targetBlacklist.set(event.target, now + 15000);
+          eventQueue.length = 0;
+          activeBatchIds.clear();
+          activeBatches.clear();
+          target = null;
+          activePlan = null;
+          break;
+        } else {
+          pruneBatchFromQueue(eventQueue, event.batchId);
+          activeBatchIds.delete(event.batchId);
+          activeBatches.delete(event.batchId);
+          continue;
+        }
       }
 
       const workers = getAvailableWorkers(ns, servers);
       const dispatched = executeOnWorkers(ns, event, workers);
 
-      if (!dispatched) {
+      if (dispatched) {
+        if (batchState) {
+          batchState.executedEventsCount++;
+          if (batchState.executedEventsCount === batchState.totalEventsCount) {
+            activeBatchIds.delete(event.batchId);
+            activeBatches.delete(event.batchId);
+          }
+        }
+      } else {
         logger.error(
           `🛑 RAM-Engpass bei ${event.target} (Event: ${event.id}). Leite Recovery ein...`,
         );
@@ -315,7 +341,7 @@ export async function main(ns: NS): Promise<void> {
         eventQueue.length = 0;
         eventQueue.push(...filteredQueue);
         activeBatchIds.clear();
-        batchEventCounts.clear();
+        activeBatches.clear();
 
         if (target === event.target) {
           target = null;
@@ -333,10 +359,13 @@ export async function main(ns: NS): Promise<void> {
         break;
       }
     }
-    // Precision Sleep Management
+
+    // ----------------------------------------------------------------------
+    // ⏱️ PRECISION SLEEP MANAGEMENT (Capped auf max. 50ms)
+    // ----------------------------------------------------------------------
     if (eventQueue.length > 0) {
       const timeToNext = eventQueue[0].startTime - Date.now();
-      await ns.sleep(Math.max(1, timeToNext));
+      await ns.sleep(Math.min(50, Math.max(1, timeToNext)));
     } else {
       await ns.sleep(50);
     }

@@ -1,9 +1,15 @@
 import { NS } from "@ns";
 
 export async function main(ns: NS): Promise<void> {
-  // 🧠 Schritt 1: Blockierten RAM sofort freigeben (v3.0 dnet mechanic)
-  await ns.dnet.memoryReallocation();
+  const currentHost = ns.getHostname();
 
-  // 🎣 Schritt 2: Das frisch gewonnene RAM für den Phishing-Angriff nutzen
-  await ns.dnet.phishingAttack();
+  try {
+    // 🧠 Schritt 1: Blockierten RAM freigeben
+    await ns.dnet.memoryReallocation(currentHost);
+
+    // 🎣 Schritt 2: Phishing starten
+    await ns.dnet.phishingAttack();
+  } catch (e) {
+    ns.tprint(`🔴 [PHISH] Fehler auf ${currentHost}: ${e}`);
+  }
 }

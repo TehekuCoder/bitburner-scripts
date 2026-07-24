@@ -242,3 +242,9 @@ export interface TargetFactionResult {
   targetRep: number;
   augName: string;
 }
+
+export interface ActiveBatch {
+  id: number;
+  executedEventsCount: number;
+  totalEventsCount: number;
+}
