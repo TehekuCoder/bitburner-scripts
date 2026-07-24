@@ -1,6 +1,6 @@
 import { NS } from "@ns";
-import { loadState, patchState } from "../core/state-manager.js";
-import { findBestTarget } from "../lib/targeting.js";
+import { findBestTarget } from "/lib/network";
+import { loadState, patchState } from "/lib/state";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -34,7 +34,7 @@ export async function main(ns: NS): Promise<void> {
     const player = ns.getPlayer(); // 0.50 GB RAM
 
     // 3. Bestes Target berechnen (ns.getServer wird in findBestTarget verwendet -> 2.00 GB RAM)
-    const bestTarget = findBestTarget(ns, allServers, player, bnMults);
+    const bestTarget = findBestTarget(ns, allServers, player.skills.hacking, bnMults);
 
     if (bestTarget) {
       patchState(ns, { kernelTarget: bestTarget });

@@ -1,6 +1,7 @@
 import { NS, FactionName } from "@ns";
-import { patchState } from "../core/state-manager.js";
-import { HACKING_FACTIONS } from "../lib/constants.js";
+// Direkte Imports statt Barrel-Export (lib/index.js)
+import { patchState } from "lib/state.js";
+import { HACKING_FACTIONS } from "lib/constants.js"; // Passe den Pfad an, falls HACKING_FACTIONS woanders liegt
 
 export interface AugmentTarget {
   name: string;
@@ -12,6 +13,10 @@ export interface AugmentTarget {
 }
 
 export async function main(ns: NS): Promise<void> {
+  // 🟢 DUMMY-REFERENZ: Zwingt den AST-Parser, getHackingLevel (0.05 GB) 
+  // sofort zur statischen RAM-Berechnung hinzuzurechnen (von 22.60 GB auf 22.65 GB).
+  void ns.getHackingLevel;
+
   const sing = ns.singularity;
   const ownedAugs = sing.getOwnedAugmentations(true); // inkl. gekaufter/wartender
   const augMap = new Map<string, AugmentTarget>();

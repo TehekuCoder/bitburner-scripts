@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { patchState } from "../core/state-manager.js";
+import { patchState } from "/lib/state";
 
 export async function main(ns: NS): Promise<void> {
   let hasCorp = false;

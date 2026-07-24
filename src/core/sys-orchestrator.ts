@@ -1,9 +1,8 @@
 import { NS } from "@ns";
-import { getAllServers } from "../lib/network.js";
-import { getNetworkMaxRam } from "../lib/ram-utils.js";
-import { Logger } from "./logger.js";
-import { patchState } from "./state-manager.js";
-import { BatchStrategy } from "./types.js";
+import { Logger } from "/lib/logger";
+import { getAllServers, getNetworkMaxRam } from "/lib/network";
+import { patchState } from "/lib/state";
+import { BatchStrategy } from "/lib/types";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -174,23 +173,23 @@ function switchExecutionEngine(
 
   switch (strategy) {
     case "BOOTSTRAP":
-      return ns.run("core/engine-prep.js", 1, "n00dles");
+      return ns.run("core/engines/engine-prep.js", 1, "n00dles");
 
     case "XP_GRIND":
       // joesguns ist eines der besten Ziele für schnellen XP-Gain
-      return ns.run("core/engine-xp-grind.js", 1, "joesguns");
+      return ns.run("core/engines/engine-xp-grind.js", 1, "joesguns");
 
     case "PREP":
-      return ns.run("core/engine-prep.js", 1, targetArg);
+      return ns.run("core/engines/engine-prep.js", 1, targetArg);
 
     case "PROTO_BATCH":
-      return ns.run("core/engine-proto.js", 1, targetArg);
+      return ns.run("core/engines/engine-proto.js", 1, targetArg);
 
     case "SHOTGUN_HWGW":
-      return ns.run("core/engine-shotgun.js", 1, targetArg);
+      return ns.run("core/engines/engine-shotgun.js", 1, targetArg);
 
     case "JIT_HWGW":
-      return ns.run("core/sys-jit-batcher.js", 1, targetArg);
+      return ns.run("core/engines/sys-jit-batcher.js", 1, targetArg);
 
     default:
       return 0;

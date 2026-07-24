@@ -1,24 +1,17 @@
 import {
   FactionName,
   CompanyName,
-  Player,
   GymType,
   BitNodeMultipliers,
 } from "@ns";
+import type { FactionConfig } from "./types.js";
 
-// --- INTERFACES ---
-export interface FactionConfig {
-  name: FactionName;
-  minStat: number;
-  priority: number;
-}
-
-// --- REFRESH INTERVALLS ---
+// --- REFRESH INTERVALS ---
 export const REFRESH_INTERVALS = {
   MEGACORP_APPLY: 600_000, // 10 Min.
   FALLBACK_TARGET: 300_000, // 5 Min.
-  STRATEGY_COOLDOWN: 60_000, // 1 Min. Schonfrist für Oszillation
-  NETWORK_SCAN: 20_000, // Nur alle 20 Sek. das Netzwerk scannen/infizieren
+  STRATEGY_COOLDOWN: 60_000, // 1 Min.
+  NETWORK_SCAN: 20_000, // 20 Sek.
 };
 
 // --- CONFIGURATION CONSTANTS ---
@@ -40,23 +33,12 @@ export const MEGACORPS: Record<string, CompanyName> = {
 
 // --- ROADMAP LISTS ---
 export const HACKING_FACTIONS: FactionConfig[] = [
-  // ------------------------------------------------------------------
-  // PHASE 1: Early-Game Hacking (Schneller Einstieg & Multiplikatoren)
-  // ------------------------------------------------------------------
   { name: "CyberSec", minStat: 0, priority: 1 },
   { name: "Tian Di Hui", minStat: 0, priority: 2 },
   { name: "Netburners", minStat: 0, priority: 3 },
   { name: "NiteSec", minStat: 0, priority: 4 },
   { name: "The Black Hand", minStat: 0, priority: 5 },
-
-  // ------------------------------------------------------------------
-  // PHASE 2: Mid-Game Core (Der beste Hacking-Multiplier-Lieferant)
-  // ------------------------------------------------------------------
   { name: "BitRunners", minStat: 0, priority: 6 },
-
-  // ------------------------------------------------------------------
-  // PHASE 3: Stadt- & Verbrecher-Fraktionen (Falls Stats vorhanden)
-  // ------------------------------------------------------------------
   { name: "Aevum", minStat: 0, priority: 7 },
   { name: "Volhaven", minStat: 0, priority: 8 },
   { name: "Chongqing", minStat: 0, priority: 9 },
@@ -66,11 +48,7 @@ export const HACKING_FACTIONS: FactionConfig[] = [
   { name: "Slum Snakes", minStat: 30, priority: 13 },
   { name: "Tetrads", minStat: 75, priority: 14 },
   { name: "The Syndicate", minStat: 200, priority: 15 },
-
-  // ------------------------------------------------------------------
-  // PHASE 4: Corporate High-Tier (Fulcrum ZUERST!)
-  // ------------------------------------------------------------------
-  { name: "Fulcrum Secret Technologies", minStat: 0, priority: 16 }, // 💥 NACH OBEN GEHOLT!
+  { name: "Fulcrum Secret Technologies", minStat: 0, priority: 16 },
   { name: "ECorp", minStat: 0, priority: 17 },
   { name: "MegaCorp", minStat: 0, priority: 18 },
   { name: "Four Sigma", minStat: 0, priority: 19 },
@@ -80,18 +58,10 @@ export const HACKING_FACTIONS: FactionConfig[] = [
   { name: "OmniTek Incorporated", minStat: 0, priority: 23 },
   { name: "Bachman & Associates", minStat: 0, priority: 24 },
   { name: "Clarke Incorporated", minStat: 0, priority: 25 },
-
-  // ------------------------------------------------------------------
-  // PHASE 5: Special & High-Combat/Endgame
-  // ------------------------------------------------------------------
   { name: "Silhouette", minStat: 0, priority: 26 },
   { name: "The Dark Army", minStat: 300, priority: 27 },
   { name: "Speakers for the Dead", minStat: 300, priority: 28 },
-
-  // ------------------------------------------------------------------
-  // PHASE 6: Endgame Pinnacle
-  // ------------------------------------------------------------------
-  { name: "Daedalus", minStat: 1500, priority: 29 }, // 💥 Höhere Prio als Covenant/Illuminati wegen Red Pill!
+  { name: "Daedalus", minStat: 1500, priority: 29 },
   { name: "The Covenant", minStat: 850, priority: 30 },
   { name: "Illuminati", minStat: 1200, priority: 31 },
 ];
@@ -105,18 +75,27 @@ export const CITY_FACTIONS: FactionName[] = [
   "Volhaven" as FactionName,
 ];
 
-export const COMBAT_KEYS = [
+export const COMBAT_STATS = [
   "strength",
   "defense",
   "dexterity",
   "agility",
 ] as const;
 
-export const GYM_STAT_MAP: Record<string, GymType> = {
-  strength: "str" as GymType,
-  defense: "def" as GymType,
-  dexterity: "dex" as GymType,
-  agility: "agi" as GymType,
+export type CombatStat = (typeof COMBAT_STATS)[number];
+
+export const STAT_MAP: Record<CombatStat, GymType> = {
+  strength: "str",
+  defense: "def",
+  dexterity: "dex",
+  agility: "agi",
+};
+
+export const DISPLAY_MAP: Record<CombatStat, string> = {
+  strength: "Str",
+  defense: "Def",
+  dexterity: "Dex",
+  agility: "Agi",
 };
 
 export const TARGET_PROGRAMS = [
@@ -184,67 +163,40 @@ export const DEFAULT_MULTIPLIERS: Record<keyof BitNodeMultipliers, number> = {
   ScriptHackMoneyGain: 1.0,
 };
 
-//systems/finance.ts
+// systems/finance.ts
 export const TRANSACTION_FEE = 100_000;
 export const MIN_INVESTMENT = 5_000_000;
 export const CASH_BUFFER = 2_000_000;
 
-//tasks/dnet-crawler.ts
+// tasks/dnet-crawler.ts
 export const processedServers = new Set<string>();
 export const COOLDOWN_FILE = "/dnet-cooldowns.txt";
 export const COOLDOWN_MS = 5 * 60 * 1000;
 export const LOOT_INTERVAL_MS = 3 * 60 * 1000;
 
-export const PATH_GROW = "/tasks/grow.js";
-export const PATH_HACK = "/tasks/hack.js";
-export const PATH_WEAKEN = "/tasks/weaken.js";
+export const PATH_GROW = "payloads/grow.js";
+export const PATH_HACK = "payloads/hack.js";
+export const PATH_WEAKEN = "payloads/weaken.js";
 
-// 📦 DEFINITION DER KERN-WORKER (utils/provision.ts)
+// utils/provision.ts
 export const PAYLOADS = [
   PATH_HACK,
   PATH_GROW,
   PATH_WEAKEN,
   "tasks/share.js",
-  "tasks/work.js", // WICHTIG: Haupt-Worker hinzugefügt!
-  "tasks/xp-grind.js", // WICHTIG: XP-Farmer hinzugefügt!
+  "tasks/work.js"
 ];
 
-// "as const" macht daraus ein Readonly-Tuple aus exakten Literalen statt string[]
-export const COMBAT_STATS = [
-  "strength",
-  "defense",
-  "dexterity",
-  "agility",
-] as const;
-
-// Erstellt den Union-Type: "strength" | "defense" | "dexterity" | "agility"
-export type CombatStat = (typeof COMBAT_STATS)[number];
-
-export const STAT_MAP: Record<CombatStat, GymType> = {
-  strength: "str",
-  defense: "def",
-  dexterity: "dex",
-  agility: "agi",
-};
-
-export const DISPLAY_MAP: Record<CombatStat, string> = {
-  strength: "Str",
-  defense: "Def",
-  dexterity: "Dex",
-  agility: "Agi",
-};
-
-// Konfigurationen sys-jit-batchter.ts
+// sys-jit-batcher.ts
 export const SPACER = 125;
 export const BATCH_GAP = 4 * SPACER;
 export const HOME_RAM_RESERVE = 64;
 export const SCRIPT_RAM_BASE = 1.75;
-export const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000; // 60 Minuten
-export const BLACKLIST_DURATION = 30000; // 30 Sekunden Sperre nach Kollaps
+export const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000;
+export const BLACKLIST_DURATION = 30000;
 
 export const SWITCH_THRESHOLD = 1.25;
 
-// Mindestanforderungen an ALLE 4 Kampfwerte (Str/Def/Dex/Agi) pro Fraktion
 export const COMBAT_FACTION_REQUIREMENTS: Partial<Record<FactionName, number>> = {
   "Slum Snakes": 30,
   "Tetrads": 75,
@@ -255,8 +207,5 @@ export const COMBAT_FACTION_REQUIREMENTS: Partial<Record<FactionName, number>> =
   "Illuminati": 1200,
 };
 
-// ============================================================================
-// KONFIGURATION & MULTIPLIKATOREN FÜR AUGMENTATIONS
-// ============================================================================
-export const MAX_WAIT_TIME_SECONDS = 1800; // Max. 30 Min. auf einzelne Teure sparen
+export const MAX_WAIT_TIME_SECONDS = 1800;
 export const AUG_PRICE_MULT = 1.9;

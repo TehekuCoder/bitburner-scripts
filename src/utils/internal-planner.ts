@@ -1,5 +1,5 @@
 import { NS, Server } from "@ns";
-import { BatchPlan } from "../core/types";
+
 import { calculateBatch } from "./batch-calculator.js";
 import {
   PATH_HACK,
@@ -7,8 +7,9 @@ import {
   PATH_WEAKEN,
   SPACER,
   BATCH_GAP,
-} from "../lib/constants.js";
-import { Logger } from "../core/logger.js";
+} from "/lib/constants.js";
+import { Logger } from "/lib/logger.js";
+import { BatchPlan } from "/lib/types.js";
 
 export function internalPlanner(
   ns: NS,

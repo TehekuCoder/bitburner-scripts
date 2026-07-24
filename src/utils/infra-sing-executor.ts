@@ -1,10 +1,7 @@
-// src/utils/infra-sing-executor.ts
-
 import { NS, ProgramName } from "@ns";
-import { loadBnMults } from "../lib/state.js";
-import { patchState } from "../core/state-manager.js";
-import { Logger } from "../core/logger.js";
-import { DEFAULT_MULTIPLIERS,TARGET_PROGRAMS } from "/lib/constants.js";
+import { DEFAULT_MULTIPLIERS, TARGET_PROGRAMS } from "/lib/constants";
+import { Logger } from "/lib/logger";
+import { loadBnMults, patchState } from "/lib/state";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

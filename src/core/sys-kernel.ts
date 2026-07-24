@@ -1,7 +1,9 @@
 import { NS } from "@ns";
-import { loadState, patchState } from "./state-manager.js";
-import { Logger } from "./logger.js";
-import { ScriptList } from "./types.js";
+import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants";
+import { Logger } from "/lib/logger";
+import { loadState, patchState } from "/lib/state";
+import { ScriptList } from "/lib/types";
+
 
 export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "Kernel", "INFO");
@@ -10,31 +12,30 @@ export async function main(ns: NS): Promise<void> {
   const scripts: ScriptList = {
     worker: "tasks/work.js",
     dispatcher: "core/sys-dispatcher.js",
-    infra: "core/sys-infra.js",
-    backdoor: "tasks/backdoor.js",
-    trade: "systems/finance.js",
-    hacknet: "systems/hacknet-early.js",
-    dnet: "core/dnet-master.js",
+    infra: "managers/infra-manager.js",
+    backdoor: "daemons/backdoor.js",
+    trade: "manager/finance-manager.js",
+    hacknet: "daemons/hacknet-early.js",
+    dnet: "manager/dnet-master.js",
     crawler: "tasks/dnet-crawler.js",
-    hack: "tasks/hack.js",
-    grow: "tasks/grow.js",
-    weaken: "tasks/weaken.js",
-    sleeve: "core/sys-sleeve.js",
-    dashboard: "core/sys-dashboard.js",
-    fillShare: "core/fill-share.js"
+    hack: PATH_HACK,
+    grow: PATH_GROW,
+    weaken: PATH_WEAKEN,
+    sleeve: "managers/sleeve-manager.js",
+    fillShare: "daemons/fill-share.js"
   };
 
-  // --- 🔄 BOOT-SEQUENCE: INITIALIZER ---
-  logger.info("Initiiere System-Boot...");
-  const initPid = ns.run("core/sys-initializer.js", 1);
-  if (initPid === 0) {
-    logger.error(
-      "Kritischer Boot-Fehler: Initializer konnte nicht gestartet werden!",
-    );
-    return;
-  }
-  while (ns.isRunning(initPid)) {
-    await ns.sleep(50);
+  // --- 🔄 FALLBACK: PRÜFEN OB BOOT/STATE INITIALISIERT IST ---
+  logger.info("Kernel gestartet. Überprüfe System-State...");
+  
+  if (!loadState(ns) && ns.fileExists("core/boot.js", "home")) {
+    logger.info("Kein State gefunden. Führe Einmal-Initializer aus...");
+    const bootPid = ns.run("core/boot.js", 1);
+    if (bootPid > 0) {
+      while (ns.isRunning(bootPid)) {
+        await ns.sleep(50);
+      }
+    }
   }
 
   // --- 📡 INITIAL STATE SETTING ---
@@ -46,18 +47,8 @@ export async function main(ns: NS): Promise<void> {
     kernelTarget: existingState.kernelTarget || "n00dles",
   });
 
-  // --- 🖥️ CORE UI BOOT ---
-  if (!ns.scriptRunning("core/sys-hud.js", "home"))
-    ns.run("core/sys-hud.js", 1);
-  if (
-    ns.fileExists(scripts.dashboard, "home") &&
-    !ns.scriptRunning(scripts.dashboard, "home")
-  ) {
-    ns.run(scripts.dashboard, 1);
-  }
-
   // Pfade für die beiden Flotten-Modi
-  const earlyFleetScript = "core/sys-early-fleet.js";
+  const earlyFleetScript = "daemons/early-fleet.js";
 
   while (true) {
     const homeMax = ns.getServerMaxRam("home");
@@ -105,8 +96,6 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // --- ⚡ DYNAMISCHER FLOTTEN-MODUS SHIFT ---
-    // 🧠 Der Dispatcher übernimmt ab 64 GB Home-RAM die Kontrolle.
-    // Darunter läuft die eigenständige Early-Fleet.
     const isDispatcherReady =
       homeMax >= 64 && ns.fileExists(scripts.dispatcher, "home");
 

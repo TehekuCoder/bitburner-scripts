@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { Logger } from "../core/logger.js"; // 🟢 Pfad vereinfacht!
+import { Logger } from "/lib/logger";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

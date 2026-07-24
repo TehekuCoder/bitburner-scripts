@@ -1,11 +1,10 @@
-// src/core/sys-suite.ts
-
 import { NS } from "@ns";
-import { loadState } from "./state-manager.js";
-import { loadBnMults } from "../lib/state.js";
-import { manageSuites } from "../modules/suite-manager.js";
-import { Logger } from "./logger.js";
-import { ScriptList } from "./types.js";
+import { manageSuites } from "daemons/suite-manager.js";
+import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants";
+import { Logger } from "/lib/logger";
+import { loadBnMults, loadState } from "/lib/state";
+import { ScriptList } from "/lib/types";
+
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -15,31 +14,24 @@ export async function main(ns: NS): Promise<void> {
   const scripts: ScriptList = {
     worker: "tasks/work.js",
     dispatcher: "core/sys-dispatcher.js",
-    infra: "core/sys-infra.js",
-    backdoor: "tasks/backdoor.js",
-    trade: "systems/finance.js",
-    hacknet: "systems/hacknet-early.js",
-    dnet: "core/dnet-master.js",
+    infra: "managers/infra-manager.js",
+    backdoor: "daemons/backdoor.js",
+    trade: "manager/finance-manager.js",
+    hacknet: "daemons/hacknet-early.js",
+    dnet: "manager/dnet-master.js",
     crawler: "tasks/dnet-crawler.js",
-    hack: "tasks/hack.js",
-    grow: "tasks/grow.js",
-    weaken: "tasks/weaken.js",
-    sleeve: "core/sys-sleeve.js",
-    dashboard: "core/sys-dashboard.js",
-    fillShare: "core/fill-share.js"
+    hack: PATH_HACK,
+    grow: PATH_GROW,
+    weaken: PATH_WEAKEN,
+    sleeve: "managers/sleeve-manager.js",
+    fillShare: "daemons/fill-share.js",
   };
 
   while (true) {
     const currentState = loadState(ns);
     if (currentState) {
       // Der Suite-Manager entscheidet nun selbst anhand des echten Netzwerk-Zustands!
-      manageSuites(
-        ns,
-        scripts,
-        currentState,
-        bnMults,
-        logger
-      );
+      manageSuites(ns, scripts, currentState, bnMults, logger);
     }
     await ns.sleep(5000); // Alle 5 Sekunden reicht völlig und schont die CPU
   }

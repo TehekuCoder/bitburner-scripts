@@ -1,10 +1,10 @@
 // tasks/dnet-solver.ts
 
 import { NS } from "@ns";
-import { Logger } from "../core/logger.js";
-import { runSolver } from "/modules/solvers/solveManager";
-import { ServerAuthDetails } from "/core/types.js";
-import { COOLDOWN_FILE, COOLDOWN_MS } from "/lib/constants.js";
+import { runSolver } from "solvers/solveManager.js";
+import { COOLDOWN_FILE, COOLDOWN_MS } from "/lib/constants";
+import { Logger } from "/lib/logger";
+import { ServerAuthDetails } from "/lib/types";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

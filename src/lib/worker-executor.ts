@@ -1,6 +1,6 @@
 import { NS } from "@ns";
-import { JitEvent, WorkerNode } from "core/types";
-import { HOME_RAM_RESERVE } from "./constants.js";
+import { HOME_RAM_RESERVE } from "lib/constants.js";
+import { WorkerNode, JitEvent } from "./types";
 
 export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   const nodes: WorkerNode[] = [];
@@ -42,10 +42,6 @@ export function executeOnWorkers(
   for (const w of workers) {
     const maxThreads = Math.floor(w.freeRam / scriptRam);
     if (maxThreads <= 0) continue;
-
-    if (!ns.fileExists(event.script, w.hostname)) {
-      ns.scp(event.script, w.hostname, "home");
-    }
 
     const threadsToRun = Math.min(threadsLeft, maxThreads);
 

@@ -1,5 +1,5 @@
 import { NS, CrimeType } from "@ns";
-import { loadState, patchState } from "../core/state-manager.js";
+import { loadState, patchState } from "/lib/state";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

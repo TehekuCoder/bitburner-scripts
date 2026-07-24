@@ -1,24 +1,28 @@
 import { NS, FactionName } from "@ns";
-import { loadState, patchState } from "./state-manager.js";
-import { BotStrategy, ScriptList } from "./types.js";
+
+import { generateProgressBar } from "../ui/ui-helper.js";
+import {
+  DEFAULT_MULTIPLIERS,
+  PATH_HACK,
+  PATH_GROW,
+  PATH_WEAKEN,
+  REFRESH_INTERVALS,
+  COMBAT_STATS,
+} from "/lib/constants.js";
+import { Logger } from "/lib/logger.js";
+import { MetricTracker } from "/lib/metrics.js";
 import {
   breakAndInfectNetwork,
   getAllServers,
-  findBestFallbackTarget,
-} from "../lib/network.js";
-import { findNextRoadmapFaction, applyToAllMegacorps } from "../lib/player.js";
-import { loadBnMults } from "../lib/state.js";
-import { Logger } from "./logger.js";
+  findBestTarget,
+} from "/lib/network.js";
 import {
-  REFRESH_INTERVALS,
-  COMBAT_STATS,
-  DEFAULT_MULTIPLIERS,
-} from "../lib/constants.js";
-
-// --- EXTERNE MODULE & UTILITIES ---
-import { determineStrategy } from "../lib/strategy.js";
-import { MetricTracker } from "../lib/metrics.js";
-import { generateProgressBar } from "../lib/ui-helper.js";
+  findNextRoadmapFaction,
+  applyToAllMegacorps,
+  determineStrategy,
+} from "/lib/player.js";
+import { loadBnMults, loadState, patchState } from "/lib/state.js";
+import { ScriptList, BotStrategy } from "/lib/types.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -45,26 +49,23 @@ export async function main(ns: NS): Promise<void> {
   let allNetworkServers: string[] = [];
   let lastNetworkScan = 0;
 
-  const scriptsList: ScriptList = {
-    worker: "tasks/work.js",
+  const scripts: ScriptList = {
+    worker: "payloads/work.js",
     dispatcher: "core/sys-dispatcher.js",
-    infra: "core/sys-infra.js",
-    backdoor: "tasks/backdoor.js",
-    trade: "systems/finance.js",
-    hacknet: "systems/hacknet-early.js",
-    dnet: "core/dnet-master.js",
+    infra: "managers/infra-manager.js",
+    backdoor: "daemons/backdoor.js",
+    trade: "manager/finance-manager.js",
+    hacknet: "daemons/hacknet-early.js",
+    dnet: "manager/dnet-master.js",
     crawler: "tasks/dnet-crawler.js",
-    hack: "tasks/hack.js",
-    grow: "tasks/grow.js",
-    weaken: "tasks/weaken.js",
-    sleeve: "core/sys-sleeve.js",
-    dashboard: "core/sys-dashboard.js",
-    fillShare: "core/fill-share.js",
+    hack: PATH_HACK,
+    grow: PATH_GROW,
+    weaken: PATH_WEAKEN,
+    sleeve: "managers/sleeve-manager.js",
+    fillShare: "daemons/fill-share.js",
   };
 
   const sysOrchestratorScript = "core/sys-orchestrator.js";
-  const sysDashboardScript = scriptsList.dashboard;
-  const fillRamScript = "utils/fill-ram.js";
 
   let lastAugAnalysis = 0;
 
@@ -170,7 +171,7 @@ export async function main(ns: NS): Promise<void> {
       currentKarma,
       isOrchestratorRunning,
       factionTargets as Record<FactionName, number>,
-      nextRoadmapFaction , // 👈 Type-Cast verhindert mismatch mit altem FactionConfig-Interface
+      nextRoadmapFaction, // 👈 Type-Cast verhindert mismatch mit altem FactionConfig-Interface
       factionToWorkFor,
       isReadyForFactionGrind,
     );
@@ -182,12 +183,12 @@ export async function main(ns: NS): Promise<void> {
       now - lastFallbackUpdate > REFRESH_INTERVALS.FALLBACK_TARGET ||
       cachedFallbackTarget === "n00dles"
     ) {
-      cachedFallbackTarget = findBestFallbackTarget(
+      cachedFallbackTarget = findBestTarget(
         ns,
-        p.skills.hacking,
-        bnMults,
-        allNetworkServers,
-        currentState?.batcherTarget ?? null,
+        allNetworkServers, // 1. nodes
+        p.skills.hacking, // 2. playerHackingLevel (gefehlt!)
+        bnMults, // 3. bnMults
+        currentState?.batcherTarget ?? null, // 4. blacklistTarget
       );
       lastFallbackUpdate = now;
     }
@@ -287,14 +288,14 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    if (
-      ns.isRunning(sysOrchestratorScript, "home") &&
-      ns.fileExists(sysDashboardScript, "home") &&
-      !ns.isRunning(sysDashboardScript, "home") &&
-      getFreeRam() >= ns.getScriptRam(sysDashboardScript, "home")
-    ) {
-      ns.run(sysDashboardScript, 1);
-    }
+    // if (
+    //   ns.isRunning(sysOrchestratorScript, "home") &&
+    //   ns.fileExists(sysDashboardScript, "home") &&
+    //   !ns.isRunning(sysDashboardScript, "home") &&
+    //   getFreeRam() >= ns.getScriptRam(sysDashboardScript, "home")
+    // ) {
+    //   ns.run(sysDashboardScript, 1);
+    // }
 
     // 💾 2. Zustand im State-Manager speichern
     patchState(ns, {
@@ -316,7 +317,7 @@ export async function main(ns: NS): Promise<void> {
     if (isEarlyGameCrime) {
       if (ns.isRunning("tasks/faction-shopping.js", "home"))
         ns.scriptKill("tasks/faction-shopping.js", "home");
-      const rogueScripts = ["systems/hacknet.js", "systems/hacknet-early.js"];
+      const rogueScripts = ["daemons/hacknet.js", "daemons/hacknet-early.js"];
       for (const script of rogueScripts) {
         if (ns.fileExists(script, "home") && ns.isRunning(script, "home"))
           ns.scriptKill(script, "home");
@@ -342,21 +343,6 @@ export async function main(ns: NS): Promise<void> {
       isBatcherActive,
     );
 
-    // 🔋 4. RAM-Filler managen
-    const isRamReady =
-      homeMaxRam >= 256 ||
-      (pServers.length > 0 &&
-        Math.max(...pServers.map((s) => ns.getServerMaxRam(s))) >= 64);
-
-    if (
-      isRamReady &&
-      !isEarlyGameCrime &&
-      ns.fileExists(fillRamScript, "home") &&
-      !ns.isRunning(fillRamScript, "home") &&
-      getFreeRam() >= ns.getScriptRam(fillRamScript, "home")
-    ) {
-      ns.run(fillRamScript, 1);
-    }
 
     await ns.sleep(2000);
   }

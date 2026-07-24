@@ -1,6 +1,6 @@
 import { NS } from "@ns";
-import { getAllServers } from "../lib/network.js";
 import { provisionServer } from "./provision.js";
+import { getAllServers } from "/lib/network.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -93,9 +93,6 @@ export async function main(ns: NS): Promise<void> {
     const maxRam = ns.getServerMaxRam(server) - reserve;
 
     let usedRam = ns.getServerUsedRam(server);
-    if (server === "home") {
-      usedRam = Math.max(0, usedRam - mySelfRam);
-    }
 
     const freeRam = maxRam - usedRam;
     const threads = Math.floor(freeRam / workerRam);

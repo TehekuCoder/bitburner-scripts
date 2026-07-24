@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { ScriptList } from "../core/types.js"; // Import aus neutraler Datei!
+import { ScriptList } from "/lib/types";
 
 /**
  * Verteilt Worker-Skripte auf einem Ziel-Server und maximiert die Thread-Auslastung.

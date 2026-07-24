@@ -1,4 +1,7 @@
-import { NS } from "@ns";
+import { NS, Player } from "@ns";
+import { JitEvent } from "lib/types.js";
+import { HOME_RAM_RESERVE } from "lib/constants.js";
+import { provisionServer } from "/utils/provision";
 
 /**
  * Durchsucht das gesamte Bitburner-Netzwerk via hochperformantem Stack (DFS).
@@ -69,87 +72,41 @@ export function breakAndInfectNetwork(ns: NS): void {
     const portsRequired = ns.getServerNumPortsRequired(server);
     const hackingLevelRequired = ns.getServerRequiredHackingLevel(server);
 
-    if (playerHackingLevel >= hackingLevelRequired && maxPossiblePorts >= portsRequired) {
+    if (
+      playerHackingLevel >= hackingLevelRequired &&
+      maxPossiblePorts >= portsRequired
+    ) {
       let portsOpened = 0;
 
-      if (portsOpened < portsRequired && cricks.ssh.has) { cricks.ssh.run(server); portsOpened++; }
-      if (portsOpened < portsRequired && cricks.ftp.has) { cricks.ftp.run(server); portsOpened++; }
-      if (portsOpened < portsRequired && cricks.smtp.has) { cricks.smtp.run(server); portsOpened++; }
-      if (portsOpened < portsRequired && cricks.http.has) { cricks.http.run(server); portsOpened++; }
-      if (portsOpened < portsRequired && cricks.sql.has) { cricks.sql.run(server); portsOpened++; }
+      if (portsOpened < portsRequired && cricks.ssh.has) {
+        cricks.ssh.run(server);
+        portsOpened++;
+      }
+      if (portsOpened < portsRequired && cricks.ftp.has) {
+        cricks.ftp.run(server);
+        portsOpened++;
+      }
+      if (portsOpened < portsRequired && cricks.smtp.has) {
+        cricks.smtp.run(server);
+        portsOpened++;
+      }
+      if (portsOpened < portsRequired && cricks.http.has) {
+        cricks.http.run(server);
+        portsOpened++;
+      }
+      if (portsOpened < portsRequired && cricks.sql.has) {
+        cricks.sql.run(server);
+        portsOpened++;
+      }
 
       if (portsOpened >= portsRequired) {
         ns.nuke(server);
-        ns.scp(
-          [
-            "tasks/work.js",
-            "tasks/weaken.js",
-            "tasks/grow.js",
-            "tasks/hack.js",
-          ],
-          server,
-          "home"
-        );
-        ns.print(`🔓 Server erfolgreich gehackt: ${server}`);
+        provisionServer(ns, server); // Centralized Payload Deployment!
+        ns.print(`🔓 Server erfolgreich gehackt & provisioniert: ${server}`);
       }
     }
   }
 }
-/**
- * Findet das profitabelste Ziel für einfache Hack/Grow/Weaken-Worker.
- */
-export function findBestFallbackTarget(
-  ns: NS,
-  hackingLevel: number,
-  bnMults: any,
-  allServers: string[],
-  blacklistTarget: string | null = null,
-): string {
-  let bestTarget = "n00dles";
-  let maxWeight = 0;
-
-  const serverMaxMoneyMult = bnMults.ServerMaxMoney ?? 1.0;
-  const growthMult = bnMults.ServerGrowthRate ?? 1.0;
-  const isNoMoneyNode = serverMaxMoneyMult === 0;
-
-  for (const current of allServers) {
-    if (
-      current === "home" ||
-      !ns.hasRootAccess(current) ||
-      current === blacklistTarget
-    )
-      continue;
-
-    const reqHacking = ns.getServerRequiredHackingLevel(current);
-    if (reqHacking > hackingLevel) continue;
-
-    if (isNoMoneyNode) {
-      const cycleTime = ns.getWeakenTime(current);
-      const weight = reqHacking / (Math.max(1, cycleTime) / 1000);
-      if (weight > maxWeight) {
-        maxWeight = weight;
-        bestTarget = current;
-      }
-      continue;
-    }
-
-    const serverMaxMoney = ns.getServerMaxMoney(current);
-    if (serverMaxMoney <= 0) continue;
-
-    const cycleTime = ns.getWeakenTime(current);
-    if (cycleTime > 5 * 60 * 1000) continue; // Ignoriere extrem langsame Server im Early/Mid Game
-
-    const weight =
-      (serverMaxMoney / (cycleTime / 1000)) * (reqHacking / 100) * growthMult;
-
-    if (weight > maxWeight) {
-      maxWeight = weight;
-      bestTarget = current;
-    }
-  }
-  return bestTarget;
-}
-
 /**
  * Verteilt Threads eines Skripts auf alle verfügbaren Server im Netzwerk.
  */
@@ -190,4 +147,102 @@ export function dispatchSimpleTask(
       }
     }
   }
+}
+
+export function getNetworkMaxRam(ns: NS, servers: string[]): number {
+  let total = servers
+    .filter((s) => ns.hasRootAccess(s) && s !== "home")
+    .reduce((sum, s) => sum + ns.getServerMaxRam(s), 0);
+
+  total += Math.max(0, ns.getServerMaxRam("home") - HOME_RAM_RESERVE);
+  return total;
+}
+
+export function getNetworkRealFreeRam(ns: NS, servers: string[]): number {
+  let free = servers
+    .filter((s) => ns.hasRootAccess(s) && s !== "home")
+    .reduce(
+      (sum, s) => sum + (ns.getServerMaxRam(s) - ns.getServerUsedRam(s)),
+      0,
+    );
+
+  free += Math.max(
+    0,
+    ns.getServerMaxRam("home") - ns.getServerUsedRam("home") - HOME_RAM_RESERVE,
+  );
+  return free;
+}
+
+export function getQueueRam(ns: NS, queue: JitEvent[]): number {
+  return queue.reduce(
+    (sum, ev) => sum + ev.threads * ns.getScriptRam(ev.script),
+    0,
+  );
+}
+
+/**
+ * Berechnet das profitabelste Hacking-Ziel im Netzwerk.
+ */
+export function findBestTarget(
+  ns: NS,
+  nodes: string[],
+  playerHackingLevel: number,
+  bnMults: any,
+  blacklistTarget: string | null = null,
+  maxCycleTimeMs: number = Infinity,
+): string {
+  let best = "n00dles";
+  let maxWeight = 0;
+
+  const serverMaxMoneyMult = bnMults?.ServerMaxMoney ?? 1.0;
+  const growthMult = bnMults?.ServerGrowthRate ?? 1.0;
+  const isNoMoneyNode = serverMaxMoneyMult === 0;
+
+  for (const node of nodes) {
+    // 1. System- & Infrastruktur-Server aussortieren
+    if (
+      node === "home" ||
+      node === "darkweb" ||
+      node.startsWith("hacknet-node") ||
+      node === blacklistTarget ||
+      !ns.hasRootAccess(node)
+    ) {
+      continue;
+    }
+
+    // 2. Hacking-Level Prüfung
+    const reqSkill = ns.getServerRequiredHackingLevel(node);
+    if (reqSkill > playerHackingLevel) continue;
+
+    const cycleTime = ns.getWeakenTime(node);
+
+    // 3. Optionaler Laufzeit-Filter (z. B. max 5 Minuten im Early/Mid-Game)
+    if (maxCycleTimeMs < Infinity && cycleTime > maxCycleTimeMs) {
+      continue;
+    }
+
+    // 4. Spezialfall: BitNodes ohne Geld (XP-Grind Fokus)
+    if (isNoMoneyNode) {
+      const weight = reqSkill / (Math.max(1, cycleTime) / 1000);
+      if (weight > maxWeight) {
+        maxWeight = weight;
+        best = node;
+      }
+      continue;
+    }
+
+    // 5. Standard Geld-Gewichtung
+    const maxMoney = ns.getServerMaxMoney(node);
+    if (maxMoney <= 0) continue;
+
+    const weight =
+      (maxMoney / (cycleTime / 1000)) * (reqSkill / 100) * growthMult;
+
+    if (weight > maxWeight) {
+      maxWeight = weight;
+      best = node;
+    }
+  }
+
+  return best;
 }

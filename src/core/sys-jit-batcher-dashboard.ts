@@ -1,10 +1,9 @@
 import { NS } from "@ns";
-import { loadState } from "./state-manager.js";
-import { drawBatcherDashboard } from "./batcher-ui.js";
-import { getAllServers } from "../lib/network.js";
-import { DashboardData } from "./types.js";
-import { HOME_RAM_RESERVE } from "/lib/constants.js";
-
+import { drawBatcherDashboard } from "ui/batcher-ui.js";
+import { HOME_RAM_RESERVE } from "/lib/constants";
+import { getAllServers } from "/lib/network";
+import { loadState } from "/lib/state";
+import { DashboardData } from "/lib/types";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

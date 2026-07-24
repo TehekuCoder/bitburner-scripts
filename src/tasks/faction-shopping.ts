@@ -1,7 +1,7 @@
 import { NS, FactionName, BitNodeMultipliers } from "@ns";
-import { AugShoppingItem } from "../core/types.js";
-import { patchState } from "../core/state-manager.js";
-import { DEFAULT_MULTIPLIERS, MAX_WAIT_TIME_SECONDS, AUG_PRICE_MULT } from "../lib/constants.js";
+import { DEFAULT_MULTIPLIERS, AUG_PRICE_MULT, MAX_WAIT_TIME_SECONDS } from "/lib/constants";
+import { patchState } from "/lib/state";
+import { AugShoppingItem } from "/lib/types";
 
 
 function getBitNodeMultipliers(ns: NS): BitNodeMultipliers {
@@ -62,7 +62,9 @@ export async function main(ns: NS): Promise<void> {
 
   // BitNode Multiplikatoren laden & dynamischen Batch berechnen
   const bnMults = getBitNodeMultipliers(ns);
-  const minBatchSize = calculateMinBatchSize(bnMults.AugmentationMoneyCost ?? 1.0);
+  const minBatchSize = calculateMinBatchSize(
+    bnMults.AugmentationMoneyCost ?? 1.0,
+  );
 
   let gangFaction = "";
   try {
@@ -79,7 +81,9 @@ export async function main(ns: NS): Promise<void> {
 
   logReport("==================================================");
   logReport("🛍️ FACTION SHOPPING REPORT - " + new Date().toLocaleTimeString());
-  logReport(`⚙️ AugCostMult: ${bnMults.AugmentationMoneyCost} | Ziel-Batch-Größe: ${minBatchSize}`);
+  logReport(
+    `⚙️ AugCostMult: ${bnMults.AugmentationMoneyCost} | Ziel-Batch-Größe: ${minBatchSize}`,
+  );
   logReport("==================================================\n");
 
   let shoppingList: AugShoppingItem[] = [];
@@ -106,7 +110,9 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
-  logReport(`📋 Scanner-Ergebnis: ${shoppingList.length} einzigartige Augmentations qualifiziert.`);
+  logReport(
+    `📋 Scanner-Ergebnis: ${shoppingList.length} einzigartige Augmentations qualifiziert.`,
+  );
 
   if (shoppingList.length === 0) {
     logReport("ℹ️ Keine kaufbaren Augmentations vorhanden.");
@@ -118,7 +124,9 @@ export async function main(ns: NS): Promise<void> {
   // Abhängigkeiten prüfen (Prereqs)
   const validCandidates = shoppingList.filter((item) => {
     const prereqs = sing.getAugmentationPrereq(item.name);
-    return prereqs.every((p) => ownedAugs.includes(p) || shoppingList.some((s) => s.name === p));
+    return prereqs.every(
+      (p) => ownedAugs.includes(p) || shoppingList.some((s) => s.name === p),
+    );
   });
 
   // Sortierung: Teuerste zuerst (Top-Down)
@@ -142,31 +150,40 @@ export async function main(ns: NS): Promise<void> {
   const canAffordAll = affordableBatch.length === validCandidates.length;
   const meetsBatchThreshold = affordableBatch.length >= minBatchSize;
 
-  logReport(`💡 Bezahlbar im Batch (mit 1.9x Skalierung): ${affordableBatch.length} / ${validCandidates.length}`);
+  logReport(
+    `💡 Bezahlbar im Batch (mit 1.9x Skalierung): ${affordableBatch.length} / ${validCandidates.length}`,
+  );
 
   // 3. KAUF ODER SPAREN
   let boughtCount = 0;
 
   if (meetsBatchThreshold || canAffordAll) {
-    logReport(`🚀 BATCH-KAUF FREIGEGEBEN (${affordableBatch.length} Augs bereit)`);
+    logReport(
+      `🚀 BATCH-KAUF FREIGEGEBEN (${affordableBatch.length} Augs bereit)`,
+    );
 
     for (const item of affordableBatch) {
       const actualPrice = sing.getAugmentationPrice(item.name);
       if (player.money >= actualPrice) {
         const success = sing.purchaseAugmentation(item.faction, item.name);
         if (success) {
-          logReport(`✅ GEKAUFT: ${item.name} ($${ns.format.number(actualPrice)})`);
+          logReport(
+            `✅ GEKAUFT: ${item.name} ($${ns.format.number(actualPrice)})`,
+          );
           boughtCount++;
         }
       }
     }
   } else {
     // Noch nicht genug für den Batch -> Sparzeit ermitteln
-    const nextTarget = validCandidates.find((item) => !affordableBatch.some((a) => a.name === item.name));
-    
+    const nextTarget = validCandidates.find(
+      (item) => !affordableBatch.some((a) => a.name === item.name),
+    );
+
     if (nextTarget) {
       const neededMoney = nextTarget.price - player.money;
-      const waitSeconds = currentIncome > 0 ? neededMoney / currentIncome : Infinity;
+      const waitSeconds =
+        currentIncome > 0 ? neededMoney / currentIncome : Infinity;
 
       if (waitSeconds <= MAX_WAIT_TIME_SECONDS) {
         const waitText = `Spare auf ${nextTarget.name} (~${formatTime(waitSeconds)}) [Batch: ${affordableBatch.length}/${minBatchSize}]`;
@@ -175,7 +192,9 @@ export async function main(ns: NS): Promise<void> {
         await ns.write("/temp/shop-report.txt", report.join("\n"), "w");
         return;
       } else {
-        logReport(`ℹ️ Warten auf ${nextTarget.name} dauert zu lange (~${formatTime(waitSeconds)}). Batch-Ziel (${minBatchSize}) noch nicht erreicht.`);
+        logReport(
+          `ℹ️ Warten auf ${nextTarget.name} dauert zu lange (~${formatTime(waitSeconds)}). Batch-Ziel (${minBatchSize}) noch nicht erreicht.`,
+        );
       }
     }
   }
@@ -220,10 +239,11 @@ export async function main(ns: NS): Promise<void> {
   }
 
   // State Patch
-  const finalStatus = boughtCount > 0
-    ? `Shop: ${boughtCount} Augs gekauft`
-    : `Shop: Warten auf Batch (${affordableBatch.length}/${minBatchSize})`;
-    
+  const finalStatus =
+    boughtCount > 0
+      ? `Shop: ${boughtCount} Augs gekauft`
+      : `Shop: Warten auf Batch (${affordableBatch.length}/${minBatchSize})`;
+
   patchState(ns, { financeProgress: finalStatus });
 
   logReport("\n🏁 Report Ende.");
