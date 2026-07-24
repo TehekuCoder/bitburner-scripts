@@ -2,7 +2,8 @@ import { NS, FactionName, BitNodeMultipliers } from "@ns";
 import { DEFAULT_MULTIPLIERS, AUG_PRICE_MULT, MAX_WAIT_TIME_SECONDS } from "/lib/constants";
 import { patchState } from "/lib/state";
 import { AugShoppingItem } from "/lib/types";
-
+// ➕ Import der Player-Helper
+import { getPurchasedUninstalledAugs, hasPurchasedAugsThisRun } from "/lib/player";
 
 function getBitNodeMultipliers(ns: NS): BitNodeMultipliers {
   const multsFilePath = "/bn-multipliers.txt";
@@ -66,6 +67,10 @@ export async function main(ns: NS): Promise<void> {
     bnMults.AugmentationMoneyCost ?? 1.0,
   );
 
+  // ➕ Abfrage der bereits gekauften, aber noch nicht installierten Augmentations
+  const uninstalledAugs = getPurchasedUninstalledAugs(ns);
+  const pendingCount = uninstalledAugs.length;
+
   let gangFaction = "";
   try {
     if (ns.gang && ns.gang.inGang()) {
@@ -82,7 +87,7 @@ export async function main(ns: NS): Promise<void> {
   logReport("==================================================");
   logReport("🛍️ FACTION SHOPPING REPORT - " + new Date().toLocaleTimeString());
   logReport(
-    `⚙️ AugCostMult: ${bnMults.AugmentationMoneyCost} | Ziel-Batch-Größe: ${minBatchSize}`,
+    `⚙️ AugCostMult: ${bnMults.AugmentationMoneyCost} | Ziel-Batch: ${minBatchSize} | Bereit für Install: ${pendingCount}`,
   );
   logReport("==================================================\n");
 
@@ -115,8 +120,11 @@ export async function main(ns: NS): Promise<void> {
   );
 
   if (shoppingList.length === 0) {
-    logReport("ℹ️ Keine kaufbaren Augmentations vorhanden.");
-    patchState(ns, { financeProgress: "Shop: Inaktiv (Keine Augs)" });
+    const statusMsg = pendingCount > 0 
+      ? `Shop: Bereit für Reset (${pendingCount} Augs ausstehend)` 
+      : "Shop: Inaktiv (Keine Augs)";
+    logReport(`ℹ️ Keine weiteren kaufbaren Augmentations vorhanden. (${statusMsg})`);
+    patchState(ns, { financeProgress: statusMsg });
     await ns.write("/temp/shop-report.txt", report.join("\n"), "w");
     return;
   }
@@ -148,10 +156,13 @@ export async function main(ns: NS): Promise<void> {
 
   const currentIncome = getIncomePerSecond(ns);
   const canAffordAll = affordableBatch.length === validCandidates.length;
-  const meetsBatchThreshold = affordableBatch.length >= minBatchSize;
+
+  // ➕ KORREKTUR: Bereits gekaufte Augmentations zählen zum Batch-Ziel dazu!
+  const totalBatchSize = pendingCount + affordableBatch.length;
+  const meetsBatchThreshold = totalBatchSize >= minBatchSize;
 
   logReport(
-    `💡 Bezahlbar im Batch (mit 1.9x Skalierung): ${affordableBatch.length} / ${validCandidates.length}`,
+    `💡 Bezahlbar im Batch: ${affordableBatch.length} neue (+ ${pendingCount} bereits gekauft = ${totalBatchSize}/${minBatchSize} Ziel)`,
   );
 
   // 3. KAUF ODER SPAREN
@@ -159,7 +170,7 @@ export async function main(ns: NS): Promise<void> {
 
   if (meetsBatchThreshold || canAffordAll) {
     logReport(
-      `🚀 BATCH-KAUF FREIGEGEBEN (${affordableBatch.length} Augs bereit)`,
+      `🚀 BATCH-KAUF FREIGEGEBEN (${affordableBatch.length} neue Augs bereit)`,
     );
 
     for (const item of affordableBatch) {
@@ -186,7 +197,7 @@ export async function main(ns: NS): Promise<void> {
         currentIncome > 0 ? neededMoney / currentIncome : Infinity;
 
       if (waitSeconds <= MAX_WAIT_TIME_SECONDS) {
-        const waitText = `Spare auf ${nextTarget.name} (~${formatTime(waitSeconds)}) [Batch: ${affordableBatch.length}/${minBatchSize}]`;
+        const waitText = `Spare auf ${nextTarget.name} (~${formatTime(waitSeconds)}) [Batch: ${totalBatchSize}/${minBatchSize}]`;
         logReport(`⏳ SPAR-MODUS: ${waitText}`);
         patchState(ns, { financeProgress: `Shop: ${waitText}` });
         await ns.write("/temp/shop-report.txt", report.join("\n"), "w");
@@ -200,7 +211,7 @@ export async function main(ns: NS): Promise<void> {
   }
 
   // 4. LATE-GAME: NEUROFLUX DUMP
-  if (canAffordAll || boughtCount > 0) {
+  if (canAffordAll || boughtCount > 0 || hasPurchasedAugsThisRun(ns)) {
     logReport("\n🔄 Phase 2: NeuroFlux Governor Dump...");
     let boughtNFG = true;
     let nfgCount = 0;
@@ -238,11 +249,14 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
+  // ➕ Aktualisierte Gesamtanzahl an uninstallierten Augs ermitteln
+  const finalUninstalledCount = getPurchasedUninstalledAugs(ns).length;
+
   // State Patch
   const finalStatus =
     boughtCount > 0
-      ? `Shop: ${boughtCount} Augs gekauft`
-      : `Shop: Warten auf Batch (${affordableBatch.length}/${minBatchSize})`;
+      ? `Shop: ${boughtCount} Augs neu gekauft (${finalUninstalledCount} bereit für Reset)`
+      : `Shop: Warten auf Batch (${finalUninstalledCount}/${minBatchSize})`;
 
   patchState(ns, { financeProgress: finalStatus });
 

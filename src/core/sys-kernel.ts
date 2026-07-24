@@ -17,7 +17,7 @@ export async function main(ns: NS): Promise<void> {
     trade: "manager/finance-manager.js",
     hacknet: "daemons/hacknet-early.js",
     dnet: "manager/dnet-master.js",
-    crawler: "tasks/dnet-crawler.js",
+    crawler: "daemons/dnet-crawler.js",
     hack: PATH_HACK,
     grow: PATH_GROW,
     weaken: PATH_WEAKEN,

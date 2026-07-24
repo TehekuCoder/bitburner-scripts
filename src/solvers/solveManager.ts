@@ -1,20 +1,20 @@
 import { NS } from "@ns";
 
-import { solveAccountsManager } from "solvers/solveAccountsManager";
-import { solveAnagram } from "solvers/solveAnagram";
-import { solveBaseConversion } from "solvers/solveBaseConversion";
-import { solveCloudBlare } from "solvers/solveCloudBlare";
-import { solveDeepGreen } from "solvers/solveDeepGreen";
-import { solveDeskMemo } from "solvers/solveDeskMemo";
-import { solveFactoriOs } from "solvers/solveFactoriOs";
-import { solveFreshInstall } from "solvers/solveFreshInstall";
-import { solveLaika4 } from "solvers/solveLaika4";
+import { solveAccountsManager } from "./solveAccountsManager";
+import { solveAnagram } from "./solveAnagram";
+import { solveBaseConversion } from "./solveBaseConversion";
+import { solveCloudBlare } from "./solveCloudBlare";
+import { solveDeepGreen } from "./solveDeepGreen";
+import { solveDeskMemo } from "./solveDeskMemo";
+import { solveFactoriOs } from "./solveFactoriOs";
+import { solveFreshInstall } from "./solveFreshInstall";
+import { solveLaika4 } from "./solveLaika4";
 import { solveNIL } from "./solveNIL";
 import { solveOpenWebAccessPoint } from "./solveOpenWebAccessPoint";
+import { solvePHP54 } from "./solvePHP54";
 import { solvePr0verFl0 } from "./solvePr0verFl0";
 import { solveRoman } from "./solveRoman";
 import { solveZeroLogon } from "./solveZeroLogon";
-import { solvePHP54 } from "./solvePHP54";
 import { SolverFunction } from "/lib/types";
 
 // Die Keys entsprechen exakt den Server-Typen, wie sie im Spiel definiert sind
@@ -39,7 +39,6 @@ const SOLVER_REGISTRY: Record<string, SolverFunction> = {
 
 /**
  * Normalisiert den Server-Typnamen, um Schreibfehler und Sonderzeichen abzufangen.
- * Null-Safe: Verhindert TypeError, falls 'type' undefined ist.
  */
 function normalizeType(type?: string): string {
   return (type || "")
@@ -51,8 +50,6 @@ function normalizeType(type?: string): string {
 /**
  * Der zentrale Manager. Holt sich den passenden Solver für den Server-Typ
  * und führt ihn sicher aus.
- *
- * @returns Das erfolgreiche Passwort (string) oder null bei Fehlschlag.
  */
 export async function runSolver(
   ns: NS,
@@ -71,7 +68,7 @@ export async function runSolver(
   // 1. Exakter Match
   let solver = SOLVER_REGISTRY[cleanType];
 
-  // 2. Fuzzy Match: Falls Modellnamen Versionen enthalten (z. B. "accountsmanagerv2")
+  // 2. Fuzzy Match für Modell-Varianten
   if (!solver) {
     const matchedKey = Object.keys(SOLVER_REGISTRY).find((key) =>
       cleanType.includes(key),

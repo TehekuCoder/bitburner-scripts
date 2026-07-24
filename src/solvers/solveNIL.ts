@@ -1,5 +1,4 @@
 import { NS } from "@ns";
-import { drawProgress } from "/utils/progress";
 
 export async function solveNIL(
   ns: NS,
@@ -11,24 +10,20 @@ export async function solveNIL(
   const locked = new Array(len).fill(false);
 
   let attempts = 0;
-  const maxAttempts = len * 12; // Sicherheitsnetz gegen Endlosschleifen
+  const maxAttempts = len * 12;
 
   while (locked.includes(false) && attempts < maxAttempts) {
     attempts++;
     const guess = digits.join("");
 
-    const currentLocked = locked.filter(Boolean).length;
-    drawProgress(ns, hostname, currentLocked, len, "NIL-Locking");
-
     const result = (await ns.dnet.authenticate(hostname, guess)) as any;
     if (result?.success) {
-      ns.print(`🎉 [NIL] Blitz-Erfolg: ${guess}`);
       return guess;
     }
 
-    // Heartbleed-Log isolieren
+    // Sofortiger Log-Zugriff nach Authentifizierung
     let logObj: any = null;
-    for (let check = 0; check < 10; check++) {
+    for (let check = 0; check < 5; check++) {
       const bleed = (await ns.dnet.heartbleed(hostname)) as any;
       const logs: string[] = bleed?.logs || [];
 
@@ -40,16 +35,15 @@ export async function solveNIL(
             break;
           }
         } catch {
-          /* Ignoriere fehlerhafte Logs */
+          /* Ignoriere fehlerhafte JSONs */
         }
       }
 
       if (logObj) break;
-      await ns.sleep(20);
+      await ns.sleep(10);
     }
 
     if (!logObj || !logObj.data) {
-      await ns.sleep(30);
       continue;
     }
 
@@ -60,7 +54,6 @@ export async function solveNIL(
       ? logObj.data.split(",").map((v: string) => v.trim().toLowerCase())
       : [];
 
-    // Inkrementiere nur noch nicht gesperrte (unlocked) Ziffern
     for (let i = 0; i < len; i++) {
       const val = feedback[i];
       if (val === "yes" || val === "true" || val === "1") {
@@ -69,18 +62,9 @@ export async function solveNIL(
         digits[i] = (digits[i] + 1) % 10;
       }
     }
-
-    await ns.sleep(10);
   }
 
-  // Finaler Validierungsversuch
   const finalGuess = digits.join("");
   const finalResult = (await ns.dnet.authenticate(hostname, finalGuess)) as any;
-  if (finalResult?.success) {
-    ns.print(`🎉 [NIL] Erfolgreich geknackt: ${finalGuess}`);
-    return finalGuess;
-  }
-
-  ns.print(`🔴 [NIL] Rekonstruiertes Passwort '${finalGuess}' wurde abgelehnt.`);
-  return null;
+  return finalResult?.success ? finalGuess : null;
 }

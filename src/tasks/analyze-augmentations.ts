@@ -1,7 +1,9 @@
 import { NS, FactionName } from "@ns";
-// Direkte Imports statt Barrel-Export (lib/index.js)
+// Direkte Imports statt Barrel-Export
 import { patchState } from "lib/state.js";
-import { HACKING_FACTIONS } from "lib/constants.js"; // Passe den Pfad an, falls HACKING_FACTIONS woanders liegt
+import { HACKING_FACTIONS } from "lib/constants.js";
+// ➕ Import der Player-Helper
+import { getPurchasedUninstalledAugs } from "lib/player.js";
 
 export interface AugmentTarget {
   name: string;
@@ -13,12 +15,13 @@ export interface AugmentTarget {
 }
 
 export async function main(ns: NS): Promise<void> {
-  // 🟢 DUMMY-REFERENZ: Zwingt den AST-Parser, getHackingLevel (0.05 GB) 
-  // sofort zur statischen RAM-Berechnung hinzuzurechnen (von 22.60 GB auf 22.65 GB).
+  // 🟢 DUMMY-REFERENZ für den AST-Parser
   void ns.getHackingLevel;
 
   const sing = ns.singularity;
   const ownedAugs = sing.getOwnedAugmentations(true); // inkl. gekaufter/wartender
+  const uninstalledCount = getPurchasedUninstalledAugs(ns).length; // ➕ Uninstalled Zähler
+  
   const augMap = new Map<string, AugmentTarget>();
 
   // 1. Alle Fraktionen durchsuchen und Augments konsolidieren
@@ -67,7 +70,10 @@ export async function main(ns: NS): Promise<void> {
   // 2. In eine Liste umwandeln und nach Rep-Anforderung sortieren (Aufsteigend)
   const augRoadmap = Array.from(augMap.values()).sort((a, b) => a.repReq - b.repReq);
 
-  // 3. Im State speichern
+  // 3. Im State speichern & informativen Log ausgeben
   patchState(ns, { augRoadmap } as any);
-  ns.tprint(`INFO: Augment-Analyse abgeschlossen. ${augRoadmap.length} einzigartige Augments in der Roadmap.`);
+  
+  ns.tprint(
+    `INFO: Augment-Analyse abgeschlossen. ${augRoadmap.length} ausstehende Augments in der Roadmap. (${uninstalledCount} gekaufte Augments bereit zum Installieren)`
+  );
 }
