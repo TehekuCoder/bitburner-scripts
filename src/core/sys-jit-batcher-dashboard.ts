@@ -5,6 +5,11 @@ import { getAllServers } from "/lib/network";
 import { loadState } from "/lib/state";
 import { DashboardData } from "/lib/types";
 
+/** Hilfsfunktion: Entfernt Countdown-Klammern für den Event-Log-Vergleich */
+function cleanProgressString(str: string): string {
+  return str.replace(/\s*\([^)]*?\d+s[^)]*?\)/g, "").trim();
+}
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
@@ -53,8 +58,15 @@ export async function main(ns: NS): Promise<void> {
       lastTarget = currentTarget;
     }
 
-    if (progressStr !== lastStateString && !progressStr.includes("Executing")) {
+    // 🟢 FIX: Countdown-Klammern vor dem Vergleich filtern, damit der Log nicht spamt
+    const cleanCurrent = cleanProgressString(progressStr);
+    const cleanLast = cleanProgressString(lastStateString);
+
+    if (cleanCurrent !== cleanLast && !progressStr.includes("Executing")) {
       eventLog.push(`[${new Date().toLocaleTimeString()}] ⚙️ ${progressStr}`);
+      lastStateString = progressStr;
+    } else {
+      // Dennoch den aktuellen State-String sichern, damit manuelle Wechseleffekte greifen
       lastStateString = progressStr;
     }
 
@@ -98,7 +110,6 @@ export async function main(ns: NS): Promise<void> {
       progressPercent = batchesSent / parseInt(match[2], 10);
     } else if (progressStr.includes("Executing")) {
       progressPercent = 1.0;
-      // Versuche die aktuelle Queue-Größe als gesendete Wellen zu mappen
       const qMatch = progressStr.match(/Queue:\s*(\d+)/);
       if (qMatch) batchesSent = Math.floor(parseInt(qMatch[1], 10) / 4);
     }
@@ -107,7 +118,7 @@ export async function main(ns: NS): Promise<void> {
     let waveProfit = 0;
     if (
       state.batcherPlan &&
-      servers.includes(currentTarget) // 🟢 FIX: Verhindert Abstürze durch Status-Strings wie "Standby"
+      servers.includes(currentTarget)
     ) {
       const plan = state.batcherPlan;
       if (ns.formulas && ns.formulas.hacking) {
@@ -122,10 +133,9 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 5. UI-Daten-Objekt füttern (Mit Serverschutz-Validierung)
+    // 5. UI-Daten-Objekt füttern
     const uiData: DashboardData = {
       status: statusText,
-      // 🟢 FIX: Nur wenn das Target ein echter Server oder eine bekannte UI-Ausnahme ist, durchlassen
       target:
         servers.includes(currentTarget) ||
         currentTarget === "Suche..." ||
@@ -146,7 +156,6 @@ export async function main(ns: NS): Promise<void> {
 
     drawBatcherDashboard(ns, uiData);
 
-    // 🛑 Auf 500ms erhöht, um dem JIT-Batcher Luft zum Atmen zu geben (weniger Engine-Lags!)
     await ns.sleep(500);
   }
 }

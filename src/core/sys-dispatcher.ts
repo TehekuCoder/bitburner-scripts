@@ -288,14 +288,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // if (
-    //   ns.isRunning(sysOrchestratorScript, "home") &&
-    //   ns.fileExists(sysDashboardScript, "home") &&
-    //   !ns.isRunning(sysDashboardScript, "home") &&
-    //   getFreeRam() >= ns.getScriptRam(sysDashboardScript, "home")
-    // ) {
-    //   ns.run(sysDashboardScript, 1);
-    // }
 
     // 💾 2. Zustand im State-Manager speichern
     patchState(ns, {

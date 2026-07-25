@@ -247,4 +247,5 @@ export interface ActiveBatch {
   id: number;
   executedEventsCount: number;
   totalEventsCount: number;
+  landEndTime:number;
 }

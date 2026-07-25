@@ -5,10 +5,14 @@ import {
   PATH_GROW,
   PATH_WEAKEN,
   SPACER,
+  HOME_RAM_RESERVE,
   BATCH_GAP,
 } from "/lib/constants.js";
 import { Logger } from "/lib/logger.js";
 import { BatchPlan } from "/lib/types.js";
+
+// Max. 10 Minuten Laufzeit pro Weaken, um Level-Up-Resets im Mid-Game zu verhindern
+const MAX_WEAKEN_TIME_MS = 10 * 60 * 1000;
 
 export function internalPlanner(
   ns: NS,
@@ -26,55 +30,78 @@ export function internalPlanner(
   let bestScore = -1;
   let bestPlan: BatchPlan | null = null;
   let maxBatches = 100;
+  let bestTargetIsPrepped = false;
 
   const ramHack = ns.getScriptRam(PATH_HACK);
   const ramGrow = ns.getScriptRam(PATH_GROW);
   const ramWeaken = ns.getScriptRam(PATH_WEAKEN);
 
-  // 💥 FIX 1: Finde den GRÖSSTEN Einzel-Host im Netzwerk für Single-Script Checks
-  const largestWorkerRam = servers.reduce((max, s) => {
+  // Größten physischen Host im Netzwerk ermitteln
+  const largestWorkerHost = servers.reduce((max, s) => {
     if (!ns.hasRootAccess(s)) return max;
-    return Math.max(max, ns.getServerMaxRam(s));
+    const maxRamHost =
+      s === "home"
+        ? Math.max(0, ns.getServerMaxRam("home") - HOME_RAM_RESERVE)
+        : ns.getServerMaxRam(s);
+    return Math.max(max, maxRamHost);
   }, 0);
 
-  // Ein einzelnes Skript darf NIEMALS größer sein als der RAM unseres größten Servers!
-  const maxSingleScriptRam = largestWorkerRam * 0.95;
-
+  // Cap für ein einzelnes Skript basiert auf der physischen Max-Kapazität
+  const maxSingleScriptRam = Math.max(1.75, largestWorkerHost * 0.95);
   const safeHwgwRam = virtualFreeRam * 0.8;
   const safePrepRam = Math.min(virtualFreeRam * 0.9, maxSingleScriptRam * 3);
+
+  if (safeHwgwRam <= 0) {
+    logger?.debug("[Planner] Kein freier RAM im Netzwerk vorhanden.");
+    return null;
+  }
 
   // ----------------------------------------------------------------------
   // 🔍 TARGET-FILTERING
   // ----------------------------------------------------------------------
   const targets = servers.filter((s) => {
-    if (targetBlacklist.has(s) || !ns.hasRootAccess(s)) return false;
+    if (s === "home") return false;
+
+    if (targetBlacklist.has(s) && (targetBlacklist.get(s) ?? 0) > Date.now()) {
+      logger?.debug(`[Planner Filter] ${s}: Verworfen (Blacklist).`);
+      return false;
+    }
+
+    if (!ns.hasRootAccess(s)) {
+      return false; // Stumm filtern für Nicht-Root-Server
+    }
+
     const sObj = ns.getServer(s);
     const moneyMax = sObj.moneyMax ?? 0;
-    if (
-      moneyMax <= 0 ||
-      (sObj.requiredHackingSkill ?? 0) > player.skills.hacking
-    )
+    if (moneyMax <= 0) return false;
+
+    if ((sObj.requiredHackingSkill ?? 0) > player.skills.hacking) {
+      return false; // Stumm filtern für zu schwere Server
+    }
+
+    // ⏱️ ZEIT-LIMIT CHECK: Ignoriere Targets mit endlosen Laufzeiten
+    const weakenTime =
+      ns.formulas?.hacking?.weakenTime(sObj, player) ?? ns.getWeakenTime(s);
+    if (weakenTime > MAX_WEAKEN_TIME_MS) {
+      logger?.debug(
+        `[Planner Filter] ${s}: Verworfen (Weaken-Zeit zu hoch: ${(weakenTime / 1000).toFixed(0)}s).`,
+      );
       return false;
-
-    // FIX 2: Prüfe mit minimalem Greed (1%), damit Low-RAM Setups Ziele nicht fälschlicherweise filtern
-    const minPlan = calculateBatch(ns, s, bnMults, 0.01, SPACER);
-    if (!minPlan) return false;
-
-    if (minPlan.totalRam > maxRam * 0.8) return false;
-    if (minPlan.totalRam > safeHwgwRam) return false;
-
-    // Einzelskript-Check gegen den größten Host
-    const maxScriptRam = Math.max(
-      minPlan.hackThreads * ramHack,
-      minPlan.growThreads * ramGrow,
-      minPlan.weaken1Threads * ramWeaken,
-      minPlan.weaken2Threads * ramWeaken,
-    );
-    if (maxScriptRam > maxSingleScriptRam) return false;
+    }
 
     return true;
   });
 
+  if (targets.length === 0) {
+    logger?.debug(
+      "[Planner] Keine gültigen Targets gefunden (Root / Skill / Zeit-Filter).",
+    );
+    return null;
+  }
+
+  // ----------------------------------------------------------------------
+  // 📊 TARGET-EVALUIERUNG
+  // ----------------------------------------------------------------------
   for (const t of targets) {
     const server = ns.getServer(t);
     const minDifficulty = server.minDifficulty ?? 1;
@@ -89,11 +116,8 @@ export function internalPlanner(
       moneyAvailable >= moneyMax * 0.99;
 
     if (!isPrepped) {
-      // ==================================================================
-      // 🛠️ PREP-PHASE (Chunking gegen RAM-Fragmentierung)
-      // ==================================================================
+      // 🛠️ PREP-PHASE
       const weakenPotency = 0.05 * (bnMults.ServerWeakenRate ?? 1.0);
-
       let weaken1Threads = 0;
       let growThreads = 0;
       let weaken2Threads = 0;
@@ -101,15 +125,16 @@ export function internalPlanner(
       const diffAmt = hackDifficulty - minDifficulty;
 
       if (diffAmt > 0.01) {
-        // Nur Weaken nötig
         const totalNeededWeaken = Math.ceil(diffAmt / weakenPotency);
         const maxPossibleWeaken = Math.floor(
           Math.min(safePrepRam, maxSingleScriptRam) / ramWeaken,
         );
         weaken1Threads = Math.min(totalNeededWeaken, maxPossibleWeaken);
-        if (weaken1Threads <= 0) continue;
+        if (weaken1Threads <= 0) {
+          logger?.debug(`[Planner Prep] ${t}: Kann Weaken1-Threads nicht stellen.`);
+          continue;
+        }
       } else if (moneyAvailable < moneyMax) {
-        // Grow + Weaken2 nötig
         const virtualServer: Server = {
           ...server,
           hackDifficulty: minDifficulty,
@@ -129,14 +154,15 @@ export function internalPlanner(
         const ramPerGrowUnit =
           ramGrow + (secPerGrow / weakenPotency) * ramWeaken;
 
-        // FIX 3: Richtige Chunks berechnen, damit Grow + Weaken2 garantiert in den RAM passen
         const maxGrowByHost = Math.floor(maxSingleScriptRam / ramGrow);
         const maxGrowByRam = Math.floor(safePrepRam / ramPerGrowUnit);
         const maxGrowUnits = Math.min(maxGrowByHost, maxGrowByRam);
 
         growThreads = Math.min(totalNeededGrow, maxGrowUnits);
-
-        if (growThreads <= 0) continue;
+        if (growThreads <= 0) {
+          logger?.debug(`[Planner Prep] ${t}: Kann Grow-Threads nicht stellen.`);
+          continue;
+        }
 
         const growSecIncrease = growThreads * 0.004;
         weaken2Threads = Math.ceil(growSecIncrease / weakenPotency) + 1;
@@ -145,7 +171,6 @@ export function internalPlanner(
       let totalRam =
         (weaken1Threads + weaken2Threads) * ramWeaken + growThreads * ramGrow;
 
-      // Falls RAM immer noch minimal drüber ist, Threads proportional anpassen
       if (totalRam > safePrepRam && growThreads > 0) {
         const scale = safePrepRam / totalRam;
         growThreads = Math.floor(growThreads * scale);
@@ -154,7 +179,10 @@ export function internalPlanner(
         totalRam = weaken2Threads * ramWeaken + growThreads * ramGrow;
       }
 
-      if (totalRam <= 0 || totalRam > safePrepRam) continue;
+      if (totalRam <= 0 || totalRam > safePrepRam) {
+        logger?.debug(`[Planner Prep] ${t}: Prep-RAM (${totalRam.toFixed(1)}GB) überschreitet safePrepRam.`);
+        continue;
+      }
 
       const tW =
         ns.formulas?.hacking?.weakenTime(server, player) ?? ns.getWeakenTime(t);
@@ -178,7 +206,6 @@ export function internalPlanner(
         executionTime: tW,
       };
 
-      // POTENTIAL-SCORING:
       const potHwgwPlan = calculateBatch(ns, t, bnMults, 0.2, SPACER);
       let score = (moneyMax / (tW || 1)) * 0.1;
 
@@ -190,29 +217,36 @@ export function internalPlanner(
         score = (potRevenue / (potHwgwPlan.weakenTime / 1000)) * 0.8;
       }
 
-      if (t === currentTarget) {
-        score *= 1.5;
-      }
+      if (t === currentTarget) score *= 1.5;
+
+      const moneyPct = ((moneyAvailable / moneyMax) * 100).toFixed(1);
+      logger?.debug(
+        `[Planner Evaluator] 🛠️ ${t} (PREP) | Geld: ${moneyPct}% | Sec: +${diffAmt.toFixed(2)} | Plan: W1:${weaken1Threads} G:${growThreads} W2:${weaken2Threads} | Score: ${score.toFixed(0)}`,
+      );
 
       if (score > bestScore) {
         bestScore = score;
         bestTarget = t;
         bestPlan = prepPlan;
-        maxBatches = 1;
+        bestTargetIsPrepped = false;
+
+        // 🚀 Dynamic Prep-Pipeline: Parallelisierbare Prep-Batches berechnen
+        const gap = Math.max(BATCH_GAP, SPACER * 4);
+        const timeMaxBatches = Math.floor(tW / gap);
+        const ramMaxBatches = Math.floor(safePrepRam / totalRam);
+        maxBatches = Math.max(1, Math.min(ramMaxBatches, timeMaxBatches, 20));
       }
     } else {
-      // ==================================================================
-      // 🚀 HWGW-PHASE (Durchsatz-Optimierung $/s)
-      // ==================================================================
+      // 🚀 HWGW-PHASE
       let optimalPlan: BatchPlan | null = null;
       let bestGreedScore = -1;
       let calcMaxBatchesForBestPlan = 1;
+      let bestGreedPct = 0;
 
       for (let greed = 0.01; greed <= 0.5; greed += 0.01) {
         const p = calculateBatch(ns, t, bnMults, greed, SPACER);
         if (!p) continue;
 
-        // 1. Single-Host Check gegen den echten größtmöglichen Worker
         const maxScriptRamInBatch = Math.max(
           p.hackThreads * ramHack,
           p.growThreads * ramGrow,
@@ -221,8 +255,6 @@ export function internalPlanner(
         );
 
         if (maxScriptRamInBatch > maxSingleScriptRam) continue;
-
-        // 2. HWGW RAM Limit Check
         if (p.totalRam > safeHwgwRam) continue;
 
         const pctPerThread = ns.formulas?.hacking
@@ -234,7 +266,6 @@ export function internalPlanner(
         const timeMaxBatches = Math.floor(p.weakenTime / gap);
         const ramMaxBatches = Math.floor(safeHwgwRam / p.totalRam);
 
-        // Dynamisches Cap (max. 100 Batches statt starr 25 für High-RAM Late Game)
         const calcMaxBatches = Math.max(
           1,
           Math.min(ramMaxBatches, timeMaxBatches, 100),
@@ -246,30 +277,44 @@ export function internalPlanner(
           bestGreedScore = greedScore;
           optimalPlan = p;
           calcMaxBatchesForBestPlan = calcMaxBatches;
+          bestGreedPct = greed;
         }
       }
 
       if (optimalPlan) {
         let score = bestGreedScore;
+        if (t === currentTarget) score *= 1.25;
 
-        if (t === currentTarget) {
-          score *= 1.25;
-        }
+        logger?.debug(
+          `[Planner Evaluator] 🚀 ${t} (HWGW) | Optimal Greed: ${(bestGreedPct * 100).toFixed(0)}% | RAM/Batch: ${optimalPlan.totalRam.toFixed(1)}GB | Score: ${score.toFixed(0)}`,
+        );
 
         if (score > bestScore) {
           bestScore = score;
           bestTarget = t;
           bestPlan = optimalPlan;
+          bestTargetIsPrepped = true;
           maxBatches = calcMaxBatchesForBestPlan;
         }
+      } else {
+        logger?.debug(
+          `[Planner HWGW] ${t}: Kein passender Greed-Plan gefunden (Limits überschritten).`,
+        );
       }
     }
   }
 
-  if (!bestTarget || !bestPlan) return null;
+  if (!bestTarget || !bestPlan) {
+    logger?.debug(
+      "[Planner] Kein Target mit ausreichendem Score/RAM gefunden.",
+    );
+    return null;
+  }
 
+  const mode = bestTargetIsPrepped ? "HWGW" : "PREP";
   logger?.info(
-    `[Planner] 🎯 Ziel gewählt: ${bestTarget} | Score: ${bestScore.toFixed(0)} | Max Batches: ${maxBatches}`,
+    `[Planner] 🎯 Ziel gewählt: ${bestTarget} (${mode}) | Score: ${bestScore.toFixed(0)} | RAM/Batch: ${bestPlan.totalRam.toFixed(1)}GB | Max Batches: ${maxBatches}`,
   );
+
   return { target: bestTarget, plan: bestPlan, maxBatches };
 }

@@ -1,8 +1,8 @@
 import { NS } from "@ns";
-import { Logger } from "/lib/logger";
-import { getAllServers, getNetworkMaxRam } from "/lib/network";
-import { patchState } from "/lib/state";
-import { BatchStrategy } from "/lib/types";
+import { Logger } from "/lib/logger.js";
+import { getAllServers, getNetworkMaxRam } from "/lib/network.js";
+import { patchState } from "/lib/state.js";
+import { BatchStrategy } from "/lib/types.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -42,7 +42,8 @@ export async function main(ns: NS): Promise<void> {
 
     // 2. Prüfen, ob ein Wechsel erforderlich ist
     const strategyChanged = desiredStrategy !== activeStrategy;
-    const targetChanged = target !== activeTarget;
+    const targetChanged =
+      desiredStrategy !== "JIT_HWGW" && target !== activeTarget;
     const processDied = activeProcessId > 0 && !ns.isRunning(activeProcessId);
 
     if (strategyChanged || targetChanged || processDied) {
@@ -121,10 +122,19 @@ function determineStrategy(
     return "BOOTSTRAP";
   }
 
+  const homeRam = ns.getServerMaxRam("home");
+  const hasFormulas = ns.fileExists("Formulas.exe", "home");
+
+  // 🚀 CORE-FIX: Wenn RAM und Formulas vorhanden sind, überlassen wir das Prep vollkommen
+  // dem JIT-Batcher! Er regelt Target-Prep, Timings und Dashboard-Countdown intern.
+  if (totalRam >= 512 && homeRam >= 1024 && hasFormulas) {
+    return "JIT_HWGW";
+  }
+
   if (!target) return "PREP";
 
-  // 🧠 LAUFENDE BATCH-ENGINES NICHT VORZEITIG ABBRECHEN
-  if (currentStrategy === "SHOTGUN_HWGW" || currentStrategy === "JIT_HWGW") {
+  // Für schwächere Setups (ohne Formulas / wenig RAM) greift die Fallback-Prep-Engine:
+  if (currentStrategy === "SHOTGUN_HWGW") {
     const sObj = ns.getServer(target);
     const curDiff = sObj.hackDifficulty ?? 99;
     const minDiff = sObj.minDifficulty ?? 1;
@@ -134,7 +144,6 @@ function determineStrategy(
     }
   }
 
-  // Prep-Check
   const sObj = ns.getServer(target);
   const currentDiff = sObj.hackDifficulty ?? 99;
   const minDiff = sObj.minDifficulty ?? 1;
@@ -149,15 +158,10 @@ function determineStrategy(
     return "PREP";
   }
 
-  const homeRam = ns.getServerMaxRam("home");
-  const hasFormulas = ns.fileExists("Formulas.exe", "home");
-
   if (totalRam < 512) {
     return "PROTO_BATCH";
-  } else if (homeRam < 2048 || !hasFormulas) {
-    return "SHOTGUN_HWGW";
   } else {
-    return "JIT_HWGW";
+    return "SHOTGUN_HWGW";
   }
 }
 
@@ -176,7 +180,6 @@ function switchExecutionEngine(
       return ns.run("core/engines/engine-prep.js", 1, "n00dles");
 
     case "XP_GRIND":
-      // joesguns ist eines der besten Ziele für schnellen XP-Gain
       return ns.run("core/engines/engine-xp-grind.js", 1, "joesguns");
 
     case "PREP":
@@ -208,7 +211,7 @@ function selectBestTarget(
       (s) =>
         ns.hasRootAccess(s) &&
         ns.getServerMaxMoney(s) > 0 &&
-        (ns.getServerRequiredHackingLevel(s) ?? 0) <= playerSkill / 2,
+        (ns.getServerRequiredHackingLevel(s) ?? 0) <= playerSkill,
     )
     .sort(
       (a, b) => (ns.getServerMaxMoney(b) ?? 0) - (ns.getServerMaxMoney(a) ?? 0),
@@ -216,7 +219,6 @@ function selectBestTarget(
 
   const bestCandidate = candidates[0] ?? "n00dles";
 
-  // Stickiness: Wechselt nur, wenn das neue Ziel deutlich mehr bringt (2.5x)
   if (currentTarget && ns.serverExists(currentTarget)) {
     const currentMaxMoney = ns.getServerMaxMoney(currentTarget);
     const bestMaxMoney = ns.getServerMaxMoney(bestCandidate);

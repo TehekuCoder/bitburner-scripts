@@ -6,6 +6,7 @@ export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   const nodes: WorkerNode[] = [];
   for (const s of servers) {
     if (!ns.hasRootAccess(s)) continue;
+    
     const maxRam = ns.getServerMaxRam(s);
     let free = maxRam - ns.getServerUsedRam(s);
     if (s === "home") free -= HOME_RAM_RESERVE;
@@ -18,67 +19,68 @@ export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
       });
     }
   }
+  // Höchster freier RAM zuerst für effiziente Verteilung
   return nodes.sort((a, b) => b.freeRam - a.freeRam);
 }
 
-export function executeOnWorkers(
-  ns: NS,
-  event: JitEvent,
-  workers: WorkerNode[],
-): boolean {
+/**
+ * Führt ein Event atomar auf den verfügbaren Workers aus (mit Thread-Splitting).
+ * Garantiert: Entweder werden ALLE Threads gestartet oder GAR KEINE.
+ */
+// lib/worker-executor.ts
+export function executeOnWorkers(ns: NS, event: JitEvent, workers: WorkerNode[]): boolean {
   const scriptRam = ns.getScriptRam(event.script);
-  if (scriptRam === 0) return false;
+  if (scriptRam <= 0 || event.threads <= 0) return false;
 
-  const totalThreadsAvailable = workers.reduce(
-    (sum, w) => sum + Math.floor(w.freeRam / scriptRam),
-    0,
-  );
-  if (totalThreadsAvailable < event.threads) return false;
+  // 1. Capacity Check
+  let totalAvailableThreads = 0;
+  for (const w of workers) {
+    totalAvailableThreads += Math.floor(w.freeRam / scriptRam);
+    if (totalAvailableThreads >= event.threads) break;
+  }
 
-  let threadsLeft = event.threads;
-  const now = Date.now();
-  const delay = Math.max(0, Math.round(event.startTime - now));
+  if (totalAvailableThreads < event.threads) return false;
 
-  // 🛡️ Rollback-Tracking für atomare Ausführung
-  const spawnedPids: number[] = [];
+  // 2. Transactional Dispatch
+  let remainingThreads = event.threads;
+  let chunkIndex = 0;
+  const launchedPids: { pid: number; worker: WorkerNode; allocatedRam: number }[] = [];
 
   for (const w of workers) {
-    const maxThreads = Math.floor(w.freeRam / scriptRam);
-    if (maxThreads <= 0) continue;
+    const possible = Math.floor(w.freeRam / scriptRam);
+    if (possible <= 0) continue;
 
-    const threadsToRun = Math.min(threadsLeft, maxThreads);
+    const toRun = Math.min(remainingThreads, possible);
 
     const pid = ns.exec(
       event.script,
       w.hostname,
-      threadsToRun,
+      toRun,
       event.target,
-      delay,
-      event.batchId,
       event.id,
+      chunkIndex++
     );
 
     if (pid > 0) {
-      spawnedPids.push(pid);
-      threadsLeft -= threadsToRun;
-      w.freeRam -= threadsToRun * scriptRam;
+      const ramUsed = toRun * scriptRam;
+      w.freeRam -= ramUsed;
+      launchedPids.push({ pid, worker: w, allocatedRam: ramUsed });
+      remainingThreads -= toRun;
     } else {
-      // ns.exec ist fehlgeschlagen -> Dispatch-Abbruch
-      break;
+      // Rollback: Prozesse beenden & RAM-Buffer der Worker wieder freigeben
+      for (const item of launchedPids) {
+        ns.kill(item.pid);
+        item.worker.freeRam += item.allocatedRam;
+      }
+      ns.print(`[ERROR] ns.exec fehlgeschlagen auf ${w.hostname} für ${event.script} - Rollback ausgeführt.`);
+      return false;
     }
 
-    if (threadsLeft <= 0) return true;
+    if (remainingThreads <= 0) return true;
   }
 
-  // 🚨 ROLLBACK: Falls nicht alle Threads gestartet werden konnten,
-  // töten wir die verwaisten Teil-Prozesse, um Batch-Desyncs zu verhindern.
-  for (const pid of spawnedPids) {
-    ns.kill(pid);
-  }
-
-  return false;
+  return remainingThreads === 0;
 }
-
 /**
  * Entzieht alle noch nicht gelaufenen Events eines abgebrochenen Batches in-place.
  * Verwendet einen Two-Pointer Swap in O(N) ohne Memory Allocation / GC-Spikes.

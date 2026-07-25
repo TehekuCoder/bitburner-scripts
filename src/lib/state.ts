@@ -1,7 +1,7 @@
 import { NS, BitNodeMultipliers } from "@ns";
-import { DEFAULT_MULTIPLIERS } from "lib/constants";
-import { Logger } from "/lib/logger.js";
-import { BotState } from "lib/types.js";
+import { DEFAULT_MULTIPLIERS } from "/lib/constants";
+import { Logger } from "/lib/logger";
+import { BotState } from "/lib/types";
 
 export function loadBnMults(ns: NS): Record<keyof BitNodeMultipliers, number> {
   if (ns.fileExists("bn-multipliers.txt", "home")) {
@@ -91,9 +91,13 @@ export function patchState(
     ...cleanedCurrentState
   } = currentState || {};
 
+  // Vollständiger Default-State: Verhindert 'undefined' bei partiellen Patches
   const baseState: Omit<BotState, "lastUpdate" | "playerHacking" | "sources"> =
     {
       strategy: "MONEY",
+      batchStrategy: "BOOTSTRAP",
+      kernelTarget: "n00dles",
+      batcherTarget: "Keines",
       progressBar: "Prüfe System...",
       batcherProgress: "Inaktiv",
       batcherActive: false,
@@ -128,7 +132,7 @@ export function patchState(
     playerHacking: ns.getHackingLevel(),
   };
 
-  // Atomares Überschreiben: erst leeren, wenn wir schreibbereit sind
+  // Atomares Überschreiben
   port.clear();
   port.write(fullState);
 }
