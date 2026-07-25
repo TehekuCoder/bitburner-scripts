@@ -1,5 +1,11 @@
 import { NS, Server, Player } from "@ns";
-import { DEFAULT_MULTIPLIERS, SPACER, PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants.js";
+import {
+  DEFAULT_MULTIPLIERS,
+  SPACER,
+  PATH_HACK,
+  PATH_GROW,
+  PATH_WEAKEN,
+} from "/lib/constants.js";
 import { BatchPlan } from "/lib/types.js";
 
 export function calculateBatch(
@@ -31,19 +37,27 @@ export function calculateBatch(
 
   // 3. Weaken 1 Phase (Float-Sicherer Ceil)
   const hackSecIncrease = hackThreads * 0.002;
-  const weaken1Threads = Math.ceil((hackSecIncrease - 1e-9) / weakenPotency) + 1;
+  const weaken1Threads =
+    Math.ceil((hackSecIncrease - 1e-9) / weakenPotency) + 1;
 
   // 4. Server-Zustand für Grow-Simulation modifizieren (Float-Sicher)
   const actualStolenPct = Math.min(0.99, hackThreads * pctPerThread);
   server.moneyAvailable = Math.max(1, server.moneyMax * (1 - actualStolenPct));
 
   // 5. Grow- & Weaken 2 Phase
-  const rawGrowThreads = ns.formulas.hacking.growThreads(server, player, server.moneyMax);
+  const growthMult = bnMults.ServerGrowthRate ?? 1.0;
+  const rawGrowThreads = ns.formulas.hacking.growThreads(
+    server,
+    player,
+    server.moneyMax,
+  );
   if (rawGrowThreads === Infinity || isNaN(rawGrowThreads)) return null;
 
-  const growThreads = Math.ceil(rawGrowThreads) + 2;
+  // 🛠️ BN-Multiplier für Grow-Threads einrechnen:
+  const growThreads = Math.ceil(rawGrowThreads / growthMult) + 2;
   const growSecIncrease = growThreads * 0.004;
-  const weaken2Threads = Math.ceil((growSecIncrease - 1e-9) / weakenPotency) + 1;
+  const weaken2Threads =
+    Math.ceil((growSecIncrease - 1e-9) / weakenPotency) + 1;
 
   // 6. Basislaufzeiten ermitteln & direkt auf Ganzzahlen runden!
   server.hackDifficulty = server.minDifficulty;

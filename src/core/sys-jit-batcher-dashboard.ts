@@ -58,7 +58,6 @@ export async function main(ns: NS): Promise<void> {
       lastTarget = currentTarget;
     }
 
-    // 🟢 FIX: Countdown-Klammern vor dem Vergleich filtern, damit der Log nicht spamt
     const cleanCurrent = cleanProgressString(progressStr);
     const cleanLast = cleanProgressString(lastStateString);
 
@@ -66,7 +65,6 @@ export async function main(ns: NS): Promise<void> {
       eventLog.push(`[${new Date().toLocaleTimeString()}] ⚙️ ${progressStr}`);
       lastStateString = progressStr;
     } else {
-      // Dennoch den aktuellen State-String sichern, damit manuelle Wechseleffekte greifen
       lastStateString = progressStr;
     }
 
@@ -86,13 +84,12 @@ export async function main(ns: NS): Promise<void> {
     }
     const ramFree = Math.max(0, totalMaxRam - totalUsedRam);
 
-    // 3. Werte intelligent aus dem JIT-State parsen
+    // 3. Intelligente Fortschritts-Berechnung (Prep-Geld % vs. Pipeline-Auslastung)
     let progressPercent = 0;
     let batchesSent = 0;
     let statusText = progressStr;
     let subText = "";
 
-    // Zerlege den JIT-Status für die UI-Segmente
     if (progressStr.includes("|")) {
       const parts = progressStr.split("|");
       statusText = parts[0].trim();
@@ -103,23 +100,32 @@ export async function main(ns: NS): Promise<void> {
       subText = "(" + parts[1];
     }
 
-    // Extrahiere gesendete Batches aus dem String "Pipelines gefüllt (12/100)"
+    // Pipeline-Batches parsen, falls vorhanden
     const match = progressStr.match(/\((\d+)\/(\d+)\)/);
     if (match) {
       batchesSent = parseInt(match[1], 10);
-      progressPercent = batchesSent / parseInt(match[2], 10);
-    } else if (progressStr.includes("Executing")) {
-      progressPercent = 1.0;
-      const qMatch = progressStr.match(/Queue:\s*(\d+)/);
-      if (qMatch) batchesSent = Math.floor(parseInt(qMatch[1], 10) / 4);
+    }
+
+    // 📊 Dynamischer Progressbar-Wert:
+    if (servers.includes(currentTarget)) {
+      const targetObj = ns.getServer(currentTarget);
+      const moneyMax = targetObj.moneyMax ?? 1;
+      const moneyAvail = targetObj.moneyAvailable ?? 0;
+
+      if (progressStr.toLowerCase().includes("prep")) {
+        // In der Prep-Phase: Zeige % des maximalen Geldes an
+        progressPercent = Math.min(1.0, Math.max(0, moneyAvail / moneyMax));
+      } else if (match) {
+        // In HWGW: Zeige Auslastung der Batches an
+        progressPercent = Math.min(1.0, batchesSent / parseInt(match[2], 10));
+      } else {
+        progressPercent = 1.0;
+      }
     }
 
     // 4. Gewinn-Schätzung pro Welle via Formulas-API
     let waveProfit = 0;
-    if (
-      state.batcherPlan &&
-      servers.includes(currentTarget)
-    ) {
+    if (state.batcherPlan && servers.includes(currentTarget)) {
       const plan = state.batcherPlan;
       if (ns.formulas && ns.formulas.hacking) {
         const serverObj = ns.getServer(currentTarget);

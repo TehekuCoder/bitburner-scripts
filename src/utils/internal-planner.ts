@@ -1,3 +1,5 @@
+// utils/internal-planner.ts
+
 import { NS, Server } from "@ns";
 import { calculateBatch } from "./batch-calculator.js";
 import {
@@ -10,9 +12,6 @@ import {
 } from "/lib/constants.js";
 import { Logger } from "/lib/logger.js";
 import { BatchPlan } from "/lib/types.js";
-
-// Max. 10 Minuten Laufzeit pro Weaken, um Level-Up-Resets im Mid-Game zu verhindern
-const MAX_WEAKEN_TIME_MS = 10 * 60 * 1000;
 
 export function internalPlanner(
   ns: NS,
@@ -49,7 +48,9 @@ export function internalPlanner(
   // Cap für ein einzelnes Skript basiert auf der physischen Max-Kapazität
   const maxSingleScriptRam = Math.max(1.75, largestWorkerHost * 0.95);
   const safeHwgwRam = virtualFreeRam * 0.8;
-  const safePrepRam = Math.min(virtualFreeRam * 0.9, maxSingleScriptRam * 3);
+
+  // 🚀 FIX 1: Entfessle den Prep-RAM! (Nutzt bis zu 90% des Netzwerks statt nur 3x Host-RAM)
+  const safePrepRam = virtualFreeRam * 0.9;
 
   if (safeHwgwRam <= 0) {
     logger?.debug("[Planner] Kein freier RAM im Netzwerk vorhanden.");
@@ -67,27 +68,13 @@ export function internalPlanner(
       return false;
     }
 
-    if (!ns.hasRootAccess(s)) {
-      return false; // Stumm filtern für Nicht-Root-Server
-    }
+    if (!ns.hasRootAccess(s)) return false;
 
     const sObj = ns.getServer(s);
     const moneyMax = sObj.moneyMax ?? 0;
     if (moneyMax <= 0) return false;
 
-    if ((sObj.requiredHackingSkill ?? 0) > player.skills.hacking) {
-      return false; // Stumm filtern für zu schwere Server
-    }
-
-    // ⏱️ ZEIT-LIMIT CHECK: Ignoriere Targets mit endlosen Laufzeiten
-    const weakenTime =
-      ns.formulas?.hacking?.weakenTime(sObj, player) ?? ns.getWeakenTime(s);
-    if (weakenTime > MAX_WEAKEN_TIME_MS) {
-      logger?.debug(
-        `[Planner Filter] ${s}: Verworfen (Weaken-Zeit zu hoch: ${(weakenTime / 1000).toFixed(0)}s).`,
-      );
-      return false;
-    }
+    if ((sObj.requiredHackingSkill ?? 0) > player.skills.hacking) return false;
 
     return true;
   });
@@ -121,6 +108,7 @@ export function internalPlanner(
       let weaken1Threads = 0;
       let growThreads = 0;
       let weaken2Threads = 0;
+      let neededPrepBatches = 1;
 
       const diffAmt = hackDifficulty - minDifficulty;
 
@@ -131,9 +119,14 @@ export function internalPlanner(
         );
         weaken1Threads = Math.min(totalNeededWeaken, maxPossibleWeaken);
         if (weaken1Threads <= 0) {
-          logger?.debug(`[Planner Prep] ${t}: Kann Weaken1-Threads nicht stellen.`);
+          logger?.debug(
+            `[Planner Prep] ${t}: Kann Weaken1-Threads nicht stellen.`,
+          );
           continue;
         }
+
+        // 💡 Wie viele Weaken-Batches dieser Größe brauchen wir?
+        neededPrepBatches = Math.ceil(totalNeededWeaken / weaken1Threads);
       } else if (moneyAvailable < moneyMax) {
         const virtualServer: Server = {
           ...server,
@@ -141,7 +134,9 @@ export function internalPlanner(
           moneyAvailable: Math.max(1, moneyAvailable),
         };
 
-        const totalNeededGrow = ns.formulas?.hacking
+        // 🛠️ BitNode Multiplier bei Grow berücksichtigen
+        const growthMult = bnMults.ServerGrowthRate ?? 1.0;
+        const rawGrowThreads = ns.formulas?.hacking
           ? Math.ceil(
               ns.formulas.hacking.growThreads(virtualServer, player, moneyMax),
             )
@@ -149,6 +144,8 @@ export function internalPlanner(
               (Math.log(moneyMax / Math.max(1, moneyAvailable)) * 100) /
                 ns.getServerGrowth(t),
             );
+
+        const totalNeededGrow = Math.ceil(rawGrowThreads / growthMult);
 
         const secPerGrow = 0.004;
         const ramPerGrowUnit =
@@ -160,12 +157,17 @@ export function internalPlanner(
 
         growThreads = Math.min(totalNeededGrow, maxGrowUnits);
         if (growThreads <= 0) {
-          logger?.debug(`[Planner Prep] ${t}: Kann Grow-Threads nicht stellen.`);
+          logger?.debug(
+            `[Planner Prep] ${t}: Kann Grow-Threads nicht stellen.`,
+          );
           continue;
         }
 
         const growSecIncrease = growThreads * 0.004;
         weaken2Threads = Math.ceil(growSecIncrease / weakenPotency) + 1;
+
+        // 🚀 FIX 2: Exakte Anzahl benötigter Grow-Batches ermitteln
+        neededPrepBatches = Math.ceil(totalNeededGrow / growThreads);
       }
 
       let totalRam =
@@ -180,7 +182,9 @@ export function internalPlanner(
       }
 
       if (totalRam <= 0 || totalRam > safePrepRam) {
-        logger?.debug(`[Planner Prep] ${t}: Prep-RAM (${totalRam.toFixed(1)}GB) überschreitet safePrepRam.`);
+        logger?.debug(
+          `[Planner Prep] ${t}: Prep-RAM (${totalRam.toFixed(1)}GB) überschreitet safePrepRam.`,
+        );
         continue;
       }
 
@@ -188,6 +192,10 @@ export function internalPlanner(
         ns.formulas?.hacking?.weakenTime(server, player) ?? ns.getWeakenTime(t);
       const tG =
         ns.formulas?.hacking?.growTime(server, player) ?? ns.getGrowTime(t);
+
+      // 🛠️ Timing-Fix für Prep: Grow muss VOR Weaken2 landen
+      const growDelay = Math.max(0, tW - SPACER - tG);
+      const weaken2Delay = 0;
 
       const prepPlan: BatchPlan = {
         target: t,
@@ -197,8 +205,8 @@ export function internalPlanner(
         weaken2Threads,
         hackDelay: 0,
         weaken1Delay: 0,
-        growDelay: 0,
-        weaken2Delay: 0,
+        growDelay,
+        weaken2Delay,
         hackTime: 0,
         growTime: tG,
         weakenTime: tW,
@@ -230,11 +238,19 @@ export function internalPlanner(
         bestPlan = prepPlan;
         bestTargetIsPrepped = false;
 
-        // 🚀 Dynamic Prep-Pipeline: Parallelisierbare Prep-Batches berechnen
+        // 🚀 FIX 3: Erlaube bis zu 50 parallele Prep-Batches basierend auf RAM, Zeitfenster und Bedarf
         const gap = Math.max(BATCH_GAP, SPACER * 4);
         const timeMaxBatches = Math.floor(tW / gap);
         const ramMaxBatches = Math.floor(safePrepRam / totalRam);
-        maxBatches = Math.max(1, Math.min(ramMaxBatches, timeMaxBatches, 20));
+
+        // 🚀 Fix für Prep-Pipelining: Mindestens 5 Batches parallel erlauben,
+        // damit der Server in Sekunden statt Minuten gepreppt ist
+        const maxAllowedPrep = Math.min(50, Math.max(5, neededPrepBatches));
+
+        maxBatches = Math.max(
+          1,
+          Math.min(ramMaxBatches, timeMaxBatches, maxAllowedPrep),
+        );
       }
     } else {
       // 🚀 HWGW-PHASE

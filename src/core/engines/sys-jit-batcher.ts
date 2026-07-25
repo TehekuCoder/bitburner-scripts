@@ -41,7 +41,7 @@ export async function main(ns: NS): Promise<void> {
     "/logs/sys-jit-batcher.txt",
   );
 
-  const bnMults = loadBnMults(ns);
+  let bnMults = loadBnMults(ns);
 
   patchState(ns, { batcherActive: true, batcherProgress: "Initialisiere..." });
 
@@ -81,7 +81,9 @@ export async function main(ns: NS): Promise<void> {
    * Setzt den internen Zustand des Batchers vollständig zurück.
    */
   function resetBatcherState() {
-    logger.info(`🔄 state.reset() ausgelöst. Vorheriges Target: ${target ?? "Keines"}`);
+    logger.info(
+      `🔄 state.reset() ausgelöst. Vorheriges Target: ${target ?? "Keines"}`,
+    );
     target = null;
     activePlan = null;
     eventQueue.length = 0;
@@ -113,7 +115,9 @@ export async function main(ns: NS): Promise<void> {
       if (now > bData.landEndTime) {
         activeBatches.delete(bId);
         activeBatchIds.delete(bId);
-        logger.debug(`🧹 Batch b${bId} verstrich (Landzeit überschritten). Aufgeräumt.`);
+        logger.debug(
+          `🧹 Batch b${bId} verstrich (Landzeit überschritten). Aufgeräumt.`,
+        );
       }
     }
 
@@ -121,6 +125,7 @@ export async function main(ns: NS): Promise<void> {
     if (now - lastServerScan > 10000) {
       servers = getAllServers(ns);
       syncPayloads(servers);
+      bnMults = loadBnMults(ns);
       lastServerScan = now;
     }
 
@@ -226,7 +231,9 @@ export async function main(ns: NS): Promise<void> {
       if (planning) {
         if (planning.target !== target) {
           if (eventQueue.length > 0) {
-            logger.debug(`⏳ Zielwechsel steht an (${target} -> ${planning.target}), warte auf Entleerung der Queue (${eventQueue.length} Events)...`);
+            logger.debug(
+              `⏳ Zielwechsel steht an (${target} -> ${planning.target}), warte auf Entleerung der Queue (${eventQueue.length} Events)...`,
+            );
             await ns.sleep(250);
             continue;
           }
@@ -241,11 +248,13 @@ export async function main(ns: NS): Promise<void> {
         const mode = activePlan?.hackThreads === 0 ? "PREP" : "HWGW";
         logger.info(
           `📋 JIT-Plan geladen: ${target} [${mode}] | RAM/Batch: ${activePlan?.totalRam.toFixed(1)}GB | ` +
-          `Threads (H/W1/G/W2): ${activePlan?.hackThreads}/${activePlan?.weaken1Threads}/${activePlan?.growThreads}/${activePlan?.weaken2Threads} | ` +
-          `Max Batches: ${dynamicMaxBatchesForTarget}`,
+            `Threads (H/W1/G/W2): ${activePlan?.hackThreads}/${activePlan?.weaken1Threads}/${activePlan?.growThreads}/${activePlan?.weaken2Threads} | ` +
+            `Max Batches: ${dynamicMaxBatchesForTarget}`,
         );
       } else {
-        logger.debug(`⚠️ internalPlanner lieferte NULL. Kein geeignetes Ziel / RAM zu knapp.`);
+        logger.debug(
+          `⚠️ internalPlanner lieferte NULL. Kein geeignetes Ziel / RAM zu knapp.`,
+        );
       }
 
       if (!target || !activePlan) {
@@ -359,8 +368,9 @@ export async function main(ns: NS): Promise<void> {
         batchesSentForTarget++;
         nextAvailableLandTime += Math.max(BATCH_GAP, SPACER * 4);
 
+        // 🚀 PREP-TIMER FIX: Setzt das Prep-Ende dynamisch auf die Landezeit des letzten Batches
         if (isPrepBatch) {
-          prepEndTime = now + activePlan.weakenTime + 1000;
+          prepEndTime = Math.max(prepEndTime, tLand + 1000);
         }
 
         const remainingPrepSec = isPrepBatch
@@ -388,7 +398,7 @@ export async function main(ns: NS): Promise<void> {
           lastRamThrottleLogTime = now;
           logger.debug(
             `⏸️ Warten auf RAM zum Queuen von b${batchIdCounter}: ` +
-            `Benötigt=${activePlan.totalRam.toFixed(1)}GB | Verfügbar=${safeVirtualRam.toFixed(1)}GB (RealFree=${realFreeRam.toFixed(1)}GB, QueueRam=${queueRam.toFixed(1)}GB)`,
+              `Benötigt=${activePlan.totalRam.toFixed(1)}GB | Verfügbar=${safeVirtualRam.toFixed(1)}GB (RealFree=${realFreeRam.toFixed(1)}GB, QueueRam=${queueRam.toFixed(1)}GB)`,
           );
         }
 
@@ -415,7 +425,9 @@ export async function main(ns: NS): Promise<void> {
 
       // LAG-PRUNE CHECK
       if (lag > 60) {
-        logger.warn(`⏳ Lag-Pruning (${Math.round(lag)}ms Delay) bei Event ${event.id} (${event.script} -> ${event.target})`);
+        logger.warn(
+          `⏳ Lag-Pruning (${Math.round(lag)}ms Delay) bei Event ${event.id} (${event.script} -> ${event.target})`,
+        );
 
         if (batchState && batchState.executedEventsCount > 0) {
           logger.error(
@@ -429,7 +441,9 @@ export async function main(ns: NS): Promise<void> {
           pruneBatchFromQueue(eventQueue, event.batchId);
           activeBatchIds.delete(event.batchId);
           activeBatches.delete(event.batchId);
-          logger.debug(`✂️ Verbleibende Events von Batch b${event.batchId} verworfen.`);
+          logger.debug(
+            `✂️ Verbleibende Events von Batch b${event.batchId} verworfen.`,
+          );
           continue;
         }
       }
