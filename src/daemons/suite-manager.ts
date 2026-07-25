@@ -33,8 +33,8 @@ export function manageSuites(
   };
 
   // --- ⚡ Hacknet Logik ---
-  const targetHacknetScript = hasFormulas ? "systems/hacknet.js" : "systems/hacknet-early.js";
-  const obsoleteHacknetScript = hasFormulas ? "systems/hacknet-early.js" : "systems/hacknet.js";
+  const targetHacknetScript = hasFormulas ? "daemons/hacknet.js" : "daemons/hacknet-early.js";
+  const obsoleteHacknetScript = hasFormulas ? "daemons/hacknet-early.js" : "daemons/hacknet.js";
 
   if (ns.isRunning(obsoleteHacknetScript, "home")) {
     logger.info(`Beende veraltetes Hacknet-Skript (${obsoleteHacknetScript}).`);

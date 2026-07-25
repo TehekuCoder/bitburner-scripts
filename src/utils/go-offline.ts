@@ -52,10 +52,17 @@ export async function main(ns: NS): Promise<void> {
   // ====================================================================
   // SCHRITT 3: WORKER-VERTEILUNG NACH LEISTUNGSKLASSE
   // ====================================================================
-  const pServers = ns.cloud.getServerNames(); // 🟢 Bitburner 3.0 API
-  const workerScript = "/tasks/work.js";
+  const pServers = ns.cloud.getServerNames();
+  const workerScript = "payloads/work.js";
   const workerRam = ns.getScriptRam(workerScript);
-  const mySelfRam = ns.getScriptRam(ns.getScriptName());
+
+  // 🛡️ SICHERHEITS-CHECK: Existiert das Worker-Skript auf 'home'?
+  if (!Number.isFinite(workerRam) || workerRam <= 0) {
+    ns.tprint(
+      `❌ ERROR: Worker-Skript '${workerScript}' wurde nicht gefunden oder benötigt 0 GB RAM! Checke den Dateipfad (.js vs .ts).`,
+    );
+    return;
+  }
 
   const hostServers = allServers.filter(
     (s) =>
@@ -78,8 +85,7 @@ export async function main(ns: NS): Promise<void> {
           proc.filename.includes("hack.js") ||
           proc.filename.includes("grow.js") ||
           proc.filename.includes("weaken.js") ||
-          proc.filename.includes("work.js") ||
-          proc.filename.includes("xp-grind.js")
+          proc.filename.includes("work.js")
         ) {
           ns.scriptKill(proc.filename, server);
         }
@@ -87,17 +93,18 @@ export async function main(ns: NS): Promise<void> {
       await ns.sleep(20);
     }
 
+    // 🛡️ Root-/Provisionierungs-Check
     await provisionServer(ns, server);
 
     const reserve = server === "home" ? 32 : 0;
-    const maxRam = ns.getServerMaxRam(server) - reserve;
+    const maxRam = Math.max(0, ns.getServerMaxRam(server) - reserve);
+    const usedRam = ns.getServerUsedRam(server);
+    const freeRam = Math.max(0, maxRam - usedRam);
 
-    let usedRam = ns.getServerUsedRam(server);
-
-    const freeRam = maxRam - usedRam;
+    // 🛡️ Expliziter Guard gegen Division durch Null / Infinity
     const threads = Math.floor(freeRam / workerRam);
 
-    if (threads > 0) {
+    if (Number.isFinite(threads) && threads > 0) {
       let assignedTarget = targetTier3;
 
       if (server === "home") {
@@ -112,30 +119,38 @@ export async function main(ns: NS): Promise<void> {
       activeTargets.add(assignedTarget);
 
       if (server !== "home") ns.scp(workerScript, server, "home");
-      ns.exec(workerScript, server, threads, assignedTarget);
+
+      const pid = ns.exec(workerScript, server, threads, assignedTarget);
+      if (pid === 0) {
+        ns.print(
+          `⚠️ Exec fehlgeschlagen auf ${server} mit ${threads} Threads für ${assignedTarget}`,
+        );
+      }
     }
   }
 
   // ====================================================================
   // 📊 MONITORING MIT DYNAMISCHER WARTEZEIT-SCHÄTZUNG
   // ====================================================================
+  if (activeTargets.size === 0) {
+    ns.tprint("❌ ERROR: Keine Worker gestartet (unzureichender RAM im Netz).");
+    return;
+  }
+
   ns.tprint("⏳ [BitOS] Multi-Zyklen gestartet. Kalibrierung läuft...");
   ns.ui.openTail();
   ns.ui.setTailTitle("Offline-Modus");
-  ns.ui.resizeTail(583,312);
+  ns.ui.resizeTail(583, 312);
 
   let stableTicks = 0;
   let lastTotalIncome = 0;
   const startTime = Date.now();
 
-  // Schätzung der benötigten Zeit für die erste profitable Hack-Welle:
-  // Um stabil Geld zu machen, müssen die Server meist einmal geschwächt und gewachsen werden.
-  // Weaken-Zeit ist hierbei das absolute zeitliche Limit.
   const longestWeakenTime = Math.max(
     ...Array.from(activeTargets).map((t) => ns.getWeakenTime(t)),
   );
 
-  const maxWaitTime = longestWeakenTime + 5000; // 5 Sekunden Puffer für die Engine-Ausführung
+  const maxWaitTime = longestWeakenTime + 5000;
 
   while (true) {
     let currentTotalIncome = 0;
@@ -144,7 +159,6 @@ export async function main(ns: NS): Promise<void> {
       for (const target of activeTargets) {
         const income = ns.getScriptIncome(workerScript, server, target);
 
-        // 🟢 SANIERUNG: Ignoriere negative Werte (Timing-Bugs) und ungültige Zahlen (NaN)
         if (!isNaN(income) && income > 0) {
           currentTotalIncome += income;
         }
@@ -153,7 +167,6 @@ export async function main(ns: NS): Promise<void> {
 
     const elapsedMs = Date.now() - startTime;
     const elapsedSecs = Math.floor(elapsedMs / 1000);
-    // 🟢 Berechnung der verbleibenden Wartezeit bis zur Stabilisierung
     const remainingMs = Math.max(0, maxWaitTime - elapsedMs);
     const remainingSecs = Math.ceil(remainingMs / 1000);
 
@@ -166,14 +179,13 @@ export async function main(ns: NS): Promise<void> {
       `LAUFZEIT:             ${elapsedSecs}s / Failsafe: ${Math.floor(maxWaitTime / 1000)}s`,
     );
 
-    // 🟢 Der neue visuelle Hinweis für den Spieler:
     if (currentTotalIncome === 0) {
       ns.print(
         `⚠️ WARTEZEIT-SCHÄTZUNG: ca. ${remainingSecs}s bis zum ersten Profit...`,
       );
       ns.print(`                      (Server-Präparation läuft noch)`);
     } else {
-      ns.print(`✅ STATUS:             Netzwerk produziert aktiv.`);
+      ns.print(`✅ STATUS:            Netzwerk produziert aktiv.`);
     }
     ns.print(`------------------------------------------------------------`);
 
