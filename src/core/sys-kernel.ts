@@ -5,12 +5,12 @@ import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { loadState, patchState } from "/lib/state.js";
 import { ScriptList } from "/lib/types.js";
 
-
 export async function main(ns: NS): Promise<void> {
-  const logger = new Logger(ns, "Kernel");
   ns.disableLog("ALL");
 
   const scripts: ScriptList = {
+    logger: "core/sys-logger.js",
+    perfMonitor: "daemons/perf-monitor.js",
     worker: "tasks/work.js",
     dispatcher: "core/sys-dispatcher.js",
     infra: "managers/infra-manager.js",
@@ -23,12 +23,32 @@ export async function main(ns: NS): Promise<void> {
     grow: PATH_GROW,
     weaken: PATH_WEAKEN,
     sleeve: "managers/sleeve-manager.js",
-    fillShare: "daemons/fill-share.js"
+    fillShare: "daemons/fill-share.js",
   };
+
+  // 1. Logger-Daemon starten
+  if (
+    ns.fileExists(scripts.logger, "home") &&
+    !ns.isRunning(scripts.logger, "home")
+  ) {
+    ns.run(scripts.logger, 1);
+    await ns.sleep(50);
+  }
+
+  // 2. Perf-Monitor starten (sobald der Logger bereit ist)
+  if (
+    ns.fileExists(scripts.perfMonitor, "home") &&
+    !ns.isRunning(scripts.perfMonitor, "home")
+  ) {
+    ns.run(scripts.perfMonitor, 1);
+  }
+
+  const logger = new Logger(ns, "Kernel");
+  logger.info("Kernel gestartet. Überprüfe System-State...");
 
   // --- 🔄 FALLBACK: PRÜFEN OB BOOT/STATE INITIALISIERT IST ---
   logger.info("Kernel gestartet. Überprüfe System-State...");
-  
+
   if (!loadState(ns) && ns.fileExists("core/boot.js", "home")) {
     logger.info("Kein State gefunden. Führe Einmal-Initializer aus...");
     const bootPid = ns.run("core/boot.js", 1);

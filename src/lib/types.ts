@@ -8,6 +8,8 @@ import {
 } from "@ns";
 
 export interface ScriptList {
+  logger: string;
+  perfMonitor: string;
   worker: string;
   dispatcher: string;
   infra: string;

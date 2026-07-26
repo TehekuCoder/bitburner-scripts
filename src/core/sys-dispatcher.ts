@@ -51,6 +51,8 @@ export async function main(ns: NS): Promise<void> {
   let lastNetworkScan = 0;
 
   const scripts: ScriptList = {
+    logger: "core/sys-logger.js",
+    perfMonitor: "daemons/perf-monitor.js",
     worker: "payloads/work.js",
     dispatcher: "core/sys-dispatcher.js",
     infra: "managers/infra-manager.js",

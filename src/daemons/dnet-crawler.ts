@@ -105,7 +105,7 @@ async function deployWorm(
       phishScript,
       "/dnet-master-db.json",
       "/lib/constants.js",
-      "/lib/logger.js",
+      "/lib/logger-clients.js",
       "/lib/types.js",
       ...solverModules,
     ];

@@ -1,20 +1,20 @@
 import { NS } from "@ns";
 
-export async function solveBaseConversion(
+export async function solveOctantVoxel(
   ns: NS,
   host: string,
   details: any
 ): Promise<string | null> {
   const rawData = String(details?.data || "").trim();
   if (!rawData) {
-    ns.print("🔴 [BaseConversion] Keine Daten übergeben.");
+    ns.print("🔴 [OctantVoxel] Keine Daten übergeben.");
     return null;
   }
 
   // Trennt bei Komma, Doppelpunkt oder Leerzeichen
   const parts = rawData.split(/[,:\s]+/).map((p) => p.trim()).filter(Boolean);
   if (parts.length < 2) {
-    ns.print(`🔴 [BaseConversion] Ungültiges Datenformat: "${rawData}"`);
+    ns.print(`🔴 [OctantVoxel] Ungültiges Datenformat: "${rawData}"`);
     return null;
   }
 
@@ -39,12 +39,12 @@ export async function solveBaseConversion(
 
   const decimalValue = parseInt(valueStr, base);
   if (isNaN(decimalValue)) {
-    ns.print(`🔴 [BaseConversion] Konnte '${valueStr}' nicht aus Basis ${base} konvertieren.`);
+    ns.print(`🔴 [OctantVoxel] Konnte '${valueStr}' nicht aus Basis ${base} konvertieren.`);
     return null;
   }
 
   const guess = decimalValue.toString();
-  ns.print(`🔢 [BaseConversion] ${valueStr} (Basis ${base}) -> Dezimal: ${guess}`);
+  ns.print(`🔢 [OctantVoxel] ${valueStr} (Basis ${base}) -> Dezimal: ${guess}`);
 
   const result = (await ns.dnet.authenticate(host, guess)) as any;
   return result?.success ? guess : null;

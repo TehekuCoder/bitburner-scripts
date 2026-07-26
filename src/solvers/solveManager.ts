@@ -2,7 +2,7 @@ import { NS } from "@ns";
 
 import { solveAccountsManager } from "./solveAccountsManager";
 import { solveAnagram } from "./solveAnagram";
-import { solveBaseConversion } from "./solveBaseConversion";
+import { solveOctantVoxel } from "./solveOctantVoxel";
 import { solveCloudBlare } from "./solveCloudBlare";
 import { solveDeepGreen } from "./solveDeepGreen";
 import { solveDeskMemo } from "./solveDeskMemo";
@@ -21,7 +21,7 @@ import { SolverFunction } from "/lib/types";
 const SOLVER_REGISTRY: Record<string, SolverFunction> = {
   accountsmanager: solveAccountsManager,
   anagram: solveAnagram,
-  octantvoxel: solveBaseConversion,
+  octantvoxel: solveOctantVoxel,
   cloudblare: solveCloudBlare,
   cloudblaretm: solveCloudBlare,
   deepgreen: solveDeepGreen,

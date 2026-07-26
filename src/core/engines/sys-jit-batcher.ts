@@ -49,10 +49,7 @@ function killWorkerPayloads(ns: NS, servers: string[]): void {
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  const logger = new Logger(
-    ns,
-    "JIT-Batcher"
-  );
+  const logger = new Logger(ns, "JIT-Batcher");
 
   let bnMults = loadBnMults(ns);
 
@@ -178,9 +175,10 @@ export async function main(ns: NS): Promise<void> {
     const currentLevel = ns.getHackingLevel();
     const levelDelta = currentLevel - lastHackingLevel;
 
+    // Erst ab +100 Leveln ODER mehr als 15% Zuwachs flushen
     const isMajorLevelUp =
-      levelDelta >= 20 ||
-      (lastHackingLevel > 0 && levelDelta / lastHackingLevel > 0.05);
+      levelDelta >= 100 ||
+      (lastHackingLevel > 0 && levelDelta / lastHackingLevel > 0.15);
 
     if (isMajorLevelUp && !isPrepping) {
       logger.warn(
@@ -200,13 +198,11 @@ export async function main(ns: NS): Promise<void> {
       const minSec = ns.getServerMinSecurityLevel(target);
       const secDiff = currentSec - minSec;
 
-      // Während HWGW schwankt die Security kurzzeitig um bis zu +2.0 vor dem Weaken.
-      // Nur wenn die Security massiv entgleist (> 5.0), gab es echte Skript-Ausfälle.
-      if (secDiff > 5.0) {
+      // HWGW-Wellen haben durch vorausfliegende Hacks/Grows natürliche Security-Spikes:
+      if (secDiff > 15.0) {
         logger.warn(
           `⚠️ Target ${target} kritisch desynchronisiert! Sec-Abweichung: +${secDiff.toFixed(2)}. Stoppe Batches & Re-Prep...`,
         );
-
         killWorkerPayloads(ns, servers);
         resetBatcherState();
       }
@@ -536,7 +532,6 @@ export async function main(ns: NS): Promise<void> {
           batcherProgress: "RAM-Coolingdown... Warte auf Freigabe",
           batcherTarget: "Standby",
         });
-
 
         await ns.sleep(3000);
         break;

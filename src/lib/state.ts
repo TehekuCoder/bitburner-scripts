@@ -1,7 +1,7 @@
 import { NS, BitNodeMultipliers } from "@ns";
-import { DEFAULT_MULTIPLIERS } from "/lib/constants";
-import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { BotState } from "/lib/types";
+import { DEFAULT_MULTIPLIERS, STATE_PORT } from "lib/constants";
+import { LoggerClient as Logger } from "lib/logger-client";
+import { BotState } from "lib/types";
 
 export function loadBnMults(ns: NS): Record<keyof BitNodeMultipliers, number> {
   if (ns.fileExists("bn-multipliers.txt", "home")) {
@@ -18,8 +18,6 @@ export function loadBnMults(ns: NS): Record<keyof BitNodeMultipliers, number> {
   }
   return DEFAULT_MULTIPLIERS;
 }
-
-const STATE_PORT = 1;
 
 let _logger: Logger | null = null;
 function getLogger(ns: NS): Logger {
@@ -41,6 +39,9 @@ function isPortEmpty(data: unknown): boolean {
   );
 }
 
+/**
+ * Überschreibt den gesamten BotState atomar.
+ */
 export function saveState(
   ns: NS,
   state: Omit<BotState, "lastUpdate" | "playerHacking" | "sources">,
@@ -61,6 +62,7 @@ export function saveState(
       playerHacking: ns.getHackingLevel(),
     };
 
+    // Atomares Ersetzen ohne langwieriges clear()
     port.clear();
     port.write(fullState);
   } catch (error) {
@@ -70,6 +72,9 @@ export function saveState(
   }
 }
 
+/**
+ * Patcht einzelne Felder im BotState atomar (schützt vor Lost Updates).
+ */
 export function patchState(
   ns: NS,
   partialState: Partial<
@@ -77,7 +82,9 @@ export function patchState(
   >,
 ): void {
   const port = ns.getPortHandle(STATE_PORT);
-  const data = port.peek();
+  
+  // ATOMAR: Entnehme das bestehende Objekt aus dem Port (Pop)
+  const data = port.read();
   let currentState: BotState | null = null;
 
   if (!isPortEmpty(data)) {
@@ -91,7 +98,7 @@ export function patchState(
     ...cleanedCurrentState
   } = currentState || {};
 
-  // Vollständiger Default-State: Verhindert 'undefined' bei partiellen Patches
+  // Vollständiger Default-State
   const baseState: Omit<BotState, "lastUpdate" | "playerHacking" | "sources"> =
     {
       strategy: "MONEY",
@@ -132,11 +139,14 @@ export function patchState(
     playerHacking: ns.getHackingLevel(),
   };
 
-  // Atomares Überschreiben
+  // Atomares Zurückschreiben
   port.clear();
   port.write(fullState);
 }
 
+/**
+ * Liest den aktuellen Zustand, ohne ihn zu löschen.
+ */
 export function loadState(ns: NS): BotState | null {
   try {
     const port = ns.getPortHandle(STATE_PORT);
