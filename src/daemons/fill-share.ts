@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { loadState } from "/lib/state";
+import { loadState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   const target = ns.getHostname();

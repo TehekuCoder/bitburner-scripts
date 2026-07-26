@@ -1,12 +1,13 @@
 import { NS, NodeStats } from "@ns";
-import { Logger } from "/lib/logger";
-import { loadBnMults, patchState, loadState } from "/lib/state";
-import { HacknetUpgrade } from "/lib/types";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+
+import { loadBnMults, patchState, loadState } from "/lib/state.js";
+import { HacknetUpgrade } from "/lib/types.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const h = ns.hacknet;
-  const logger = new Logger(ns, "HACKNET", "INFO", "/logs/hacknet.txt");
+  const logger = new Logger(ns, "HACKNET");
 
   const isCappedMode = ns.args.length > 0;
   const maxNodes = (ns.args[0] as number) || 30;

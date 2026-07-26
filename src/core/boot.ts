@@ -1,7 +1,7 @@
 import { NS } from "@ns";
 // Direkte Imports verhindern AST-Parsing-Fehler bei Barrel-Exports
 import { loadState, patchState } from "lib/state.js";
-import { Logger } from "lib/logger.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { DEFAULT_MULTIPLIERS } from "lib/constants.js";
 
 export async function main(ns: NS): Promise<void> {
@@ -10,7 +10,7 @@ export async function main(ns: NS): Promise<void> {
   void ns.getHackingLevel;
 
   ns.disableLog("ALL");
-  const logger = new Logger(ns, "Initializer", "INFO");
+  const logger = new Logger(ns, "Initializer");
 
   const multsFilePath = "/bn-multipliers.txt";
   const analyzeAugmentationsScript = "/tasks/analyze-augmentations.js";

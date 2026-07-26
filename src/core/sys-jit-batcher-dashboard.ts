@@ -1,9 +1,9 @@
 import { NS } from "@ns";
 import { drawBatcherDashboard } from "ui/batcher-ui.js";
-import { HOME_RAM_RESERVE } from "/lib/constants";
-import { getAllServers } from "/lib/network";
-import { loadState } from "/lib/state";
-import { DashboardData } from "/lib/types";
+import { HOME_RAM_RESERVE } from "/lib/constants.js";
+import { getAllServers } from "/lib/network.js";
+import { loadState } from "/lib/state.js";
+import { DashboardData } from "/lib/types.js";
 
 /** Hilfsfunktion: Entfernt Countdown-Klammern für den Event-Log-Vergleich */
 function cleanProgressString(str: string): string {

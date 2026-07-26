@@ -1,7 +1,7 @@
 import { NS, FactionName } from "@ns";
 import { getFactionsNeedingRep, manageAllSleeves } from "/lib/sleeve-utils.js";
 import { printSleeveDashboard } from "ui/sleeve-ui.js";
-import { Logger } from "/lib/logger";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { loadState, patchState } from "/lib/state";
 
 export async function main(ns: NS): Promise<void> {
@@ -11,7 +11,7 @@ export async function main(ns: NS): Promise<void> {
   ns.ui.setTailTitle("Zentrale Sleeve-Verwaltung");
   ns.ui.resizeTail(767, 298);
 
-  const logger = new Logger(ns, "SLEEVE", "INFO", "/logs/sleeve.txt");
+  const logger = new Logger(ns, "SLEEVE");
   logger.info("🦾 Sleeve-Subsystem aktiv. Kontrolliere Klone...");
 
   let factionsNeedingRep: FactionName[] = [];

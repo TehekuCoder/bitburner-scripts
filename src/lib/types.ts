@@ -1,4 +1,11 @@
-import { NS, FactionName, CompanyName, JobField, SleevePerson, SleeveTask } from "@ns";
+import {
+  NS,
+  FactionName,
+  CompanyName,
+  JobField,
+  SleevePerson,
+  SleeveTask,
+} from "@ns";
 
 export interface ScriptList {
   worker: string;
@@ -90,12 +97,12 @@ export interface SourceFileProgress {
   [sourceFileNumber: number]: number;
 }
 
-export type BatchStrategy = 
+export type BatchStrategy =
   | "BOOTSTRAP"
-  | "XP_GRIND" 
-  | "PREP" 
-  | "PROTO_BATCH" 
-  | "SHOTGUN_HWGW" 
+  | "XP_GRIND"
+  | "PREP"
+  | "PROTO_BATCH"
+  | "SHOTGUN_HWGW"
   | "JIT_HWGW";
 
 export interface BotState {
@@ -150,8 +157,6 @@ export interface BotState {
   batcherDynamicMaxBatches?: number;
   augRoadmap?: AugmentTarget[];
 }
-
-export type LogLevel = "DEBUG" | "INFO" | "SUCCESS" | "WARN" | "ERROR";
 
 export type SleeveMode =
   | "RECOVERY"
@@ -220,7 +225,11 @@ export interface NetworkInfo {
   parentMap: Record<string, string>;
 }
 
-export type SolverFunction = (ns: NS, host: string, details: any) => Promise<string | null>;
+export type SolverFunction = (
+  ns: NS,
+  host: string,
+  details: any,
+) => Promise<string | null>;
 
 export interface SleeveData {
   index: number;
@@ -247,5 +256,14 @@ export interface ActiveBatch {
   id: number;
   executedEventsCount: number;
   totalEventsCount: number;
-  landEndTime:number;
+  landEndTime: number;
+}
+
+export type LogLevel = "DEBUG" | "INFO" | "SUCCESS" | "WARN" | "ERROR";
+
+export interface LogPayload {
+  module: string;
+  level: LogLevel;
+  msg: string;
+  timestamp: number;
 }

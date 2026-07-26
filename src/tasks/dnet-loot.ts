@@ -1,5 +1,6 @@
 import { NS } from "@ns";
-import { Logger } from "/lib/logger";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -8,9 +9,7 @@ export async function main(ns: NS): Promise<void> {
 
   const logger = new Logger(
     ns,
-    `LOOT-${currentHost}`,
-    "INFO",
-    "/logs/dnet_system.txt",
+    `LOOT-${currentHost}`
   );
   let totalSuckedCaches = 0;
 

@@ -9,7 +9,8 @@ import {
   REFRESH_INTERVALS,
   COMBAT_STATS,
 } from "/lib/constants.js";
-import { Logger } from "/lib/logger.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+
 import { MetricTracker } from "/lib/metrics.js";
 import {
   breakAndInfectNetwork,
@@ -26,7 +27,7 @@ import { ScriptList, BotStrategy } from "/lib/types.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  const logger = new Logger(ns, "Dispatcher", "INFO");
+  const logger = new Logger(ns, "Dispatcher");
 
   if (ns.singularity === undefined) {
     logger.error("Kritischer Systemfehler: Singularity-API (SF4) fehlt!");

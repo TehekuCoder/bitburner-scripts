@@ -1,7 +1,7 @@
 // src/modules/suite-manager.ts
 
 import { NS } from "@ns";
-import { ScriptList, BotState } from "/lib/types";
+import { ScriptList, BotState } from "/lib/types.js";
 
 export function manageSuites(
   ns: NS,

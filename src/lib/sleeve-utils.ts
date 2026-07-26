@@ -7,7 +7,7 @@ import {
   SleeveTask,
   Player,
 } from "@ns";
-import { Logger } from "lib/logger.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { BotState, SleeveMode, SleeveData } from "lib/types.js";
 import { MEGACORPS, COMBAT_STATS, STAT_MAP } from "lib/constants.js";
 

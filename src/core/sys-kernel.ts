@@ -1,12 +1,13 @@
 import { NS } from "@ns";
 import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants";
-import { Logger } from "/lib/logger";
-import { loadState, patchState } from "/lib/state";
-import { ScriptList } from "/lib/types";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+
+import { loadState, patchState } from "/lib/state.js";
+import { ScriptList } from "/lib/types.js";
 
 
 export async function main(ns: NS): Promise<void> {
-  const logger = new Logger(ns, "Kernel", "INFO");
+  const logger = new Logger(ns, "Kernel");
   ns.disableLog("ALL");
 
   const scripts: ScriptList = {

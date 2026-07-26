@@ -1,5 +1,6 @@
 import { NS } from "@ns";
-import { Logger } from "lib/logger.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -8,7 +9,7 @@ export async function main(ns: NS): Promise<void> {
   const jsonDbFile = "/dnet-master-db.json";
   const textDbFile = "/passwords.txt";
 
-  const logger = new Logger(ns, "DNET-MASTER", "INFO", "/logs/dnet_system.txt");
+  const logger = new Logger(ns, "DNET-MASTER");
   logger.info("🖥️ Darknet-Master gestartet. Lausche auf Port " + PORT_ID);
 
   let passwordDb: Record<string, string> = {};

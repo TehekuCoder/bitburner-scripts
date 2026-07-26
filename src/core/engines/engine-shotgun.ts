@@ -1,15 +1,13 @@
 import { NS } from "@ns";
-import { Logger } from "/lib/logger";
-import { breakAndInfectNetwork, getAllServers } from "/lib/network";
-import { patchState } from "/lib/state";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
+import { patchState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new Logger(
     ns,
-    "ShotgunEngine",
-    "INFO",
-    "/logs/engine-shotgun.txt",
+    "ShotgunEngine"
   );
 
   const target = (ns.args[0] as string) || "n00dles";

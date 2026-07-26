@@ -209,3 +209,5 @@ export const COMBAT_FACTION_REQUIREMENTS: Partial<Record<FactionName, number>> =
 
 export const MAX_WAIT_TIME_SECONDS = 1800;
 export const AUG_PRICE_MULT = 1.9;
+
+export const LOG_PORT = 1;

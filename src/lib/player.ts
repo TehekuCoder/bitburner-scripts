@@ -4,7 +4,7 @@ import {
   HACKING_FACTIONS,
   COMBAT_FACTION_REQUIREMENTS,
 } from "./constants.js";
-import { Logger } from "./logger.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
 import {
   TargetFactionResult,
   AugmentTarget,

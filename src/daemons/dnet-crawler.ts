@@ -4,8 +4,9 @@ import {
   COOLDOWN_MS,
   LOOT_INTERVAL_MS,
   processedServers,
-} from "/lib/constants";
-import { Logger } from "/lib/logger";
+} from "/lib/constants.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+
 
 let lastLootTime = 0;
 let dbCache: Record<string, string> | null = null;
@@ -130,9 +131,7 @@ export async function main(ns: NS): Promise<void> {
 
   const logger = new Logger(
     ns,
-    `CRAWLER-${currentHost}`,
-    "INFO",
-    "/logs/dnet_system.txt",
+    `CRAWLER-${currentHost}`
   );
 
   if (currentHost !== "home") {

@@ -1,5 +1,3 @@
-// utils/internal-planner.ts
-
 import { NS, Server } from "@ns";
 import { calculateBatch } from "./batch-calculator.js";
 import {
@@ -10,8 +8,27 @@ import {
   HOME_RAM_RESERVE,
   BATCH_GAP,
 } from "/lib/constants.js";
-import { Logger } from "/lib/logger.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { BatchPlan } from "/lib/types.js";
+
+// Absolute Obergrenze für simulierte Batches (Schutz vor Bitburner/JS-Garbage-Collector Lag)
+const MAX_BATCH_CAP = 2500;
+const MAX_PREP_CAP = 250;
+
+/**
+ * Hystereseschwellenwert für Zielwechsel.
+ * 0.75 bedeutet: Das aktuelle Ziel wird behalten, solange sein Score mindestens 75%
+ * des absoluten Top-Scores beträgt (das neue Ziel müsste also > 33% besser sein).
+ */
+const HYSTERESIS_THRESHOLD = 0.75;
+
+interface EvaluatedCandidate {
+  target: string;
+  plan: BatchPlan;
+  maxBatches: number;
+  score: number;
+  isPrepped: boolean;
+}
 
 export function internalPlanner(
   ns: NS,
@@ -25,11 +42,7 @@ export function internalPlanner(
   currentTarget?: string | null,
 ): { target: string; plan: BatchPlan; maxBatches: number } | null {
   const player = ns.getPlayer();
-  let bestTarget: string | null = null;
-  let bestScore = -1;
-  let bestPlan: BatchPlan | null = null;
-  let maxBatches = 100;
-  let bestTargetIsPrepped = false;
+  const candidates: EvaluatedCandidate[] = [];
 
   const ramHack = ns.getScriptRam(PATH_HACK);
   const ramGrow = ns.getScriptRam(PATH_GROW);
@@ -47,10 +60,8 @@ export function internalPlanner(
 
   // Cap für ein einzelnes Skript basiert auf der physischen Max-Kapazität
   const maxSingleScriptRam = Math.max(1.75, largestWorkerHost * 0.95);
-  const safeHwgwRam = virtualFreeRam * 0.8;
-
-  // 🚀 FIX 1: Entfessle den Prep-RAM! (Nutzt bis zu 90% des Netzwerks statt nur 3x Host-RAM)
-  const safePrepRam = virtualFreeRam * 0.9;
+  const safeHwgwRam = virtualFreeRam * 0.9;
+  const safePrepRam = virtualFreeRam * 0.95;
 
   if (safeHwgwRam <= 0) {
     logger?.debug("[Planner] Kein freier RAM im Netzwerk vorhanden.");
@@ -103,7 +114,7 @@ export function internalPlanner(
       moneyAvailable >= moneyMax * 0.99;
 
     if (!isPrepped) {
-      // 🛠️ PREP-PHASE
+      // 🛠️ PREP-PHASE (Kombiniertes Weaken + Grow in einem Batch)
       const weakenPotency = 0.05 * (bnMults.ServerWeakenRate ?? 1.0);
       let weaken1Threads = 0;
       let growThreads = 0;
@@ -112,29 +123,23 @@ export function internalPlanner(
 
       const diffAmt = hackDifficulty - minDifficulty;
 
-      if (diffAmt > 0.01) {
+      if (diffAmt > 0.5) {
         const totalNeededWeaken = Math.ceil(diffAmt / weakenPotency);
         const maxPossibleWeaken = Math.floor(
           Math.min(safePrepRam, maxSingleScriptRam) / ramWeaken,
         );
         weaken1Threads = Math.min(totalNeededWeaken, maxPossibleWeaken);
-        if (weaken1Threads <= 0) {
-          logger?.debug(
-            `[Planner Prep] ${t}: Kann Weaken1-Threads nicht stellen.`,
-          );
-          continue;
-        }
+      } else if (diffAmt > 0.01) {
+        weaken1Threads = Math.ceil(diffAmt / weakenPotency);
+      }
 
-        // 💡 Wie viele Weaken-Batches dieser Größe brauchen wir?
-        neededPrepBatches = Math.ceil(totalNeededWeaken / weaken1Threads);
-      } else if (moneyAvailable < moneyMax) {
+      if (moneyAvailable < moneyMax) {
         const virtualServer: Server = {
           ...server,
           hackDifficulty: minDifficulty,
           moneyAvailable: Math.max(1, moneyAvailable),
         };
 
-        // 🛠️ BitNode Multiplier bei Grow berücksichtigen
         const growthMult = bnMults.ServerGrowthRate ?? 1.0;
         const rawGrowThreads = ns.formulas?.hacking
           ? Math.ceil(
@@ -145,29 +150,37 @@ export function internalPlanner(
                 ns.getServerGrowth(t),
             );
 
-        const totalNeededGrow = Math.ceil(rawGrowThreads / growthMult);
+        const totalNeededGrow = ns.formulas?.hacking
+          ? rawGrowThreads
+          : Math.ceil(rawGrowThreads / growthMult);
 
         const secPerGrow = 0.004;
         const ramPerGrowUnit =
           ramGrow + (secPerGrow / weakenPotency) * ramWeaken;
 
+        const remainingPrepRam = Math.max(
+          0,
+          safePrepRam - weaken1Threads * ramWeaken,
+        );
+
         const maxGrowByHost = Math.floor(maxSingleScriptRam / ramGrow);
-        const maxGrowByRam = Math.floor(safePrepRam / ramPerGrowUnit);
-        const maxGrowUnits = Math.min(maxGrowByHost, maxGrowByRam);
+        const maxGrowByRam = Math.floor(remainingPrepRam / ramPerGrowUnit);
+        const maxGrowUnits = Math.max(0, Math.min(maxGrowByHost, maxGrowByRam));
 
         growThreads = Math.min(totalNeededGrow, maxGrowUnits);
-        if (growThreads <= 0) {
-          logger?.debug(
-            `[Planner Prep] ${t}: Kann Grow-Threads nicht stellen.`,
-          );
-          continue;
+
+        if (growThreads > 0) {
+          const growSecIncrease = growThreads * 0.004;
+          weaken2Threads = Math.ceil(growSecIncrease / weakenPotency) + 1;
         }
 
-        const growSecIncrease = growThreads * 0.004;
-        weaken2Threads = Math.ceil(growSecIncrease / weakenPotency) + 1;
-
-        // 🚀 FIX 2: Exakte Anzahl benötigter Grow-Batches ermitteln
-        neededPrepBatches = Math.ceil(totalNeededGrow / growThreads);
+        const neededWeakenBatches =
+          weaken1Threads > 0
+            ? Math.ceil(diffAmt / (weaken1Threads * weakenPotency))
+            : 1;
+        const neededGrowBatches =
+          growThreads > 0 ? Math.ceil(totalNeededGrow / growThreads) : 1;
+        neededPrepBatches = Math.max(neededWeakenBatches, neededGrowBatches);
       }
 
       let totalRam =
@@ -178,24 +191,16 @@ export function internalPlanner(
         growThreads = Math.floor(growThreads * scale);
         const growSecIncrease = growThreads * 0.004;
         weaken2Threads = Math.ceil(growSecIncrease / weakenPotency) + 1;
-        totalRam = weaken2Threads * ramWeaken + growThreads * ramGrow;
+        totalRam =
+          (weaken1Threads + weaken2Threads) * ramWeaken + growThreads * ramGrow;
       }
 
-      if (totalRam <= 0 || totalRam > safePrepRam) {
-        logger?.debug(
-          `[Planner Prep] ${t}: Prep-RAM (${totalRam.toFixed(1)}GB) überschreitet safePrepRam.`,
-        );
-        continue;
-      }
+      if (totalRam <= 0 || totalRam > safePrepRam) continue;
 
       const tW =
         ns.formulas?.hacking?.weakenTime(server, player) ?? ns.getWeakenTime(t);
       const tG =
         ns.formulas?.hacking?.growTime(server, player) ?? ns.getGrowTime(t);
-
-      // 🛠️ Timing-Fix für Prep: Grow muss VOR Weaken2 landen
-      const growDelay = Math.max(0, tW - SPACER - tG);
-      const weaken2Delay = 0;
 
       const prepPlan: BatchPlan = {
         target: t,
@@ -205,8 +210,8 @@ export function internalPlanner(
         weaken2Threads,
         hackDelay: 0,
         weaken1Delay: 0,
-        growDelay,
-        weaken2Delay,
+        growDelay: Math.max(0, tW - SPACER - tG),
+        weaken2Delay: 0,
         hackTime: 0,
         growTime: tG,
         weakenTime: tW,
@@ -225,43 +230,31 @@ export function internalPlanner(
         score = (potRevenue / (potHwgwPlan.weakenTime / 1000)) * 0.8;
       }
 
-      if (t === currentTarget) score *= 1.5;
-
-      const moneyPct = ((moneyAvailable / moneyMax) * 100).toFixed(1);
-      logger?.debug(
-        `[Planner Evaluator] 🛠️ ${t} (PREP) | Geld: ${moneyPct}% | Sec: +${diffAmt.toFixed(2)} | Plan: W1:${weaken1Threads} G:${growThreads} W2:${weaken2Threads} | Score: ${score.toFixed(0)}`,
+      const gap = Math.max(BATCH_GAP, SPACER * 4);
+      const timeMaxBatches = Math.floor(tW / gap);
+      const ramMaxBatches = Math.floor(safePrepRam / totalRam);
+      const maxAllowedPrep = Math.min(MAX_PREP_CAP, neededPrepBatches);
+      const prepMaxBatches = Math.max(
+        1,
+        Math.min(ramMaxBatches, timeMaxBatches, maxAllowedPrep),
       );
 
-      if (score > bestScore) {
-        bestScore = score;
-        bestTarget = t;
-        bestPlan = prepPlan;
-        bestTargetIsPrepped = false;
-
-        // 🚀 FIX 3: Erlaube bis zu 50 parallele Prep-Batches basierend auf RAM, Zeitfenster und Bedarf
-        const gap = Math.max(BATCH_GAP, SPACER * 4);
-        const timeMaxBatches = Math.floor(tW / gap);
-        const ramMaxBatches = Math.floor(safePrepRam / totalRam);
-
-        // 🚀 Fix für Prep-Pipelining: Mindestens 5 Batches parallel erlauben,
-        // damit der Server in Sekunden statt Minuten gepreppt ist
-        const maxAllowedPrep = Math.min(50, Math.max(5, neededPrepBatches));
-
-        maxBatches = Math.max(
-          1,
-          Math.min(ramMaxBatches, timeMaxBatches, maxAllowedPrep),
-        );
-      }
+      candidates.push({
+        target: t,
+        plan: prepPlan,
+        maxBatches: prepMaxBatches,
+        score,
+        isPrepped: false,
+      });
     } else {
-      // 🚀 HWGW-PHASE
+      // 🚀 HWGW-PHASE (2-Pass Greed Search)
       let optimalPlan: BatchPlan | null = null;
       let bestGreedScore = -1;
       let calcMaxBatchesForBestPlan = 1;
-      let bestGreedPct = 0;
 
-      for (let greed = 0.01; greed <= 0.5; greed += 0.01) {
+      const evaluateGreed = (greed: number) => {
         const p = calculateBatch(ns, t, bnMults, greed, SPACER);
-        if (!p) continue;
+        if (!p) return null;
 
         const maxScriptRamInBatch = Math.max(
           p.hackThreads * ramHack,
@@ -270,8 +263,8 @@ export function internalPlanner(
           p.weaken2Threads * ramWeaken,
         );
 
-        if (maxScriptRamInBatch > maxSingleScriptRam) continue;
-        if (p.totalRam > safeHwgwRam) continue;
+        if (maxScriptRamInBatch > maxSingleScriptRam) return null;
+        if (p.totalRam > safeHwgwRam) return null;
 
         const pctPerThread = ns.formulas?.hacking
           ? ns.formulas.hacking.hackPercent(server, player)
@@ -284,53 +277,93 @@ export function internalPlanner(
 
         const calcMaxBatches = Math.max(
           1,
-          Math.min(ramMaxBatches, timeMaxBatches, 100),
+          Math.min(ramMaxBatches, timeMaxBatches, MAX_BATCH_CAP),
         );
 
         const greedScore = (revenue * calcMaxBatches) / (p.weakenTime / 1000);
 
-        if (greedScore > bestGreedScore) {
-          bestGreedScore = greedScore;
-          optimalPlan = p;
-          calcMaxBatchesForBestPlan = calcMaxBatches;
-          bestGreedPct = greed;
+        return { p, calcMaxBatches, greedScore };
+      };
+
+      // 1️⃣ Grobsuche (0.05 bis 0.95)
+      let bestCoarseGreed = 0.05;
+      for (let greed = 0.05; greed <= 0.95; greed += 0.05) {
+        const res = evaluateGreed(greed);
+        if (res && res.greedScore > bestGreedScore) {
+          bestGreedScore = res.greedScore;
+          optimalPlan = res.p;
+          calcMaxBatchesForBestPlan = res.calcMaxBatches;
+          bestCoarseGreed = greed;
+        }
+      }
+
+      // 2️⃣ Feinsuche (±4% in 1%-Schritten)
+      const minFine = Math.max(0.01, Number((bestCoarseGreed - 0.04).toFixed(2)));
+      const maxFine = Math.min(0.95, Number((bestCoarseGreed + 0.04).toFixed(2)));
+
+      for (let greed = minFine; greed <= maxFine; greed += 0.01) {
+        const roundedGreed = Number(greed.toFixed(2));
+        const res = evaluateGreed(roundedGreed);
+        if (res && res.greedScore > bestGreedScore) {
+          bestGreedScore = res.greedScore;
+          optimalPlan = res.p;
+          calcMaxBatchesForBestPlan = res.calcMaxBatches;
         }
       }
 
       if (optimalPlan) {
-        let score = bestGreedScore;
-        if (t === currentTarget) score *= 1.25;
-
-        logger?.debug(
-          `[Planner Evaluator] 🚀 ${t} (HWGW) | Optimal Greed: ${(bestGreedPct * 100).toFixed(0)}% | RAM/Batch: ${optimalPlan.totalRam.toFixed(1)}GB | Score: ${score.toFixed(0)}`,
-        );
-
-        if (score > bestScore) {
-          bestScore = score;
-          bestTarget = t;
-          bestPlan = optimalPlan;
-          bestTargetIsPrepped = true;
-          maxBatches = calcMaxBatchesForBestPlan;
-        }
-      } else {
-        logger?.debug(
-          `[Planner HWGW] ${t}: Kein passender Greed-Plan gefunden (Limits überschritten).`,
-        );
+        candidates.push({
+          target: t,
+          plan: optimalPlan,
+          maxBatches: calcMaxBatchesForBestPlan,
+          score: bestGreedScore,
+          isPrepped: true,
+        });
       }
     }
   }
 
-  if (!bestTarget || !bestPlan) {
+  if (candidates.length === 0) {
     logger?.debug(
       "[Planner] Kein Target mit ausreichendem Score/RAM gefunden.",
     );
     return null;
   }
 
-  const mode = bestTargetIsPrepped ? "HWGW" : "PREP";
+  // ----------------------------------------------------------------------
+  // ⚖️ HYSTERESE & STICKY-TARGET ENTSCHEIDUNG
+  // ----------------------------------------------------------------------
+  candidates.sort((a, b) => b.score - a.score);
+  const topCandidate = candidates[0];
+
+  const currentCandidate = currentTarget
+    ? candidates.find((c) => c.target === currentTarget)
+    : null;
+
+  let selected = topCandidate;
+
+  if (
+    currentCandidate &&
+    currentCandidate.score >= topCandidate.score * HYSTERESIS_THRESHOLD
+  ) {
+    selected = currentCandidate;
+    logger?.debug(
+      `📌 Hystereseschutz aktiv: Bleibe bei ${currentTarget} (Score: ${currentCandidate.score.toFixed(0)} vs Top ${topCandidate.target}: ${topCandidate.score.toFixed(0)})`,
+    );
+  } else if (currentTarget && selected.target !== currentTarget) {
+    logger?.info(
+      `🔄 Target-Wechsel gerechtfertigt: ${currentTarget} (${currentCandidate?.score.toFixed(0) ?? 0}) -> ${selected.target} (${selected.score.toFixed(0)})`,
+    );
+  }
+
+  const mode = selected.isPrepped ? "HWGW" : "PREP";
   logger?.info(
-    `[Planner] 🎯 Ziel gewählt: ${bestTarget} (${mode}) | Score: ${bestScore.toFixed(0)} | RAM/Batch: ${bestPlan.totalRam.toFixed(1)}GB | Max Batches: ${maxBatches}`,
+    `[Planner] 🎯 Ziel gewählt: ${selected.target} (${mode}) | Score: ${selected.score.toFixed(0)} | RAM/Batch: ${selected.plan.totalRam.toFixed(1)}GB | Max Batches: ${selected.maxBatches}`,
   );
 
-  return { target: bestTarget, plan: bestPlan, maxBatches };
+  return {
+    target: selected.target,
+    plan: selected.plan,
+    maxBatches: selected.maxBatches,
+  };
 }

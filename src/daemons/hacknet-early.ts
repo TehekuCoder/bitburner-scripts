@@ -1,15 +1,14 @@
 import { NS } from "@ns";
-import { Logger } from "/lib/logger";
-import { loadBnMults, patchState, loadState } from "/lib/state";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+
+import { loadBnMults, patchState, loadState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const h = ns.hacknet;
   const logger = new Logger(
     ns,
-    "HACKNET-EARLY",
-    "INFO",
-    "logs/hacknet-early.txt",
+    "HACKNET-EARLY"
   );
 
   const isCappedMode = ns.args.length > 0;

@@ -2,7 +2,8 @@
 
 import { NS } from "@ns";
 import { TRANSACTION_FEE, CASH_BUFFER, MIN_INVESTMENT } from "/lib/constants";
-import { Logger } from "/lib/logger";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+
 import { patchState } from "/lib/state";
 
 
@@ -24,7 +25,7 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  const logger = new Logger(ns, "FINANCE", "INFO", "/logs/finance.txt");
+  const logger = new Logger(ns, "FINANCE");
   logger.info("⚡ Finanz-Subsystem aktiv. RAM-Kriterien erfüllt.");
 
   let fullyUnlocked = false;

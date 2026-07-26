@@ -1,6 +1,6 @@
 import { NS, BitNodeMultipliers } from "@ns";
 import { DEFAULT_MULTIPLIERS } from "/lib/constants";
-import { Logger } from "/lib/logger";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { BotState } from "/lib/types";
 
 export function loadBnMults(ns: NS): Record<keyof BitNodeMultipliers, number> {
@@ -23,7 +23,7 @@ const STATE_PORT = 1;
 
 let _logger: Logger | null = null;
 function getLogger(ns: NS): Logger {
-  if (!_logger) _logger = new Logger(ns, "State", "INFO");
+  if (!_logger) _logger = new Logger(ns, "State");
   return _logger;
 }
 

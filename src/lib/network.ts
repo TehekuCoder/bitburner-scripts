@@ -1,7 +1,7 @@
 import { NS, Player } from "@ns";
 import { JitEvent } from "lib/types.js";
 import { HOME_RAM_RESERVE } from "lib/constants.js";
-import { provisionServer } from "/utils/provision";
+import { provisionServer } from "/utils/provision.js";
 
 /**
  * Durchsucht das gesamte Bitburner-Netzwerk via hochperformantem Stack (DFS).
@@ -62,6 +62,8 @@ export function breakAndInfectNetwork(ns: NS): void {
     http: { has: ns.fileExists("HTTPWorm.exe", "home"), run: ns.httpworm },
     sql: { has: ns.fileExists("SQLInject.exe", "home"), run: ns.sqlinject },
   };
+
+
 
   const maxPossiblePorts = Object.values(cricks).filter((c) => c.has).length;
   const playerHackingLevel = ns.getPlayer().skills.hacking;

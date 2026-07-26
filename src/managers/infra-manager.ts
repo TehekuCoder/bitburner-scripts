@@ -1,7 +1,7 @@
 import { NS } from "@ns";
 import { printDashboard } from "ui/infra-ui.js";
 import { DEFAULT_MULTIPLIERS } from "/lib/constants";
-import { Logger } from "/lib/logger";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { handleServerPurchases } from "/lib/pserv-manager";
 import { loadBnMults, loadState } from "/lib/state";
 
@@ -16,7 +16,7 @@ export async function main(ns: NS): Promise<void> {
   ns.ui.setTailTitle("Infrastruktur");
   ns.ui.resizeTail(580, 500);
 
-  const logger = new Logger(ns, "Infra", "INFO");
+  const logger = new Logger(ns, "Infra");
   logger.info("Schlanker Infrastruktur-Manager gestartet.");
 
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;

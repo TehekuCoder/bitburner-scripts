@@ -1,11 +1,11 @@
 import { NS, ProgramName } from "@ns";
 import { DEFAULT_MULTIPLIERS, TARGET_PROGRAMS } from "/lib/constants";
-import { Logger } from "/lib/logger";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { loadBnMults, patchState } from "/lib/state";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  const logger = new Logger(ns, "Infra-Sing", "INFO");
+  const logger = new Logger(ns, "Infra-Sing");
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
 
   const currentHacking = ns.getHackingLevel();

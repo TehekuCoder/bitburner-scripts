@@ -1,6 +1,6 @@
 import { NS } from "@ns";
-import { breakAndInfectNetwork, getAllServers } from "/lib/network";
-import { patchState } from "/lib/state";
+import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
+import { patchState } from "/lib/state.js";
 
 
 export async function main(ns: NS): Promise<void> {

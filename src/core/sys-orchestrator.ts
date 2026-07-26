@@ -1,16 +1,15 @@
 import { NS } from "@ns";
-import { Logger } from "/lib/logger.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { getAllServers, getNetworkMaxRam } from "/lib/network.js";
 import { patchState } from "/lib/state.js";
 import { BatchStrategy } from "/lib/types.js";
+import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new Logger(
     ns,
-    "Orchestrator",
-    "INFO",
-    "/logs/sys-orchestrator.txt",
+    "Orchestrator"
   );
 
   const DASHBOARD_SCRIPT = "core/sys-jit-batcher-dashboard.js";
@@ -29,14 +28,14 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     const servers = getAllServers(ns);
     const totalMaxRam = getNetworkMaxRam(ns, servers);
-    const target = selectBestTarget(ns, servers, activeTarget);
 
-    // 1. Strategie evaluieren (inkl. XP-Grind & BN-Sonderregeln)
-    const desiredStrategy = determineStrategy(
+    // 1. Strategie & Target ohne Henne-Ei-Konflikt evaluieren
+    const { strategy: desiredStrategy, target } = evaluateStrategyAndTarget(
       ns,
+      servers,
       totalMaxRam,
-      target,
       activeStrategy,
+      activeTarget,
       bnMults,
     );
 
@@ -51,10 +50,13 @@ export async function main(ns: NS): Promise<void> {
         `🔄 Statuswechsel: Strategie [${activeStrategy ?? "NONE"} ➡️ ${desiredStrategy}] | Ziel [${activeTarget ?? "NONE"} ➡️ ${target ?? "NONE"}]`,
       );
 
-      // Laufende Alt-Prozesse beenden
+      // Alt-Engine stoppen
       if (activeProcessId > 0 && ns.isRunning(activeProcessId)) {
         ns.kill(activeProcessId);
       }
+
+      // Worker-Payloads im gesamten Netzwerk säubern
+      killAllWorkerPayloads(ns, servers);
 
       // Neue Execution Engine starten
       activeProcessId = switchExecutionEngine(ns, desiredStrategy, target);
@@ -95,52 +97,56 @@ export async function main(ns: NS): Promise<void> {
 }
 
 /**
- * Kernlogik: Wählt die richtige Batch/Prep/XP-Strategie.
+ * Kernlogik: Wählt die richtige Strategie UND das passendste Ziel aus.
+ * Trennt globale System-Bedingungen sauber von ziel-abhängigen Entscheidungen.
  */
-function determineStrategy(
+function evaluateStrategyAndTarget(
   ns: NS,
+  servers: string[],
   totalRam: number,
-  target: string | null,
   currentStrategy: BatchStrategy | null,
+  currentTarget: string | null,
   bnMults: Record<string, number>,
-): BatchStrategy {
+): { strategy: BatchStrategy; target: string | null } {
   const hackingEfficiency =
     (bnMults.ServerMaxMoney ?? 1.0) * (bnMults.ScriptHackMoneyGain ?? 1.0);
 
-  // 1. BitNode-Sonderregel: Wenn Hacking kein Geld bringt -> XP_GRIND
-  if (hackingEfficiency === 0) {
-    return "XP_GRIND";
+  // ----------------------------------------------------------------------
+  // 1️⃣ GLOBALE STRATEGIEN (Egal welches Ziel)
+  // ----------------------------------------------------------------------
+  if (hackingEfficiency === 0 || ns.getPlayer().skills.hacking < 30) {
+    return { strategy: "XP_GRIND", target: "joesguns" };
   }
 
-  // 2. Niedriges Hacking-Level -> XP_GRIND
-  if (ns.getPlayer().skills.hacking < 30) {
-    return "XP_GRIND";
-  }
-
-  // 3. Sehr wenig RAM -> BOOTSTRAP
   if (totalRam < 64) {
-    return "BOOTSTRAP";
+    return { strategy: "BOOTSTRAP", target: "n00dles" };
   }
 
   const homeRam = ns.getServerMaxRam("home");
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  // 🚀 CORE-FIX: Wenn RAM und Formulas vorhanden sind, überlassen wir das Prep vollkommen
-  // dem JIT-Batcher! Er regelt Target-Prep, Timings und Dashboard-Countdown intern.
   if (totalRam >= 512 && homeRam >= 1024 && hasFormulas) {
-    return "JIT_HWGW";
+    // Bei JIT_HWGW übernimmt der internalPlanner im Batcher die dynamic Target-Wahl.
+    // Wir behalten das bisherige Target oder nutzen n00dles als Starter.
+    return { strategy: "JIT_HWGW", target: currentTarget ?? "n00dles" };
   }
 
-  if (!target) return "PREP";
+  // ----------------------------------------------------------------------
+  // 2️⃣ ZIEL-ABHÄNGIGE STRATEGIEN (PREP, PROTO, SHOTGUN)
+  // ----------------------------------------------------------------------
+  const target = selectBestTarget(ns, servers, currentTarget);
+  if (!target) {
+    return { strategy: "PREP", target: "n00dles" };
+  }
 
-  // Für schwächere Setups (ohne Formulas / wenig RAM) greift die Fallback-Prep-Engine:
+  // Hysterese für SHOTGUN_HWGW (Vermeidet Target-Jumping bei kleiner Sec-Erhöhung)
   if (currentStrategy === "SHOTGUN_HWGW") {
     const sObj = ns.getServer(target);
     const curDiff = sObj.hackDifficulty ?? 99;
     const minDiff = sObj.minDifficulty ?? 1;
 
     if (curDiff - minDiff <= 20.0) {
-      return currentStrategy;
+      return { strategy: "SHOTGUN_HWGW", target };
     }
   }
 
@@ -155,14 +161,51 @@ function determineStrategy(
     (maxMoney > 0 ? currentMoney / maxMoney >= 0.98 : true);
 
   if (!isPrepped) {
-    return "PREP";
+    return { strategy: "PREP", target };
   }
 
   if (totalRam < 512) {
-    return "PROTO_BATCH";
+    return { strategy: "PROTO_BATCH", target };
   } else {
-    return "SHOTGUN_HWGW";
+    return { strategy: "SHOTGUN_HWGW", target };
   }
+}
+
+/**
+ * Wählt das lukrativste Ziel für einfache Strategien aus.
+ */
+function selectBestTarget(
+  ns: NS,
+  servers: string[],
+  currentTarget: string | null,
+): string | null {
+  const playerSkill = ns.getPlayer().skills.hacking;
+
+  const candidates = servers
+    .filter(
+      (s) =>
+        ns.hasRootAccess(s) &&
+        ns.getServerMaxMoney(s) > 0 &&
+        (ns.getServerRequiredHackingLevel(s) ?? 0) <= playerSkill,
+    )
+    .sort(
+      (a, b) => (ns.getServerMaxMoney(b) ?? 0) - (ns.getServerMaxMoney(a) ?? 0),
+    );
+
+  const bestCandidate = candidates[0] ?? "n00dles";
+
+  if (currentTarget && ns.serverExists(currentTarget)) {
+    const currentMaxMoney = ns.getServerMaxMoney(currentTarget);
+    const bestMaxMoney = ns.getServerMaxMoney(bestCandidate);
+
+    const threshold = playerSkill < 300 ? 1.3 : 2.5;
+
+    if (bestMaxMoney < currentMaxMoney * threshold) {
+      return currentTarget;
+    }
+  }
+
+  return bestCandidate;
 }
 
 /**
@@ -199,34 +242,25 @@ function switchExecutionEngine(
   }
 }
 
-function selectBestTarget(
-  ns: NS,
-  servers: string[],
-  currentTarget: string | null,
-): string | null {
-  const playerSkill = ns.getPlayer().skills.hacking;
+/**
+ * Beendet gezielt alle H/G/W Payload-Prozesse im Netzwerk inklusive home.
+ */
+function killAllWorkerPayloads(ns: NS, servers: string[]): void {
+  const payloadScripts = [
+    PATH_HACK,
+    PATH_GROW,
+    PATH_WEAKEN,
+    "payloads/weaken.js",
+    "payloads/grow.js",
+    "payloads/hack.js",
+  ];
 
-  const candidates = servers
-    .filter(
-      (s) =>
-        ns.hasRootAccess(s) &&
-        ns.getServerMaxMoney(s) > 0 &&
-        (ns.getServerRequiredHackingLevel(s) ?? 0) <= playerSkill,
-    )
-    .sort(
-      (a, b) => (ns.getServerMaxMoney(b) ?? 0) - (ns.getServerMaxMoney(a) ?? 0),
-    );
-
-  const bestCandidate = candidates[0] ?? "n00dles";
-
-  if (currentTarget && ns.serverExists(currentTarget)) {
-    const currentMaxMoney = ns.getServerMaxMoney(currentTarget);
-    const bestMaxMoney = ns.getServerMaxMoney(bestCandidate);
-
-    if (bestMaxMoney < currentMaxMoney * 2.5) {
-      return currentTarget;
+  for (const server of servers) {
+    if (!ns.hasRootAccess(server)) continue;
+    for (const proc of ns.ps(server)) {
+      if (payloadScripts.some((script) => proc.filename.includes(script))) {
+        ns.kill(proc.pid);
+      }
     }
   }
-
-  return bestCandidate;
 }

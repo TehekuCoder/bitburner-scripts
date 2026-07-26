@@ -1,14 +1,14 @@
 import { NS } from "@ns";
 import { manageSuites } from "daemons/suite-manager.js";
-import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants";
-import { Logger } from "/lib/logger";
-import { loadBnMults, loadState } from "/lib/state";
-import { ScriptList } from "/lib/types";
+import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+import { loadBnMults, loadState } from "/lib/state.js";
+import { ScriptList } from "/lib/types.js";
 
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  const logger = new Logger(ns, "Suites", "INFO");
+  const logger = new Logger(ns, "Suites");
   const bnMults = loadBnMults(ns);
 
   const scripts: ScriptList = {

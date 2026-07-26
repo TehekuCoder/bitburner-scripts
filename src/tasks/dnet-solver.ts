@@ -3,7 +3,8 @@
 import { NS } from "@ns";
 import { runSolver } from "solvers/solveManager.js";
 import { COOLDOWN_FILE, COOLDOWN_MS } from "/lib/constants";
-import { Logger } from "/lib/logger";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+
 import { ServerAuthDetails } from "/lib/types";
 
 export async function main(ns: NS): Promise<void> {
@@ -12,12 +13,7 @@ export async function main(ns: NS): Promise<void> {
   if (ns.args.length < 1) return;
   const host = String(ns.args[0]);
 
-  const logger = new Logger(
-    ns,
-    `SOLVER-${host}`,
-    "INFO",
-    "/logs/dnet_system.txt",
-  );
+  const logger = new Logger(ns, `SOLVER-${host}`);
 
   if (isServerInCooldown(ns, host)) return;
 
@@ -30,7 +26,7 @@ export async function main(ns: NS): Promise<void> {
   // 1. Live-Details vom Server laden
   const details = ns.dnet.getServerDetails(host) as ServerAuthDetails;
   if (!details) {
-    logger.error(`❌ Konnte ServerDetails für '${host}' nicht abrufen.`, false);
+    logger.error(`❌ Konnte ServerDetails für '${host}' nicht abrufen.`);
     return;
   }
 
@@ -96,7 +92,6 @@ export async function main(ns: NS): Promise<void> {
   } else {
     logger.error(
       `❌ Krypto-Angriff auf ${host} (${details.modelId}) fehlgeschlagen. Cooldown aktiviert.`,
-      false,
     );
     setServerCooldown(ns, host);
   }

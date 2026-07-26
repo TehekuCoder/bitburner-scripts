@@ -1,11 +1,11 @@
 import { NS } from "@ns";
-import { Logger } from "/lib/logger";
-import { breakAndInfectNetwork, getAllServers } from "/lib/network";
-import { patchState } from "/lib/state";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
+import { patchState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  const logger = new Logger(ns, "XPGrindEngine", "INFO");
+  const logger = new Logger(ns, "XPGrindEngine");
 
   // Standard-Ziel für maximalen XP-Gain im Early/Mid-Game
   let target = (ns.args[0] as string) || "joesguns";

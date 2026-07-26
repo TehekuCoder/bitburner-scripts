@@ -1,11 +1,11 @@
 import { NS } from "@ns";
-import { breakAndInfectNetwork, getAllServers } from "/lib/network";
-import { Logger } from "/lib/logger";
-import { patchState } from "/lib/state";
+import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+import { patchState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  const logger = new Logger(ns, "PrepEngine", "INFO");
+  const logger = new Logger(ns, "PrepEngine");
 
   // Ziel-Server kann via CLI/Orchestrator übergeben werden (z.B. ns.run("core/engine-prep.js", 1, "n00dles"))
   const target = (ns.args[0] as string) || "n00dles";

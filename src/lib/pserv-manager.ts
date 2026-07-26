@@ -2,7 +2,8 @@
 
 import { NS } from "@ns";
 import { provisionServer } from "../utils/provision.js";
-import { Logger } from "./logger.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+
 
 export async function handleServerPurchases(
   ns: NS,

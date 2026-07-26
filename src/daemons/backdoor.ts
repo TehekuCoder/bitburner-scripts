@@ -1,6 +1,6 @@
 import { NS, Server } from "@ns";
-import { findPathTo, getAllServers } from "/lib/network";
-import { loadState } from "/lib/state";
+import { findPathTo, getAllServers } from "/lib/network.js";
+import { loadState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
