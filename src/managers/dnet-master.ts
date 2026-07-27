@@ -41,20 +41,29 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-      if (host && password !== undefined && passwordDb[host] !== password) {
+      if (
+        host &&
+        typeof password === "string" &&
+        password.trim().length > 0 &&
+        passwordDb[host] !== password
+      ) {
         passwordDb[host] = password;
 
-        logger.success(`🔑 Neues Passwort registriert: ${host} -> "${password}"`);
+        logger.success(
+          `🔑 Neues Passwort registriert: ${host} -> "${password}"`,
+        );
 
         await ns.write(jsonDbFile, JSON.stringify(passwordDb, null, 2), "w");
 
-        const uniquePasswords = [...new Set(Object.values(passwordDb))].filter(
-          (pw) =>
-            pw !== undefined &&
-            !pw.includes("You have discovered") &&
-            !pw.includes("shares of") &&
-            pw.length < 30,
-        );
+        const uniquePasswords = [...new Set(Object.values(passwordDb))]
+          .map((pw) => (typeof pw === "string" ? pw.trim() : ""))
+          .filter(
+            (pw) =>
+              pw.length > 0 &&
+              !pw.includes("You have discovered") &&
+              !pw.includes("shares of") &&
+              pw.length < 30,
+          );
 
         await ns.write(textDbFile, uniquePasswords.join("\n"), "w");
       }

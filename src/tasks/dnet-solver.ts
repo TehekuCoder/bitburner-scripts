@@ -1,8 +1,8 @@
 import { NS } from "@ns";
 import { runSolver } from "solvers/solveManager.js";
-import { COOLDOWN_FILE, COOLDOWN_MS } from "/lib/constants";
+import { COOLDOWN_FILE, COOLDOWN_MS } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { ServerAuthDetails } from "/lib/types";
+import { ServerAuthDetails } from "/lib/types.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -72,11 +72,19 @@ export async function main(ns: NS): Promise<void> {
 
   if (password !== null) {
     const auth = await ns.dnet.authenticate(host, password);
-    const isSuccess = typeof auth === "boolean" ? auth : auth && auth.success;
+    const isSuccess = !!(
+      auth &&
+      typeof auth.success === "boolean" &&
+      auth.success
+    );
 
     if (isSuccess) {
       handleSuccess(ns, host, password, logger);
-      logger.info(`🔐 Authentifizierung für ${host} erfolgreich abgeschlossen.`, undefined, { tags: ["darknet", "auth"], context: { host } });
+      logger.info(
+        `🔐 Authentifizierung für ${host} erfolgreich abgeschlossen.`,
+        undefined,
+        { tags: ["darknet", "auth"], context: { host } },
+      );
     } else {
       logger.error(
         `❌ Passwort "${password}" für ${host} ermittelt, aber Authentifizierung fehlgeschlagen.`,

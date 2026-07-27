@@ -1,4 +1,4 @@
-import { NS, FactionName } from "@ns";
+import { NS, FactionName, CompanyName } from "@ns";
 
 import { generateProgressBar } from "../ui/ui-helper.js";
 import {
@@ -22,6 +22,8 @@ import {
 import { loadBnMults, loadState, patchState } from "/lib/state.js";
 import { ScriptList, BotStrategy } from "/lib/types.js";
 import { PATHS } from "/lib/paths.js";
+
+import { AugmentTarget } from "/lib/types.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -91,7 +93,7 @@ export async function main(ns: NS): Promise<void> {
     >;
 
     // Periodische Augment-Analyse (alle 5 Minuten oder bei Neustart)
-    if (now - lastAugAnalysis > 300_000 || !currentState?.augRoadmap) {
+    if (now - lastAugAnalysis > 300_000 || !currentState?.augRoadMap) {
       if (ns.fileExists(scripts.augAnalyze, "home")) {
         ns.run(scripts.augAnalyze, 1);
         lastAugAnalysis = now;
@@ -99,7 +101,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // Fraktions-Ziel über Roadmap ermitteln
-    const augRoadmap = currentState?.augRoadmap ?? [];
+    const augRoadmap = currentState?.augRoadMap ?? [];
     const nextRoadmapFaction = findNextRoadmapFaction(ns, augRoadmap);
 
     const p = ns.getPlayer();
@@ -209,8 +211,10 @@ export async function main(ns: NS): Promise<void> {
         now - modeLockTime < REFRESH_INTERVALS.STRATEGY_COOLDOWN
       ) {
         mode = previousStrategy as BotStrategy;
-        if (mode === "REP") targetFaction = currentState?.targetFaction || null;
-        if (mode === "CORP") targetCompany = currentState?.targetCompany;
+        if (mode === "REP")
+          targetFaction = (currentState?.targetFaction as FactionName) || null;
+        if (mode === "CORP")
+          targetCompany = currentState?.targetCompany as CompanyName;
         if (mode === "TRAIN") targetStat = currentState?.targetStat || 0;
       } else {
         modeLockTime = now;

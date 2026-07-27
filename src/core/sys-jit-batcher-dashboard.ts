@@ -10,6 +10,15 @@ function cleanProgressString(str: string): string {
   return str.replace(/\s*\([^)]*?\d+s[^)]*?\)/g, "").trim();
 }
 
+/** Hilfsfunktion: Liefert den ersten validen Servernamen aus einer kommasparierten Liste */
+function getPrimaryTarget(rawTarget: string): string {
+  if (!rawTarget) return "Keines";
+  if (rawTarget.includes(",")) {
+    return rawTarget.split(",")[0].trim();
+  }
+  return rawTarget.trim();
+}
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
@@ -36,26 +45,28 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    const currentTarget = state.batcherTarget ?? "Keines";
+    const rawTarget = state.batcherTarget ?? "Keines";
+    const primaryTarget = getPrimaryTarget(rawTarget);
     const progressStr = state.batcherProgress ?? "";
+    const targetsSummary = state.batcherTargetsSummary ?? [];
 
     // 1. Dynamic Event-Logging für Zustandsänderungen
     if (
-      currentTarget !== lastTarget &&
-      currentTarget !== "Suche..." &&
-      currentTarget !== "Keines" &&
-      currentTarget !== "Standby"
+      rawTarget !== lastTarget &&
+      rawTarget !== "Suche..." &&
+      rawTarget !== "Keines" &&
+      rawTarget !== "Standby"
     ) {
       if (lastTarget && lastTarget !== "Keines" && lastTarget !== "Suche...") {
         eventLog.push(
-          `[${new Date().toLocaleTimeString()}] 🎯 Target: ${lastTarget} ➡️ ${currentTarget}`,
+          `[${new Date().toLocaleTimeString()}] 🎯 targets: ${lastTarget} ➡️ ${rawTarget}`,
         );
       } else {
         eventLog.push(
-          `[${new Date().toLocaleTimeString()}] 🚀 JIT-Zündung auf Ziel: ${currentTarget}`,
+          `[${new Date().toLocaleTimeString()}] 🚀 JIT Multi-Zündung: ${rawTarget}`,
         );
       }
-      lastTarget = currentTarget;
+      lastTarget = rawTarget;
     }
 
     const cleanCurrent = cleanProgressString(progressStr);
@@ -84,80 +95,63 @@ export async function main(ns: NS): Promise<void> {
     }
     const ramFree = Math.max(0, totalMaxRam - totalUsedRam);
 
-    // 3. Intelligente Fortschritts-Berechnung (Prep-Geld % vs. Pipeline-Auslastung)
-    let progressPercent = 0;
-    let batchesSent = 0;
-    let statusText = progressStr;
-    let subText = "";
+    // 3. Multi-Target Metriken aufsummieren
+    let totalActiveBatches = 0;
+    let totalMaxBatches = 0;
+    let totalProgressPercent = 0;
+    let averageGreed = 0;
 
-    if (progressStr.includes("|")) {
-      const parts = progressStr.split("|");
-      statusText = parts[0].trim();
-      subText = parts[1].trim();
-    } else if (progressStr.includes("(")) {
-      const parts = progressStr.split("(");
-      statusText = parts[0].trim();
-      subText = "(" + parts[1];
-    }
-
-    // Pipeline-Batches parsen, falls vorhanden
-    const match = progressStr.match(/\((\d+)\/(\d+)\)/);
-    if (match) {
-      batchesSent = parseInt(match[1], 10);
-    }
-
-    // 📊 Dynamischer Progressbar-Wert:
-    if (servers.includes(currentTarget)) {
-      const targetObj = ns.getServer(currentTarget);
-      const moneyMax = targetObj.moneyMax ?? 1;
-      const moneyAvail = targetObj.moneyAvailable ?? 0;
-
-      if (progressStr.toLowerCase().includes("prep")) {
-        // In der Prep-Phase: Zeige % des maximalen Geldes an
-        progressPercent = Math.min(1.0, Math.max(0, moneyAvail / moneyMax));
-      } else if (match) {
-        // In HWGW: Zeige Auslastung der Batches an
-        progressPercent = Math.min(1.0, batchesSent / parseInt(match[2], 10));
-      } else {
-        progressPercent = 1.0;
+    if (targetsSummary.length > 0) {
+      for (const t of targetsSummary) {
+        totalActiveBatches += t.activeBatches;
+        totalMaxBatches += t.maxBatches;
+        averageGreed += t.greed;
       }
+      averageGreed /= targetsSummary.length;
+      totalProgressPercent =
+        totalMaxBatches > 0 ? totalActiveBatches / totalMaxBatches : 0;
+    } else {
+      totalMaxBatches = state.batcherDynamicMaxBatches ?? 100;
+      averageGreed =
+        state.batcherPlan?.greed ?? state.batcherPlan?.greedFactor ?? 0;
     }
 
-    // 4. Gewinn-Schätzung pro Welle via Formulas-API
-    let waveProfit = 0;
-    if (state.batcherPlan && servers.includes(currentTarget)) {
-      const plan = state.batcherPlan;
-      if (ns.formulas && ns.formulas.hacking) {
-        const serverObj = ns.getServer(currentTarget);
-        const playerObj = ns.getPlayer();
-        const pctPerThread = ns.formulas.hacking.hackPercent(
-          serverObj,
-          playerObj,
-        );
-        waveProfit =
-          (serverObj.moneyMax ?? 0) * (plan.hackThreads * pctPerThread);
+    // 4. Gewinn-Schätzung pro Welle via Formulas-API (über alle HWGW-Ziele)
+    let totalWaveProfit = 0;
+    if (ns.formulas && ns.formulas.hacking) {
+      const playerObj = ns.getPlayer();
+
+      for (const t of targetsSummary) {
+        if (t.mode === "HWGW" && ns.serverExists(t.target)) {
+          const serverObj = ns.getServer(t.target);
+
+          // Schätzung basierend auf dem Greed-Faktor des Ziels
+          totalWaveProfit += (serverObj.moneyMax ?? 0) * t.greed;
+        }
       }
     }
 
     // 5. UI-Daten-Objekt füttern
+    // Falls ein Einzel-Target übergeben wird, nutzen wir primaryTarget, sonst zeigen wir die Zusammenfassung
+    const displayTarget =
+      targetsSummary.length > 1
+        ? `${primaryTarget} (+${targetsSummary.length - 1})`
+        : primaryTarget;
+
     const uiData: DashboardData = {
-      status: statusText,
-      target:
-        servers.includes(currentTarget) ||
-        currentTarget === "Suche..." ||
-        currentTarget === "Keines"
-          ? currentTarget
-          : "Suche...",
-      progress: progressPercent,
-      progressText: subText || statusText,
-      greed: state.batcherPlan?.greedFactor ?? state.batcherPlan?.greed ?? 0.0,
+      status: `Multi-Target (${targetsSummary.length} aktiv)`,
+      target: displayTarget,
+      progress: Math.min(1.0, Math.max(0, totalProgressPercent)),
+      progressText: `${totalActiveBatches} / ${totalMaxBatches} Batches`,
+      greed: averageGreed,
       ramNeeded: state.batcherRamNeeded ?? 0,
       ramFree: ramFree,
       ramTotal: totalMaxRam,
-      batchesSent: batchesSent,
-      batchesMax: state.batcherDynamicMaxBatches ?? 100,
+      batchesSent: totalActiveBatches,
+      batchesMax: totalMaxBatches,
       eventLog: eventLog,
-      lastWaveProfit: waveProfit,
+      lastWaveProfit: totalWaveProfit,
+      targetsSummary: targetsSummary,
     };
 
     drawBatcherDashboard(ns, uiData);

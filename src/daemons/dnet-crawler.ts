@@ -25,10 +25,6 @@ function isServerInCooldown(ns: NS, host: string): boolean {
   return false;
 }
 
-function getSolverFiles(ns: NS): string[] {
-  return ns.ls("home").filter((file) => file.includes("solvers/"));
-}
-
 async function ensureSession(
   ns: NS,
   hostname: string,
@@ -47,7 +43,10 @@ async function ensureSession(
     getPasswordFromRegistry(ns, hostname),
   ];
 
-  if (details.modelId && String(details.modelId).toLowerCase().includes("zerologon")) {
+  if (
+    details.modelId &&
+    String(details.modelId).toLowerCase().includes("zerologon")
+  ) {
     passwordCandidates.push("");
   }
 
@@ -67,10 +66,17 @@ async function ensureSession(
           : Boolean(authResult?.success);
 
       if (authSuccess) {
-        logger.info(`✅ Authentifizierung erfolgreich auf ${hostname} mit Passwort-Variante.`, undefined, {
-          tags: ["darknet", "auth"],
-          context: { host: hostname, model: String(details?.modelId || "unknown") },
-        });
+        logger.info(
+          `✅ Authentifizierung erfolgreich auf ${hostname} mit Passwort-Variante.`,
+          undefined,
+          {
+            tags: ["darknet", "auth"],
+            context: {
+              host: hostname,
+              model: String(details?.modelId || "unknown"),
+            },
+          },
+        );
         return true;
       }
     } catch {
@@ -246,9 +252,7 @@ export async function main(ns: NS): Promise<void> {
     let solverStarted = false;
 
     if (targetToCrack && targetDetails && !isSolverRunning) {
-      const hasSolverModules =
-        ns.fileExists("/solvers/solveManager.js", currentHost) ||
-        ns.fileExists("/solvers/solveManager.ts", currentHost);
+      const hasSolverModules = ns.fileExists(solverScript, currentHost);
 
       if (requiredSolverRam === 0 || !hasSolverModules) {
         // HIER ANGEPASST: Einfach den Server provisionieren lassen
@@ -280,7 +284,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-if (
+    if (
       currentHost !== "home" &&
       !isSolverRunning &&
       !solverStarted &&

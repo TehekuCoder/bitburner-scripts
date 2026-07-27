@@ -7,6 +7,13 @@ import {
   SleeveTask,
 } from "@ns";
 
+export interface AugmentRoadmapItem {
+  faction: FactionName | string;
+  augmentation: string;
+  repRequired: number;
+  cost: number;
+}
+
 export interface ScriptList {
   logger: string;
   perfMonitor: string;
@@ -31,10 +38,14 @@ export interface ScriptList {
 
 export interface BatchPlan {
   target: string;
+  
+  // Threads
   hackThreads: number;
-  weaken1Threads: number;
+  weakenThreads1: number;
   growThreads: number;
-  weaken2Threads: number;
+  weakenThreads2: number;
+
+  // Delays & Laufzeiten (essentiell für das Timing im Batcher)
   hackDelay: number;
   weaken1Delay: number;
   growDelay: number;
@@ -42,8 +53,14 @@ export interface BatchPlan {
   hackTime: number;
   growTime: number;
   weakenTime: number;
-  totalRam: number;
   executionTime: number;
+
+  // RAM & Orchestrierung
+  totalRam: number;
+  batchRam: number;
+  maxBatches?: number;
+  greed?: number;
+  greedFactor?: number;
 }
 
 export interface InFlightBatch {
@@ -83,6 +100,7 @@ export interface DashboardData {
   batchesMax: number;
   eventLog: string[];
   lastWaveProfit: number;
+  targetsSummary?: TargetSummary[];
 }
 
 export interface FactionConfig {
@@ -111,57 +129,73 @@ export type BatchStrategy =
   | "SHOTGUN_HWGW"
   | "JIT_HWGW";
 
+export interface TargetSummary {
+  target: string;
+  mode: "PREP" | "HWGW";
+  activeBatches: number;
+  maxBatches: number;
+  prepEndTime: number;
+  greed: number;
+}
+
 export interface BotState {
   strategy: BotStrategy;
-  batchStrategy?: BatchStrategy;
-  progressBar: string;
-  targetFaction?: FactionName;
-  targetCompany?: CompanyName;
-  targetStat?: number;
-  jobField?: JobField;
-  targetKills?: number;
-  factionTargets?: Partial<Record<FactionName, number>>;
-  factionCurrentReps?: Partial<Record<FactionName, number>>;
-  batcherProgress?: string;
-  batcherRamNeeded?: number;
-  batcherTarget?: string;
+  batchStrategy?: string;
+  kernelTarget: string;
+  batcherTarget?: string | null;
+  progressBar?: string;
+  batcherProgress: string;
   batcherActive: boolean;
+  financeProgress: string;
+  traderProgress: string;
+  hacknetProgress: string;
+
+  sleeveProgress?: string;
+  sleeveGlobalMode?: string;
+
+  factionTargets?: Record<string, number>;
+  augRoadMap?: AugmentTarget[];
+  targetFaction?: string | FactionName | null;
+  targetCompany?: string;
+  targetStat?: number;
+  targetKills?: number;
+
   fillerConfig?: {
     shareMaxRamPercent: number;
     maxXpLevel: number;
   };
-  financeProgress?: string;
-  moneyReserve?: number;
-  traderMode?: "INACTIVE" | "EARLY" | "4S_ACTIVE" | "LIQUIDATING";
-  traderProgress?: string;
-  hacknetMode?: "INACTIVE" | "PRODUCTION" | "HASH_SPENDING";
-  hacknetProgress?: string;
-  sleeveGlobalMode?: "RECOVERY" | "CRIME" | "COMPANY" | "FACTION";
-  sleeveProgress?: string;
-  targetSleeveCompany?: CompanyName;
+
+  // Globales Netzwerk & Multi-Target State
+  allServers?: string[];
+  totalNodes?: number;
+  batcherTargetsSummary?: TargetSummary[];
+  batcherPlan?: BatchPlan | null;
+  batcherDynamicMaxBatches?: number;
+  batcherRamNeeded?: number;
+
   currentBitNode: number;
   currentBitNodeLevel: number;
-  sourceFiles: SourceFileProgress;
+  sourceFiles: Record<string, number>;
   hasDarkScapeNavigator: boolean;
   hasTorRouter: boolean;
   hasGang: boolean;
   hasCorporation: boolean;
   hasBladeburner: boolean;
+
   lastUpdate: number;
-  playerHacking: number;
-  kernelTarget?: string;
-  rootCount?: number;
-  totalNodes?: number;
-  isFleetMode?: boolean;
+  playerHacking?: number;
   sources?: Record<string, string>;
-  allServers?: string[];
-  bnMults?: Record<string, number>;
-  homeCores?: number;
+
+  traderMode?: string;
+
+  moneyReserve?: number;
   isHomePrioritized?: boolean;
+
+  factionCurrentReps?: Partial<Record<FactionName, number>>;
+  homeCores?: number;
   isRushModeActive?: boolean;
-  batcherPlan?: any | null;
-  batcherDynamicMaxBatches?: number;
-  augRoadmap?: AugmentTarget[];
+
+  rootCount?: number;
 }
 
 export type SleeveMode =
@@ -281,4 +315,13 @@ export interface LogPayload {
   target?: string;
   tags?: string[];
   context?: Record<string, string | number | boolean | null | undefined>;
+}
+
+export interface MultiTargetState {
+  target: string;
+  phase: "PREP" | "HWGW";
+  moneyPercent: number;
+  activeBatches: number;
+  maxBatches: number;
+  estimatedIncomePerSec: number;
 }

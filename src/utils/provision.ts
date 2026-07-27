@@ -14,9 +14,7 @@ export async function provisionServer(
   if (serverName === "home") return;
 
   const currentHost = ns.getHostname();
-  const sourceCandidates = [currentHost, "home"].filter(
-    (host, index, hosts) => hosts.indexOf(host) === index,
-  );
+  const sourceCandidates = ["home", currentHost];
 
   const missingFiles = PAYLOADS.filter(
     (file) => !ns.fileExists(file, serverName),
@@ -31,6 +29,10 @@ export async function provisionServer(
 
     if (sourceHost) {
       ns.scp(file, serverName, sourceHost);
+    }
+
+    if (!sourceHost) {
+      ns.print(`[PROVISION] Datei fehlt: ${file} auf home & ${currentHost}`);
     }
   }
 }

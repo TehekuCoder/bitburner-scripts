@@ -84,12 +84,12 @@ export function calculateBatch(
     growThreads * ramGrow +
     weaken2Threads * ramWeaken;
 
-  return {
+return {
     target: targetName,
     hackThreads,
-    weaken1Threads,
+    weakenThreads1: weaken1Threads,
     growThreads,
-    weaken2Threads,
+    weakenThreads2: weaken2Threads,
     hackDelay,
     weaken1Delay,
     growDelay,
@@ -98,6 +98,7 @@ export function calculateBatch(
     growTime: tG,
     weakenTime: tW,
     totalRam,
+    batchRam: totalRam, // 🟢 Mapped totalRam auch auf batchRam
     executionTime: tW + spacer * 2,
   };
 }

@@ -13,7 +13,7 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    const faction: FactionName = state.targetFaction;
+    const faction: FactionName = state.targetFaction as FactionName;
     const sing = ns.singularity;
     const currentWork = sing.getCurrentWork();
 

@@ -10,21 +10,35 @@ function makeProgressBar(progress: number, width = 20): string {
 export function drawBatcherDashboard(ns: NS, data: DashboardData): void {
   ns.clearLog();
 
-  // 🟢 FIX: "Suche..." explizit von den API-Abfragen ausschließen
-  const hasValidTarget =
-    data.target !== "Keines" &&
-    data.target !== "Suche..." &&
-    data.target !== "";
+  // 🟢 FIX: Prüfe mit ns.serverExists, ob das Ziel ein echter Servername ist.
+  // Falls data.target ein kombinierter String ist, versuche das erste Target aus targetsSummary zu nutzen.
+  let statsTarget = "";
+  if (ns.serverExists(data.target)) {
+    statsTarget = data.target;
+  } else if (
+    data.targetsSummary &&
+    data.targetsSummary.length > 0 &&
+    ns.serverExists(data.targetsSummary[0].target)
+  ) {
+    statsTarget = data.targetsSummary[0].target;
+  }
 
-  const curSec = hasValidTarget ? ns.getServerSecurityLevel(data.target) : 0;
-  const minSec = hasValidTarget ? ns.getServerMinSecurityLevel(data.target) : 0;
-  const curMoney = hasValidTarget ? ns.getServerMoneyAvailable(data.target) : 0;
-  const maxMoney = hasValidTarget ? ns.getServerMaxMoney(data.target) : 0;
+  const hasValidTarget = statsTarget !== "";
+
+  const curSec = hasValidTarget ? ns.getServerSecurityLevel(statsTarget) : 0;
+  const minSec = hasValidTarget ? ns.getServerMinSecurityLevel(statsTarget) : 0;
+  const curMoney = hasValidTarget ? ns.getServerMoneyAvailable(statsTarget) : 0;
+  const maxMoney = hasValidTarget ? ns.getServerMaxMoney(statsTarget) : 0;
 
   const moneyPercent = maxMoney > 0 ? (curMoney / maxMoney) * 100 : 0;
   const ramUsed = data.ramTotal - data.ramFree;
   const ramPercent = data.ramTotal > 0 ? (ramUsed / data.ramTotal) * 100 : 0;
   const bar = makeProgressBar(data.progress, 20);
+
+  const targetHeader =
+    data.targetsSummary && data.targetsSummary.length > 1
+      ? `ZIELSERVER-ZUSTAND (${statsTarget}):`
+      : `ZIELSERVER-ZUSTAND:`;
 
   ns.print(`============================================================`);
   ns.print(
@@ -43,7 +57,7 @@ export function drawBatcherDashboard(ns: NS, data: DashboardData): void {
     `Wellen-Ram:  ${ns.format.ram(data.ramNeeded)} Benötigt | Frei gepoolt: ${ns.format.ram(data.ramFree)}`,
   );
   ns.print(`------------------------------------------------------------`);
-  ns.print(`ZIELSERVER-ZUSTAND:`);
+  ns.print(targetHeader);
   ns.print(`Sicherheit:  ${curSec.toFixed(2)} / ${minSec.toFixed(2)} (Min)`);
   ns.print(
     `Finanzen:    $${ns.format.number(curMoney)} / $${ns.format.number(maxMoney)} (${moneyPercent.toFixed(1)}%)`,

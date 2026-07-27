@@ -1,16 +1,12 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 
-
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const currentHost = ns.getHostname();
   if (currentHost === "home") return;
 
-  const logger = new Logger(
-    ns,
-    `LOOT-${currentHost}`
-  );
+  const logger = new Logger(ns, `LOOT-${currentHost}`);
   let totalSuckedCaches = 0;
 
   const nearbyServers = ns.dnet.probe();
@@ -35,12 +31,26 @@ export async function main(ns: NS): Promise<void> {
   }
 
   if (totalSuckedCaches > 0) {
-    logger.info(`🌪️ ${totalSuckedCaches} Caches von Satelliten abgesaugt.`, undefined, { tags: ["darknet", "loot"], context: { host: currentHost, count: totalSuckedCaches } });
+    logger.info(
+      `🌪️ ${totalSuckedCaches} Caches von Satelliten abgesaugt.`,
+      undefined,
+      {
+        tags: ["darknet", "loot"],
+        context: { host: currentHost, count: totalSuckedCaches },
+      },
+    );
   }
 
   const files = ns.ls(currentHost, ".cache");
   if (files.length > 0) {
-    logger.success(`💰 Verarbeite ${files.length} lokale Caches auf ${currentHost}.`, undefined, { tags: ["darknet", "loot"], context: { host: currentHost, count: files.length } });
+    logger.success(
+      `💰 Verarbeite ${files.length} lokale Caches auf ${currentHost}.`,
+      undefined,
+      {
+        tags: ["darknet", "loot"],
+        context: { host: currentHost, count: files.length },
+      },
+    );
   }
 
   for (const file of files) {
@@ -53,8 +63,11 @@ export async function main(ns: NS): Promise<void> {
             ? potentialPw.split(":").pop()?.trim()
             : potentialPw.trim();
           if (cleanPw) {
-            ns.write("/passwords.txt", `\n${cleanPw}`, "a");
-            ns.writePort(5, `${currentHost}:${cleanPw}`);
+            ns.write("/passwords.txt", `${cleanPw}\n`, "a");
+            ns.writePort(
+              5,
+              JSON.stringify({ host: currentHost, password: cleanPw }),
+            );
           }
         }
         ns.rm(file, currentHost);

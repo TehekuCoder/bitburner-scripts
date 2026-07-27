@@ -41,8 +41,9 @@ export async function main(ns: NS): Promise<void> {
 
     const p = ns.getPlayer();
     const loaded = loadState(ns);
-    const currentState = loaded ?? {
+const currentState = loaded ?? {
       strategy: "MONEY",
+      kernelTarget: "n00dles", // 🟢 Erforderliches Feld ergänzt
       progressBar: "Init...",
       batcherProgress: "Inaktiv",
       batcherActive: false,

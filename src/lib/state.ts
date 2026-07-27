@@ -62,7 +62,6 @@ export function saveState(
       playerHacking: ns.getHackingLevel(),
     };
 
-    // Atomares Ersetzen ohne langwieriges clear()
     port.clear();
     port.write(fullState);
   } catch (error) {
@@ -83,7 +82,6 @@ export function patchState(
 ): void {
   const port = ns.getPortHandle(STATE_PORT);
   
-  // ATOMAR: Entnehme das bestehende Objekt aus dem Port (Pop)
   const data = port.read();
   let currentState: BotState | null = null;
 
@@ -98,7 +96,7 @@ export function patchState(
     ...cleanedCurrentState
   } = currentState || {};
 
-  // Vollständiger Default-State
+  // Vollständiger Default-State inkl. Multi-Target & Kernel Feldern
   const baseState: Omit<BotState, "lastUpdate" | "playerHacking" | "sources"> =
     {
       strategy: "MONEY",
@@ -108,6 +106,12 @@ export function patchState(
       progressBar: "Prüfe System...",
       batcherProgress: "Inaktiv",
       batcherActive: false,
+      batcherTargetsSummary: [],
+      allServers: [],
+      totalNodes: 0,
+      batcherPlan: null,
+      batcherDynamicMaxBatches: 0,
+      batcherRamNeeded: 0,
       financeProgress: "Berechne Budget...",
       traderProgress: "Kein Depot",
       hacknetProgress: "Inaktiv",
@@ -139,14 +143,10 @@ export function patchState(
     playerHacking: ns.getHackingLevel(),
   };
 
-  // Atomares Zurückschreiben
   port.clear();
   port.write(fullState);
 }
 
-/**
- * Liest den aktuellen Zustand, ohne ihn zu löschen.
- */
 export function loadState(ns: NS): BotState | null {
   try {
     const port = ns.getPortHandle(STATE_PORT);

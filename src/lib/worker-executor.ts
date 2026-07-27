@@ -11,20 +11,21 @@ import { LoggerClient as Logger } from "/lib/logger-client.js";
 
 // Statisches RAM Lookup zur Vermeidung träger File-System API Calls
 const SCRIPT_RAM_MAP: Record<string, number> = {
-  [PATH_HACK]: 1.70,
+  [PATH_HACK]: 1.7,
   [PATH_GROW]: 1.75,
   [PATH_WEAKEN]: 1.75,
 };
 
-const RAM_SAFETY_BUFFER_GB = 0.05;
-
 function getUsableThreads(freeRam: number, scriptRam: number): number {
-  if (!Number.isFinite(freeRam) || !Number.isFinite(scriptRam) || scriptRam <= 0) {
+  if (
+    !Number.isFinite(freeRam) ||
+    !Number.isFinite(scriptRam) ||
+    scriptRam <= 0
+  ) {
     return 0;
   }
-
-  const safeFreeRam = Math.max(0, freeRam - RAM_SAFETY_BUFFER_GB);
-  return Math.floor(safeFreeRam / scriptRam);
+  // Vernachlässigbarer epsilon-Toleranzwert gegen JS-Fließkomma-Ungenauigkeiten
+  return Math.floor((freeRam + 1e-5) / scriptRam);
 }
 
 export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
@@ -32,8 +33,8 @@ export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   for (const s of servers) {
     if (!ns.hasRootAccess(s)) continue;
 
-    const maxRam = Math.max(0, Math.min(100_000, ns.getServerMaxRam(s)));
-    const usedRam = Math.max(0, Math.min(100_000, ns.getServerUsedRam(s)));
+    const maxRam = Math.max(0, ns.getServerMaxRam(s));
+    const usedRam = Math.max(0, ns.getServerUsedRam(s));
     let free = maxRam - usedRam;
     if (s === "home") free -= HOME_RAM_RESERVE;
 
@@ -81,10 +82,15 @@ export function syncPayloads(ns: NS, serverList: string[]): void {
  * Führt ein Event atomar auf den verfügbaren Workers aus (mit Thread-Splitting).
  * Garantiert: Entweder werden ALLE Threads gestartet oder GAR KEINE.
  */
-export function executeOnWorkers(ns: NS, event: JitEvent, workers: WorkerNode[]): boolean {
+export function executeOnWorkers(
+  ns: NS,
+  event: JitEvent,
+  workers: WorkerNode[],
+): boolean {
   if (!Number.isFinite(event.threads) || event.threads <= 0) return false;
 
-  const scriptRam = SCRIPT_RAM_MAP[event.script] ?? ns.getScriptRam(event.script);
+  const scriptRam =
+    SCRIPT_RAM_MAP[event.script] ?? ns.getScriptRam(event.script);
   if (scriptRam <= 0) return false;
 
   // 1. Capacity Check
@@ -99,7 +105,11 @@ export function executeOnWorkers(ns: NS, event: JitEvent, workers: WorkerNode[])
   // 2. Transactional Dispatch
   let remainingThreads = event.threads;
   let chunkIndex = 0;
-  const launchedPids: { pid: number; worker: WorkerNode; allocatedRam: number }[] = [];
+  const launchedPids: {
+    pid: number;
+    worker: WorkerNode;
+    allocatedRam: number;
+  }[] = [];
 
   for (const w of workers) {
     const possible = getUsableThreads(w.freeRam, scriptRam);
@@ -113,21 +123,23 @@ export function executeOnWorkers(ns: NS, event: JitEvent, workers: WorkerNode[])
       toRun,
       event.target,
       event.id,
-      chunkIndex++
+      chunkIndex++,
     );
 
     if (pid > 0) {
       const ramUsed = toRun * scriptRam;
-      w.freeRam -= ramUsed; // Zieht RAM lokal vom Worker-Objekt ab!
+      w.freeRam -= ramUsed; // Zieht RAM lokal vom Worker-Objekt ab
       launchedPids.push({ pid, worker: w, allocatedRam: ramUsed });
       remainingThreads -= toRun;
     } else {
-      // Rollback
+      // Rollback bei Fehlschlag
       for (const item of launchedPids) {
         ns.kill(item.pid);
         item.worker.freeRam += item.allocatedRam;
       }
-      ns.print(`[ERROR] ns.exec fehlgeschlagen auf ${w.hostname} für ${event.script} - Rollback ausgeführt.`);
+      ns.print(
+        `[ERROR] ns.exec fehlgeschlagen auf ${w.hostname} für ${event.script} - Rollback ausgeführt.`,
+      );
       return false;
     }
 
@@ -150,11 +162,12 @@ export function createBatchEvents(
     hackTime: number;
     weakenTime: number;
     growTime: number;
-  }
+  },
 ): JitEvent[] {
+  const prefix = `${target}-b${bId}`;
   return [
     {
-      id: `b${bId}-h`,
+      id: `${prefix}-h`,
       batchId: bId,
       script: PATH_HACK,
       threads: plan.hackThreads,
@@ -163,7 +176,7 @@ export function createBatchEvents(
       landTime: tLand - SPACER,
     },
     {
-      id: `b${bId}-w1`,
+      id: `${prefix}-w1`,
       batchId: bId,
       script: PATH_WEAKEN,
       threads: plan.weaken1Threads,
@@ -172,7 +185,7 @@ export function createBatchEvents(
       landTime: tLand,
     },
     {
-      id: `b${bId}-g`,
+      id: `${prefix}-g`,
       batchId: bId,
       script: PATH_GROW,
       threads: plan.growThreads,
@@ -181,7 +194,7 @@ export function createBatchEvents(
       landTime: tLand + SPACER,
     },
     {
-      id: `b${bId}-w2`,
+      id: `${prefix}-w2`,
       batchId: bId,
       script: PATH_WEAKEN,
       threads: plan.weaken2Threads,
@@ -198,23 +211,29 @@ export function cleanupActiveBatches(
   activeBatchIds: Set<number>,
   now: number,
   isPrepBatch: boolean,
-  logger: Logger
+  logger: Logger,
 ): void {
   for (const [bId, bData] of activeBatches.entries()) {
     if (now >= bData.landEndTime) {
-      activeBatches.delete(bId);
-      activeBatchIds.delete(bId);
+      const fullyExecuted = bData.executedEventsCount >= bData.totalEventsCount;
 
-      const modeLog = isPrepBatch ? "Prep-Batch" : "HWGW-Batch";
-      logger.debug(`✅ ${modeLog} b${bId} erfolgreich gelandet.`);
-    } else if (now > bData.landEndTime + 3000) {
-      activeBatches.delete(bId);
-      activeBatchIds.delete(bId);
-      logger.warn(`🧹 Watchdog: Batch b${bId} hing fest und wurde zwangsaufgeräumt.`);
+      if (fullyExecuted) {
+        activeBatches.delete(bId);
+        activeBatchIds.delete(bId);
+        const modeLog = isPrepBatch ? "Prep-Batch" : "HWGW-Batch";
+        logger.debug(`✅ ${modeLog} b${bId} erfolgreich gelandet.`);
+      } else if (now > bData.landEndTime + 3000) {
+        activeBatches.delete(bId);
+        activeBatchIds.delete(bId);
+        logger.warn(
+          `🧹 Watchdog: Batch b${bId} unvollständig (${bData.executedEventsCount}/${bData.totalEventsCount} Events) zwangsaufgeräumt.`,
+        );
+      }
     }
   }
 }
 
+/** In-place Queue-Bereinigung ohne Garbage Collection Overhead */
 export function pruneBatchFromQueue(queue: JitEvent[], batchId: number): void {
   let writeIndex = 0;
   for (let readIndex = 0; readIndex < queue.length; readIndex++) {
@@ -226,6 +245,7 @@ export function pruneBatchFromQueue(queue: JitEvent[], batchId: number): void {
   queue.length = writeIndex;
 }
 
+/** Sortiertes Einfügen via Binärsuche O(log N) */
 export function insertEventSorted(queue: JitEvent[], event: JitEvent): void {
   let low = 0;
   let high = queue.length;
