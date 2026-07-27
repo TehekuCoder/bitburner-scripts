@@ -5,14 +5,13 @@ import {
   executeOnWorkers,
   insertEventSorted,
   pruneBatchFromQueue,
+  killWorkerPayloads,
+  syncPayloads,
+  createBatchEvents,
+  cleanupActiveBatches,
 } from "lib/worker-executor.js";
-import {
-  PATH_HACK,
-  PATH_GROW,
-  PATH_WEAKEN,
-  SPACER,
-  BATCH_GAP,
-} from "/lib/constants";
+import { formatTime } from "lib/format.js";
+import { SPACER, BATCH_GAP } from "/lib/constants";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import {
   getAllServers,
@@ -24,32 +23,6 @@ import { loadBnMults, patchState } from "/lib/state.js";
 import { JitEvent, ActiveBatch } from "/lib/types.js";
 
 type PlannerPlan = NonNullable<ReturnType<typeof internalPlanner>>;
-
-/** Formatiert Sekunden in ein lesbares Format (z.B. "1m 15s" oder "45s") */
-function formatTime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}m ${s < 10 ? "0" : ""}${s}s`;
-}
-
-/**
- * Killt gezielt nur Worker-Payloads auf ALLEN Servern (inklusive home),
- * ohne den Batcher, den Orchestrator oder Daemons zu beenden.
- */
-function killWorkerPayloads(ns: NS, servers: string[]): void {
-  const payloadScripts = [PATH_HACK, PATH_GROW, PATH_WEAKEN];
-  for (const server of servers) {
-    if (!ns.hasRootAccess(server)) continue;
-    if (ns.getServerMaxRam(server) === 0) continue;
-
-    for (const proc of ns.ps(server)) {
-      if (payloadScripts.some((path) => proc.filename.includes(path))) {
-        ns.kill(proc.pid);
-      }
-    }
-  }
-}
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -64,7 +37,7 @@ export async function main(ns: NS): Promise<void> {
   let lastServerScan = Date.now();
 
   killWorkerPayloads(ns, servers);
-  syncPayloads(servers);
+  syncPayloads(ns, servers);
 
   const eventQueue: JitEvent[] = [];
   const targetBlacklist = new Map<string, number>();
@@ -87,9 +60,7 @@ export async function main(ns: NS): Promise<void> {
   let lastHackingLevel = ns.getHackingLevel();
 
   function resetBatcherState() {
-    logger.debug(
-      `🔄 state.reset() ausgelöst. Vorheriges Target: ${target ?? "Keines"}`,
-    );
+    logger.debug(`🔄 state.reset() ausgelöst. Vorheriges Target: ${target ?? "Keines"}`);
 
     killWorkerPayloads(ns, servers);
 
@@ -103,14 +74,6 @@ export async function main(ns: NS): Promise<void> {
     batchesSentForTarget = 0;
   }
 
-  function syncPayloads(serverList: string[]) {
-    for (const s of serverList) {
-      if (s !== "home" && ns.hasRootAccess(s)) {
-        ns.scp([PATH_HACK, PATH_GROW, PATH_WEAKEN], s, "home");
-      }
-    }
-  }
-
   logger.debug("🚀 JIT-Batcher gestartet. Überwachung aktiv.");
 
   while (true) {
@@ -119,24 +82,8 @@ export async function main(ns: NS): Promise<void> {
     // ----------------------------------------------------------------------
     // 🧹 BATCH-ABSCHLUSS & CLEANUP
     // ----------------------------------------------------------------------
-    for (const [bId, bData] of activeBatches.entries()) {
-      if (now >= bData.landEndTime) {
-        activeBatches.delete(bId);
-        activeBatchIds.delete(bId);
-
-        const modeLog =
-          activePlan && activePlan.hackThreads === 0
-            ? "Prep-Batch"
-            : "HWGW-Batch";
-        logger.debug(`✅ ${modeLog} b${bId} erfolgreich gelandet.`);
-      } else if (now > bData.landEndTime + 3000) {
-        activeBatches.delete(bId);
-        activeBatchIds.delete(bId);
-        logger.warn(
-          `🧹 Watchdog: Batch b${bId} hing fest und wurde zwangsaufgeräumt.`,
-        );
-      }
-    }
+    const isPrepBatch = activePlan ? activePlan.hackThreads === 0 : false;
+    cleanupActiveBatches(activeBatches, activeBatchIds, now, isPrepBatch, logger);
 
     // ----------------------------------------------------------------------
     // 🧹 PREP-ENDE CHECK
@@ -148,9 +95,7 @@ export async function main(ns: NS): Promise<void> {
       activeBatchIds.size === 0 &&
       eventQueue.length === 0
     ) {
-      logger.debug(
-        `✨ Prep-Phase für ${target} abgeschlossen. Evaluiere neuen Plan...`,
-      );
+      logger.debug(`✨ Prep-Phase für ${target} abgeschlossen. Evaluiere neuen Plan...`);
       activePlan = null;
       prepEndTime = 0;
       nextAvailableLandTime = 0;
@@ -160,7 +105,7 @@ export async function main(ns: NS): Promise<void> {
 
     if (now - lastServerScan > 10000) {
       servers = getAllServers(ns);
-      syncPayloads(servers);
+      syncPayloads(ns, servers);
       bnMults = loadBnMults(ns);
       lastServerScan = now;
     }
@@ -275,9 +220,7 @@ export async function main(ns: NS): Promise<void> {
             `Max Batches: ${dynamicMaxBatchesForTarget}`,
         );
       } else {
-        logger.debug(
-          `⚠️ internalPlanner lieferte NULL. Kein geeignetes Ziel / RAM zu knapp.`,
-        );
+        logger.debug(`⚠️ internalPlanner lieferte NULL. Kein geeignetes Ziel / RAM zu knapp.`);
       }
 
       if (!target || !activePlan) {
@@ -308,10 +251,7 @@ export async function main(ns: NS): Promise<void> {
     // ----------------------------------------------------------------------
     if (isPrepping && now - lastTimerPatchTime >= 1000) {
       lastTimerPatchTime = now;
-      const remainingPrepSec = Math.max(
-        0,
-        Math.ceil((prepEndTime - now) / 1000),
-      );
+      const remainingPrepSec = Math.max(0, Math.ceil((prepEndTime - now) / 1000));
       patchState(ns, {
         batcherProgress: `Prep-Phase Active (${formatTime(remainingPrepSec)} verbleibend)`,
       });
@@ -320,28 +260,19 @@ export async function main(ns: NS): Promise<void> {
     // ----------------------------------------------------------------------
     // 📥 2. EVENT-QUEUE BEFÜLLEN
     // ----------------------------------------------------------------------
-    if (
-      target &&
-      activePlan &&
-      activeBatchIds.size < dynamicMaxBatchesForTarget
-    ) {
+    if (target && activePlan && activeBatchIds.size < dynamicMaxBatchesForTarget) {
       const plan = activePlan;
-      const isPrepBatch = plan.hackThreads === 0;
-      const ramMultiplier = isPrepBatch ? 0.95 : 0.8;
+      const isPrep = plan.hackThreads === 0;
+      const ramMultiplier = isPrep ? 0.95 : 0.8;
       const batchGap = Math.max(BATCH_GAP, SPACER * 4);
       const planRam = plan.batchRam;
 
       let batchesQueuedThisLoop = 0;
 
-      while (
-        target &&
-        activePlan &&
-        activeBatchIds.size < dynamicMaxBatchesForTarget
-      ) {
+      while (target && activePlan && activeBatchIds.size < dynamicMaxBatchesForTarget) {
         const currentQueueRam = getQueueRam(ns, eventQueue);
         const safeVirtualRam = (realFreeRam - currentQueueRam) * ramMultiplier;
 
-        // Wenn das RAM temporär voll ist, pausieren wir das Queuen einfach für diesen Tick!
         if (safeVirtualRam < planRam) {
           if (now - lastRamThrottleLogTime > 4000) {
             lastRamThrottleLogTime = now;
@@ -350,7 +281,7 @@ export async function main(ns: NS): Promise<void> {
                 `Benötigt=${planRam.toFixed(1)}GB | Verfügbar=${safeVirtualRam.toFixed(1)}GB (RealFree=${realFreeRam.toFixed(1)}GB, QueueRam=${currentQueueRam.toFixed(1)}GB)`,
             );
           }
-          break; // Warten auf freies RAM aus laufenden Batches (KEIN Target-Reset mehr!)
+          break;
         }
 
         if (nextAvailableLandTime < now + plan.weakenTime + 500) {
@@ -360,44 +291,8 @@ export async function main(ns: NS): Promise<void> {
         const bId = batchIdCounter++;
         const tLand = nextAvailableLandTime;
 
-        const validEvents: JitEvent[] = [
-          {
-            id: `b${bId}-h`,
-            batchId: bId,
-            script: PATH_HACK,
-            threads: plan.hackThreads,
-            target,
-            startTime: tLand - SPACER - plan.hackTime,
-            landTime: tLand - SPACER,
-          },
-          {
-            id: `b${bId}-w1`,
-            batchId: bId,
-            script: PATH_WEAKEN,
-            threads: plan.weaken1Threads,
-            target,
-            startTime: tLand - plan.weakenTime,
-            landTime: tLand,
-          },
-          {
-            id: `b${bId}-g`,
-            batchId: bId,
-            script: PATH_GROW,
-            threads: plan.growThreads,
-            target,
-            startTime: tLand + SPACER - plan.growTime,
-            landTime: tLand + SPACER,
-          },
-          {
-            id: `b${bId}-w2`,
-            batchId: bId,
-            script: PATH_WEAKEN,
-            threads: plan.weaken2Threads,
-            target,
-            startTime: tLand + 2 * SPACER - plan.weakenTime,
-            landTime: tLand + 2 * SPACER,
-          },
-        ].filter((ev) => ev.threads > 0);
+        // Ausgelagerte Event-Erstellung
+        const validEvents = createBatchEvents(bId, target, tLand, plan);
 
         for (const ev of validEvents) {
           insertEventSorted(eventQueue, ev);
@@ -415,7 +310,7 @@ export async function main(ns: NS): Promise<void> {
         batchesQueuedThisLoop++;
         nextAvailableLandTime += batchGap;
 
-        if (isPrepBatch) {
+        if (isPrep) {
           prepEndTime = Math.max(prepEndTime, tLand + 1000);
         }
 
@@ -426,13 +321,9 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-      // ⚡ Port State NUR EINMAL pro Loop-Durchlauf aktualisieren (spart I/O Overhead)
       if (batchesQueuedThisLoop > 0 && target && activePlan) {
-        const remainingPrepSec = isPrepBatch
-          ? Math.max(0, Math.ceil((prepEndTime - now) / 1000))
-          : 0;
-
-        const progressMsg = isPrepBatch
+        const remainingPrepSec = isPrep ? Math.max(0, Math.ceil((prepEndTime - now) / 1000)) : 0;
+        const progressMsg = isPrep
           ? `Prep-Phase Active (${formatTime(remainingPrepSec)} verbleibend)`
           : `JIT-HWGW Active (${activeBatchIds.size}/${dynamicMaxBatchesForTarget} Batches)`;
 
@@ -451,7 +342,6 @@ export async function main(ns: NS): Promise<void> {
     // ⚡ 3. JIT DISPATCH LOOP
     // ----------------------------------------------------------------------
     if (eventQueue.length > 0 && Date.now() >= eventQueue[0].startTime) {
-      // Worker NUR EINMALIG pro Dispatch-Frame abfragen! (Spart hunderte API-Calls)
       const workers = getAvailableWorkers(ns, servers);
 
       while (eventQueue.length > 0 && Date.now() >= eventQueue[0].startTime) {
@@ -484,9 +374,7 @@ export async function main(ns: NS): Promise<void> {
           if (target === event.target) {
             resetBatcherState();
           } else {
-            const filteredQueue = eventQueue.filter(
-              (ev) => ev.target !== event.target,
-            );
+            const filteredQueue = eventQueue.filter((ev) => ev.target !== event.target);
             eventQueue.length = 0;
             eventQueue.push(...filteredQueue);
           }

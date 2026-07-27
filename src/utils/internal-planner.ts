@@ -19,14 +19,8 @@ export interface BatchPlan {
 const RAM_HACK = 1.70;
 const RAM_GROW = 1.75;
 const RAM_WEAKEN = 1.75;
-
-/** Maximale Obergrenze für simulierte Batches, um Event-Loop Stalls zu vermeiden */
 const MAX_BATCH_CAP = 100;
 
-/**
- * Evaluiert alle erreichbaren Server und berechnet den profitabelsten
- * Zielserver inklusive eines optimierten HWGW- oder Prep-Batch-Plans.
- */
 export function internalPlanner(
   ns: NS,
   servers: string[],
@@ -50,7 +44,6 @@ export function internalPlanner(
     const minSec = serverObj.minDifficulty ?? 1;
     const currentSec = serverObj.hackDifficulty ?? minSec;
 
-    // Virtualisierter prepped Server für die HWGW-Berechnung
     const preppedServer: Server = {
       ...serverObj,
       hackDifficulty: minSec,
@@ -69,50 +62,50 @@ export function internalPlanner(
       ? ns.formulas.hacking.hackTime(preppedServer, player)
       : ns.getHackTime(target);
 
-    // -----------------------------------------------------------------------
-    // PHASE 1: Target benötigt Vorbereitung (PREP)
-    // -----------------------------------------------------------------------
     const isPrepped = currentSec <= minSec + 0.5 && moneyAvailable >= moneyMax * 0.99;
 
+    // -----------------------------------------------------------------------
+    // PHASE 1: Target benötigt PREP
+    // -----------------------------------------------------------------------
     if (!isPrepped) {
-      const secDiff = Math.max(0, currentSec - minSec);
-      let weakenPrepThreads = Math.ceil(secDiff / 0.05);
-
+      let weakenPrepThreads = 0;
       let growPrepThreads = 0;
-      if (moneyAvailable < moneyMax) {
+      let prepWeaken2Threads = 0;
+
+      // Priorität A: Security ist zu hoch -> Erst NUR Weaken ausführen!
+      if (currentSec > minSec + 0.5) {
+        const secDiff = currentSec - minSec;
+        weakenPrepThreads = Math.ceil(secDiff / 0.05);
+      } 
+      // Priorität B: Security ist minimal, aber Geld fehlt -> Grow + Weaken
+      else if (moneyAvailable < moneyMax) {
         const growthFactor = moneyMax / Math.max(1, moneyAvailable);
-
-        const prepServerObj: Server = {
-          ...serverObj,
-          hackDifficulty: minSec,
-          moneyAvailable: Math.max(1, moneyAvailable),
-        };
-
         growPrepThreads = ns.formulas?.hacking
-          ? Math.ceil(ns.formulas.hacking.growThreads(prepServerObj, player, moneyMax))
+          ? Math.ceil(ns.formulas.hacking.growThreads(preppedServer, player, moneyMax))
           : Math.ceil(ns.growthAnalyze(target, growthFactor));
+
+        prepWeaken2Threads = Math.ceil((growPrepThreads * 0.004) / 0.05);
       }
 
-      let prepWeaken2Threads = Math.ceil((growPrepThreads * 0.004) / 0.05);
       let prepRam =
         (weakenPrepThreads + prepWeaken2Threads) * RAM_WEAKEN +
         growPrepThreads * RAM_GROW;
 
-      // ⚡ FIX: Skaliere PREP-Threads herunter, falls der RAM-Bedarf das freie RAM übersteigt (Partielles Prep)
-      const maxUsablePrepRam = Math.min(maxRam, virtualFreeRam) * 0.90;
+      const maxUsablePrepRam = Math.min(maxRam, virtualFreeRam) * 0.95;
 
-      if (prepRam > maxUsablePrepRam && maxUsablePrepRam > RAM_WEAKEN) {
+      // RAM-Skalierung unter Wahrung des Security-Gleichgewichts
+      if (prepRam > maxUsablePrepRam && maxUsablePrepRam >= RAM_WEAKEN) {
         const scale = maxUsablePrepRam / prepRam;
-        weakenPrepThreads = Math.floor(weakenPrepThreads * scale);
-        growPrepThreads = Math.floor(growPrepThreads * scale);
-        prepWeaken2Threads = Math.floor(prepWeaken2Threads * scale);
 
-        // Sicherstellen, dass mindestens 1 Thread läuft, wenn RAM vorhanden ist
-        if (weakenPrepThreads === 0 && secDiff > 0 && maxUsablePrepRam >= RAM_WEAKEN) {
-          weakenPrepThreads = 1;
+        if (weakenPrepThreads > 0) {
+          weakenPrepThreads = Math.max(1, Math.floor(weakenPrepThreads * scale));
         }
-        if (growPrepThreads === 0 && moneyAvailable < moneyMax && maxUsablePrepRam >= RAM_GROW) {
-          growPrepThreads = 1;
+        if (growPrepThreads > 0) {
+          growPrepThreads = Math.floor(growPrepThreads * scale);
+          // Weaken2 MUSS Grow immer vollständig kompensieren!
+          prepWeaken2Threads = growPrepThreads > 0 
+            ? Math.ceil((growPrepThreads * 0.004) / 0.05) 
+            : 0;
         }
 
         prepRam =
@@ -120,7 +113,6 @@ export function internalPlanner(
           growPrepThreads * RAM_GROW;
       }
 
-      // Guardrail gegen ungültigen RAM-Bedarf
       if (!Number.isFinite(prepRam) || prepRam <= 0 || prepRam > maxUsablePrepRam) continue;
 
       const prepScore = (moneyMax / weakenTime) * 0.1;
@@ -192,26 +184,26 @@ export function internalPlanner(
       const profitPerBatch = moneyMax * actualGreed;
       const greedScore = (profitPerBatch / weakenTime) * Math.min(calcMaxBatches, 50);
 
-      const p: BatchPlan = {
-        target,
-        mode: "HWGW",
-        hackThreads,
-        weaken1Threads,
-        growThreads,
-        weaken2Threads,
-        hackTime,
-        weakenTime,
-        growTime,
-        greed: actualGreed,
+      return {
+        p: {
+          target,
+          mode: "HWGW",
+          hackThreads,
+          weaken1Threads,
+          growThreads,
+          weaken2Threads,
+          hackTime,
+          weakenTime,
+          growTime,
+          greed: actualGreed,
+          greedScore,
+          maxBatches: calcMaxBatches,
+          batchRam,
+        },
         greedScore,
-        maxBatches: calcMaxBatches,
-        batchRam,
       };
-
-      return { p, greedScore };
     };
 
-    // Step 1: Grobsuche
     const greedSteps = [0.01, 0.02, 0.03, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
     let bestCoarseGreed = 0.01;
 
@@ -224,7 +216,6 @@ export function internalPlanner(
       }
     }
 
-    // Step 2: Feinsuche im Umkreis des besten Grobwerts
     if (optimalTargetPlan) {
       const fineStep = 0.005;
       const fineMin = Math.max(0.001, bestCoarseGreed - 0.04);

@@ -1,6 +1,13 @@
 import { NS } from "@ns";
-import { HOME_RAM_RESERVE, PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants.js";
-import { WorkerNode, JitEvent } from "./types.js";
+import {
+  HOME_RAM_RESERVE,
+  PATH_HACK,
+  PATH_GROW,
+  PATH_WEAKEN,
+  SPACER,
+} from "/lib/constants.js";
+import { WorkerNode, JitEvent, ActiveBatch } from "./types.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
 
 // Statisches RAM Lookup zur Vermeidung träger File-System API Calls
 const SCRIPT_RAM_MAP: Record<string, number> = {
@@ -13,7 +20,7 @@ export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   const nodes: WorkerNode[] = [];
   for (const s of servers) {
     if (!ns.hasRootAccess(s)) continue;
-    
+
     const maxRam = ns.getServerMaxRam(s);
     let free = maxRam - ns.getServerUsedRam(s);
     if (s === "home") free -= HOME_RAM_RESERVE;
@@ -27,6 +34,35 @@ export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
     }
   }
   return nodes.sort((a, b) => b.freeRam - a.freeRam);
+}
+
+/**
+ * Killt gezielt nur Worker-Payloads auf ALLEN Servern (inklusive home),
+ * ohne den Batcher, den Orchestrator oder Daemons zu beenden.
+ */
+export function killWorkerPayloads(ns: NS, servers: string[]): void {
+  const payloadScripts = [PATH_HACK, PATH_GROW, PATH_WEAKEN];
+  for (const server of servers) {
+    if (!ns.hasRootAccess(server)) continue;
+    if (ns.getServerMaxRam(server) === 0) continue;
+
+    for (const proc of ns.ps(server)) {
+      if (payloadScripts.some((path) => proc.filename.includes(path))) {
+        ns.kill(proc.pid);
+      }
+    }
+  }
+}
+
+/**
+ * Synchronisiert die Payload-Skripte auf alle gerooteten Netzwerk-Server.
+ */
+export function syncPayloads(ns: NS, serverList: string[]): void {
+  for (const s of serverList) {
+    if (s !== "home" && ns.hasRootAccess(s)) {
+      ns.scp([PATH_HACK, PATH_GROW, PATH_WEAKEN], s, "home");
+    }
+  }
 }
 
 /**
@@ -87,6 +123,84 @@ export function executeOnWorkers(ns: NS, event: JitEvent, workers: WorkerNode[])
   }
 
   return remainingThreads === 0;
+}
+
+/** Erstellt die Liste der JIT-Events für einen einzelnen Batch */
+export function createBatchEvents(
+  bId: number,
+  target: string,
+  tLand: number,
+  plan: {
+    hackThreads: number;
+    weaken1Threads: number;
+    growThreads: number;
+    weaken2Threads: number;
+    hackTime: number;
+    weakenTime: number;
+    growTime: number;
+  }
+): JitEvent[] {
+  return [
+    {
+      id: `b${bId}-h`,
+      batchId: bId,
+      script: PATH_HACK,
+      threads: plan.hackThreads,
+      target,
+      startTime: tLand - SPACER - plan.hackTime,
+      landTime: tLand - SPACER,
+    },
+    {
+      id: `b${bId}-w1`,
+      batchId: bId,
+      script: PATH_WEAKEN,
+      threads: plan.weaken1Threads,
+      target,
+      startTime: tLand - plan.weakenTime,
+      landTime: tLand,
+    },
+    {
+      id: `b${bId}-g`,
+      batchId: bId,
+      script: PATH_GROW,
+      threads: plan.growThreads,
+      target,
+      startTime: tLand + SPACER - plan.growTime,
+      landTime: tLand + SPACER,
+    },
+    {
+      id: `b${bId}-w2`,
+      batchId: bId,
+      script: PATH_WEAKEN,
+      threads: plan.weaken2Threads,
+      target,
+      startTime: tLand + 2 * SPACER - plan.weakenTime,
+      landTime: tLand + 2 * SPACER,
+    },
+  ].filter((ev) => ev.threads > 0);
+}
+
+/** Überprüft aktive Batches auf Abschluss oder Hängenbleiben und räumt sie auf */
+export function cleanupActiveBatches(
+  activeBatches: Map<number, ActiveBatch>,
+  activeBatchIds: Set<number>,
+  now: number,
+  isPrepBatch: boolean,
+  logger: Logger
+): void {
+  for (const [bId, bData] of activeBatches.entries()) {
+    if (now >= bData.landEndTime) {
+      activeBatches.delete(bId);
+      activeBatchIds.delete(bId);
+
+      const modeLog = isPrepBatch ? "Prep-Batch" : "HWGW-Batch";
+      logger.debug(`✅ ${modeLog} b${bId} erfolgreich gelandet.`);
+    } else if (now > bData.landEndTime + 3000) {
+      activeBatches.delete(bId);
+      activeBatchIds.delete(bId);
+      logger.warn(`🧹 Watchdog: Batch b${bId} hing fest und wurde zwangsaufgeräumt.`);
+    }
+  }
 }
 
 export function pruneBatchFromQueue(queue: JitEvent[], batchId: number): void {
