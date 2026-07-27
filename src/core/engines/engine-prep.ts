@@ -2,6 +2,7 @@ import { NS } from "@ns";
 import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { patchState } from "/lib/state.js";
+import { PATHS } from "/lib/paths";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -10,8 +11,8 @@ export async function main(ns: NS): Promise<void> {
   // Ziel-Server kann via CLI/Orchestrator übergeben werden (z.B. ns.run("core/engine-prep.js", 1, "n00dles"))
   const target = (ns.args[0] as string) || "n00dles";
 
-  const weakenScript = "payloads/weaken.js";
-  const growScript = "payloads/grow.js";
+  const weakenScript = PATHS.payloads.weaken;
+  const growScript = PATHS.payloads.grow;
 
   logger.info(`🔥 Engine-Prep gestartet für Ziel: [${target}]`);
 

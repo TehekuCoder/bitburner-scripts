@@ -4,7 +4,7 @@ import {
   GymType,
   BitNodeMultipliers,
 } from "@ns";
-import type { FactionConfig } from "./types.js";
+import type { FactionConfig, LogLevel } from "./types.js";
 
 // --- REFRESH INTERVALS ---
 export const REFRESH_INTERVALS = {
@@ -212,3 +212,10 @@ export const AUG_PRICE_MULT = 1.9;
 
 export const LOG_PORT = 1;
 export const STATE_PORT = 2;
+export const LEVEL_RANK: Record<LogLevel, number> = {
+  DEBUG: 0,
+  INFO: 1,
+  SUCCESS: 1,
+  WARN: 2,
+  ERROR: 3,
+};

@@ -4,6 +4,7 @@ import { getAllServers, getNetworkMaxRam } from "/lib/network.js";
 import { patchState } from "/lib/state.js";
 import { BatchStrategy } from "/lib/types.js";
 import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants.js";
+import { PATHS } from "/lib/paths";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -220,22 +221,22 @@ function switchExecutionEngine(
 
   switch (strategy) {
     case "BOOTSTRAP":
-      return ns.run("core/engines/engine-prep.js", 1, "n00dles");
+      return ns.run(PATHS.core.engines.prep, 1, "n00dles");
 
     case "XP_GRIND":
-      return ns.run("core/engines/engine-xp-grind.js", 1, "joesguns");
+      return ns.run(PATHS.core.engines.xpGrind, 1, "joesguns");
 
     case "PREP":
-      return ns.run("core/engines/engine-prep.js", 1, targetArg);
+      return ns.run(PATHS.core.engines.prep, 1, targetArg);
 
     case "PROTO_BATCH":
-      return ns.run("core/engines/engine-proto.js", 1, targetArg);
+      return ns.run(PATHS.core.engines.proto, 1, targetArg);
 
     case "SHOTGUN_HWGW":
-      return ns.run("core/engines/engine-shotgun.js", 1, targetArg);
+      return ns.run(PATHS.core.engines.shotgun, 1, targetArg);
 
     case "JIT_HWGW":
-      return ns.run("core/engines/sys-jit-batcher.js", 1, targetArg);
+      return ns.run(PATHS.core.engines.jitBatcher, 1, targetArg);
 
     default:
       return 0;

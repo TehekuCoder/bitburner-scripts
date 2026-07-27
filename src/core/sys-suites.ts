@@ -4,7 +4,7 @@ import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { loadBnMults, loadState } from "/lib/state.js";
 import { ScriptList } from "/lib/types.js";
-
+import { PATHS } from "/lib/paths";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -12,23 +12,26 @@ export async function main(ns: NS): Promise<void> {
   const bnMults = loadBnMults(ns);
 
   const scripts: ScriptList = {
-    logger: "core/sys-logger.js",
-    perfMonitor: "daemons/perf-monitor.js",
-    worker: "tasks/work.js",
-    dispatcher: "core/sys-dispatcher.js",
-    infra: "managers/infra-manager.js",
-    backdoor: "daemons/backdoor.js",
-    trade: "manager/finance-manager.js",
-    hacknet: "daemons/hacknet-early.js",
-    dnet: "manager/dnet-master.js",
-    crawler: "tasks/dnet-crawler.js",
-    hack: PATH_HACK,
-    grow: PATH_GROW,
-    weaken: PATH_WEAKEN,
-    sleeve: "managers/sleeve-manager.js",
-    fillShare: "daemons/fill-share.js",
+    logger: PATHS.core.logger,
+    perfMonitor: PATHS.daemons.perfMonitor,
+    worker: PATHS.payloads.work,
+    dispatcher: PATHS.core.dispatcher,
+    infra: PATHS.managers.infra,
+    backdoor: PATHS.daemons.backdoor,
+    trade: PATHS.managers.finance,
+    hacknet: PATHS.daemons.hacknetEarly,
+    dnet: PATHS.managers.dnet,
+    crawler: PATHS.daemons.crawler,
+    hack: PATHS.payloads.hack,
+    grow: PATHS.payloads.grow,
+    weaken: PATHS.payloads.weaken,
+    sleeve: PATHS.managers.sleeve,
+    fillShare: PATHS.daemons.fillShare,
+    augShopping: PATHS.tasks.augShopping,
+    augAnalyze: PATHS.tasks.analyzeAug,
+    orchestrator: PATHS.core.orchestrator,
+    suites: PATHS.core.suites,
   };
-
   while (true) {
     const currentState = loadState(ns);
     if (currentState) {

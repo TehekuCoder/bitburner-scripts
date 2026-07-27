@@ -2,6 +2,7 @@
 
 import { NS } from "@ns";
 import { ScriptList, BotState } from "/lib/types.js";
+import { PATHS } from "/lib/paths";
 
 export function manageSuites(
   ns: NS,
@@ -33,8 +34,8 @@ export function manageSuites(
   };
 
   // --- ⚡ Hacknet Logik ---
-  const targetHacknetScript = hasFormulas ? "daemons/hacknet.js" : "daemons/hacknet-early.js";
-  const obsoleteHacknetScript = hasFormulas ? "daemons/hacknet-early.js" : "daemons/hacknet.js";
+  const targetHacknetScript = hasFormulas ? PATHS.daemons.hacknet : PATHS.daemons.hacknetEarly;
+  const obsoleteHacknetScript = hasFormulas ? PATHS.daemons.hacknetEarly :  PATHS.daemons.hacknet;
 
   if (ns.isRunning(obsoleteHacknetScript, "home")) {
     logger.info(`Beende veraltetes Hacknet-Skript (${obsoleteHacknetScript}).`);

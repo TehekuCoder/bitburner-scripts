@@ -3,9 +3,6 @@ import { NS, FactionName } from "@ns";
 import { generateProgressBar } from "../ui/ui-helper.js";
 import {
   DEFAULT_MULTIPLIERS,
-  PATH_HACK,
-  PATH_GROW,
-  PATH_WEAKEN,
   REFRESH_INTERVALS,
   COMBAT_STATS,
 } from "/lib/constants.js";
@@ -24,6 +21,7 @@ import {
 } from "/lib/player.js";
 import { loadBnMults, loadState, patchState } from "/lib/state.js";
 import { ScriptList, BotStrategy } from "/lib/types.js";
+import { PATHS } from "/lib/paths.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -51,24 +49,26 @@ export async function main(ns: NS): Promise<void> {
   let lastNetworkScan = 0;
 
   const scripts: ScriptList = {
-    logger: "core/sys-logger.js",
-    perfMonitor: "daemons/perf-monitor.js",
-    worker: "payloads/work.js",
-    dispatcher: "core/sys-dispatcher.js",
-    infra: "managers/infra-manager.js",
-    backdoor: "daemons/backdoor.js",
-    trade: "manager/finance-manager.js",
-    hacknet: "daemons/hacknet-early.js",
-    dnet: "manager/dnet-master.js",
-    crawler: "tasks/dnet-crawler.js",
-    hack: PATH_HACK,
-    grow: PATH_GROW,
-    weaken: PATH_WEAKEN,
-    sleeve: "managers/sleeve-manager.js",
-    fillShare: "daemons/fill-share.js",
+    logger: PATHS.core.logger,
+    perfMonitor: PATHS.daemons.perfMonitor,
+    worker: PATHS.payloads.work,
+    dispatcher: PATHS.core.dispatcher,
+    infra: PATHS.managers.infra,
+    backdoor: PATHS.daemons.backdoor,
+    trade: PATHS.managers.finance,
+    hacknet: PATHS.daemons.hacknetEarly,
+    dnet: PATHS.managers.dnet,
+    crawler: PATHS.daemons.crawler,
+    hack: PATHS.payloads.hack,
+    grow: PATHS.payloads.grow,
+    weaken: PATHS.payloads.weaken,
+    sleeve: PATHS.managers.sleeve,
+    fillShare: PATHS.daemons.fillShare,
+    augShopping: PATHS.tasks.augShopping,
+    augAnalyze: PATHS.tasks.analyzeAug,
+    orchestrator: PATHS.core.orchestrator,
+    suites: PATHS.core.suites,
   };
-
-  const sysOrchestratorScript = "core/sys-orchestrator.js";
 
   let lastAugAnalysis = 0;
 
@@ -92,8 +92,8 @@ export async function main(ns: NS): Promise<void> {
 
     // Periodische Augment-Analyse (alle 5 Minuten oder bei Neustart)
     if (now - lastAugAnalysis > 300_000 || !currentState?.augRoadmap) {
-      if (ns.fileExists("tasks/analyze-augmentations.js", "home")) {
-        ns.run("tasks/analyze-augmentations.js", 1);
+      if (ns.fileExists(scripts.augAnalyze, "home")) {
+        ns.run(scripts.augAnalyze, 1);
         lastAugAnalysis = now;
       }
     }
@@ -163,7 +163,7 @@ export async function main(ns: NS): Promise<void> {
     const hasSavingTarget =
       factionToWorkFor !== null && !isReadyForFactionGrind;
 
-    const isOrchestratorRunning = ns.isRunning(sysOrchestratorScript, "home");
+    const isOrchestratorRunning = ns.isRunning(scripts.suites, "home");
 
     // 5. Strategie ermitteln
     const strategy = determineStrategy(
@@ -282,15 +282,14 @@ export async function main(ns: NS): Promise<void> {
     // 🚀 1. Orchestrator & Dashboard Steuerung
     if (
       !isOrchestratorRunning &&
-      ns.fileExists(sysOrchestratorScript, "home") &&
-      getFreeRam() >= ns.getScriptRam(sysOrchestratorScript, "home")
+      ns.fileExists(scripts.suites, "home") &&
+      getFreeRam() >= ns.getScriptRam(scripts.suites, "home")
     ) {
-      const pid = ns.run(sysOrchestratorScript, 1);
+      const pid = ns.run(scripts.suites, 1);
       if (pid > 0) {
-        logger.success(`🚀 Orchestrator gestartet (${sysOrchestratorScript})`);
+        logger.success(`🚀 Orchestrator gestartet (${scripts.suites})`);
       }
     }
-
 
     // 💾 2. Zustand im State-Manager speichern
     patchState(ns, {
@@ -310,8 +309,8 @@ export async function main(ns: NS): Promise<void> {
       homeMaxRam < 128 && (mode === "CRIME" || mode === "KILLS");
 
     if (isEarlyGameCrime) {
-      if (ns.isRunning("tasks/faction-shopping.js", "home"))
-        ns.scriptKill("tasks/faction-shopping.js", "home");
+      if (ns.isRunning(PATHS.tasks.augShopping, "home"))
+        ns.scriptKill(PATHS.tasks.augShopping, "home");
       const rogueScripts = ["daemons/hacknet.js", "daemons/hacknet-early.js"];
       for (const script of rogueScripts) {
         if (ns.fileExists(script, "home") && ns.isRunning(script, "home"))
@@ -320,10 +319,10 @@ export async function main(ns: NS): Promise<void> {
     } else {
       if (
         getFreeRam() > 12 &&
-        ns.fileExists("tasks/faction-shopping.js", "home") &&
-        !ns.isRunning("tasks/faction-shopping.js", "home")
+        ns.fileExists(PATHS.tasks.augShopping, "home") &&
+        !ns.isRunning(PATHS.tasks.augShopping, "home")
       ) {
-        ns.run("tasks/faction-shopping.js", 1);
+        ns.run(PATHS.tasks.augShopping, 1);
       }
     }
 
@@ -333,11 +332,10 @@ export async function main(ns: NS): Promise<void> {
       mode,
       hasSavingTarget,
       logger,
-      sysOrchestratorScript,
+      scripts.orchestrator,
       targetStat,
       isBatcherActive,
     );
-
 
     await ns.sleep(2000);
   }

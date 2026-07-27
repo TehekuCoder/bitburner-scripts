@@ -1,6 +1,7 @@
 import { NS } from "@ns";
 import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
+import { PATHS } from "/lib/paths";
 
 import { loadState, patchState } from "/lib/state.js";
 import { ScriptList } from "/lib/types.js";
@@ -9,21 +10,25 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
   const scripts: ScriptList = {
-    logger: "core/sys-logger.js",
-    perfMonitor: "daemons/perf-monitor.js",
-    worker: "tasks/work.js",
-    dispatcher: "core/sys-dispatcher.js",
-    infra: "managers/infra-manager.js",
-    backdoor: "daemons/backdoor.js",
-    trade: "manager/finance-manager.js",
-    hacknet: "daemons/hacknet-early.js",
-    dnet: "manager/dnet-master.js",
-    crawler: "daemons/dnet-crawler.js",
-    hack: PATH_HACK,
-    grow: PATH_GROW,
-    weaken: PATH_WEAKEN,
-    sleeve: "managers/sleeve-manager.js",
-    fillShare: "daemons/fill-share.js",
+    logger: PATHS.core.logger,
+    perfMonitor: PATHS.daemons.perfMonitor,
+    worker: PATHS.payloads.work,
+    dispatcher: PATHS.core.dispatcher,
+    infra: PATHS.managers.infra,
+    backdoor: PATHS.daemons.backdoor,
+    trade: PATHS.managers.finance,
+    hacknet: PATHS.daemons.hacknetEarly,
+    dnet: PATHS.managers.dnet,
+    crawler: PATHS.daemons.crawler,
+    hack: PATHS.payloads.hack,
+    grow: PATHS.payloads.grow,
+    weaken: PATHS.payloads.weaken,
+    sleeve: PATHS.managers.sleeve,
+    fillShare: PATHS.daemons.fillShare,
+    augShopping: PATHS.tasks.augShopping,
+    augAnalyze: PATHS.tasks.analyzeAug,
+    orchestrator: PATHS.core.orchestrator,
+    suites: PATHS.core.suites,
   };
 
   // 1. Logger-Daemon starten
@@ -49,9 +54,9 @@ export async function main(ns: NS): Promise<void> {
   // --- 🔄 FALLBACK: PRÜFEN OB BOOT/STATE INITIALISIERT IST ---
   logger.info("Kernel gestartet. Überprüfe System-State...");
 
-  if (!loadState(ns) && ns.fileExists("core/boot.js", "home")) {
+  if (!loadState(ns) && ns.fileExists(PATHS.core.boot, "home")) {
     logger.info("Kein State gefunden. Führe Einmal-Initializer aus...");
-    const bootPid = ns.run("core/boot.js", 1);
+    const bootPid = ns.run(PATHS.core.boot, 1);
     if (bootPid > 0) {
       while (ns.isRunning(bootPid)) {
         await ns.sleep(50);
@@ -69,7 +74,7 @@ export async function main(ns: NS): Promise<void> {
   });
 
   // Pfade für die beiden Flotten-Modi
-  const earlyFleetScript = "daemons/early-fleet.js";
+  const earlyFleetScript = PATHS.daemons.earlyFleet;
 
   while (true) {
     const homeMax = ns.getServerMaxRam("home");
@@ -79,9 +84,9 @@ export async function main(ns: NS): Promise<void> {
     // --- 🤖 SUBSYSTEM ORCHESTRATION ---
 
     // 1. Suite-Manager Daemon (Ab 16GB)
-    if (homeMax >= 16 && !ns.isRunning("core/sys-suites.js", "home")) {
+    if (homeMax >= 16 && !ns.isRunning(PATHS.core.suites, "home")) {
       if (homeMax - ns.getServerUsedRam("home") >= 12.0) {
-        ns.run("core/sys-suites.js", 1);
+        ns.run(PATHS.core.suites, 1);
       }
     }
 
@@ -151,12 +156,12 @@ export async function main(ns: NS): Promise<void> {
       const reqSkill = ns.getServerRequiredHackingLevel(targetNode);
       if (
         ns.getHackingLevel() >= reqSkill &&
-        !ns.scriptRunning("core/sys-apocalypse-ui.js", "home")
+        !ns.scriptRunning(PATHS.core.apocalypse, "home")
       ) {
         logger.success(
           "!!! KRITISCHER SCHWELLENWERT ERREICHT: W0R1D_D43M0N BEREIT !!!",
         );
-        ns.run("core/sys-apocalypse-ui.js", 1);
+        ns.run(PATHS.core.apocalypse, 1);
       }
     }
 

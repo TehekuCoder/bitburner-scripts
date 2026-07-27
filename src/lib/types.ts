@@ -23,6 +23,10 @@ export interface ScriptList {
   weaken: string;
   sleeve: string;
   fillShare: string;
+  augShopping: string;
+  augAnalyze: string;
+  orchestrator: string;
+  suites: string;
 }
 
 export interface BatchPlan {

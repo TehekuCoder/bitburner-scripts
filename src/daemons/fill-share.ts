@@ -1,11 +1,13 @@
 import { NS } from "@ns";
 import { loadState } from "/lib/state.js";
 
+import { PATHS } from "/lib/paths";
+
 export async function main(ns: NS): Promise<void> {
   const target = ns.getHostname();
   ns.disableLog("ALL");
 
-  const SHARE_SCRIPT = "payloads/share.js";
+  const SHARE_SCRIPT = PATHS.payloads.share;
   const GLOBAL_SHARE_POWER_CAP = 1.42;
 
   const maxRam = ns.getServerMaxRam(target);

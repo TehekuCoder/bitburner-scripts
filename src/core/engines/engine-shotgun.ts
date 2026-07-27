@@ -2,6 +2,7 @@ import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
 import { patchState } from "/lib/state.js";
+import { PATHS } from "/lib/paths";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -13,9 +14,9 @@ export async function main(ns: NS): Promise<void> {
   const target = (ns.args[0] as string) || "n00dles";
 
   const scripts = {
-    hack: "payloads/hack.js",
-    grow: "payloads/grow.js",
-    weaken: "payloads/weaken.js",
+    hack: PATHS.payloads.hack,
+    grow: PATHS.payloads.grow,
+    weaken: PATHS.payloads.weaken,
   };
 
   logger.info(`💥 Engine-Shotgun gestartet für Ziel: [${target}]`);

@@ -1,13 +1,6 @@
 import { NS } from "@ns";
 import { LogLevel, LogPayload } from "lib/types.js";
-
-const LEVEL_RANK: Record<LogLevel, number> = {
-  DEBUG: 0,
-  INFO: 1,
-  SUCCESS: 1,
-  WARN: 2,
-  ERROR: 3,
-};
+import { LEVEL_RANK } from "/lib/constants";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -16,10 +9,10 @@ export async function main(ns: NS): Promise<void> {
   // CLI-Flags verarbeiten
   const flags = ns.flags([
     ["port", 1],
-    ["target", ""],    // z. B. --target n00dles,joesguns (Kommagetrennt für mehrere)
-    ["module", ""],    // z. B. --module JIT-BATCHER,PREP
-    ["level", "DEBUG"],// Minimales Log-Level: DEBUG, INFO, WARN, ERROR
-    ["fileAll", false] // true = schreibt ALLES in die Datei, filtert nur das UI-Fenster
+    ["target", ""], // z. B. --target n00dles,joesguns (Kommagetrennt für mehrere)
+    ["module", ""], // z. B. --module JIT-BATCHER,PREP
+    ["level", "DEBUG"], // Minimales Log-Level: DEBUG, INFO, WARN, ERROR
+    ["fileAll", false], // true = schreibt ALLES in die Datei, filtert nur das UI-Fenster
   ]);
 
   const PORT_NUM = flags.port as number;
@@ -31,16 +24,21 @@ export async function main(ns: NS): Promise<void> {
   // Filter-Sets aufbauen (leeres Set = alle erlaubt)
   const targetFilter = parseFilterSet(flags.target as string);
   const moduleFilter = parseFilterSet(flags.module as string);
-  const minLevelRank = LEVEL_RANK[(flags.level as string).toUpperCase() as LogLevel] ?? 0;
+  const minLevelRank =
+    LEVEL_RANK[(flags.level as string).toUpperCase() as LogLevel] ?? 0;
   const fileAll = flags.fileAll as boolean;
 
   const port = ns.getPortHandle(PORT_NUM);
-  let currentFileSize = ns.fileExists(LOG_FILE, "home") ? ns.read(LOG_FILE).length : 0;
+  let currentFileSize = ns.fileExists(LOG_FILE, "home")
+    ? ns.read(LOG_FILE).length
+    : 0;
   let buffer: string[] = [];
 
   ns.print(`[SYS-LOGGER] 🎧 Daemon gestartet auf Port ${PORT_NUM}`);
-  if (targetFilter.size > 0) ns.print(`🎯 Filter Ziele  : ${[...targetFilter].join(", ")}`);
-  if (moduleFilter.size > 0) ns.print(`📦 Filter Module : ${[...moduleFilter].join(", ")}`);
+  if (targetFilter.size > 0)
+    ns.print(`🎯 Filter Ziele  : ${[...targetFilter].join(", ")}`);
+  if (moduleFilter.size > 0)
+    ns.print(`📦 Filter Module : ${[...moduleFilter].join(", ")}`);
   ns.print(`📊 Min Log-Level : ${flags.level}`);
 
   while (true) {
@@ -49,11 +47,15 @@ export async function main(ns: NS): Promise<void> {
       if (!payload || !payload.module) continue;
 
       const levelRank = LEVEL_RANK[payload.level] ?? 0;
-      
+
       // Filter-Prüfungen
       const passesLevel = levelRank >= minLevelRank;
-      const passesModule = moduleFilter.size === 0 || moduleFilter.has(payload.module.toUpperCase());
-      const passesTarget = targetFilter.size === 0 || (payload.target && targetFilter.has(payload.target.toLowerCase()));
+      const passesModule =
+        moduleFilter.size === 0 ||
+        moduleFilter.has(payload.module.toUpperCase());
+      const passesTarget =
+        targetFilter.size === 0 ||
+        (payload.target && targetFilter.has(payload.target.toLowerCase()));
 
       const isVisible = passesLevel && passesModule && passesTarget;
       const formatted = formatMessage(payload);
@@ -97,7 +99,7 @@ function parseFilterSet(input: string): Set<string> {
     input
       .split(",")
       .map((s) => s.trim().toLowerCase())
-      .filter((s) => s.length > 0)
+      .filter((s) => s.length > 0),
   );
 }
 

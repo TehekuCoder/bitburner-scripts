@@ -3,6 +3,7 @@ import { NS } from "@ns";
 import { loadState, patchState } from "lib/state.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { DEFAULT_MULTIPLIERS } from "lib/constants.js";
+import { PATHS } from "/lib/paths";
 
 export async function main(ns: NS): Promise<void> {
   // 🟢 DUMMY-REFERENZ: Zwingt den AST-Parser von Bitburner, 
@@ -13,7 +14,7 @@ export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "Initializer");
 
   const multsFilePath = "/bn-multipliers.txt";
-  const analyzeAugmentationsScript = "/tasks/analyze-augmentations.js";
+  const analyzeAugmentationsScript = PATHS.tasks.analyzeAug;
 
   // --- SCHRITT 1: BITNODE MULTIPLIKATOREN ERMITTELN ---
   if (!ns.fileExists(multsFilePath, "home")) {

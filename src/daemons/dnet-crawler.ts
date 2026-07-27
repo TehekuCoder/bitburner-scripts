@@ -6,6 +6,7 @@ import {
   processedServers,
 } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
+import { PATHS } from "/lib/paths";
 
 let lastLootTime = 0;
 
@@ -82,9 +83,10 @@ async function deployWorm(
       lootScript,
       phishScript,
       "/dnet-master-db.json",
-      "/lib/constants.js",
-      "/lib/logger-client.js", // FIX: Tippfehler korrigiert!
-      "/lib/types.js",
+      PATHS.lib.constants,
+      PATHS.lib.logger, // FIX: Tippfehler korrigiert!
+      PATHS.lib.types,
+      PATHS.lib.paths,
       ...solverModules,
     ];
 
@@ -117,9 +119,9 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const now = Date.now();
-    const solverScript = "/tasks/dnet-solver.js";
-    const lootScript = "/tasks/dnet-loot.js";
-    const phishScript = "/tasks/dnet-phish.js";
+    const solverScript = PATHS.tasks.solver;
+    const lootScript = PATHS.tasks.loot;
+    const phishScript = PATHS.tasks.phish;
 
     const maxRam = ns.getServerMaxRam(currentHost);
     let freeRam = maxRam - ns.getServerUsedRam(currentHost);

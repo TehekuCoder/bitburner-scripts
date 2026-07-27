@@ -21,6 +21,7 @@ import {
 } from "/lib/network";
 import { loadBnMults, patchState } from "/lib/state.js";
 import { JitEvent, ActiveBatch } from "/lib/types.js";
+import { PATHS } from "/lib/paths";
 
 type PlannerPlan = NonNullable<ReturnType<typeof internalPlanner>>;
 
