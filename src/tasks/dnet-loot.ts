@@ -35,12 +35,12 @@ export async function main(ns: NS): Promise<void> {
   }
 
   if (totalSuckedCaches > 0) {
-    logger.info(`🌪️ ${totalSuckedCaches} Caches von Satelliten abgesaugt.`);
+    logger.info(`🌪️ ${totalSuckedCaches} Caches von Satelliten abgesaugt.`, undefined, { tags: ["darknet", "loot"], context: { host: currentHost, count: totalSuckedCaches } });
   }
 
   const files = ns.ls(currentHost, ".cache");
   if (files.length > 0) {
-    logger.success(`💰 Verarbeite ${files.length} lokale Caches auf ${currentHost}.`);
+    logger.success(`💰 Verarbeite ${files.length} lokale Caches auf ${currentHost}.`, undefined, { tags: ["darknet", "loot"], context: { host: currentHost, count: files.length } });
   }
 
   for (const file of files) {

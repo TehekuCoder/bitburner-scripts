@@ -9,6 +9,7 @@ export async function main(ns: NS): Promise<void> {
 
   if (ns.args.length < 1) return;
   const host = String(ns.args[0]);
+  const currentHost = ns.getHostname();
 
   const logger = new Logger(ns, `SOLVER-${host}`);
 
@@ -16,14 +17,28 @@ export async function main(ns: NS): Promise<void> {
 
   const jsonDbFile = "/dnet-master-db.json";
 
+  // 🔄 DB von 'home' kopieren, falls wir auf einem Remote-Node laufen
+  if (currentHost !== "home" && ns.fileExists(jsonDbFile, "home")) {
+    ns.scp(jsonDbFile, currentHost, "home");
+  }
+
   // Bitburner 3.0: Erstelle zuerst die Session für diesen spezifischen PID, falls Passwort bekannt
   if (ns.fileExists(jsonDbFile)) {
     try {
       const db = JSON.parse(ns.read(jsonDbFile));
       if (db[host] !== undefined) {
-        const sessionCreated = ns.dnet.connectToSession(host, db[host]);
-        if (sessionCreated) {
-          logger.success(`🎉 [SUCCESS] Session für PID erfolgreich hergestellt! Überspringe Solver.`);
+        const authResult = await ns.dnet.authenticate(host, db[host]);
+        const authSuccess =
+          typeof authResult === "boolean"
+            ? authResult
+            : Boolean(authResult?.success);
+
+        if (authSuccess) {
+          logger.success(
+            `🎉 [SUCCESS] Session für ${host} über bekannten Passwort-Cache hergestellt!`,
+            undefined,
+            { tags: ["darknet", "auth", "cache"], context: { host } },
+          );
           handleSuccess(ns, host, db[host], logger);
           return;
         }
@@ -47,7 +62,9 @@ export async function main(ns: NS): Promise<void> {
   );
 
   if (password === null) {
-    logger.warn(`⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`);
+    logger.warn(
+      `⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`,
+    );
     password =
       (await dictionaryAttack(ns, host, details)) ||
       (await fileLootAttack(ns, host, details));
@@ -55,16 +72,21 @@ export async function main(ns: NS): Promise<void> {
 
   if (password !== null) {
     const auth = await ns.dnet.authenticate(host, password);
-    const isSuccess = typeof auth === "boolean" ? auth : (auth && auth.success);
+    const isSuccess = typeof auth === "boolean" ? auth : auth && auth.success;
 
-    if (isSuccess || ns.dnet.connectToSession(host, password)) {
+    if (isSuccess) {
       handleSuccess(ns, host, password, logger);
+      logger.info(`🔐 Authentifizierung für ${host} erfolgreich abgeschlossen.`, undefined, { tags: ["darknet", "auth"], context: { host } });
     } else {
-      logger.error(`❌ Passwort "${password}" für ${host} ermittelt, aber Authentifizierung fehlgeschlagen.`);
+      logger.error(
+        `❌ Passwort "${password}" für ${host} ermittelt, aber Authentifizierung fehlgeschlagen.`,
+      );
       await setServerCooldown(ns, host);
     }
   } else {
-    logger.error(`❌ Krypto-Angriff auf ${host} (${details.modelId}) fehlgeschlagen. Cooldown aktiviert.`);
+    logger.error(
+      `❌ Krypto-Angriff auf ${host} (${details.modelId}) fehlgeschlagen. Cooldown aktiviert.`,
+    );
     await setServerCooldown(ns, host);
   }
 }
@@ -91,7 +113,9 @@ async function setServerCooldown(ns: NS, host: string): Promise<void> {
   if (ns.fileExists(COOLDOWN_FILE)) {
     const lines = ns.read(COOLDOWN_FILE).split("\n");
     content = lines
-      .filter((line) => line.trim() && now - Number(line.split(",")[1]) < COOLDOWN_MS)
+      .filter(
+        (line) => line.trim() && now - Number(line.split(",")[1]) < COOLDOWN_MS,
+      )
       .join("\n");
   }
   content += (content ? "\n" : "") + `${host},${now}`;
@@ -108,12 +132,23 @@ async function dictionaryAttack(
   try {
     const db = JSON.parse(ns.read(jsonDbFile));
     const list = [...new Set(Object.values(db) as string[])].filter(
-      (pw) => pw !== undefined && !pw.includes("You have discovered") && pw.length < 30,
+      (pw) =>
+        pw !== undefined &&
+        !pw.includes("You have discovered") &&
+        pw.length < 30,
     );
     for (const pw of list) {
-      if (details.passwordLength !== undefined && pw.length !== details.passwordLength)
+      if (
+        details.passwordLength !== undefined &&
+        pw.length !== details.passwordLength
+      )
         continue;
-      if (ns.dnet.connectToSession(host, pw)) return pw;
+      const authResult = await ns.dnet.authenticate(host, pw);
+      const authSuccess =
+        typeof authResult === "boolean"
+          ? authResult
+          : Boolean(authResult?.success);
+      if (authSuccess) return pw;
     }
   } catch {}
   return null;
@@ -129,7 +164,12 @@ async function fileLootAttack(
     for (const file of files) {
       const content = ns.read(file).trim();
       if (content.length <= (details.passwordLength || 20)) {
-        if (ns.dnet.connectToSession(host, content)) return content;
+        const authResult = await ns.dnet.authenticate(host, content);
+        const authSuccess =
+          typeof authResult === "boolean"
+            ? authResult
+            : Boolean(authResult?.success);
+        if (authSuccess) return content;
       }
     }
   } catch {}

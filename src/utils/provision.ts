@@ -13,13 +13,24 @@ export async function provisionServer(
   // Home braucht keine Kopien seiner eigenen Dateien
   if (serverName === "home") return;
 
+  const currentHost = ns.getHostname();
+  const sourceCandidates = [currentHost, "home"].filter(
+    (host, index, hosts) => hosts.indexOf(host) === index,
+  );
+
   const missingFiles = PAYLOADS.filter(
     (file) => !ns.fileExists(file, serverName),
   );
 
-  if (missingFiles.length > 0) {
-    await ns.scp(missingFiles, serverName, "home");
-    // Optional: Log ausgeben, wenn das aufrufende Skript das wünscht
-    // ns.print(`[PROVISION] 📦 Worker-Payloads auf ${serverName} installiert.`);
+  if (missingFiles.length === 0) return;
+
+  for (const file of missingFiles) {
+    const sourceHost = sourceCandidates.find(
+      (host) => host !== serverName && ns.fileExists(file, host),
+    );
+
+    if (sourceHost) {
+      ns.scp(file, serverName, sourceHost);
+    }
   }
 }

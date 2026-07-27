@@ -59,13 +59,20 @@ export async function main(ns: NS): Promise<void> {
   const activeBatches = new Map<number, ActiveBatch>();
 
   let lastHackingLevel = ns.getHackingLevel();
+  let targetSwitchCooldownUntil = 0;
+  let lastTargetSwitchTime = 0;
+  let lastTargetSelection = target;
 
-  function resetBatcherState() {
-    logger.debug(`🔄 state.reset() ausgelöst. Vorheriges Target: ${target ?? "Keines"}`);
+  function resetBatcherState(preserveTarget = false) {
+    logger.debug(
+      `🔄 state.reset() ausgelöst. Vorheriges Target: ${target ?? "Keines"}`,
+    );
 
     killWorkerPayloads(ns, servers);
 
-    target = null;
+    if (!preserveTarget) {
+      target = null;
+    }
     activePlan = null;
     eventQueue.length = 0;
     activeBatchIds.clear();
@@ -84,7 +91,13 @@ export async function main(ns: NS): Promise<void> {
     // 🧹 BATCH-ABSCHLUSS & CLEANUP
     // ----------------------------------------------------------------------
     const isPrepBatch = activePlan ? activePlan.hackThreads === 0 : false;
-    cleanupActiveBatches(activeBatches, activeBatchIds, now, isPrepBatch, logger);
+    cleanupActiveBatches(
+      activeBatches,
+      activeBatchIds,
+      now,
+      isPrepBatch,
+      logger,
+    );
 
     // ----------------------------------------------------------------------
     // 🧹 PREP-ENDE CHECK
@@ -96,7 +109,9 @@ export async function main(ns: NS): Promise<void> {
       activeBatchIds.size === 0 &&
       eventQueue.length === 0
     ) {
-      logger.debug(`✨ Prep-Phase für ${target} abgeschlossen. Evaluiere neuen Plan...`);
+      logger.debug(
+        `✨ Prep-Phase für ${target} abgeschlossen. Evaluiere neuen Plan...`,
+      );
       activePlan = null;
       prepEndTime = 0;
       nextAvailableLandTime = 0;
@@ -117,9 +132,9 @@ export async function main(ns: NS): Promise<void> {
     const currentLevel = ns.getHackingLevel();
     const levelDelta = currentLevel - lastHackingLevel;
 
-    const isMajorLevelUp =
-      levelDelta >= 100 ||
-      (lastHackingLevel > 0 && levelDelta / lastHackingLevel > 0.15);
+    // 🛑 FIX: Dynamischer Schwellenwert (mind. 5% Anstieg oder mind. 100 Stufen bei niedrigen Levels)
+    const minAbsDelta = Math.max(100, Math.floor(lastHackingLevel * 0.05));
+    const isMajorLevelUp = levelDelta >= minAbsDelta;
 
     if (isMajorLevelUp && !isPrepping) {
       logger.warn(
@@ -143,8 +158,9 @@ export async function main(ns: NS): Promise<void> {
         logger.warn(
           `⚠️ Target ${target} kritisch desynchronisiert! Sec-Abweichung: +${secDiff.toFixed(2)}. Stoppe Batches & Re-Prep...`,
         );
+        targetBlacklist.set(target, now + 45000);
         killWorkerPayloads(ns, servers);
-        resetBatcherState();
+        resetBatcherState(true);
       }
     }
 
@@ -193,6 +209,11 @@ export async function main(ns: NS): Promise<void> {
       );
 
       if (planning) {
+        const shouldRespectSwitchCooldown =
+          target &&
+          planning.target !== target &&
+          now < targetSwitchCooldownUntil;
+
         if (target && planning.target !== target) {
           if (eventQueue.length > 0) {
             logger.debug(
@@ -200,10 +221,24 @@ export async function main(ns: NS): Promise<void> {
             );
             await ns.sleep(100);
             continue;
-          } else {
-            resetBatcherState();
-            logger.debug(`🚀 JIT Wechsel auf Ziel: ${planning.target}`);
           }
+
+          if (shouldRespectSwitchCooldown) {
+            logger.debug(
+              `🧊 Zielwechsel auf ${planning.target} verzögert (${Math.ceil((targetSwitchCooldownUntil - now) / 1000)}s Cooldown)`,
+            );
+            await ns.sleep(100);
+            continue;
+          }
+
+          resetBatcherState();
+          logger.debug(`🚀 JIT Wechsel auf Ziel: ${planning.target}`);
+        }
+
+        if (target && planning.target !== target && lastTargetSelection !== planning.target) {
+          targetSwitchCooldownUntil = now + 20_000;
+          lastTargetSwitchTime = now;
+          lastTargetSelection = planning.target;
         }
 
         target = planning.target;
@@ -221,7 +256,9 @@ export async function main(ns: NS): Promise<void> {
             `Max Batches: ${dynamicMaxBatchesForTarget}`,
         );
       } else {
-        logger.debug(`⚠️ internalPlanner lieferte NULL. Kein geeignetes Ziel / RAM zu knapp.`);
+        logger.debug(
+          `⚠️ internalPlanner lieferte NULL. Kein geeignetes Ziel / RAM zu knapp.`,
+        );
       }
 
       if (!target || !activePlan) {
@@ -252,7 +289,10 @@ export async function main(ns: NS): Promise<void> {
     // ----------------------------------------------------------------------
     if (isPrepping && now - lastTimerPatchTime >= 1000) {
       lastTimerPatchTime = now;
-      const remainingPrepSec = Math.max(0, Math.ceil((prepEndTime - now) / 1000));
+      const remainingPrepSec = Math.max(
+        0,
+        Math.ceil((prepEndTime - now) / 1000),
+      );
       patchState(ns, {
         batcherProgress: `Prep-Phase Active (${formatTime(remainingPrepSec)} verbleibend)`,
       });
@@ -261,7 +301,11 @@ export async function main(ns: NS): Promise<void> {
     // ----------------------------------------------------------------------
     // 📥 2. EVENT-QUEUE BEFÜLLEN
     // ----------------------------------------------------------------------
-    if (target && activePlan && activeBatchIds.size < dynamicMaxBatchesForTarget) {
+    if (
+      target &&
+      activePlan &&
+      activeBatchIds.size < dynamicMaxBatchesForTarget
+    ) {
       const plan = activePlan;
       const isPrep = plan.hackThreads === 0;
       const ramMultiplier = isPrep ? 0.95 : 0.8;
@@ -270,7 +314,11 @@ export async function main(ns: NS): Promise<void> {
 
       let batchesQueuedThisLoop = 0;
 
-      while (target && activePlan && activeBatchIds.size < dynamicMaxBatchesForTarget) {
+      while (
+        target &&
+        activePlan &&
+        activeBatchIds.size < dynamicMaxBatchesForTarget
+      ) {
         const currentQueueRam = getQueueRam(ns, eventQueue);
         const safeVirtualRam = (realFreeRam - currentQueueRam) * ramMultiplier;
 
@@ -323,7 +371,9 @@ export async function main(ns: NS): Promise<void> {
       }
 
       if (batchesQueuedThisLoop > 0 && target && activePlan) {
-        const remainingPrepSec = isPrep ? Math.max(0, Math.ceil((prepEndTime - now) / 1000)) : 0;
+        const remainingPrepSec = isPrep
+          ? Math.max(0, Math.ceil((prepEndTime - now) / 1000))
+          : 0;
         const progressMsg = isPrep
           ? `Prep-Phase Active (${formatTime(remainingPrepSec)} verbleibend)`
           : `JIT-HWGW Active (${activeBatchIds.size}/${dynamicMaxBatchesForTarget} Batches)`;
@@ -350,11 +400,12 @@ export async function main(ns: NS): Promise<void> {
         const lag = Date.now() - event.startTime;
         const batchState = activeBatches.get(event.batchId);
 
-        if (lag > 90) {
-          logger.warn(`⏳ Lag-Pruning bei Event ${event.id}`);
+        // 🛑 FIX: Lag-Toleranz auf 150ms angehoben & Cooldown auf 5s verkürzt
+        if (lag > 150) {
+          logger.warn(`⏳ Lag-Pruning bei Event ${event.id} (Lag: ${lag}ms)`);
           if (batchState && batchState.executedEventsCount > 0) {
-            targetBlacklist.set(event.target, now + 15000);
-            resetBatcherState();
+            targetBlacklist.set(event.target, now + 5000);
+            resetBatcherState(true);
             break;
           } else {
             pruneBatchFromQueue(eventQueue, event.batchId);
@@ -373,9 +424,11 @@ export async function main(ns: NS): Promise<void> {
           targetBlacklist.set(event.target, now + 45000);
 
           if (target === event.target) {
-            resetBatcherState();
+            resetBatcherState(true);
           } else {
-            const filteredQueue = eventQueue.filter((ev) => ev.target !== event.target);
+            const filteredQueue = eventQueue.filter(
+              (ev) => ev.target !== event.target,
+            );
             eventQueue.length = 0;
             eventQueue.push(...filteredQueue);
           }

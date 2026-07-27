@@ -13,6 +13,8 @@ export async function main(ns: NS): Promise<void> {
     ["module", ""], // z. B. --module JIT-BATCHER,PREP
     ["level", "DEBUG"], // Minimales Log-Level: DEBUG, INFO, WARN, ERROR
     ["fileAll", false], // true = schreibt ALLES in die Datei, filtert nur das UI-Fenster
+    ["tag", ""], // z. B. --tag darknet,auth
+    ["context", ""], // z. B. --context host=darkweb
   ]);
 
   const PORT_NUM = flags.port as number;
@@ -24,6 +26,8 @@ export async function main(ns: NS): Promise<void> {
   // Filter-Sets aufbauen (leeres Set = alle erlaubt)
   const targetFilter = parseFilterSet(flags.target as string);
   const moduleFilter = parseFilterSet(flags.module as string);
+  const tagFilter = parseFilterSet(flags.tag as string);
+  const contextFilter = parseContextFilter(flags.context as string);
   const minLevelRank =
     LEVEL_RANK[(flags.level as string).toUpperCase() as LogLevel] ?? 0;
   const fileAll = flags.fileAll as boolean;
@@ -39,6 +43,10 @@ export async function main(ns: NS): Promise<void> {
     ns.print(`🎯 Filter Ziele  : ${[...targetFilter].join(", ")}`);
   if (moduleFilter.size > 0)
     ns.print(`📦 Filter Module : ${[...moduleFilter].join(", ")}`);
+  if (tagFilter.size > 0)
+    ns.print(`🏷️ Filter Tags   : ${[...tagFilter].join(", ")}`);
+  if (contextFilter.size > 0)
+    ns.print(`🧩 Filter Context: ${[...contextFilter.entries()].map(([k,v]) => `${k}=${v}`).join(", ")}`);
   ns.print(`📊 Min Log-Level : ${flags.level}`);
 
   while (true) {
@@ -57,7 +65,17 @@ export async function main(ns: NS): Promise<void> {
         targetFilter.size === 0 ||
         (payload.target && targetFilter.has(payload.target.toLowerCase()));
 
-      const isVisible = passesLevel && passesModule && passesTarget;
+      const passesTag =
+        tagFilter.size === 0 ||
+        (payload.tags || []).some((tag) => tagFilter.has(tag.toLowerCase()));
+      const passesContext =
+        contextFilter.size === 0 ||
+        [...contextFilter.entries()].every(([key, expected]) => {
+          const actual = payload.context?.[key];
+          return actual !== undefined && String(actual).toLowerCase() === expected.toLowerCase();
+        });
+
+      const isVisible = passesLevel && passesModule && passesTarget && passesTag && passesContext;
       const formatted = formatMessage(payload);
 
       // 1. UI Output nur wenn Filter matchen
@@ -103,6 +121,17 @@ function parseFilterSet(input: string): Set<string> {
   );
 }
 
+function parseContextFilter(input: string): Map<string, string> {
+  if (!input || input.trim() === "") return new Map();
+  const result = new Map<string, string>();
+  for (const part of input.split(",")) {
+    const [key, ...rest] = part.split("=");
+    if (!key) continue;
+    result.set(key.trim().toLowerCase(), (rest.join("=") || "").trim().toLowerCase());
+  }
+  return result;
+}
+
 function formatMessage(p: LogPayload): string {
   const d = new Date(p.timestamp);
   const hh = String(d.getHours()).padStart(2, "0");
@@ -112,6 +141,11 @@ function formatMessage(p: LogPayload): string {
 
   const targetTag = p.target ? ` [${p.target.toLowerCase()}]` : "";
   const levelTag = p.level.padEnd(7);
+  const tags = p.tags ?? [];
+  const tagSuffix = tags.length > 0 ? ` [tags:${tags.join(",")}]` : "";
+  const contextSuffix = p.context && Object.keys(p.context).length > 0
+    ? ` [ctx:${Object.entries(p.context).map(([k,v]) => `${k}=${v}`).join(",")}]`
+    : "";
 
-  return `[${hh}:${mm}:${ss}.${ms}] [${levelTag}] [${p.module}]${targetTag} ${p.msg}`;
+  return `[${hh}:${mm}:${ss}.${ms}] [${levelTag}] [${p.module}]${targetTag}${tagSuffix}${contextSuffix} ${p.msg}`;
 }

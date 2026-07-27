@@ -7,6 +7,7 @@ import {
 } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths";
+import { provisionServer } from "/utils/provision";
 
 let lastLootTime = 0;
 
@@ -28,8 +29,67 @@ function getSolverFiles(ns: NS): string[] {
   return ns.ls("home").filter((file) => file.includes("solvers/"));
 }
 
+async function ensureSession(
+  ns: NS,
+  hostname: string,
+  details: any,
+  logger: Logger,
+): Promise<boolean> {
+  if (!details) return false;
+
+  const isConnected = details.isConnectedToCurrentServer !== false;
+  const isOnline = details.isOnline !== false;
+  if (!isConnected || !isOnline) return false;
+
+  if (details.hasSession) return true;
+
+  const passwordCandidates: Array<string | null> = [
+    getPasswordFromRegistry(ns, hostname),
+  ];
+
+  if (details.modelId && String(details.modelId).toLowerCase().includes("zerologon")) {
+    passwordCandidates.push("");
+  }
+
+  passwordCandidates.push("admin");
+  passwordCandidates.push("password");
+  passwordCandidates.push("letmein");
+  passwordCandidates.push("root");
+
+  for (const candidate of passwordCandidates) {
+    if (!candidate) continue;
+
+    try {
+      const authResult = await ns.dnet.authenticate(hostname, candidate);
+      const authSuccess =
+        typeof authResult === "boolean"
+          ? authResult
+          : Boolean(authResult?.success);
+
+      if (authSuccess) {
+        logger.info(`✅ Authentifizierung erfolgreich auf ${hostname} mit Passwort-Variante.`, undefined, {
+          tags: ["darknet", "auth"],
+          context: { host: hostname, model: String(details?.modelId || "unknown") },
+        });
+        return true;
+      }
+    } catch {
+      // Fallback auf die nächste Variante
+    }
+  }
+
+  return false;
+}
+
 function getPasswordFromRegistry(ns: NS, host: string): string | null {
   const jsonDbFile = "/dnet-master-db.json";
+  const currentHost = ns.getHostname();
+
+  // 🔄 Falls wir nicht auf home sind: Neueste DB von 'home' ziehen
+  if (currentHost !== "home" && ns.fileExists(jsonDbFile, "home")) {
+    ns.scp(jsonDbFile, currentHost, "home");
+  }
+
   if (!ns.fileExists(jsonDbFile)) return null;
   try {
     const dbContent = ns.read(jsonDbFile);
@@ -63,44 +123,27 @@ async function deployWorm(
     return false;
   }
 
-  let details = ns.dnet.getServerDetails(hostname) as any;
-  let sessionReady = details ? details.hasSession : false;
+  const details = ns.dnet.getServerDetails(hostname) as any;
+  const sessionReady = await ensureSession(ns, hostname, details, logger);
 
-  if (!sessionReady) {
-    const password = getPasswordFromRegistry(ns, hostname);
-    if (password !== null) {
-      sessionReady = ns.dnet.connectToSession(hostname, password);
-    }
-  }
-
+  // ✅ Wenn Session steht: Wurm kopieren & starten!
   if (sessionReady) {
-    logger.info(`🚀 Wurm-Ausbreitung: Infiziere ${hostname} und starte Crawler.`);
+    logger.info(
+      `🚀 Wurm-Ausbreitung: Infiziere ${hostname} und starte Crawler.`,
+      undefined,
+      { tags: ["darknet", "propagation"], context: { host: hostname } },
+    );
 
-    const solverModules = getSolverFiles(ns);
-    const filesToCopy = [
-      scriptName,
-      solverScript,
-      lootScript,
-      phishScript,
-      "/dnet-master-db.json",
-      PATHS.lib.constants,
-      PATHS.lib.logger, // FIX: Tippfehler korrigiert!
-      PATHS.lib.types,
-      PATHS.lib.paths,
-      ...solverModules,
-    ];
+    await provisionServer(ns, hostname);
+    await provisionServer(ns, ns.getHostname());
+    ns.scp(scriptName, hostname, ns.getHostname());
 
-    ns.scp(filesToCopy, hostname, "home");
-
-    if (details.isConnectedToCurrentServer || isDarkweb) {
-      ns.exec(scriptName, hostname, 1);
-      return true;
-    }
+    const pid = ns.exec(scriptName, hostname, 1);
+    return pid > 0;
   }
 
   return false;
 }
-
 export async function main(ns: NS): Promise<void> {
   const scriptName = ns.getScriptName();
   const currentHost = ns.getHostname();
@@ -208,13 +251,12 @@ export async function main(ns: NS): Promise<void> {
         ns.fileExists("/solvers/solveManager.ts", currentHost);
 
       if (requiredSolverRam === 0 || !hasSolverModules) {
-        const solverModules = getSolverFiles(ns);
-        if (solverModules.length > 0) {
-          logger.info(
-            `📦 Solver-Abhängigkeiten fehlen auf ${currentHost}. Repliziere ${solverModules.length} Krypto-Module von home...`,
-          );
-          ns.scp([solverScript, ...solverModules], currentHost, "home");
-        }
+        // HIER ANGEPASST: Einfach den Server provisionieren lassen
+        logger.info(
+          `📦 Solver-Abhängigkeiten fehlen auf ${currentHost}. Provisioniere Server von home...`,
+        );
+        await provisionServer(ns, currentHost);
+
         requiredSolverRam = ns.getScriptRam(solverScript, currentHost);
       }
 
@@ -227,16 +269,9 @@ export async function main(ns: NS): Promise<void> {
         logger.info(
           `📡 Target gesichtet: ${targetToCrack} [${targetDetails.modelId}]. Starte Krypto-Solver.`,
         );
-        ns.exec(
-          solverScript,
-          currentHost,
-          1,
-          targetToCrack,
-          targetDetails.modelId || "Unknown",
-          targetDetails.passwordLength || 0,
-          targetDetails.passwordHint || "",
-          targetDetails.data || "",
-        );
+
+        // HIER AUFGERÄUMT: Die unnötigen Parameter entfernt (wie im letzten Schritt besprochen)
+        ns.exec(solverScript, currentHost, 1, targetToCrack);
         solverStarted = true;
       } else {
         logger.debug(
@@ -245,7 +280,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    if (
+if (
       currentHost !== "home" &&
       !isSolverRunning &&
       !solverStarted &&
@@ -256,7 +291,8 @@ export async function main(ns: NS): Promise<void> {
         !ns.fileExists(phishScript, currentHost) ||
         !ns.fileExists(lootScript, currentHost)
       ) {
-        ns.scp([phishScript, lootScript], currentHost, "home");
+        // HIER ANGEPASST: provisionServer statt ns.scp
+        await provisionServer(ns, currentHost);
       }
 
       const phishRam = ns.getScriptRam(phishScript, currentHost);

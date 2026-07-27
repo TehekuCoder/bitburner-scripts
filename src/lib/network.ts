@@ -3,6 +3,13 @@ import { JitEvent } from "lib/types.js";
 import { HOME_RAM_RESERVE } from "lib/constants.js";
 import { provisionServer } from "/utils/provision.js";
 
+const MAX_REASONABLE_RAM_GB = 100_000;
+
+function sanitizeRamValue(value: number): number {
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return Math.min(value, MAX_REASONABLE_RAM_GB);
+}
+
 /**
  * Durchsucht das gesamte Bitburner-Netzwerk via hochperformantem Stack (DFS).
  * Gibt ein Array mit ALLEN Servernamen im Spiel zurück. Performance: O(1) beim Pop.
@@ -154,24 +161,28 @@ export function dispatchSimpleTask(
 export function getNetworkMaxRam(ns: NS, servers: string[]): number {
   let total = servers
     .filter((s) => ns.hasRootAccess(s) && s !== "home")
-    .reduce((sum, s) => sum + ns.getServerMaxRam(s), 0);
+    .reduce((sum, s) => {
+      const maxRam = sanitizeRamValue(ns.getServerMaxRam(s));
+      return sum + maxRam;
+    }, 0);
 
-  total += Math.max(0, ns.getServerMaxRam("home") - HOME_RAM_RESERVE);
+  const homeMaxRam = sanitizeRamValue(ns.getServerMaxRam("home"));
+  total += Math.max(0, homeMaxRam - HOME_RAM_RESERVE);
   return total;
 }
 
 export function getNetworkRealFreeRam(ns: NS, servers: string[]): number {
   let free = servers
     .filter((s) => ns.hasRootAccess(s) && s !== "home")
-    .reduce(
-      (sum, s) => sum + (ns.getServerMaxRam(s) - ns.getServerUsedRam(s)),
-      0,
-    );
+    .reduce((sum, s) => {
+      const maxRam = sanitizeRamValue(ns.getServerMaxRam(s));
+      const usedRam = sanitizeRamValue(ns.getServerUsedRam(s));
+      return sum + Math.max(0, maxRam - usedRam);
+    }, 0);
 
-  free += Math.max(
-    0,
-    ns.getServerMaxRam("home") - ns.getServerUsedRam("home") - HOME_RAM_RESERVE,
-  );
+  const homeMaxRam = sanitizeRamValue(ns.getServerMaxRam("home"));
+  const homeUsedRam = sanitizeRamValue(ns.getServerUsedRam("home"));
+  free += Math.max(0, homeMaxRam - homeUsedRam - HOME_RAM_RESERVE);
   return free;
 }
 

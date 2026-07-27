@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { LogLevel, LogPayload } from "lib/types.js";
+import { LogLevel, LogPayload, LoggerContext } from "lib/types.js";
 import { LOG_PORT } from "lib/constants.js";
 
 export class LoggerClient {
@@ -22,13 +22,15 @@ export class LoggerClient {
     return new LoggerClient(this.ns, this.moduleName, target, this.portNumber);
   }
 
-  private send(level: LogLevel, msg: string, target?: string): void {
+  private send(level: LogLevel, msg: string, target?: string, context?: LoggerContext): void {
     const payload: LogPayload = {
       module: this.moduleName,
       level,
       msg,
       timestamp: Date.now(),
       target: target || this.defaultTarget,
+      tags: context?.tags,
+      context: context?.context,
     };
 
     const success = this.ns.tryWritePort(this.portNumber, payload);
@@ -37,9 +39,9 @@ export class LoggerClient {
     }
   }
 
-  public debug(msg: string, target?: string): void { this.send("DEBUG", msg, target); }
-  public info(msg: string, target?: string): void { this.send("INFO", msg, target); }
-  public success(msg: string, target?: string): void { this.send("SUCCESS", msg, target); }
-  public warn(msg: string, target?: string): void { this.send("WARN", msg, target); }
-  public error(msg: string, target?: string): void { this.send("ERROR", msg, target); }
+  public debug(msg: string, target?: string, context?: LoggerContext): void { this.send("DEBUG", msg, target, context); }
+  public info(msg: string, target?: string, context?: LoggerContext): void { this.send("INFO", msg, target, context); }
+  public success(msg: string, target?: string, context?: LoggerContext): void { this.send("SUCCESS", msg, target, context); }
+  public warn(msg: string, target?: string, context?: LoggerContext): void { this.send("WARN", msg, target, context); }
+  public error(msg: string, target?: string, context?: LoggerContext): void { this.send("ERROR", msg, target, context); }
 }

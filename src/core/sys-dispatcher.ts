@@ -80,7 +80,7 @@ export async function main(ns: NS): Promise<void> {
       now - lastNetworkScan > REFRESH_INTERVALS.NETWORK_SCAN ||
       allNetworkServers.length === 0
     ) {
-      breakAndInfectNetwork(ns);
+      await breakAndInfectNetwork(ns);
       allNetworkServers = getAllServers(ns);
       lastNetworkScan = now;
     }
@@ -163,7 +163,7 @@ export async function main(ns: NS): Promise<void> {
     const hasSavingTarget =
       factionToWorkFor !== null && !isReadyForFactionGrind;
 
-    const isOrchestratorRunning = ns.isRunning(scripts.suites, "home");
+    const isOrchestratorRunning = ns.isRunning(scripts.orchestrator, "home");
 
     // 5. Strategie ermitteln
     const strategy = determineStrategy(
@@ -282,12 +282,12 @@ export async function main(ns: NS): Promise<void> {
     // 🚀 1. Orchestrator & Dashboard Steuerung
     if (
       !isOrchestratorRunning &&
-      ns.fileExists(scripts.suites, "home") &&
-      getFreeRam() >= ns.getScriptRam(scripts.suites, "home")
+      ns.fileExists(scripts.orchestrator, "home") &&
+      getFreeRam() >= ns.getScriptRam(scripts.orchestrator, "home")
     ) {
-      const pid = ns.run(scripts.suites, 1);
+      const pid = ns.run(scripts.orchestrator, 1);
       if (pid > 0) {
-        logger.success(`🚀 Orchestrator gestartet (${scripts.suites})`);
+        logger.success(`🚀 Orchestrator gestartet (${scripts.orchestrator})`);
       }
     }
 

@@ -16,13 +16,25 @@ const SCRIPT_RAM_MAP: Record<string, number> = {
   [PATH_WEAKEN]: 1.75,
 };
 
+const RAM_SAFETY_BUFFER_GB = 0.05;
+
+function getUsableThreads(freeRam: number, scriptRam: number): number {
+  if (!Number.isFinite(freeRam) || !Number.isFinite(scriptRam) || scriptRam <= 0) {
+    return 0;
+  }
+
+  const safeFreeRam = Math.max(0, freeRam - RAM_SAFETY_BUFFER_GB);
+  return Math.floor(safeFreeRam / scriptRam);
+}
+
 export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   const nodes: WorkerNode[] = [];
   for (const s of servers) {
     if (!ns.hasRootAccess(s)) continue;
 
-    const maxRam = ns.getServerMaxRam(s);
-    let free = maxRam - ns.getServerUsedRam(s);
+    const maxRam = Math.max(0, Math.min(100_000, ns.getServerMaxRam(s)));
+    const usedRam = Math.max(0, Math.min(100_000, ns.getServerUsedRam(s)));
+    let free = maxRam - usedRam;
     if (s === "home") free -= HOME_RAM_RESERVE;
 
     if (free > 0) {
@@ -78,7 +90,7 @@ export function executeOnWorkers(ns: NS, event: JitEvent, workers: WorkerNode[])
   // 1. Capacity Check
   let totalAvailableThreads = 0;
   for (const w of workers) {
-    totalAvailableThreads += Math.floor(w.freeRam / scriptRam);
+    totalAvailableThreads += getUsableThreads(w.freeRam, scriptRam);
     if (totalAvailableThreads >= event.threads) break;
   }
 
@@ -90,7 +102,7 @@ export function executeOnWorkers(ns: NS, event: JitEvent, workers: WorkerNode[])
   const launchedPids: { pid: number; worker: WorkerNode; allocatedRam: number }[] = [];
 
   for (const w of workers) {
-    const possible = Math.floor(w.freeRam / scriptRam);
+    const possible = getUsableThreads(w.freeRam, scriptRam);
     if (possible <= 0) continue;
 
     const toRun = Math.min(remainingThreads, possible);

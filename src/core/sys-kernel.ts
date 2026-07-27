@@ -49,9 +49,7 @@ export async function main(ns: NS): Promise<void> {
   }
 
   const logger = new Logger(ns, "Kernel");
-  logger.info("Kernel gestartet. Überprüfe System-State...");
 
-  // --- 🔄 FALLBACK: PRÜFEN OB BOOT/STATE INITIALISIERT IST ---
   logger.info("Kernel gestartet. Überprüfe System-State...");
 
   if (!loadState(ns) && ns.fileExists(PATHS.core.boot, "home")) {

@@ -198,10 +198,15 @@ function selectBestTarget(
   if (currentTarget && ns.serverExists(currentTarget)) {
     const currentMaxMoney = ns.getServerMaxMoney(currentTarget);
     const bestMaxMoney = ns.getServerMaxMoney(bestCandidate);
+    const currentReq = ns.getServerRequiredHackingLevel(currentTarget) ?? 0;
+    const bestReq = ns.getServerRequiredHackingLevel(bestCandidate) ?? 0;
 
-    const threshold = playerSkill < 300 ? 1.3 : 2.5;
+    const threshold = playerSkill < 300 ? 1.3 : 1.8;
+    const currentIsStillCompetitive =
+      currentMaxMoney >= bestMaxMoney * threshold ||
+      (currentMaxMoney >= bestMaxMoney && currentReq <= bestReq);
 
-    if (bestMaxMoney < currentMaxMoney * threshold) {
+    if (currentIsStillCompetitive) {
       return currentTarget;
     }
   }

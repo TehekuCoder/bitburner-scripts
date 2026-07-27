@@ -5,6 +5,7 @@ import {
   BitNodeMultipliers,
 } from "@ns";
 import type { FactionConfig, LogLevel } from "./types.js";
+import { PATHS } from "./paths.js";
 
 // --- REFRESH INTERVALS ---
 export const REFRESH_INTERVALS = {
@@ -179,12 +180,23 @@ export const PATH_HACK = "payloads/hack.js";
 export const PATH_WEAKEN = "payloads/weaken.js";
 
 // utils/provision.ts
-export const PAYLOADS = [
-  PATH_HACK,
-  PATH_GROW,
-  PATH_WEAKEN,
-  "tasks/share.js",
-  "tasks/work.js"
+export const PAYLOADS: string[] = [
+  // 1. Ausführbare Skripte für Remote-Knoten
+  PATHS.daemons.crawler,
+  PATHS.tasks.solver,
+  PATHS.tasks.loot,
+  PATHS.tasks.phish,
+  PATHS.payloads.work,
+
+  // 2. Bibliotheken & Helpers, die von den Worker-Skripten importiert werden
+  PATHS.lib.constants,
+  PATHS.lib.logger,
+  PATHS.lib.paths,
+  PATHS.lib.types,
+  PATHS.utils.provision,
+
+  // 3. Alle Solver-Module für den DNet-Solver
+  ...Object.values(PATHS.solvers),
 ];
 
 // sys-jit-batcher.ts
