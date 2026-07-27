@@ -1,7 +1,6 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 
-
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const PORT_ID = 5;
@@ -26,20 +25,34 @@ export async function main(ns: NS): Promise<void> {
     const port = ns.getPortHandle(PORT_ID);
 
     while (!port.empty()) {
-      const dataString = port.read() as string;
-      const [host, password] = dataString.split(":");
+      const rawData = port.read() as string;
+      let host = "";
+      let password = "";
+
+      // Robuster Parser: Unterstützt JSON (Neu) und den alten string-Fallback "host:pw"
+      try {
+        const parsed = JSON.parse(rawData);
+        host = parsed.host;
+        password = parsed.password;
+      } catch {
+        const firstColon = rawData.indexOf(":");
+        if (firstColon !== -1) {
+          host = rawData.substring(0, firstColon);
+          password = rawData.substring(firstColon + 1);
+        }
+      }
 
       if (host && password !== undefined && passwordDb[host] !== password) {
         passwordDb[host] = password;
 
         logger.success(`🔑 Neues Passwort registriert: ${host} -> "${password}"`);
 
-        // 🟢 FIX: Aktualisierte JSON-Datenbank direkt auf Disk schreiben
+        // Atomares Schreiben auf Disk
         await ns.write(jsonDbFile, JSON.stringify(passwordDb, null, 2), "w");
 
         const uniquePasswords = [...new Set(Object.values(passwordDb))].filter(
           (pw) =>
-            pw &&
+            pw !== undefined &&
             !pw.includes("You have discovered") &&
             !pw.includes("shares of") &&
             pw.length < 30,

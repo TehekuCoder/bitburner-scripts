@@ -1,369 +1,249 @@
-import { NS, Server } from "@ns";
-import { calculateBatch } from "./batch-calculator.js";
-import {
-  PATH_HACK,
-  PATH_GROW,
-  PATH_WEAKEN,
-  SPACER,
-  HOME_RAM_RESERVE,
-  BATCH_GAP,
-} from "/lib/constants.js";
-import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { BatchPlan } from "/lib/types.js";
+import { NS, BitNodeMultipliers, Player, Server } from "@ns";
 
-// Absolute Obergrenze für simulierte Batches (Schutz vor Bitburner/JS-Garbage-Collector Lag)
-const MAX_BATCH_CAP = 2500;
-const MAX_PREP_CAP = 250;
-
-/**
- * Hystereseschwellenwert für Zielwechsel.
- * 0.75 bedeutet: Das aktuelle Ziel wird behalten, solange sein Score mindestens 75%
- * des absoluten Top-Scores beträgt (das neue Ziel müsste also > 33% besser sein).
- */
-const HYSTERESIS_THRESHOLD = 0.75;
-
-interface EvaluatedCandidate {
+export interface BatchPlan {
   target: string;
-  plan: BatchPlan;
+  mode: "PREP" | "HWGW";
+  hackThreads: number;
+  weaken1Threads: number;
+  growThreads: number;
+  weaken2Threads: number;
+  hackTime: number;
+  weakenTime: number;
+  growTime: number;
+  greed: number;
+  greedScore: number;
   maxBatches: number;
-  score: number;
-  isPrepped: boolean;
+  batchRam: number;
 }
 
+const RAM_HACK = 1.70;
+const RAM_GROW = 1.75;
+const RAM_WEAKEN = 1.75;
+
+/** Maximale Obergrenze für simulierte Batches, um Event-Loop Stalls zu vermeiden */
+const MAX_BATCH_CAP = 100;
+
+/**
+ * Evaluiert alle erreichbaren Server und berechnet den profitabelsten
+ * Zielserver inklusive eines optimierten HWGW- oder Prep-Batch-Plans.
+ */
 export function internalPlanner(
   ns: NS,
   servers: string[],
   maxRam: number,
   virtualFreeRam: number,
-  bnMults: any,
-  targetBlacklist: Map<string, number>,
-  queueLength: number,
-  logger?: Logger,
-  currentTarget?: string | null,
-): { target: string; plan: BatchPlan; maxBatches: number } | null {
-  const player = ns.getPlayer();
-  const candidates: EvaluatedCandidate[] = [];
+  bnMults: BitNodeMultipliers,
+  player: Player = ns.getPlayer()
+): BatchPlan | null {
+  let bestPlan: BatchPlan | null = null;
+  let highestScore = -1;
 
-  const ramHack = ns.getScriptRam(PATH_HACK);
-  const ramGrow = ns.getScriptRam(PATH_GROW);
-  const ramWeaken = ns.getScriptRam(PATH_WEAKEN);
+  for (const target of servers) {
+    if (!ns.hasRootAccess(target)) continue;
 
-  // Größten physischen Host im Netzwerk ermitteln
-  const largestWorkerHost = servers.reduce((max, s) => {
-    if (!ns.hasRootAccess(s)) return max;
-    const maxRamHost =
-      s === "home"
-        ? Math.max(0, ns.getServerMaxRam("home") - HOME_RAM_RESERVE)
-        : ns.getServerMaxRam(s);
-    return Math.max(max, maxRamHost);
-  }, 0);
+    const serverObj = ns.getServer(target);
+    if (!serverObj.moneyMax || serverObj.moneyMax <= 0) continue;
+    if ((serverObj.requiredHackingSkill ?? Infinity) > player.skills.hacking) continue;
 
-  // Cap für ein einzelnes Skript basiert auf der physischen Max-Kapazität
-  const maxSingleScriptRam = Math.max(1.75, largestWorkerHost * 0.95);
-  const safeHwgwRam = virtualFreeRam * 0.9;
-  const safePrepRam = virtualFreeRam * 0.95;
+    const moneyMax = serverObj.moneyMax;
+    const moneyAvailable = serverObj.moneyAvailable ?? 0;
+    const minSec = serverObj.minDifficulty ?? 1;
+    const currentSec = serverObj.hackDifficulty ?? minSec;
 
-  if (safeHwgwRam <= 0) {
-    logger?.debug("[Planner] Kein freier RAM im Netzwerk vorhanden.");
-    return null;
-  }
+    // Virtualisierter prepped Server für die HWGW-Berechnung
+    const preppedServer: Server = {
+      ...serverObj,
+      hackDifficulty: minSec,
+      moneyAvailable: moneyMax,
+    };
 
-  // ----------------------------------------------------------------------
-  // 🔍 TARGET-FILTERING
-  // ----------------------------------------------------------------------
-  const targets = servers.filter((s) => {
-    if (s === "home") return false;
+    const weakenTime = ns.formulas?.hacking
+      ? ns.formulas.hacking.weakenTime(preppedServer, player)
+      : ns.getWeakenTime(target);
 
-    if (targetBlacklist.has(s) && (targetBlacklist.get(s) ?? 0) > Date.now()) {
-      logger?.debug(`[Planner Filter] ${s}: Verworfen (Blacklist).`);
-      return false;
-    }
+    const growTime = ns.formulas?.hacking
+      ? ns.formulas.hacking.growTime(preppedServer, player)
+      : ns.getGrowTime(target);
 
-    if (!ns.hasRootAccess(s)) return false;
+    const hackTime = ns.formulas?.hacking
+      ? ns.formulas.hacking.hackTime(preppedServer, player)
+      : ns.getHackTime(target);
 
-    const sObj = ns.getServer(s);
-    const moneyMax = sObj.moneyMax ?? 0;
-    if (moneyMax <= 0) return false;
-
-    if ((sObj.requiredHackingSkill ?? 0) > player.skills.hacking) return false;
-
-    return true;
-  });
-
-  if (targets.length === 0) {
-    logger?.debug(
-      "[Planner] Keine gültigen Targets gefunden (Root / Skill / Zeit-Filter).",
-    );
-    return null;
-  }
-
-  // ----------------------------------------------------------------------
-  // 📊 TARGET-EVALUIERUNG
-  // ----------------------------------------------------------------------
-  for (const t of targets) {
-    const server = ns.getServer(t);
-    const minDifficulty = server.minDifficulty ?? 1;
-    const hackDifficulty = server.hackDifficulty ?? 1;
-    const moneyMax = server.moneyMax ?? 0;
-    const moneyAvailable = server.moneyAvailable ?? 0;
-
-    if (moneyMax <= 0) continue;
-
-    const isPrepped =
-      hackDifficulty <= minDifficulty + 0.1 &&
-      moneyAvailable >= moneyMax * 0.99;
+    // -----------------------------------------------------------------------
+    // PHASE 1: Target benötigt Vorbereitung (PREP)
+    // -----------------------------------------------------------------------
+    const isPrepped = currentSec <= minSec + 0.5 && moneyAvailable >= moneyMax * 0.99;
 
     if (!isPrepped) {
-      // 🛠️ PREP-PHASE (Kombiniertes Weaken + Grow in einem Batch)
-      const weakenPotency = 0.05 * (bnMults.ServerWeakenRate ?? 1.0);
-      let weaken1Threads = 0;
-      let growThreads = 0;
-      let weaken2Threads = 0;
-      let neededPrepBatches = 1;
+      const secDiff = Math.max(0, currentSec - minSec);
+      let weakenPrepThreads = Math.ceil(secDiff / 0.05);
 
-      const diffAmt = hackDifficulty - minDifficulty;
-
-      if (diffAmt > 0.5) {
-        const totalNeededWeaken = Math.ceil(diffAmt / weakenPotency);
-        const maxPossibleWeaken = Math.floor(
-          Math.min(safePrepRam, maxSingleScriptRam) / ramWeaken,
-        );
-        weaken1Threads = Math.min(totalNeededWeaken, maxPossibleWeaken);
-      } else if (diffAmt > 0.01) {
-        weaken1Threads = Math.ceil(diffAmt / weakenPotency);
-      }
-
+      let growPrepThreads = 0;
       if (moneyAvailable < moneyMax) {
-        const virtualServer: Server = {
-          ...server,
-          hackDifficulty: minDifficulty,
+        const growthFactor = moneyMax / Math.max(1, moneyAvailable);
+
+        const prepServerObj: Server = {
+          ...serverObj,
+          hackDifficulty: minSec,
           moneyAvailable: Math.max(1, moneyAvailable),
         };
 
-        const growthMult = bnMults.ServerGrowthRate ?? 1.0;
-        const rawGrowThreads = ns.formulas?.hacking
-          ? Math.ceil(
-              ns.formulas.hacking.growThreads(virtualServer, player, moneyMax),
-            )
-          : Math.ceil(
-              (Math.log(moneyMax / Math.max(1, moneyAvailable)) * 100) /
-                ns.getServerGrowth(t),
-            );
+        growPrepThreads = ns.formulas?.hacking
+          ? Math.ceil(ns.formulas.hacking.growThreads(prepServerObj, player, moneyMax))
+          : Math.ceil(ns.growthAnalyze(target, growthFactor));
+      }
 
-        const totalNeededGrow = ns.formulas?.hacking
-          ? rawGrowThreads
-          : Math.ceil(rawGrowThreads / growthMult);
+      let prepWeaken2Threads = Math.ceil((growPrepThreads * 0.004) / 0.05);
+      let prepRam =
+        (weakenPrepThreads + prepWeaken2Threads) * RAM_WEAKEN +
+        growPrepThreads * RAM_GROW;
 
-        const secPerGrow = 0.004;
-        const ramPerGrowUnit =
-          ramGrow + (secPerGrow / weakenPotency) * ramWeaken;
+      // ⚡ FIX: Skaliere PREP-Threads herunter, falls der RAM-Bedarf das freie RAM übersteigt (Partielles Prep)
+      const maxUsablePrepRam = Math.min(maxRam, virtualFreeRam) * 0.90;
 
-        const remainingPrepRam = Math.max(
-          0,
-          safePrepRam - weaken1Threads * ramWeaken,
-        );
+      if (prepRam > maxUsablePrepRam && maxUsablePrepRam > RAM_WEAKEN) {
+        const scale = maxUsablePrepRam / prepRam;
+        weakenPrepThreads = Math.floor(weakenPrepThreads * scale);
+        growPrepThreads = Math.floor(growPrepThreads * scale);
+        prepWeaken2Threads = Math.floor(prepWeaken2Threads * scale);
 
-        const maxGrowByHost = Math.floor(maxSingleScriptRam / ramGrow);
-        const maxGrowByRam = Math.floor(remainingPrepRam / ramPerGrowUnit);
-        const maxGrowUnits = Math.max(0, Math.min(maxGrowByHost, maxGrowByRam));
-
-        growThreads = Math.min(totalNeededGrow, maxGrowUnits);
-
-        if (growThreads > 0) {
-          const growSecIncrease = growThreads * 0.004;
-          weaken2Threads = Math.ceil(growSecIncrease / weakenPotency) + 1;
+        // Sicherstellen, dass mindestens 1 Thread läuft, wenn RAM vorhanden ist
+        if (weakenPrepThreads === 0 && secDiff > 0 && maxUsablePrepRam >= RAM_WEAKEN) {
+          weakenPrepThreads = 1;
+        }
+        if (growPrepThreads === 0 && moneyAvailable < moneyMax && maxUsablePrepRam >= RAM_GROW) {
+          growPrepThreads = 1;
         }
 
-        const neededWeakenBatches =
-          weaken1Threads > 0
-            ? Math.ceil(diffAmt / (weaken1Threads * weakenPotency))
-            : 1;
-        const neededGrowBatches =
-          growThreads > 0 ? Math.ceil(totalNeededGrow / growThreads) : 1;
-        neededPrepBatches = Math.max(neededWeakenBatches, neededGrowBatches);
+        prepRam =
+          (weakenPrepThreads + prepWeaken2Threads) * RAM_WEAKEN +
+          growPrepThreads * RAM_GROW;
       }
 
-      let totalRam =
-        (weaken1Threads + weaken2Threads) * ramWeaken + growThreads * ramGrow;
+      // Guardrail gegen ungültigen RAM-Bedarf
+      if (!Number.isFinite(prepRam) || prepRam <= 0 || prepRam > maxUsablePrepRam) continue;
 
-      if (totalRam > safePrepRam && growThreads > 0) {
-        const scale = safePrepRam / totalRam;
-        growThreads = Math.floor(growThreads * scale);
-        const growSecIncrease = growThreads * 0.004;
-        weaken2Threads = Math.ceil(growSecIncrease / weakenPotency) + 1;
-        totalRam =
-          (weaken1Threads + weaken2Threads) * ramWeaken + growThreads * ramGrow;
+      const prepScore = (moneyMax / weakenTime) * 0.1;
+      if (prepScore > highestScore) {
+        highestScore = prepScore;
+        bestPlan = {
+          target,
+          mode: "PREP",
+          hackThreads: 0,
+          weaken1Threads: weakenPrepThreads,
+          growThreads: growPrepThreads,
+          weaken2Threads: prepWeaken2Threads,
+          hackTime,
+          weakenTime,
+          growTime,
+          greed: 0,
+          greedScore: prepScore,
+          maxBatches: 1,
+          batchRam: prepRam,
+        };
       }
+      continue;
+    }
 
-      if (totalRam <= 0 || totalRam > safePrepRam) continue;
+    // -----------------------------------------------------------------------
+    // PHASE 2: Target ist prepped -> HWGW Greed Search
+    // -----------------------------------------------------------------------
+    let bestGreedScore = -1;
+    let optimalTargetPlan: BatchPlan | null = null;
 
-      const tW =
-        ns.formulas?.hacking?.weakenTime(server, player) ?? ns.getWeakenTime(t);
-      const tG =
-        ns.formulas?.hacking?.growTime(server, player) ?? ns.getGrowTime(t);
+    const evaluateGreed = (greed: number): { p: BatchPlan; greedScore: number } | null => {
+      const hackPercent = ns.formulas?.hacking
+        ? ns.formulas.hacking.hackPercent(preppedServer, player)
+        : ns.hackAnalyze(target);
 
-      const prepPlan: BatchPlan = {
-        target: t,
-        hackThreads: 0,
+      if (hackPercent <= 0) return null;
+
+      const hackThreads = Math.max(1, Math.floor(greed / hackPercent));
+      const actualGreed = hackThreads * hackPercent;
+      if (actualGreed >= 1) return null;
+
+      const weaken1Threads = Math.ceil((hackThreads * 0.002) / 0.05);
+
+      const postHackMoney = Math.max(1, moneyMax * (1 - actualGreed));
+      const growthFactor = moneyMax / postHackMoney;
+
+      const serverAfterHack: Server = {
+        ...preppedServer,
+        moneyAvailable: postHackMoney,
+      };
+
+      const growThreads = ns.formulas?.hacking
+        ? Math.ceil(ns.formulas.hacking.growThreads(serverAfterHack, player, moneyMax))
+        : Math.ceil(ns.growthAnalyze(target, growthFactor));
+
+      const weaken2Threads = Math.ceil((growThreads * 0.004) / 0.05);
+
+      const batchRam =
+        hackThreads * RAM_HACK +
+        weaken1Threads * RAM_WEAKEN +
+        growThreads * RAM_GROW +
+        weaken2Threads * RAM_WEAKEN;
+
+      if (!Number.isFinite(batchRam) || batchRam > maxRam) return null;
+
+      const calcMaxBatches = Math.min(MAX_BATCH_CAP, Math.floor(maxRam / batchRam));
+      if (calcMaxBatches < 1) return null;
+
+      const profitPerBatch = moneyMax * actualGreed;
+      const greedScore = (profitPerBatch / weakenTime) * Math.min(calcMaxBatches, 50);
+
+      const p: BatchPlan = {
+        target,
+        mode: "HWGW",
+        hackThreads,
         weaken1Threads,
         growThreads,
         weaken2Threads,
-        hackDelay: 0,
-        weaken1Delay: 0,
-        growDelay: Math.max(0, tW - SPACER - tG),
-        weaken2Delay: 0,
-        hackTime: 0,
-        growTime: tG,
-        weakenTime: tW,
-        totalRam,
-        executionTime: tW,
+        hackTime,
+        weakenTime,
+        growTime,
+        greed: actualGreed,
+        greedScore,
+        maxBatches: calcMaxBatches,
+        batchRam,
       };
 
-      const potHwgwPlan = calculateBatch(ns, t, bnMults, 0.2, SPACER);
-      let score = (moneyMax / (tW || 1)) * 0.1;
+      return { p, greedScore };
+    };
 
-      if (potHwgwPlan) {
-        const pctPerThread = ns.formulas?.hacking
-          ? ns.formulas.hacking.hackPercent(server, player)
-          : ns.hackAnalyze(t);
-        const potRevenue = potHwgwPlan.hackThreads * pctPerThread * moneyMax;
-        score = (potRevenue / (potHwgwPlan.weakenTime / 1000)) * 0.8;
+    // Step 1: Grobsuche
+    const greedSteps = [0.01, 0.02, 0.03, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
+    let bestCoarseGreed = 0.01;
+
+    for (const greed of greedSteps) {
+      const res = evaluateGreed(greed);
+      if (res && res.greedScore > bestGreedScore) {
+        bestGreedScore = res.greedScore;
+        optimalTargetPlan = res.p;
+        bestCoarseGreed = greed;
       }
+    }
 
-      const gap = Math.max(BATCH_GAP, SPACER * 4);
-      const timeMaxBatches = Math.floor(tW / gap);
-      const ramMaxBatches = Math.floor(safePrepRam / totalRam);
-      const maxAllowedPrep = Math.min(MAX_PREP_CAP, neededPrepBatches);
-      const prepMaxBatches = Math.max(
-        1,
-        Math.min(ramMaxBatches, timeMaxBatches, maxAllowedPrep),
-      );
+    // Step 2: Feinsuche im Umkreis des besten Grobwerts
+    if (optimalTargetPlan) {
+      const fineStep = 0.005;
+      const fineMin = Math.max(0.001, bestCoarseGreed - 0.04);
+      const fineMax = Math.min(0.95, bestCoarseGreed + 0.04);
 
-      candidates.push({
-        target: t,
-        plan: prepPlan,
-        maxBatches: prepMaxBatches,
-        score,
-        isPrepped: false,
-      });
-    } else {
-      // 🚀 HWGW-PHASE (2-Pass Greed Search)
-      let optimalPlan: BatchPlan | null = null;
-      let bestGreedScore = -1;
-      let calcMaxBatchesForBestPlan = 1;
-
-      const evaluateGreed = (greed: number) => {
-        const p = calculateBatch(ns, t, bnMults, greed, SPACER);
-        if (!p) return null;
-
-        const maxScriptRamInBatch = Math.max(
-          p.hackThreads * ramHack,
-          p.growThreads * ramGrow,
-          p.weaken1Threads * ramWeaken,
-          p.weaken2Threads * ramWeaken,
-        );
-
-        if (maxScriptRamInBatch > maxSingleScriptRam) return null;
-        if (p.totalRam > safeHwgwRam) return null;
-
-        const pctPerThread = ns.formulas?.hacking
-          ? ns.formulas.hacking.hackPercent(server, player)
-          : ns.hackAnalyze(t);
-        const revenue = p.hackThreads * pctPerThread * moneyMax;
-
-        const gap = Math.max(BATCH_GAP, SPACER * 4);
-        const timeMaxBatches = Math.floor(p.weakenTime / gap);
-        const ramMaxBatches = Math.floor(safeHwgwRam / p.totalRam);
-
-        const calcMaxBatches = Math.max(
-          1,
-          Math.min(ramMaxBatches, timeMaxBatches, MAX_BATCH_CAP),
-        );
-
-        const greedScore = (revenue * calcMaxBatches) / (p.weakenTime / 1000);
-
-        return { p, calcMaxBatches, greedScore };
-      };
-
-      // 1️⃣ Grobsuche (0.05 bis 0.95)
-      let bestCoarseGreed = 0.05;
-      for (let greed = 0.05; greed <= 0.95; greed += 0.05) {
+      for (let greed = fineMin; greed <= fineMax; greed += fineStep) {
         const res = evaluateGreed(greed);
         if (res && res.greedScore > bestGreedScore) {
           bestGreedScore = res.greedScore;
-          optimalPlan = res.p;
-          calcMaxBatchesForBestPlan = res.calcMaxBatches;
-          bestCoarseGreed = greed;
+          optimalTargetPlan = res.p;
         }
       }
+    }
 
-      // 2️⃣ Feinsuche (±4% in 1%-Schritten)
-      const minFine = Math.max(0.01, Number((bestCoarseGreed - 0.04).toFixed(2)));
-      const maxFine = Math.min(0.95, Number((bestCoarseGreed + 0.04).toFixed(2)));
-
-      for (let greed = minFine; greed <= maxFine; greed += 0.01) {
-        const roundedGreed = Number(greed.toFixed(2));
-        const res = evaluateGreed(roundedGreed);
-        if (res && res.greedScore > bestGreedScore) {
-          bestGreedScore = res.greedScore;
-          optimalPlan = res.p;
-          calcMaxBatchesForBestPlan = res.calcMaxBatches;
-        }
-      }
-
-      if (optimalPlan) {
-        candidates.push({
-          target: t,
-          plan: optimalPlan,
-          maxBatches: calcMaxBatchesForBestPlan,
-          score: bestGreedScore,
-          isPrepped: true,
-        });
-      }
+    if (optimalTargetPlan && bestGreedScore > highestScore) {
+      highestScore = bestGreedScore;
+      bestPlan = optimalTargetPlan;
     }
   }
 
-  if (candidates.length === 0) {
-    logger?.debug(
-      "[Planner] Kein Target mit ausreichendem Score/RAM gefunden.",
-    );
-    return null;
-  }
-
-  // ----------------------------------------------------------------------
-  // ⚖️ HYSTERESE & STICKY-TARGET ENTSCHEIDUNG
-  // ----------------------------------------------------------------------
-  candidates.sort((a, b) => b.score - a.score);
-  const topCandidate = candidates[0];
-
-  const currentCandidate = currentTarget
-    ? candidates.find((c) => c.target === currentTarget)
-    : null;
-
-  let selected = topCandidate;
-
-  if (
-    currentCandidate &&
-    currentCandidate.score >= topCandidate.score * HYSTERESIS_THRESHOLD
-  ) {
-    selected = currentCandidate;
-    logger?.debug(
-      `📌 Hystereseschutz aktiv: Bleibe bei ${currentTarget} (Score: ${currentCandidate.score.toFixed(0)} vs Top ${topCandidate.target}: ${topCandidate.score.toFixed(0)})`,
-    );
-  } else if (currentTarget && selected.target !== currentTarget) {
-    logger?.info(
-      `🔄 Target-Wechsel gerechtfertigt: ${currentTarget} (${currentCandidate?.score.toFixed(0) ?? 0}) -> ${selected.target} (${selected.score.toFixed(0)})`,
-    );
-  }
-
-  const mode = selected.isPrepped ? "HWGW" : "PREP";
-  logger?.info(
-    `[Planner] 🎯 Ziel gewählt: ${selected.target} (${mode}) | Score: ${selected.score.toFixed(0)} | RAM/Batch: ${selected.plan.totalRam.toFixed(1)}GB | Max Batches: ${selected.maxBatches}`,
-  );
-
-  return {
-    target: selected.target,
-    plan: selected.plan,
-    maxBatches: selected.maxBatches,
-  };
+  return bestPlan;
 }

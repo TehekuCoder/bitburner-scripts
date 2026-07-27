@@ -5,34 +5,41 @@ import { LOG_PORT } from "lib/constants.js";
 export class LoggerClient {
   private ns: NS;
   private moduleName: string;
-  private portNumber: number; // In TypeScript nutzen wir 'number' statt 'int'
+  private portNumber: number;
+  private defaultTarget?: string;
 
-  constructor(ns: NS, moduleName: string, portNumber = LOG_PORT) {
+  constructor(ns: NS, moduleName: string, defaultTarget?: string, portNumber = LOG_PORT) {
     this.ns = ns;
     this.moduleName = moduleName.toUpperCase();
+    this.defaultTarget = defaultTarget;
     this.portNumber = portNumber;
   }
 
-  private send(level: LogLevel, msg: string): void {
+  /**
+   * Erstellt einen abgeleiteten Logger mit festem Ziel-Fokus (z.B. für einen Batcher-Loop)
+   */
+  public forTarget(target: string): LoggerClient {
+    return new LoggerClient(this.ns, this.moduleName, target, this.portNumber);
+  }
+
+  private send(level: LogLevel, msg: string, target?: string): void {
     const payload: LogPayload = {
       module: this.moduleName,
       level,
       msg,
-      timestamp: Date.now(), // Nur Timestamp speichern, keine String-Formatierung im Hot-Loop
+      timestamp: Date.now(),
+      target: target || this.defaultTarget,
     };
 
-    // Fast-Path: Bipolarer Schreibversuch in den RAM-Port
     const success = this.ns.tryWritePort(this.portNumber, payload);
-
     if (!success) {
-      // Fallback falls der Port voll ist (Port-Queue überlaufen)
       this.ns.print(`[LOGGER-CLIENT WARN] Port ${this.portNumber} ist voll! Log verworfen.`);
     }
   }
 
-  public debug(msg: string): void { this.send("DEBUG", msg); }
-  public info(msg: string): void { this.send("INFO", msg); }
-  public success(msg: string): void { this.send("SUCCESS", msg); }
-  public warn(msg: string): void { this.send("WARN", msg); }
-  public error(msg: string): void { this.send("ERROR", msg); }
+  public debug(msg: string, target?: string): void { this.send("DEBUG", msg, target); }
+  public info(msg: string, target?: string): void { this.send("INFO", msg, target); }
+  public success(msg: string, target?: string): void { this.send("SUCCESS", msg, target); }
+  public warn(msg: string, target?: string): void { this.send("WARN", msg, target); }
+  public error(msg: string, target?: string): void { this.send("ERROR", msg, target); }
 }

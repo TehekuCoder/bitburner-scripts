@@ -1,6 +1,13 @@
 import { NS } from "@ns";
-import { HOME_RAM_RESERVE } from "/lib/constants.js";
+import { HOME_RAM_RESERVE, PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants.js";
 import { WorkerNode, JitEvent } from "./types.js";
+
+// Statisches RAM Lookup zur Vermeidung träger File-System API Calls
+const SCRIPT_RAM_MAP: Record<string, number> = {
+  [PATH_HACK]: 1.70,
+  [PATH_GROW]: 1.75,
+  [PATH_WEAKEN]: 1.75,
+};
 
 export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   const nodes: WorkerNode[] = [];
@@ -19,7 +26,6 @@ export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
       });
     }
   }
-  // Höchster freier RAM zuerst für effiziente Verteilung
   return nodes.sort((a, b) => b.freeRam - a.freeRam);
 }
 
@@ -27,10 +33,11 @@ export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
  * Führt ein Event atomar auf den verfügbaren Workers aus (mit Thread-Splitting).
  * Garantiert: Entweder werden ALLE Threads gestartet oder GAR KEINE.
  */
-// lib/worker-executor.ts
 export function executeOnWorkers(ns: NS, event: JitEvent, workers: WorkerNode[]): boolean {
-  const scriptRam = ns.getScriptRam(event.script);
-  if (scriptRam <= 0 || event.threads <= 0) return false;
+  if (!Number.isFinite(event.threads) || event.threads <= 0) return false;
+
+  const scriptRam = SCRIPT_RAM_MAP[event.script] ?? ns.getScriptRam(event.script);
+  if (scriptRam <= 0) return false;
 
   // 1. Capacity Check
   let totalAvailableThreads = 0;
@@ -63,11 +70,11 @@ export function executeOnWorkers(ns: NS, event: JitEvent, workers: WorkerNode[])
 
     if (pid > 0) {
       const ramUsed = toRun * scriptRam;
-      w.freeRam -= ramUsed;
+      w.freeRam -= ramUsed; // Zieht RAM lokal vom Worker-Objekt ab!
       launchedPids.push({ pid, worker: w, allocatedRam: ramUsed });
       remainingThreads -= toRun;
     } else {
-      // Rollback: Prozesse beenden & RAM-Buffer der Worker wieder freigeben
+      // Rollback
       for (const item of launchedPids) {
         ns.kill(item.pid);
         item.worker.freeRam += item.allocatedRam;
@@ -81,10 +88,7 @@ export function executeOnWorkers(ns: NS, event: JitEvent, workers: WorkerNode[])
 
   return remainingThreads === 0;
 }
-/**
- * Entzieht alle noch nicht gelaufenen Events eines abgebrochenen Batches in-place.
- * Verwendet einen Two-Pointer Swap in O(N) ohne Memory Allocation / GC-Spikes.
- */
+
 export function pruneBatchFromQueue(queue: JitEvent[], batchId: number): void {
   let writeIndex = 0;
   for (let readIndex = 0; readIndex < queue.length; readIndex++) {
@@ -96,9 +100,6 @@ export function pruneBatchFromQueue(queue: JitEvent[], batchId: number): void {
   queue.length = writeIndex;
 }
 
-/**
- * Fügt ein Event via Binary Search in O(log N) an der korrekten zeitlichen Position ein.
- */
 export function insertEventSorted(queue: JitEvent[], event: JitEvent): void {
   let low = 0;
   let high = queue.length;

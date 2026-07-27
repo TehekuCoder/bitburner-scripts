@@ -268,4 +268,5 @@ export interface LogPayload {
   level: LogLevel;
   msg: string;
   timestamp: number;
+  target?: string;
 }

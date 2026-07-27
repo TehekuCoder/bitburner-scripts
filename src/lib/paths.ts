@@ -12,7 +12,7 @@ export const PATHS = {
       proto: "core/engines/engine-proto.js",
       shotgun: "core/engines/engine-shotgun.js",
       xpGrind: "core/engines/xp-grind.js",
-      JITbatcher: "core/engines/sys-jit-batcher.js",
+      jitBatcher: "core/engines/sys-jit-batcher.js",
     },
   },
   daemons: {
@@ -98,4 +98,4 @@ export const PATHS = {
     provision: "utils/provision.js",
     starter: "utils/starter.js",
   },
-};
+} as const;

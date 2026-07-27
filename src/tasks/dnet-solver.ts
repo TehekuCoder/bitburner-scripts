@@ -1,10 +1,7 @@
-// tasks/dnet-solver.ts
-
 import { NS } from "@ns";
 import { runSolver } from "solvers/solveManager.js";
 import { COOLDOWN_FILE, COOLDOWN_MS } from "/lib/constants";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-
 import { ServerAuthDetails } from "/lib/types";
 
 export async function main(ns: NS): Promise<void> {
@@ -30,7 +27,7 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  // NEU: 1.1 Prüfen, ob der Server bereits geknackt wurde (Session existiert)
+  // 1.1 Prüfen, ob der Server bereits geknackt wurde (Session existiert)
   if (details.hasSession) {
     logger.info(
       `✅ Session auf '${host}' existiert bereits. Solver wird vorzeitig beendet.`,
@@ -38,21 +35,20 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  // NEU: 1.2 Prüfen, ob das Passwort bereits in der Master-DB steht, bevor der Solver startet
+  // 1.2 Prüfen, ob das Passwort bereits in der Master-DB steht
   const jsonDbFile = "/dnet-master-db.json";
   if (ns.fileExists(jsonDbFile)) {
     try {
       const db = JSON.parse(ns.read(jsonDbFile));
-      if (db[host]) {
+      if (db[host] !== undefined) {
         logger.info(
           `🔍 Bekanntes Passwort für '${host}' in DB gefunden. Teste Login...`,
         );
         const auth = await ns.dnet.authenticate(host, db[host]);
         if (auth.success) {
           logger.success(
-            `🎉 [SUCCESS] Direkt-Login erfolgreich! Überspringe rechenintensiven Solver.`,
+            `🎉 [SUCCESS] Direkt-Login erfolgreich! Überspringe Solver.`,
           );
-          // Wir führen handleSuccess aus, um das Passwort via Port zu pushen, falls andere Knoten lauschen
           handleSuccess(ns, host, db[host], logger);
           return;
         } else {
@@ -74,8 +70,7 @@ export async function main(ns: NS): Promise<void> {
     details,
   );
 
-  // 3. Fallbacks ausführen, falls der Solver explizit null zurückgibt
-  // WICHTIG: Strikt auf null prüfen, da "" (ZeroLogon) ein gültiges Passwort ist!
+  // 3. Fallbacks ausführen (Strikt auf null prüfen, da "" ein gültiges PW ist!)
   if (password === null) {
     logger.warn(
       `⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`,
@@ -85,24 +80,32 @@ export async function main(ns: NS): Promise<void> {
       (await fileLootAttack(ns, host, details));
   }
 
-  // 4. Zentraler Abschluss
+  // 4. Authentifizierung & Abschluss
   if (password !== null) {
-    // <-- GEÄNDERT: Strikt auf null prüfen
-    handleSuccess(ns, host, password, logger);
+    // ⚡ FIX: Hier muss der tatsächliche Login-Aufruf stattfinden!
+    const auth = await ns.dnet.authenticate(host, password);
+    if (auth.success) {
+      handleSuccess(ns, host, password, logger);
+    } else {
+      logger.error(
+        `❌ Passwort "${password}" für ${host} ermittelt, aber Login verweigert. Cooldown aktiviert.`,
+      );
+      await setServerCooldown(ns, host);
+    }
   } else {
     logger.error(
       `❌ Krypto-Angriff auf ${host} (${details.modelId}) fehlgeschlagen. Cooldown aktiviert.`,
     );
-    setServerCooldown(ns, host);
+    await setServerCooldown(ns, host);
   }
 }
 
 /**
- * Zentrale Erfolgsabwicklung – vermeidet Code-Duplizierung
+ * Zentrale Erfolgsabwicklung: Sendet Daten sicher als JSON an Port 5.
+ * Die Dateiwartung übernimmt ausschließlich der DNET-MASTER.
  */
 function handleSuccess(ns: NS, host: string, pw: string, logger: Logger): void {
-  ns.writePort(5, `${host}:${pw}`);
-  updateJsonDatabase(ns, host, pw);
+  ns.writePort(5, JSON.stringify({ host, password: pw }));
   logger.success(`🎉 [SUCCESS] Server gebrochen! ${host} -> "${pw}"`);
 }
 
@@ -117,31 +120,17 @@ function isServerInCooldown(ns: NS, host: string): boolean {
   return false;
 }
 
-function setServerCooldown(ns: NS, host: string): void {
+async function setServerCooldown(ns: NS, host: string): Promise<void> {
   let content = "";
   const now = Date.now();
   if (ns.fileExists(COOLDOWN_FILE)) {
     const lines = ns.read(COOLDOWN_FILE).split("\n");
     content = lines
-      .filter((line) => now - Number(line.split(",")[1]) < COOLDOWN_MS)
+      .filter((line) => line.trim() && now - Number(line.split(",")[1]) < COOLDOWN_MS)
       .join("\n");
   }
   content += (content ? "\n" : "") + `${host},${now}`;
-  ns.write(COOLDOWN_FILE, content, "w");
-}
-
-function updateJsonDatabase(ns: NS, host: string, newPw: string): void {
-  const file = "/dnet-master-db.json";
-  let db: Record<string, string> = {};
-  if (ns.fileExists(file)) {
-    try {
-      db = JSON.parse(ns.read(file));
-    } catch {
-      db = {};
-    }
-  }
-  db[host] = newPw;
-  ns.write(file, JSON.stringify(db, null, 2), "w");
+  await ns.write(COOLDOWN_FILE, content, "w");
 }
 
 async function dictionaryAttack(
@@ -160,7 +149,7 @@ async function dictionaryAttack(
         pw.length < 30,
     );
     for (const pw of list) {
-      if (details.passwordLength && pw.length !== details.passwordLength)
+      if (details.passwordLength !== undefined && pw.length !== details.passwordLength)
         continue;
       if ((await ns.dnet.authenticate(host, pw)).success) {
         return pw;
