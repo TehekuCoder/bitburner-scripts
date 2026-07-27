@@ -17,7 +17,6 @@ import { solveRoman } from "./solveRoman";
 import { solveZeroLogon } from "./solveZeroLogon";
 import { SolverFunction } from "/lib/types";
 
-// Die Keys entsprechen exakt den Server-Typen, wie sie im Spiel definiert sind
 const SOLVER_REGISTRY: Record<string, SolverFunction> = {
   accountsmanager: solveAccountsManager,
   anagram: solveAnagram,
@@ -37,9 +36,6 @@ const SOLVER_REGISTRY: Record<string, SolverFunction> = {
   php54: solvePHP54,
 };
 
-/**
- * Normalisiert den Server-Typnamen, um Schreibfehler und Sonderzeichen abzufangen.
- */
 function normalizeType(type?: string): string {
   return (type || "")
     .toLowerCase()
@@ -47,10 +43,6 @@ function normalizeType(type?: string): string {
     .trim();
 }
 
-/**
- * Der zentrale Manager. Holt sich den passenden Solver für den Server-Typ
- * und führt ihn sicher aus.
- */
 export async function runSolver(
   ns: NS,
   host: string,
@@ -59,25 +51,19 @@ export async function runSolver(
 ): Promise<string | null> {
   const cleanType = normalizeType(serverType);
   if (!cleanType) {
-    ns.print(
-      `🔴 [Manager] Kein gültiger serverType für Host '${host}' übergeben.`,
-    );
+    ns.print(`🔴 [Manager] Kein gültiger serverType für Host '${host}' übergeben.`);
     return null;
   }
 
-  // 1. Exakter Match
   let solver = SOLVER_REGISTRY[cleanType];
 
-  // 2. Fuzzy Match für Modell-Varianten
   if (!solver) {
     const matchedKey = Object.keys(SOLVER_REGISTRY).find((key) =>
       cleanType.includes(key),
     );
     if (matchedKey) {
       solver = SOLVER_REGISTRY[matchedKey];
-      ns.print(
-        `ℹ️ [Manager] Unscharfer Match für '${serverType}': Nutze '${matchedKey}'.`,
-      );
+      ns.print(`ℹ️ [Manager] Unscharfer Match für '${serverType}': Nutze '${matchedKey}'.`);
     }
   }
 

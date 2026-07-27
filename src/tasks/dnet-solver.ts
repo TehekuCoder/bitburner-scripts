@@ -14,55 +14,31 @@ export async function main(ns: NS): Promise<void> {
 
   if (isServerInCooldown(ns, host)) return;
 
-  const connectedServers = ns.dnet.probe();
-  if (!connectedServers.includes(host)) {
-    logger.warn(`⚠️ Host '${host}' nicht mehr erreichbar. Abbruch.`);
-    return;
+  const jsonDbFile = "/dnet-master-db.json";
+
+  // Bitburner 3.0: Erstelle zuerst die Session für diesen spezifischen PID, falls Passwort bekannt
+  if (ns.fileExists(jsonDbFile)) {
+    try {
+      const db = JSON.parse(ns.read(jsonDbFile));
+      if (db[host] !== undefined) {
+        const sessionCreated = ns.dnet.connectToSession(host, db[host]);
+        if (sessionCreated) {
+          logger.success(`🎉 [SUCCESS] Session für PID erfolgreich hergestellt! Überspringe Solver.`);
+          handleSuccess(ns, host, db[host], logger);
+          return;
+        }
+      }
+    } catch {}
   }
 
-  // 1. Live-Details vom Server laden
   const details = ns.dnet.getServerDetails(host) as ServerAuthDetails;
   if (!details) {
     logger.error(`❌ Konnte ServerDetails für '${host}' nicht abrufen.`);
     return;
   }
 
-  // 1.1 Prüfen, ob der Server bereits geknackt wurde (Session existiert)
-  if (details.hasSession) {
-    logger.info(
-      `✅ Session auf '${host}' existiert bereits. Solver wird vorzeitig beendet.`,
-    );
-    return;
-  }
-
-  // 1.2 Prüfen, ob das Passwort bereits in der Master-DB steht
-  const jsonDbFile = "/dnet-master-db.json";
-  if (ns.fileExists(jsonDbFile)) {
-    try {
-      const db = JSON.parse(ns.read(jsonDbFile));
-      if (db[host] !== undefined) {
-        logger.info(
-          `🔍 Bekanntes Passwort für '${host}' in DB gefunden. Teste Login...`,
-        );
-        const auth = await ns.dnet.authenticate(host, db[host]);
-        if (auth.success) {
-          logger.success(
-            `🎉 [SUCCESS] Direkt-Login erfolgreich! Überspringe Solver.`,
-          );
-          handleSuccess(ns, host, db[host], logger);
-          return;
-        } else {
-          logger.warn(
-            `⚠️ Gespeichertes Passwort war inkorrekt. Starte regulären Angriff.`,
-          );
-        }
-      }
-    } catch {}
-  }
-
   logger.info(`🔨 Krypto-Angriff auf Modell [${details.modelId}] gestartet...`);
 
-  // 2. Haupt-Solver ausführen
   let password = await runSolver(
     ns,
     host,
@@ -70,40 +46,29 @@ export async function main(ns: NS): Promise<void> {
     details,
   );
 
-  // 3. Fallbacks ausführen (Strikt auf null prüfen, da "" ein gültiges PW ist!)
   if (password === null) {
-    logger.warn(
-      `⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`,
-    );
+    logger.warn(`⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`);
     password =
       (await dictionaryAttack(ns, host, details)) ||
       (await fileLootAttack(ns, host, details));
   }
 
-  // 4. Authentifizierung & Abschluss
   if (password !== null) {
-    // ⚡ FIX: Hier muss der tatsächliche Login-Aufruf stattfinden!
     const auth = await ns.dnet.authenticate(host, password);
-    if (auth.success) {
+    const isSuccess = typeof auth === "boolean" ? auth : (auth && auth.success);
+
+    if (isSuccess || ns.dnet.connectToSession(host, password)) {
       handleSuccess(ns, host, password, logger);
     } else {
-      logger.error(
-        `❌ Passwort "${password}" für ${host} ermittelt, aber Login verweigert. Cooldown aktiviert.`,
-      );
+      logger.error(`❌ Passwort "${password}" für ${host} ermittelt, aber Authentifizierung fehlgeschlagen.`);
       await setServerCooldown(ns, host);
     }
   } else {
-    logger.error(
-      `❌ Krypto-Angriff auf ${host} (${details.modelId}) fehlgeschlagen. Cooldown aktiviert.`,
-    );
+    logger.error(`❌ Krypto-Angriff auf ${host} (${details.modelId}) fehlgeschlagen. Cooldown aktiviert.`);
     await setServerCooldown(ns, host);
   }
 }
 
-/**
- * Zentrale Erfolgsabwicklung: Sendet Daten sicher als JSON an Port 5.
- * Die Dateiwartung übernimmt ausschließlich der DNET-MASTER.
- */
 function handleSuccess(ns: NS, host: string, pw: string, logger: Logger): void {
   ns.writePort(5, JSON.stringify({ host, password: pw }));
   logger.success(`🎉 [SUCCESS] Server gebrochen! ${host} -> "${pw}"`);
@@ -143,17 +108,12 @@ async function dictionaryAttack(
   try {
     const db = JSON.parse(ns.read(jsonDbFile));
     const list = [...new Set(Object.values(db) as string[])].filter(
-      (pw) =>
-        pw !== undefined &&
-        !pw.includes("You have discovered") &&
-        pw.length < 30,
+      (pw) => pw !== undefined && !pw.includes("You have discovered") && pw.length < 30,
     );
     for (const pw of list) {
       if (details.passwordLength !== undefined && pw.length !== details.passwordLength)
         continue;
-      if ((await ns.dnet.authenticate(host, pw)).success) {
-        return pw;
-      }
+      if (ns.dnet.connectToSession(host, pw)) return pw;
     }
   } catch {}
   return null;
@@ -169,9 +129,7 @@ async function fileLootAttack(
     for (const file of files) {
       const content = ns.read(file).trim();
       if (content.length <= (details.passwordLength || 20)) {
-        if ((await ns.dnet.authenticate(host, content)).success) {
-          return content;
-        }
+        if (ns.dnet.connectToSession(host, content)) return content;
       }
     }
   } catch {}

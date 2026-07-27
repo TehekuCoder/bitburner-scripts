@@ -7,10 +7,7 @@ import {
 } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 
-
 let lastLootTime = 0;
-let dbCache: Record<string, string> | null = null;
-let lastDbRead = 0;
 
 function isServerInCooldown(ns: NS, host: string): boolean {
   if (!ns.fileExists(COOLDOWN_FILE)) return false;
@@ -26,38 +23,23 @@ function isServerInCooldown(ns: NS, host: string): boolean {
   return false;
 }
 
-/**
- * Holt zuverlässig alle Dateien aus dem /solvers/ Ordner auf home.
- */
 function getSolverFiles(ns: NS): string[] {
   return ns.ls("home").filter((file) => file.includes("solvers/"));
 }
 
-/**
- * Liest das Passwort aus der Master-DB mit In-Memory Caching (Refresh alle 10 Sek.).
- */
 function getPasswordFromRegistry(ns: NS, host: string): string | null {
   const jsonDbFile = "/dnet-master-db.json";
-  const now = Date.now();
-
-  if (!dbCache || now - lastDbRead > 10000) {
-    if (!ns.fileExists(jsonDbFile)) return null;
-    try {
-      const dbContent = ns.read(jsonDbFile);
-      if (!dbContent) return null;
-      dbCache = JSON.parse(dbContent);
-      lastDbRead = now;
-    } catch {
-      return null;
-    }
+  if (!ns.fileExists(jsonDbFile)) return null;
+  try {
+    const dbContent = ns.read(jsonDbFile);
+    if (!dbContent) return null;
+    const db = JSON.parse(dbContent);
+    return db[host] ?? null;
+  } catch {
+    return null;
   }
-
-  return dbCache ? (dbCache[host] ?? null) : null;
 }
 
-/**
- * Einheitliche Wurm-Ausbreitung auf einen Ziel-Knoten.
- */
 async function deployWorm(
   ns: NS,
   hostname: string,
@@ -81,21 +63,17 @@ async function deployWorm(
   }
 
   let details = ns.dnet.getServerDetails(hostname) as any;
-  let sessionReady = details.hasSession;
+  let sessionReady = details ? details.hasSession : false;
 
   if (!sessionReady) {
     const password = getPasswordFromRegistry(ns, hostname);
     if (password !== null) {
-      await ns.dnet.connectToSession(hostname, password);
-      details = ns.dnet.getServerDetails(hostname) as any;
-      sessionReady = details.hasSession;
+      sessionReady = ns.dnet.connectToSession(hostname, password);
     }
   }
 
   if (sessionReady) {
-    logger.info(
-      `🚀 Wurm-Ausbreitung: Infiziere ${hostname} und starte Crawler.`,
-    );
+    logger.info(`🚀 Wurm-Ausbreitung: Infiziere ${hostname} und starte Crawler.`);
 
     const solverModules = getSolverFiles(ns);
     const filesToCopy = [
@@ -105,16 +83,13 @@ async function deployWorm(
       phishScript,
       "/dnet-master-db.json",
       "/lib/constants.js",
-      "/lib/logger-clients.js",
+      "/lib/logger-client.js", // FIX: Tippfehler korrigiert!
       "/lib/types.js",
       ...solverModules,
     ];
 
     ns.scp(filesToCopy, hostname, "home");
 
-    ns.scp(filesToCopy, hostname, "home");
-
-    // exec funktioniert bei Darknet nur auf DIREKT verbundenen Nodes
     if (details.isConnectedToCurrentServer || isDarkweb) {
       ns.exec(scriptName, hostname, 1);
       return true;
@@ -129,10 +104,7 @@ export async function main(ns: NS): Promise<void> {
   const currentHost = ns.getHostname();
   ns.disableLog("ALL");
 
-  const logger = new Logger(
-    ns,
-    `CRAWLER-${currentHost}`
-  );
+  const logger = new Logger(ns, `CRAWLER-${currentHost}`);
 
   if (currentHost !== "home") {
     const blockedRam = ns.dnet.getBlockedRam(currentHost);
@@ -145,9 +117,9 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const now = Date.now();
-    const solverScript = "tasks/dnet-solver.js";
-    const lootScript = "tasks/dnet-loot.js";
-    const phishScript = "tasks/dnet-phish.js";
+    const solverScript = "/tasks/dnet-solver.js";
+    const lootScript = "/tasks/dnet-loot.js";
+    const phishScript = "/tasks/dnet-phish.js";
 
     const maxRam = ns.getServerMaxRam(currentHost);
     let freeRam = maxRam - ns.getServerUsedRam(currentHost);
@@ -161,7 +133,6 @@ export async function main(ns: NS): Promise<void> {
 
     const nearbyServers: string[] = ns.dnet.probe();
 
-    // Topologie-Überwachung
     const currentTopology = nearbyServers.slice().sort().join(",");
     const lastTopology = lastKnownConnections.slice().sort().join(",");
 
@@ -175,11 +146,9 @@ export async function main(ns: NS): Promise<void> {
     let targetToCrack: string | null = null;
     let targetDetails: any = null;
 
-    // 1. SCAN & TARGET EVALUATION: Nahegelegene Server prüfen + Wurm ausbreiten
     for (const hostname of nearbyServers) {
       if (hostname === "home" || !ns.serverExists(hostname)) continue;
 
-      // Ausbreitung auf Nachbarn
       await deployWorm(
         ns,
         hostname,
@@ -190,7 +159,6 @@ export async function main(ns: NS): Promise<void> {
         logger,
       );
 
-      // Ziel-Erkennung für den Krypto-Solver
       if (!targetToCrack) {
         const details = ns.dnet.getServerDetails(hostname) as any;
         if (
@@ -204,7 +172,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 2. WURM-AUSBREITUNG AUF BEKANNTE PROCESSED SERVERS
     for (const hostname of processedServers) {
       await deployWorm(
         ns,
@@ -217,7 +184,6 @@ export async function main(ns: NS): Promise<void> {
       );
     }
 
-    // 3. LOOT EVICTION
     if (isLootDue && !isLootRunning && maxRam >= requiredLootRam) {
       if (isSolverRunning) {
         logger.warn(
@@ -234,11 +200,10 @@ export async function main(ns: NS): Promise<void> {
 
     let solverStarted = false;
 
-    // 4. SOLVER EXECUTION
     if (targetToCrack && targetDetails && !isSolverRunning) {
       const hasSolverModules =
-        ns.fileExists("solvers/solveManager.js", currentHost) ||
-        ns.fileExists("solvers/solveManager.ts", currentHost);
+        ns.fileExists("/solvers/solveManager.js", currentHost) ||
+        ns.fileExists("/solvers/solveManager.ts", currentHost);
 
       if (requiredSolverRam === 0 || !hasSolverModules) {
         const solverModules = getSolverFiles(ns);
@@ -278,7 +243,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 5. PERIODISCHER PHISHING- & LOOT-ZYKLUS
     if (
       currentHost !== "home" &&
       !isSolverRunning &&

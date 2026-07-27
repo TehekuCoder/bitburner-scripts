@@ -29,7 +29,6 @@ export async function main(ns: NS): Promise<void> {
       let host = "";
       let password = "";
 
-      // Robuster Parser: Unterstützt JSON (Neu) und den alten string-Fallback "host:pw"
       try {
         const parsed = JSON.parse(rawData);
         host = parsed.host;
@@ -47,7 +46,6 @@ export async function main(ns: NS): Promise<void> {
 
         logger.success(`🔑 Neues Passwort registriert: ${host} -> "${password}"`);
 
-        // Atomares Schreiben auf Disk
         await ns.write(jsonDbFile, JSON.stringify(passwordDb, null, 2), "w");
 
         const uniquePasswords = [...new Set(Object.values(passwordDb))].filter(
