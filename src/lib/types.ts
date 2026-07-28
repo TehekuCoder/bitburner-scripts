@@ -17,6 +17,7 @@ export interface AugmentRoadmapItem {
 export interface ScriptList {
   logger: string;
   perfMonitor: string;
+  earlyFleet: string;
   worker: string;
   dispatcher: string;
   infra: string;
@@ -34,6 +35,7 @@ export interface ScriptList {
   augAnalyze: string;
   orchestrator: string;
   suites: string;
+  gang: string;
 }
 
 export interface BatchPlan {

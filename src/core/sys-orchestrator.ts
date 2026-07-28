@@ -8,10 +8,7 @@ import { PATHS } from "/lib/paths";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  const logger = new Logger(
-    ns,
-    "Orchestrator"
-  );
+  const logger = new Logger(ns, "Orchestrator");
 
   const DASHBOARD_SCRIPT = "core/sys-jit-batcher-dashboard.js";
 
@@ -56,7 +53,7 @@ export async function main(ns: NS): Promise<void> {
         ns.kill(activeProcessId);
       }
 
-      // Worker-Payloads im gesamten Netzwerk säubern
+      // Worker-Payloads im gesamten Netzwerk säubern (inkl. Early-Fleet Workern)
       killAllWorkerPayloads(ns, servers);
 
       // Neue Execution Engine starten
@@ -119,7 +116,8 @@ function evaluateStrategyAndTarget(
     return { strategy: "XP_GRIND", target: "joesguns" };
   }
 
-  if (totalRam < 64) {
+  // Bis 128GB Gesamtsystem-RAM nutzt die Engine BOOTSTRAP / Early-Prep
+  if (totalRam < 128) {
     return { strategy: "BOOTSTRAP", target: "n00dles" };
   }
 
@@ -128,7 +126,6 @@ function evaluateStrategyAndTarget(
 
   if (totalRam >= 512 && homeRam >= 1024 && hasFormulas) {
     // Bei JIT_HWGW übernimmt der internalPlanner im Batcher die dynamic Target-Wahl.
-    // Wir behalten das bisherige Target oder nutzen n00dles als Starter.
     return { strategy: "JIT_HWGW", target: currentTarget ?? "n00dles" };
   }
 
@@ -249,7 +246,7 @@ function switchExecutionEngine(
 }
 
 /**
- * Beendet gezielt alle H/G/W Payload-Prozesse im Netzwerk inklusive home.
+ * Beendet gezielt alle H/G/W & Early-Fleet Payload-Prozesse im Netzwerk inklusive home.
  */
 function killAllWorkerPayloads(ns: NS, servers: string[]): void {
   const payloadScripts = [
@@ -259,6 +256,9 @@ function killAllWorkerPayloads(ns: NS, servers: string[]): void {
     "payloads/weaken.js",
     "payloads/grow.js",
     "payloads/hack.js",
+    PATHS.payloads.work,
+    "payloads/work.ts",
+    "payloads/work.js",
   ];
 
   for (const server of servers) {

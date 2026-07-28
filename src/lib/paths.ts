@@ -24,6 +24,7 @@ export const PATHS = {
     hacknet: "daemons/hacknet.js",
     perfMonitor: "daemons/perf-monitor.js",
     suite: "daemons/suite-manager.js",
+    gang: "daemons/gang.js"
   },
   lib: {
     constants: "lib/constants.js",

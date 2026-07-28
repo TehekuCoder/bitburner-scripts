@@ -53,6 +53,7 @@ export async function main(ns: NS): Promise<void> {
   const scripts: ScriptList = {
     logger: PATHS.core.logger,
     perfMonitor: PATHS.daemons.perfMonitor,
+    earlyFleet: PATHS.daemons.earlyFleet,
     worker: PATHS.payloads.work,
     dispatcher: PATHS.core.dispatcher,
     infra: PATHS.managers.infra,
@@ -70,6 +71,7 @@ export async function main(ns: NS): Promise<void> {
     augAnalyze: PATHS.tasks.analyzeAug,
     orchestrator: PATHS.core.orchestrator,
     suites: PATHS.core.suites,
+    gang: PATHS.daemons.gang,
   };
 
   let lastAugAnalysis = 0;
@@ -129,7 +131,6 @@ export async function main(ns: NS): Promise<void> {
       lastCorpApplication = now;
     }
 
-    const pServers = ns.cloud.getServerNames();
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
     // 4. Finanz- & Strategie-Schwellenwerte berechnen
@@ -295,9 +296,15 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    let isInGang = false;
+    try {
+      isInGang = ns.gang.inGang();
+    } catch (_) {}
+
     // 💾 2. Zustand im State-Manager speichern
     patchState(ns, {
       strategy: mode,
+      hasGang: isInGang,
       targetFaction: targetFaction || undefined,
       targetCompany: targetCompany,
       targetStat: mode === "TRAIN" ? targetStat : undefined,

@@ -11,6 +11,7 @@ export async function main(ns: NS): Promise<void> {
   const scripts: ScriptList = {
     logger: PATHS.core.logger,
     perfMonitor: PATHS.daemons.perfMonitor,
+    earlyFleet: PATHS.daemons.earlyFleet,
     worker: PATHS.payloads.work,
     dispatcher: PATHS.core.dispatcher,
     infra: PATHS.managers.infra,
@@ -28,6 +29,7 @@ export async function main(ns: NS): Promise<void> {
     augAnalyze: PATHS.tasks.analyzeAug,
     orchestrator: PATHS.core.orchestrator,
     suites: PATHS.core.suites,
+    gang: PATHS.daemons.gang,
   };
 
   // 1. Logger-Daemon starten
@@ -70,9 +72,6 @@ export async function main(ns: NS): Promise<void> {
     kernelTarget: existingState.kernelTarget || "n00dles",
   });
 
-  // Pfade für die beiden Flotten-Modi
-  const earlyFleetScript = PATHS.daemons.earlyFleet;
-
   while (true) {
     const homeMax = ns.getServerMaxRam("home");
     const currentState = loadState(ns);
@@ -87,10 +86,11 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 2. Infrastruktur-Manager (Immer aktiv für P-Server/Upgrades)
+    // 2. Infrastruktur-Manager (Ab 64GB für P-Server/Upgrades)
     if (
       ns.fileExists(scripts.infra, "home") &&
-      !ns.isRunning(scripts.infra, "home")
+      !ns.isRunning(scripts.infra, "home") &&
+      homeMax >= 64
     ) {
       ns.run(scripts.infra, 1);
     }
@@ -120,34 +120,60 @@ export async function main(ns: NS): Promise<void> {
 
     // --- ⚡ DYNAMISCHER FLOTTEN-MODUS SHIFT ---
     const isDispatcherReady =
-      homeMax >= 64 && ns.fileExists(scripts.dispatcher, "home");
+      homeMax >= 128 && ns.fileExists(scripts.dispatcher, "home");
 
     if (isDispatcherReady) {
-      // Modus: Dispatcher-Kontrolle
-      if (ns.isRunning(earlyFleetScript, "home")) {
+      // Modus: Dispatcher-Kontrolle (128GB+)
+      if (ns.isRunning(scripts.earlyFleet, "home")) {
         logger.warn(
-          "64 GB+ RAM erreicht! Übergebe Kontrolle an das Hauptgehirn. Stoppe Early-Fleet...",
+          "128 GB+ RAM erreicht! Übergebe Kontrolle an das Hauptgehirn. Stoppe Early-Fleet...",
         );
-        ns.scriptKill(earlyFleetScript, "home");
+        ns.scriptKill(scripts.earlyFleet, "home");
       }
       if (!ns.isRunning(scripts.dispatcher, "home")) {
         logger.success("Starte zentralen System-Dispatcher...");
         ns.run(scripts.dispatcher, 1);
       }
     } else {
-      // Modus: Ultra-Early Game / Boot-Phase (RAM < 64GB)
+      // Modus: Ultra-Early Game / Boot-Phase (RAM < 128GB)
       if (
-        !ns.isRunning(earlyFleetScript, "home") &&
-        ns.fileExists(earlyFleetScript, "home")
+        !ns.isRunning(scripts.earlyFleet, "home") &&
+        ns.fileExists(scripts.earlyFleet, "home")
       ) {
         logger.info(
-          "Zentraler Dispatcher benötigt mindestens 64GB RAM. Aktiviere temporäre Early-Fleet...",
+          "Zentraler Dispatcher benötigt mindestens 128GB RAM. Aktiviere temporäre Early-Fleet...",
         );
-        ns.run(earlyFleetScript, 1);
+        ns.run(scripts.earlyFleet, 1);
       }
     }
 
-    // 5. 💥 Automatischer End-Game Trigger (Wenn w0r1d_d43m0n bereit ist)
+    // 5. 🦹 Gang-Daemon Management
+    let isInGang = false;
+    try {
+      isInGang = ns.gang.inGang();
+    } catch (_) {
+      // Falls SF2/Gang-API im aktuellen BitNode nicht freigeschaltet ist
+    }
+
+    if (isInGang) {
+      const gangRam = ns.getScriptRam(scripts.gang);
+      const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+
+      if (freeRam >= gangRam) {
+        if (!ns.isRunning(scripts.gang, "home")) {
+          logger.success(
+            "Gang-Zugehörigkeit & ausreichend RAM erkannt! Starte Gang-Daemon...",
+          );
+          ns.run(scripts.gang, 1);
+        }
+      } else if (!ns.isRunning(scripts.gang, "home")) {
+        logger.warn(
+          `Gang erkannt, aber zu wenig RAM frei (${freeRam.toFixed(1)}GB / ${gangRam.toFixed(1)}GB benötigt).`,
+        );
+      }
+    }
+
+    // 6. 💥 Automatischer End-Game Trigger (Wenn w0r1d_d43m0n bereit ist)
     const targetNode = "w0r1d_d43m0n";
     if (ns.serverExists(targetNode) && ns.hasRootAccess(targetNode)) {
       const reqSkill = ns.getServerRequiredHackingLevel(targetNode);
