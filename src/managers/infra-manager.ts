@@ -6,26 +6,32 @@ import { handleServerPurchases } from "/lib/pserv-manager";
 import { loadBnMults, loadFinanceState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
-  // 🟢 DUMMY-REFERENZ: Zwingt den AST-Parser dazu, ns.cloud.getServerCost (0.25 GB)
-  // sofort einzuberechnen (erhöht die Statische Zuweisung von 5.40 GB auf 5.65 GB).
   void ns.cloud.getServerCost;
 
   ns.disableLog("ALL");
-
   ns.ui.openTail();
   ns.ui.setTailTitle("Infrastruktur");
   ns.ui.resizeTail(580, 500);
 
   const logger = new Logger(ns, "Infra");
-  logger.info("Schlanker Infrastruktur-Manager gestartet.");
+  logger.info("Infrastruktur-Manager gestartet.");
 
   const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
 
   while (true) {
     const playerMoney = ns.getPlayer().money;
     const financeState = loadFinanceState(ns);
+    const homeMaxRam = ns.getServerMaxRam("home");
 
-    // TRIGGER-LOGIK: Berechne verfügbares Einkommen NACH Abzug der Reserve
+    // 🎯 RULE: Home-RAM hat absolute Priorität bis 128 GB.
+    // Erst wenn Home mindestens 128 GB hat, erlauben wir P-Server-Käufe!
+    const isHomeUnderpowered = homeMaxRam < 128;
+    const freezePservers =
+      isHomeUnderpowered ||
+      financeState?.isHomePrioritized ||
+      (financeState?.moneyReserve ?? 0) > 0;
+
+    // Singularity Executor anstoßen (für Home-RAM Upgrades & Programmkäufe)
     const moneyReserve = financeState?.moneyReserve || 0;
     const dynamicAvailable = playerMoney - moneyReserve;
     const shouldRunSing = dynamicAvailable >= 200_000 || playerMoney >= 500_000;
@@ -37,12 +43,7 @@ export async function main(ns: NS): Promise<void> {
       ns.run("/utils/infra-sing-executor.js", 1);
     }
 
-    // 🛑 AUTOMATISCHER SCHUTZ: Friere P-Server ein, wenn eine Upgrade-Reserve für Home aktiv ist
-    const homeMaxRam = ns.getServerMaxRam("home");
-    const freezePservers =
-      financeState?.isHomePrioritized || (moneyReserve > 0 && homeMaxRam < 256);
-
-    // Serverkäufe verwalten - Jetzt mit Übergabe der moneyReserve!
+    // P-Server Käufe verwalten
     await handleServerPurchases(
       ns,
       bnMults,
@@ -51,12 +52,14 @@ export async function main(ns: NS): Promise<void> {
       logger,
     );
 
-    // UI rendern via Library-Modul
+    // UI rendern
     const uiState = {
       ...(financeState || {}),
       homeCores: ns.getServer("home").cpuCores,
+      isHomeUnderpowered,
     };
     printDashboard(ns, freezePservers, uiState);
+
     await ns.sleep(1000);
   }
 }
