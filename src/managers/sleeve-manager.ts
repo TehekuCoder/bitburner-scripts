@@ -2,7 +2,8 @@ import { NS, FactionName } from "@ns";
 import { getFactionsNeedingRep, manageAllSleeves } from "/lib/sleeve-utils.js";
 import { printSleeveDashboard } from "ui/sleeve-ui.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { loadState, patchState } from "/lib/state";
+import { loadSleeveState, patchSleeveState } from "/lib/state.js";
+import { SleeveMode, SleeveOptions } from "lib/types";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -40,31 +41,17 @@ export async function main(ns: NS): Promise<void> {
     }
 
     const p = ns.getPlayer();
-    const loaded = loadState(ns);
-const currentState = loaded ?? {
-      strategy: "MONEY",
-      kernelTarget: "n00dles", // 🟢 Erforderliches Feld ergänzt
-      progressBar: "Init...",
-      batcherProgress: "Inaktiv",
-      batcherActive: false,
-      financeProgress: "Inaktiv",
-      traderProgress: "Inaktiv",
-      hacknetProgress: "Inaktiv",
-      sleeveProgress: "Inaktiv",
-      currentBitNode: 1,
-      currentBitNodeLevel: 1,
-      sourceFiles: {},
-      hasDarkScapeNavigator: false,
-      hasTorRouter: false,
-      hasGang: false,
-      hasCorporation: false,
-      hasBladeburner: false,
-      sources: {},
-      lastUpdate: Date.now(),
-      playerHacking: p.skills.hacking,
+    
+    // Extrahieren nur der relevanten Optionen aus dem globalen State (ohne festen Fallback-BotState)
+    const botState = loadSleeveState(ns);
+    const options: SleeveOptions = {
+      globalMode: botState?.sleeveGlobalMode as SleeveMode | undefined,
+      targetFaction: botState?.targetFaction,
+      targetStat: botState?.targetStat,
+      strategy: botState?.strategy,
     };
 
-    // 🛡️ API CHECK 2: Singularity (SF4) für getOwnedAugmentations
+    // 🛡️ API CHECK 2: Singularity (SF4)
     let ownedAugs: string[] = [];
     if (ns.singularity !== undefined) {
       ownedAugs = ns.singularity.getOwnedAugmentations(true);
@@ -79,11 +66,11 @@ const currentState = loaded ?? {
       lastFactionScan = Date.now();
     }
 
-    // 1. Zuweisung & Berechnung
-    manageAllSleeves(
+    // 1. Zuweisung & Berechnung (gibt nun direkt den Fortschritts-String zurück)
+    const currentProgress = manageAllSleeves(
       ns,
       p,
-      currentState,
+      options,
       ownedAugs,
       factionsNeedingRep,
       logger,
@@ -91,12 +78,9 @@ const currentState = loaded ?? {
     );
 
     // 2. Nur patchen, wenn sich der Fortschritt verändert hat
-    if (
-      currentState.sleeveProgress &&
-      currentState.sleeveProgress !== lastStateProgress
-    ) {
-      patchState(ns, { sleeveProgress: currentState.sleeveProgress });
-      lastStateProgress = currentState.sleeveProgress;
+    if (currentProgress && currentProgress !== lastStateProgress) {
+      patchSleeveState(ns, { sleeveProgress: currentProgress });
+      lastStateProgress = currentProgress;
     }
 
     // 3. Dashboard rendern

@@ -3,7 +3,7 @@ import { printDashboard } from "ui/infra-ui.js";
 import { DEFAULT_MULTIPLIERS } from "/lib/constants";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { handleServerPurchases } from "/lib/pserv-manager";
-import { loadBnMults, loadState } from "/lib/state";
+import { loadBnMults, loadFinanceState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   // 🟢 DUMMY-REFERENZ: Zwingt den AST-Parser dazu, ns.cloud.getServerCost (0.25 GB)
@@ -23,10 +23,10 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const playerMoney = ns.getPlayer().money;
-    const currentState = loadState(ns);
+    const financeState = loadFinanceState(ns);
 
     // TRIGGER-LOGIK: Berechne verfügbares Einkommen NACH Abzug der Reserve
-    const moneyReserve = currentState?.moneyReserve || 0;
+    const moneyReserve = financeState?.moneyReserve || 0;
     const dynamicAvailable = playerMoney - moneyReserve;
     const shouldRunSing = dynamicAvailable >= 200_000 || playerMoney >= 500_000;
 
@@ -40,7 +40,7 @@ export async function main(ns: NS): Promise<void> {
     // 🛑 AUTOMATISCHER SCHUTZ: Friere P-Server ein, wenn eine Upgrade-Reserve für Home aktiv ist
     const homeMaxRam = ns.getServerMaxRam("home");
     const freezePservers =
-      currentState?.isHomePrioritized || (moneyReserve > 0 && homeMaxRam < 256);
+      financeState?.isHomePrioritized || (moneyReserve > 0 && homeMaxRam < 256);
 
     // Serverkäufe verwalten - Jetzt mit Übergabe der moneyReserve!
     await handleServerPurchases(
@@ -52,8 +52,11 @@ export async function main(ns: NS): Promise<void> {
     );
 
     // UI rendern via Library-Modul
-    printDashboard(ns, freezePservers, currentState);
-
-    await ns.sleep(10000);
+    const uiState = {
+      ...(financeState || {}),
+      homeCores: ns.getServer("home").cpuCores,
+    };
+    printDashboard(ns, freezePservers, uiState);
+    await ns.sleep(1000);
   }
 }

@@ -1,7 +1,26 @@
 import { NS, BitNodeMultipliers } from "@ns";
 import { DEFAULT_MULTIPLIERS, STATE_PORT } from "lib/constants";
 import { LoggerClient as Logger } from "lib/logger-client";
-import { BotState } from "lib/types";
+import {
+  BotState,
+  BatcherState,
+  StrategyState,
+  FinanceState,
+  SleeveState,
+  AugmentState,
+  FactionState,
+  BotStateProgress,
+} from "lib/types";
+
+type BotStateContent = Omit<BotState, "lastUpdate" | "playerHacking" | "sources">;
+export type BotStatePatch = Partial<BotStateContent>;
+export type BatcherStatePatch = Partial<BatcherState>;
+export type StrategyStatePatch = Partial<StrategyState>;
+export type FinanceStatePatch = Partial<FinanceState>;
+export type SleeveStatePatch = Partial<SleeveState>;
+export type AugmentStatePatch = Partial<AugmentState>;
+export type FactionStatePatch = Partial<FactionState>;
+export type ProgressStatePatch = Partial<BotStateProgress>;
 
 export function loadBnMults(ns: NS): Record<keyof BitNodeMultipliers, number> {
   if (ns.fileExists("bn-multipliers.txt", "home")) {
@@ -42,10 +61,7 @@ function isPortEmpty(data: unknown): boolean {
 /**
  * Überschreibt den gesamten BotState atomar.
  */
-export function saveState(
-  ns: NS,
-  state: Omit<BotState, "lastUpdate" | "playerHacking" | "sources">,
-): void {
+export function saveState(ns: NS, state: BotStateContent): void {
   try {
     const port = ns.getPortHandle(STATE_PORT);
     const caller = getCallerName(ns);
@@ -74,12 +90,7 @@ export function saveState(
 /**
  * Patcht einzelne Felder im BotState atomar (schützt vor Lost Updates).
  */
-export function patchState(
-  ns: NS,
-  partialState: Partial<
-    Omit<BotState, "lastUpdate" | "playerHacking" | "sources">
-  >,
-): void {
+export function patchState(ns: NS, partialState: BotStatePatch): void {
   const port = ns.getPortHandle(STATE_PORT);
   
   const data = port.read();
@@ -97,8 +108,7 @@ export function patchState(
   } = currentState || {};
 
   // Vollständiger Default-State inkl. Multi-Target & Kernel Feldern
-  const baseState: Omit<BotState, "lastUpdate" | "playerHacking" | "sources"> =
-    {
+  const baseState: BotStateContent = {
       strategy: "MONEY",
       batchStrategy: "BOOTSTRAP",
       kernelTarget: "n00dles",
@@ -115,7 +125,6 @@ export function patchState(
       financeProgress: "Berechne Budget...",
       traderProgress: "Kein Depot",
       hacknetProgress: "Inaktiv",
-      sleeveProgress: "Inaktiv",
 
       currentBitNode: 1,
       currentBitNodeLevel: 1,
@@ -145,6 +154,131 @@ export function patchState(
 
   port.clear();
   port.write(fullState);
+}
+
+export function patchBatcherState(ns: NS, partialState: BatcherStatePatch): void {
+  patchState(ns, partialState as BotStatePatch);
+}
+
+export function loadBatcherState(ns: NS): BatcherState | null {
+  const state = loadState(ns);
+  if (!state) return null;
+
+  const {
+    batcherTarget,
+    batcherProgress,
+    batcherActive,
+    batcherTargetsSummary,
+    batcherPlan,
+    batcherDynamicMaxBatches,
+    batcherRamNeeded,
+  } = state;
+
+  return {
+    batcherTarget,
+    batcherProgress,
+    batcherActive,
+    batcherTargetsSummary,
+    batcherPlan,
+    batcherDynamicMaxBatches,
+    batcherRamNeeded,
+  };
+}
+
+export function loadStrategyState(ns: NS): StrategyState | null {
+  const state = loadState(ns);
+  if (!state) return null;
+  const { strategy, targetFaction, targetCompany, targetStat, targetKills } = state;
+  return { strategy, targetFaction, targetCompany, targetStat, targetKills };
+}
+
+export function patchStrategyState(ns: NS, partialState: StrategyStatePatch): void {
+  patchState(ns, partialState as BotStatePatch);
+}
+
+export function loadFinanceState(ns: NS): FinanceState | null {
+  const state = loadState(ns);
+  if (!state) return null;
+  const {
+    traderMode,
+    traderProgress,
+    financeProgress,
+    moneyReserve,
+    isHomePrioritized,
+    isRushModeActive,
+  } = state;
+  return {
+    traderMode,
+    traderProgress,
+    financeProgress,
+    moneyReserve,
+    isHomePrioritized,
+    isRushModeActive,
+  };
+}
+
+export function patchFinanceState(ns: NS, partialState: FinanceStatePatch): void {
+  patchState(ns, partialState as BotStatePatch);
+}
+
+export function loadSleeveState(ns: NS): SleeveState | null {
+  const state = loadState(ns);
+  if (!state) return null;
+  const { sleeveGlobalMode, targetFaction, targetStat, strategy, sleeveProgress } = state;
+  return { sleeveGlobalMode, targetFaction, targetStat, strategy, sleeveProgress };
+}
+
+export function patchSleeveState(ns: NS, partialState: SleeveStatePatch): void {
+  patchState(ns, partialState as BotStatePatch);
+}
+
+export function loadAugmentState(ns: NS): AugmentState | null {
+  const state = loadState(ns);
+  if (!state) return null;
+  const { augRoadMap } = state;
+  return { augRoadMap };
+}
+
+export function patchAugmentState(ns: NS, partialState: AugmentStatePatch): void {
+  patchState(ns, partialState as BotStatePatch);
+}
+
+export function loadFactionState(ns: NS): FactionState | null {
+  const state = loadState(ns);
+  if (!state) return null;
+  const { targetFaction, factionCurrentReps, strategy } = state;
+  return { targetFaction, factionCurrentReps, strategy };
+}
+
+export function patchFactionState(ns: NS, partialState: FactionStatePatch): void {
+  patchState(ns, partialState as BotStatePatch);
+}
+
+export function loadProgressState(ns: NS): BotStateProgress | null {
+  const state = loadState(ns);
+  if (!state) return null;
+  const {
+    progressBar,
+    financeProgress,
+    traderProgress,
+    hacknetProgress,
+    sleeveProgress,
+    sleeveGlobalMode,
+    fillerConfig,
+  } = state;
+  return {
+    progressBar,
+    financeProgress,
+    traderProgress,
+    hacknetProgress,
+    sleeveProgress,
+    sleeveGlobalMode,
+    fillerConfig,
+  };
+}
+
+export function patchProgressState(ns: NS, partialState: ProgressStatePatch): void {
+  patchState(ns, partialState as BotStatePatch);
 }
 
 export function loadState(ns: NS): BotState | null {

@@ -17,7 +17,7 @@ import {
   getQueueRam,
   getNetworkMaxRam,
 } from "/lib/network.js";
-import { loadBnMults, patchState } from "/lib/state.js";
+import { loadBnMults, patchBatcherState } from "/lib/state.js";
 import { JitEvent, ActiveBatch } from "/lib/types.js";
 
 type PlannerPlan = NonNullable<ReturnType<typeof internalPlanner>>;
@@ -40,7 +40,7 @@ export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "JIT-Batcher");
 
   let bnMults: BitNodeMultipliers = loadBnMults(ns);
-  patchState(ns, { batcherActive: true, batcherProgress: "Initialisiere..." });
+  patchBatcherState(ns, { batcherActive: true, batcherProgress: "Initialisiere..." });
 
   let servers = getAllServers(ns);
   let lastServerScan = Date.now();
@@ -348,7 +348,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // Dashboard State Update
-    patchState(ns, {
+    patchBatcherState(ns, {
       batcherTarget: Array.from(activeTargets.keys()).join(", ") || "Suche...",
       batcherProgress: `Multi-Target (${activeTargets.size} aktiv)`,
       batcherTargetsSummary: Array.from(activeTargets.values()).map((ctx) => ({

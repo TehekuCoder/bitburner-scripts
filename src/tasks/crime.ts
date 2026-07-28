@@ -1,5 +1,5 @@
 import { NS, CrimeType } from "@ns";
-import { loadState, patchState } from "/lib/state";
+import { loadStrategyState, patchProgressState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -9,7 +9,7 @@ export async function main(ns: NS): Promise<void> {
   const MIN_SUCCESS_CHANCE = 0.7;
 
   while (true) {
-    const state = loadState(ns);
+    const state = loadStrategyState(ns);
     const mode = (state?.strategy || "IDLE") as string;
 
     // 🟢 HIER: "PSERV_RUSH" zur Whitelist hinzugefügt!
@@ -29,7 +29,7 @@ export async function main(ns: NS): Promise<void> {
 
     // Logik-Weiche: Kills vs. Profit/XP
     if (mode === "KILLS") {
-      const targetKills = (state as any)?.targetKills || 30;
+      const targetKills = state?.targetKills || 30;
       if (p.numPeopleKilled < targetKills) {
         bestCrime = ns.enums.CrimeType.homicide;
         if (sing.getCrimeChance(ns.enums.CrimeType.homicide) < 0.1) {
@@ -78,7 +78,7 @@ export async function main(ns: NS): Promise<void> {
       progressStr = `🥷 ${bestCrime} (${chancePct}%) | Karma: ${ns.format.number(p.karma, 0)}`;
     }
 
-    patchState(ns, {
+    patchProgressState(ns, {
       progressBar: progressStr,
     });
 

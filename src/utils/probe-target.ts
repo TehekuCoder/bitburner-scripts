@@ -1,6 +1,6 @@
 import { NS } from "@ns";
 import { findBestTarget } from "/lib/network";
-import { loadState, patchState } from "/lib/state";
+import { loadState, patchState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

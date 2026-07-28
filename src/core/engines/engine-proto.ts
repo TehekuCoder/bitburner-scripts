@@ -1,7 +1,7 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
-import { patchState } from "/lib/state.js";
+import { patchBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths";
 
 export async function main(ns: NS): Promise<void> {
@@ -36,7 +36,7 @@ export async function main(ns: NS): Promise<void> {
 
     if (curSec > minSec + 0.1 || curMoney < maxMoney * 0.95) {
       logger.warn(`Ziel [${target}] ist nicht prepped! Proto-Batcher pausiert kurz...`);
-      patchState(ns, {
+      patchBatcherState(ns, {
         batcherTarget: target,
         batcherProgress: `PROTO (Awaiting Prep...)`,
       });
@@ -79,7 +79,7 @@ export async function main(ns: NS): Promise<void> {
     executeDelayedScript(ns, workerNodes, scripts.grow, growThreads, target, delayGrow);
     executeDelayedScript(ns, workerNodes, scripts.weaken, weaken2Threads, target, delayWeaken2);
 
-    patchState(ns, {
+    patchBatcherState(ns, {
       batcherTarget: target,
       batcherProgress: `PROTO-BATCH (In Flight...)`,
     });

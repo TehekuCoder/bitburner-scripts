@@ -2,7 +2,7 @@ import { NS } from "@ns";
 import { drawBatcherDashboard } from "ui/batcher-ui.js";
 import { HOME_RAM_RESERVE } from "/lib/constants.js";
 import { getAllServers } from "/lib/network.js";
-import { loadState } from "/lib/state.js";
+import { loadBatcherState } from "/lib/state.js";
 import { DashboardData } from "/lib/types.js";
 
 /** Hilfsfunktion: Entfernt Countdown-Klammern für den Event-Log-Vergleich */
@@ -31,7 +31,7 @@ export async function main(ns: NS): Promise<void> {
   ns.print("Warte auf Synchronisation mit Kernel-Port 1...");
 
   while (true) {
-    const state = loadState(ns);
+    const state = loadBatcherState(ns);
 
     // Failsafe, falls der JIT-Batcher inaktiv ist
     if (!state || !state.batcherActive) {

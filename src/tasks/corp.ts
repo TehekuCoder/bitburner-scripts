@@ -1,5 +1,5 @@
 import { NS, CompanyName, JobField } from "@ns";
-import { loadState, patchState } from "/lib/state";
+import { loadStrategyState, patchProgressState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -8,9 +8,9 @@ export async function main(ns: NS): Promise<void> {
   const sing = ns.singularity;
 
   while (true) {
-    const state = loadState(ns);
+    const state = loadStrategyState(ns);
     const mode = (state?.strategy || "IDLE") as string;
-    const targetCompany = ((state as any)?.targetCompany as CompanyName) || undefined;
+    const targetCompany = (state?.targetCompany as CompanyName) || undefined;
     const jobField = ((state as any)?.jobField as JobField) || "Software";
 
     if (mode !== "CORP") {
@@ -47,7 +47,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     const currentRep = sing.getCompanyRep(targetCompany);
-    patchState(ns, {
+    patchProgressState(ns, {
       progressBar: `💼 ${targetCompany}: ${currentJobTitle} (${ns.format.number(currentRep, 0)} Rep)`,
     });
 

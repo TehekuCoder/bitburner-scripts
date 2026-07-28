@@ -1,13 +1,13 @@
 // src/modules/suite-manager.ts
 
 import { NS } from "@ns";
-import { ScriptList, BotState } from "/lib/types.js";
+import { ScriptList, BotStateNetwork } from "/lib/types.js";
 import { PATHS } from "/lib/paths";
 
 export function manageSuites(
   ns: NS,
   scripts: ScriptList, // 👈 Typsicherheit für alle Skripte nutzen
-  state: BotState,
+  state: BotStateNetwork,
   bnMults: any,
   logger: any
 ): void {

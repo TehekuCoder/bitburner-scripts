@@ -1,6 +1,6 @@
 import { NS, FactionName } from "@ns";
 // Direkte Imports statt Barrel-Export
-import { patchState } from "lib/state.js";
+import { patchAugmentState } from "lib/state.js";
 import { HACKING_FACTIONS } from "lib/constants.js";
 // ➕ Import der Player-Helper
 import { getPurchasedUninstalledAugs } from "lib/player.js";
@@ -71,7 +71,7 @@ export async function main(ns: NS): Promise<void> {
   const augRoadmap = Array.from(augMap.values()).sort((a, b) => a.repReq - b.repReq);
 
   // 3. Im State speichern & informativen Log ausgeben
-  patchState(ns, { augRoadmap } as any);
+  patchAugmentState(ns, { augRoadMap: augRoadmap });
   
   ns.print(
     `INFO: Augment-Analyse abgeschlossen. ${augRoadmap.length} ausstehende Augments in der Roadmap. (${uninstalledCount} gekaufte Augments bereit zum Installieren)`

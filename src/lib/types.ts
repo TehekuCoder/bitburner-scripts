@@ -38,7 +38,7 @@ export interface ScriptList {
 
 export interface BatchPlan {
   target: string;
-  
+
   // Threads
   hackThreads: number;
   weakenThreads1: number;
@@ -138,41 +138,84 @@ export interface TargetSummary {
   greed: number;
 }
 
-export interface BotState {
+export interface BotStateStrategy {
   strategy: BotStrategy;
-  batchStrategy?: string;
+  batchStrategy?: BatchStrategy;
   kernelTarget: string;
-  batcherTarget?: string | null;
-  progressBar?: string;
-  batcherProgress: string;
-  batcherActive: boolean;
-  financeProgress: string;
-  traderProgress: string;
-  hacknetProgress: string;
-
-  sleeveProgress?: string;
-  sleeveGlobalMode?: string;
-
-  factionTargets?: Record<string, number>;
-  augRoadMap?: AugmentTarget[];
   targetFaction?: string | FactionName | null;
   targetCompany?: string;
   targetStat?: number;
   targetKills?: number;
+}
 
-  fillerConfig?: {
-    shareMaxRamPercent: number;
-    maxXpLevel: number;
-  };
-
-  // Globales Netzwerk & Multi-Target State
-  allServers?: string[];
-  totalNodes?: number;
+export interface BatcherState {
+  batcherTarget?: string | null;
+  batcherProgress: string;
+  batcherActive: boolean;
   batcherTargetsSummary?: TargetSummary[];
   batcherPlan?: BatchPlan | null;
   batcherDynamicMaxBatches?: number;
   batcherRamNeeded?: number;
+}
 
+export interface StrategyState {
+  strategy: BotStrategy;
+  targetFaction?: string | FactionName | null;
+  targetCompany?: string;
+  targetStat?: number;
+  targetKills?: number;
+}
+
+export interface FinanceState {
+  traderMode?: string;
+  traderProgress: string;
+  financeProgress: string;
+  moneyReserve?: number;
+  isHomePrioritized?: boolean;
+  isRushModeActive?: boolean;
+  homeCores?: number;
+}
+
+export interface SleeveState {
+  sleeveGlobalMode?: string;
+  targetFaction?: string | FactionName | null;
+  targetStat?: number;
+  strategy: BotStrategy;
+  sleeveProgress?: string;
+}
+
+export interface AugmentState {
+  augRoadMap?: AugmentTarget[];
+}
+
+export interface FactionState {
+  targetFaction?: string | FactionName | null;
+  factionCurrentReps?: Partial<Record<FactionName, number>>;
+  strategy: BotStrategy;
+}
+
+export interface BotStateProgress {
+  progressBar?: string;
+  financeProgress: string;
+  traderProgress: string;
+  hacknetProgress: string;
+  sleeveProgress?: string;
+  sleeveGlobalMode?: string;
+  fillerConfig?: {
+    shareMaxRamPercent: number;
+    maxXpLevel: number;
+  };
+}
+
+export interface BotStateNetwork {
+  factionTargets?: Record<string, number>;
+  augRoadMap?: AugmentTarget[];
+  allServers?: string[];
+  totalNodes?: number;
+  rootCount?: number;
+}
+
+export interface BotStateMeta {
   currentBitNode: number;
   currentBitNodeLevel: number;
   sourceFiles: Record<string, number>;
@@ -181,21 +224,29 @@ export interface BotState {
   hasGang: boolean;
   hasCorporation: boolean;
   hasBladeburner: boolean;
-
   lastUpdate: number;
   playerHacking?: number;
   sources?: Record<string, string>;
-
   traderMode?: string;
-
   moneyReserve?: number;
   isHomePrioritized?: boolean;
-
   factionCurrentReps?: Partial<Record<FactionName, number>>;
   homeCores?: number;
   isRushModeActive?: boolean;
+}
 
-  rootCount?: number;
+export interface BotState
+  extends BotStateStrategy,
+    BotStateProgress,
+    BotStateNetwork,
+    BotStateMeta,
+    BatcherState {}
+
+export interface SleeveOptions {
+  globalMode?: SleeveMode;
+  targetFaction?: FactionName | string | null;
+  targetStat?: number;
+  strategy?: BotStrategy;
 }
 
 export type SleeveMode =

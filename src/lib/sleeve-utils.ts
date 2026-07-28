@@ -8,8 +8,10 @@ import {
   Player,
 } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { BotState, SleeveMode, SleeveData } from "lib/types.js";
+import { SleeveMode, SleeveData, BotStrategy, SleeveOptions } from "lib/types.js";
 import { MEGACORPS, COMBAT_STATS, STAT_MAP } from "lib/constants.js";
+
+
 
 let lastShoppingScan = 0;
 const SHOPPING_INTERVAL = 15000; // Augmentations-Einkauf nur alle 15 Sek.
@@ -19,7 +21,6 @@ export function getFactionsNeedingRep(
   playerFactions: string[],
   ownedAugs: string[],
 ): FactionName[] {
-  // 🛡️ Guard: Singularity API verfügbar?
   if (!ns.singularity) return [];
 
   const ownedAugsSet = new Set(ownedAugs);
@@ -52,23 +53,20 @@ export function getFactionsNeedingRep(
 
 export function determineSleeveMode(
   stats: SleevePerson,
-  currentState: BotState | null,
-  factionsNeedingRep: FactionName[],
+  options?: SleeveOptions,
+  factionsNeedingRep: FactionName[] = [],
 ): SleeveMode {
   if (stats.shock > 0) return "RECOVERY";
   if (stats.sync < 100) return "SYNCHRO";
 
-  if (currentState?.sleeveGlobalMode) {
-    return currentState.sleeveGlobalMode as SleeveMode;
+  if (options?.globalMode) {
+    return options.globalMode;
   }
 
-  if (
-    currentState?.strategy === "CRIME" ||
-    currentState?.strategy === "KILLS"
-  ) {
+  if (options?.strategy === "CRIME" || options?.strategy === "KILLS") {
     return "CRIME";
   }
-  if (currentState?.strategy === "TRAIN") {
+  if (options?.strategy === "TRAIN") {
     return "TRAIN";
   }
 
@@ -82,17 +80,16 @@ export function determineSleeveMode(
 export function manageAllSleeves(
   ns: NS,
   p: Player,
-  currentState: BotState | null,
+  options: SleeveOptions | undefined,
   ownedAugs: string[],
   factionsNeedingRep: FactionName[],
   logger: Logger,
   addLocalLog: (msg: string) => void,
-): void {
+): string {
   const numSleeves = ns.sleeve.getNumSleeves();
 
   if (numSleeves === 0) {
-    if (currentState) currentState.sleeveProgress = "Keine";
-    return;
+    return "Keine";
   }
 
   const sleeves: SleeveData[] = Array.from({ length: numSleeves }, (_, i) => ({
@@ -132,17 +129,16 @@ export function manageAllSleeves(
     }
   }
 
-  if (currentState) {
-    const avgShock = totalShock / numSleeves;
-    const avgSync = totalSync / numSleeves;
+  let sleeveProgress = "Inaktiv";
+  const avgShock = totalShock / numSleeves;
+  const avgSync = totalSync / numSleeves;
 
-    if (avgShock > 0) {
-      currentState.sleeveProgress = `Shock: ${avgShock.toFixed(1)}%`;
-    } else if (avgSync < 100) {
-      currentState.sleeveProgress = `Sync: ${avgSync.toFixed(1)}%`;
-    } else {
-      currentState.sleeveProgress = `${activeWorkers}/${numSleeves} Aktiv`;
-    }
+  if (avgShock > 0) {
+    sleeveProgress = `Shock: ${avgShock.toFixed(1)}%`;
+  } else if (avgSync < 100) {
+    sleeveProgress = `Sync: ${avgSync.toFixed(1)}%`;
+  } else {
+    sleeveProgress = `${activeWorkers}/${numSleeves} Aktiv`;
   }
 
   // Einkauf gedrosselt ausführen
@@ -155,7 +151,7 @@ export function manageAllSleeves(
 
     const mode = determineSleeveMode(
       sleeve.stats,
-      currentState,
+      options,
       factionsNeedingRep,
     );
 
@@ -165,7 +161,7 @@ export function manageAllSleeves(
       mode,
       sleeve.stats,
       sleeve.task,
-      currentState,
+      options,
       factionsNeedingRep,
       occupiedFactions,
       occupiedCompanies,
@@ -178,6 +174,8 @@ export function manageAllSleeves(
   if (canShop) {
     lastShoppingScan = Date.now();
   }
+
+  return sleeveProgress;
 }
 
 export function manageSingleSleeve(
@@ -186,7 +184,7 @@ export function manageSingleSleeve(
   mode: SleeveMode,
   stats: SleevePerson,
   currentTask: SleeveTask | null,
-  currentState: BotState | null,
+  options: SleeveOptions | undefined,
   factionsNeedingRep: FactionName[],
   occupiedFactions: FactionName[],
   occupiedCompanies: CompanyName[],
@@ -243,7 +241,7 @@ export function manageSingleSleeve(
           i,
           stats,
           currentTask,
-          currentState,
+          options,
           factionsNeedingRep,
           occupiedFactions,
           logger,
@@ -258,7 +256,7 @@ export function manageSingleSleeve(
           i,
           stats,
           currentTask,
-          currentState,
+          options,
           occupiedCompanies,
           p,
           logger,
@@ -277,7 +275,7 @@ export function manageSingleSleeve(
           i,
           stats,
           currentTask,
-          currentState,
+          options,
           occupiedCompanies,
           p,
           logger,
@@ -300,7 +298,7 @@ function tryAssignFactionWork(
   i: number,
   stats: SleevePerson,
   currentTask: SleeveTask | null,
-  currentState: BotState | null,
+  options: SleeveOptions | undefined,
   factionsNeedingRep: FactionName[],
   occupiedFactions: FactionName[],
   logger: Logger,
@@ -322,10 +320,10 @@ function tryAssignFactionWork(
     if (availableFactions.length > 0) {
       if (
         i === 0 &&
-        currentState?.targetFaction &&
-        availableFactions.includes(currentState.targetFaction as FactionName)
+        options?.targetFaction &&
+        availableFactions.includes(options.targetFaction as FactionName)
       ) {
-        targetFaction = currentState.targetFaction as FactionName;
+        targetFaction = options.targetFaction as FactionName;
       } else {
         targetFaction = availableFactions[0];
       }
@@ -334,7 +332,7 @@ function tryAssignFactionWork(
 
   if (!targetFaction) return false;
 
-  const minRequiredStat = currentState?.targetStat || 0;
+  const minRequiredStat = options?.targetStat || 0;
   const lowestStatName = COMBAT_STATS.reduce((a, b) =>
     stats.skills[a] < stats.skills[b] ? a : b,
   );
@@ -387,14 +385,14 @@ function tryAssignCompanyWork(
   i: number,
   stats: SleevePerson,
   currentTask: SleeveTask | null,
-  currentState: BotState | null,
+  options: SleeveOptions | undefined,
   occupiedCompanies: CompanyName[],
   p: Player,
   logger: Logger,
   addLocalLog: (msg: string) => void,
 ): boolean {
-  if (currentState?.strategy === "MONEY") return false;
-  if (!ns.singularity) return false; // 🛡️ Guard: Singularity API erforderlich
+  if (options?.strategy === "MONEY") return false;
+  if (!ns.singularity) return false;
 
   const companyList = Object.values(MEGACORPS);
 
@@ -406,7 +404,6 @@ function tryAssignCompanyWork(
 
   let targetCorp: CompanyName | null = null;
 
-  // 1. Ist dieser Klon bereits bei einer Firma beschäftigt, die noch Ruf braucht?
   if (currentTask?.type === "COMPANY") {
     const currentCorp = currentTask.companyName as CompanyName;
     if (employedCorps.includes(currentCorp)) {
@@ -417,7 +414,6 @@ function tryAssignCompanyWork(
     }
   }
 
-  // 2. Falls nicht (oder Ziel erreicht), freie Firma suchen, die noch NIE belegt ist
   if (!targetCorp) {
     const availableCorps = employedCorps.filter((c) => {
       if (occupiedCompanies.includes(c)) return false;

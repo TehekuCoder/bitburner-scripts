@@ -1,7 +1,7 @@
 import { NS } from "@ns";
 import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { patchState } from "/lib/state.js";
+import { patchBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths";
 
 export async function main(ns: NS): Promise<void> {
@@ -46,7 +46,7 @@ export async function main(ns: NS): Promise<void> {
     if (isSecMin && isMoneyMax) {
       logger.success(`✅ Ziel [${target}] ist vollständig PREPPED!`);
 
-      patchState(ns, {
+      patchBatcherState(ns, {
         batcherTarget: target,
         batcherProgress: "PREPPED 100%",
       });
@@ -63,7 +63,7 @@ export async function main(ns: NS): Promise<void> {
     const moneyPct =
       maxMoney > 0 ? ((curMoney / maxMoney) * 100).toFixed(1) : "100";
     const secStatus = `+${secDelta.toFixed(2)}`;
-    patchState(ns, {
+    patchBatcherState(ns, {
       batcherTarget: target,
       batcherProgress: `PREP (Money: ${moneyPct}% | Sec: ${secStatus})`,
     });

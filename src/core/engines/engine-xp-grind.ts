@@ -1,7 +1,7 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
-import { patchState } from "/lib/state.js";
+import { patchBatcherState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -50,7 +50,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     const currentLevel = ns.getPlayer().skills.hacking;
-    patchState(ns, {
+    patchBatcherState(ns, {
       batcherTarget: target,
       batcherProgress: `XP-GRIND (Lvl ${currentLevel} | Threads: ${totalThreadsDeployed})`,
     });

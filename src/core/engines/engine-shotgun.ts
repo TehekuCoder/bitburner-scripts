@@ -1,7 +1,7 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
-import { patchState } from "/lib/state.js";
+import { patchBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths";
 
 export async function main(ns: NS): Promise<void> {
@@ -68,7 +68,7 @@ export async function main(ns: NS): Promise<void> {
       lastState = currentState;
     }
 
-    patchState(ns, {
+    patchBatcherState(ns, {
       batcherTarget: target,
       batcherProgress: `SHOTGUN (${moneyPct}% | Sec: +${secDelta})`,
     });

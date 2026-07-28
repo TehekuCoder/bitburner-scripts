@@ -1,7 +1,7 @@
 import { NS, ProgramName } from "@ns";
 import { DEFAULT_MULTIPLIERS, TARGET_PROGRAMS } from "/lib/constants";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { loadBnMults, patchState } from "/lib/state";
+import { loadBnMults, patchFinanceState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -22,7 +22,7 @@ export async function main(ns: NS): Promise<void> {
   // 4. Aktuelle CPU-Kerne erfassen
   const homeCores = ns.getServer("home").cpuCores;
 
-  patchState(ns, {
+  patchFinanceState(ns, {
     isHomePrioritized: shieldActive,
     homeCores: homeCores,
   });
@@ -174,7 +174,7 @@ function checkUnifiedUpgradeShield(ns: NS): boolean {
 
   // --- 🏠 HOME UPGRADE SHIELD EVALUIERUNG ---
   if (nextRamCost === Infinity && nextCoreCost === Infinity) {
-    patchState(ns, {
+    patchFinanceState(ns, {
       moneyReserve: programReserve,
       financeProgress,
       isRushModeActive: false,
@@ -195,7 +195,7 @@ function checkUnifiedUpgradeShield(ns: NS): boolean {
     shieldActive ? targetUpgradeCost : 0,
   );
 
-  patchState(ns, {
+  patchFinanceState(ns, {
     moneyReserve: finalReserve,
     financeProgress:
       programReserve > (shieldActive ? targetUpgradeCost : 0)

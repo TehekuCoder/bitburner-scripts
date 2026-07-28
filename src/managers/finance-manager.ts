@@ -4,7 +4,7 @@ import { NS } from "@ns";
 import { TRANSACTION_FEE, CASH_BUFFER, MIN_INVESTMENT } from "/lib/constants";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 
-import { patchState } from "/lib/state";
+import { patchFinanceState } from "/lib/state.js";
 
 
 export async function main(ns: NS): Promise<void> {
@@ -17,7 +17,7 @@ export async function main(ns: NS): Promise<void> {
 
   if (!hasWse && (playerMoney < 100_000_000 || homeMaxRam < 128)) {
     // Wenn zu früh im Run: Sofort beenden und RAM freigeben!
-    patchState(ns, {
+    patchFinanceState(ns, {
       traderMode: "INACTIVE",
       traderProgress: "Warte auf $100m + 128GB RAM",
       financeProgress: "Inaktiv",
@@ -33,7 +33,7 @@ export async function main(ns: NS): Promise<void> {
   let lastLogTime = 0;
 
   ns.atExit(() => {
-    patchState(ns, {
+    patchFinanceState(ns, {
       traderMode: "INACTIVE",
       traderProgress: "Inaktiv",
       financeProgress: "Inaktiv",
@@ -74,7 +74,7 @@ export async function main(ns: NS): Promise<void> {
 
       fullyUnlocked = unlocked;
 
-      patchState(ns, {
+      patchFinanceState(ns, {
         traderMode: "EARLY",
         traderProgress: fullyUnlocked
           ? "Initialisiere..."
@@ -224,7 +224,7 @@ export async function main(ns: NS): Promise<void> {
       progressString = parts.join(" | ");
     }
 
-    patchState(ns, {
+    patchFinanceState(ns, {
       traderMode: "4S_ACTIVE",
       traderProgress: progressString,
     });

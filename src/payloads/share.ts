@@ -6,5 +6,6 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     // Erhöht temporär den globalen Fraktions-Reputations-Multiplikator des Spielers
     await ns.share();
+    await ns.sleep(1000);
   }
 }

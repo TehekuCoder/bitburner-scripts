@@ -1,6 +1,6 @@
 import { NS } from "@ns";
 import { COMBAT_STATS, CombatStat, STAT_MAP, DISPLAY_MAP } from "/lib/constants";
-import { loadState, patchState } from "/lib/state";
+import { loadStrategyState, patchProgressState } from "/lib/state.js";
 
 
 export async function main(ns: NS): Promise<void> {
@@ -18,7 +18,7 @@ export async function main(ns: NS): Promise<void> {
   let lastProgressBar = "";
 
   while (true) {
-    const state = loadState(ns);
+    const state = loadStrategyState(ns);
     const mode = state?.strategy || "IDLE";
     const targetStat = (ns.args[0] as number) || state?.targetStat || 0;
 
@@ -73,13 +73,13 @@ export async function main(ns: NS): Promise<void> {
 
       // Nur patchen, wenn sich die Anzeige wirklich verändert hat (z.B. Level-Up)
       if (nextProgressBar !== lastProgressBar) {
-        patchState(ns, { progressBar: nextProgressBar });
+        patchProgressState(ns, { progressBar: nextProgressBar });
         lastProgressBar = nextProgressBar;
       }
     } else {
       ns.print("[INFO] Alle Stats erreicht. Warte auf Dispatcher...");
       if (lastProgressBar !== "🏋️ Combat Stats [DONE]") {
-        patchState(ns, { progressBar: "🏋️ Combat Stats [DONE]" });
+        patchProgressState(ns, { progressBar: "🏋️ Combat Stats [DONE]" });
         lastProgressBar = "🏋️ Combat Stats [DONE]";
       }
     }

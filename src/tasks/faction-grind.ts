@@ -1,11 +1,11 @@
 import { NS, FactionName } from "@ns";
-import { loadState, patchState } from "/lib/state";
+import { loadFactionState, patchFactionState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.print("🧬 Faction-Grinder Subsystem initialisiert.");
 
   while (true) {
-    const state = loadState(ns);
+    const state = loadFactionState(ns);
 
     if (!state || !state.targetFaction) {
       ns.print("⏳ Warte auf Zielvorgabe durch den Dispatcher...");
@@ -51,7 +51,7 @@ export async function main(ns: NS): Promise<void> {
     } as Record<FactionName, number>;
     updatedCurrentReps[faction] = currentRep;
 
-    patchState(ns, {
+    patchFactionState(ns, {
       // progressBar wurde hier entfernt, damit der Dispatcher die Kontrolle behält!
       factionCurrentReps: updatedCurrentReps, // Verhindert das Zerschießen deiner Kernel-Ziele
     });
