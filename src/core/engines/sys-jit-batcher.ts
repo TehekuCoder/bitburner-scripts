@@ -9,15 +9,14 @@ import {
   createBatchEvents,
   cleanupActiveBatches,
 } from "lib/worker-executor.js";
-import { formatTime } from "lib/format.js";
-import { SPACER, BATCH_GAP } from "/lib/constants";
+import { SPACER, BATCH_GAP } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import {
   getAllServers,
   getNetworkRealFreeRam,
   getQueueRam,
   getNetworkMaxRam,
-} from "/lib/network";
+} from "/lib/network.js";
 import { loadBnMults, patchState } from "/lib/state.js";
 import { JitEvent, ActiveBatch } from "/lib/types.js";
 
@@ -33,7 +32,8 @@ interface TargetContext {
   activeBatchIds: Set<number>;
 }
 
-const MAX_CONCURRENT_TARGETS = 5; // Begrenzung für parallele Zielserver (anpassbar)
+// Globaler Oberwert gegen Event-Loop Overhead bei extrem vielen laufenden Skripten
+const MAX_SAFE_CONCURRENT_SCRIPTS = 10000;
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -61,6 +61,8 @@ export async function main(ns: NS): Promise<void> {
   let lastHackingLevel = ns.getHackingLevel();
   let lastHeartbeatTime = 0;
   let lastRamThrottleLogTime = 0;
+  let lastEvictionCheck = 0;
+  let rollingLag = 0;
 
   /** Entfernt ein einzelnes Ziel isoliert aus dem Batcher ohne andere Targets zu stören */
   function removeTarget(targetName: string, reason: string): void {
@@ -192,6 +194,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    const totalNetworkMaxRam = getNetworkMaxRam(ns, servers);
     const realFreeRam = getNetworkRealFreeRam(ns, servers);
     const queueRam = getQueueRam(ns, eventQueue);
     const virtualFreeRam = realFreeRam - queueRam;
@@ -204,14 +207,54 @@ export async function main(ns: NS): Promise<void> {
       const targetNames =
         Array.from(activeTargets.keys()).join(", ") || "Keine";
       logger.debug(
-        `💓 Ziele: [${targetNames}] | Queue: ${eventQueue.length} (${queueRam.toFixed(0)}GB) | Freier RAM: ${virtualFreeRam.toFixed(0)}GB`,
+        `💓 Ziele: [${targetNames}] | Queue: ${eventQueue.length} (${queueRam.toFixed(
+          0,
+        )}GB) | Lag: ${rollingLag.toFixed(1)}ms | Freier RAM: ${virtualFreeRam.toFixed(
+          0,
+        )}GB`,
       );
     }
 
     // ----------------------------------------------------------------------
-    // 🔍 4. MULTI-TARGET PLANNER EVALUIERUNG
+    // 🔄 4. TARGET EVICTION CHECK (ALLE 20 SECONDS)
     // ----------------------------------------------------------------------
-    if (activeTargets.size < MAX_CONCURRENT_TARGETS && virtualFreeRam > 10) {
+    const dynamicMaxTargets = getDynamicMaxTargets(
+      totalNetworkMaxRam,
+      currentLevel,
+    );
+
+    if (
+      now - lastEvictionCheck > 20000 &&
+      activeTargets.size >= dynamicMaxTargets
+    ) {
+      const candidateServers = servers.filter(
+        (s) => !targetBlacklist.has(s) && !activeTargets.has(s),
+      );
+      checkTargetEviction(
+        ns,
+        activeTargets,
+        candidateServers,
+        virtualFreeRam,
+        bnMults,
+        logger,
+        removeTarget,
+      );
+      lastEvictionCheck = now;
+    }
+
+    // ----------------------------------------------------------------------
+    // ⚖️ 5. DYNAMISCHE RAM-VERTEILUNG (CAPS NEU BERECHNEN)
+    // ----------------------------------------------------------------------
+    updateDynamicBatchCaps(
+      activeTargets,
+      virtualFreeRam,
+      MAX_SAFE_CONCURRENT_SCRIPTS,
+    );
+
+    // ----------------------------------------------------------------------
+    // 🔍 6. MULTI-TARGET PLANNER EVALUIERUNG
+    // ----------------------------------------------------------------------
+    if (activeTargets.size < dynamicMaxTargets && virtualFreeRam > 10) {
       const candidateServers = servers.filter(
         (s) => !targetBlacklist.has(s) && !activeTargets.has(s),
       );
@@ -219,7 +262,7 @@ export async function main(ns: NS): Promise<void> {
       const planning = internalPlanner(
         ns,
         candidateServers,
-        getNetworkMaxRam(ns, servers),
+        totalNetworkMaxRam,
         virtualFreeRam,
         bnMults,
         ns.getPlayer(),
@@ -246,13 +289,15 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // ----------------------------------------------------------------------
-    // 📥 5. EVENT-QUEUE BEFÜLLEN (FÜR ALLE TARGETS)
+    // 📥 7. EVENT-QUEUE BEFÜLLEN (FÜR ALLE TARGETS)
     // ----------------------------------------------------------------------
+    const currentAdaptiveGap = getAdaptiveBatchGap(rollingLag);
+
     for (const ctx of activeTargets.values()) {
       const plan = ctx.plan;
       const isPrep = plan.hackThreads === 0;
       const ramMultiplier = isPrep ? 0.95 : 0.8;
-      const batchGap = Math.max(BATCH_GAP, SPACER * 4);
+      const batchGap = Math.max(currentAdaptiveGap, SPACER * 4);
       const planRam = plan.batchRam;
 
       while (ctx.activeBatchIds.size < ctx.dynamicMaxBatches) {
@@ -263,7 +308,9 @@ export async function main(ns: NS): Promise<void> {
           if (now - lastRamThrottleLogTime > 5000) {
             lastRamThrottleLogTime = now;
             logger.debug(
-              `⏸️ RAM-Engpass für ${ctx.target}. Benötigt: ${planRam.toFixed(1)}GB | Frei: ${safeVirtualRam.toFixed(1)}GB`,
+              `⏸️ RAM-Engpass für ${ctx.target}. Benötigt: ${planRam.toFixed(
+                1,
+              )}GB | Frei: ${safeVirtualRam.toFixed(1)}GB`,
               ctx.target,
             );
           }
@@ -315,7 +362,7 @@ export async function main(ns: NS): Promise<void> {
     });
 
     // ----------------------------------------------------------------------
-    // ⚡ 6. JIT DISPATCH LOOP (GLOBAL)
+    // ⚡ 8. JIT DISPATCH LOOP (GLOBAL)
     // ----------------------------------------------------------------------
     if (eventQueue.length > 0 && Date.now() >= eventQueue[0].startTime) {
       const workers = getAvailableWorkers(ns, servers);
@@ -324,6 +371,9 @@ export async function main(ns: NS): Promise<void> {
         const event = eventQueue.shift()!;
         const lag = Date.now() - event.startTime;
         const batchState = activeBatches.get(event.batchId);
+
+        // Rolling Average für geglättetes Lag-Monitoring
+        rollingLag = rollingLag * 0.9 + lag * 0.1;
 
         if (lag > 150) {
           logger.warn(
@@ -370,4 +420,113 @@ export async function main(ns: NS): Promise<void> {
       await ns.sleep(50);
     }
   }
+}
+
+// ==========================================================================
+// 🛠️ HELPER FUNCTIONS (LOCAL TO BATCHER)
+// ==========================================================================
+
+/** Verteilt den freien RAM proportional zum greedScore aller aktiven Targets */
+function updateDynamicBatchCaps(
+  activeTargets: Map<string, TargetContext>,
+  totalFreeRam: number,
+  maxConcurrentScripts: number,
+): void {
+  if (activeTargets.size === 0) return;
+
+  let totalScore = 0;
+  for (const ctx of activeTargets.values()) {
+    totalScore += Math.max(0.001, ctx.plan.greedScore);
+  }
+
+  const activeTargetCount = activeTargets.size;
+  const scriptBudgetPerTarget = Math.floor(
+    maxConcurrentScripts / Math.max(1, activeTargetCount),
+  );
+
+  for (const ctx of activeTargets.values()) {
+    const scoreShare = ctx.plan.greedScore / totalScore;
+    const targetRamBudget = totalFreeRam * scoreShare;
+
+    if (ctx.plan.batchRam > 0) {
+      const maxRamBatches = Math.floor(targetRamBudget / ctx.plan.batchRam);
+      const maxPipeBatches = Math.max(
+        1,
+        Math.floor(ctx.plan.weakenTime / BATCH_GAP),
+      );
+      const safeScriptBatches = Math.floor(scriptBudgetPerTarget / 4);
+
+      ctx.dynamicMaxBatches = Math.max(
+        1,
+        Math.min(maxPipeBatches, maxRamBatches, safeScriptBatches),
+      );
+    }
+  }
+}
+
+/** Ersetzt das schlechteste Target, wenn ein deutlich besseres gefunden wird */
+function checkTargetEviction(
+  ns: NS,
+  activeTargets: Map<string, TargetContext>,
+  candidateServers: string[],
+  virtualFreeRam: number,
+  bnMults: BitNodeMultipliers,
+  logger: Logger,
+  removeTargetFn: (target: string, reason: string) => void,
+): void {
+  if (activeTargets.size === 0) return;
+
+  let worstTarget: TargetContext | null = null;
+  let lowestScore = Infinity;
+
+  for (const ctx of activeTargets.values()) {
+    if (ctx.plan.hackThreads > 0 && ctx.plan.greedScore < lowestScore) {
+      lowestScore = ctx.plan.greedScore;
+      worstTarget = ctx;
+    }
+  }
+
+  if (!worstTarget) return;
+
+  const bestCandidatePlan = internalPlanner(
+    ns,
+    candidateServers,
+    getNetworkMaxRam(ns, candidateServers),
+    virtualFreeRam,
+    bnMults,
+    ns.getPlayer(),
+    logger,
+  );
+
+  if (bestCandidatePlan && bestCandidatePlan.greedScore > lowestScore * 1.3) {
+    logger.info(
+      `🔄 Target-Eviction: Ersetze [${worstTarget.target}] (Score: ${lowestScore.toFixed(
+        0,
+      )}) durch [${bestCandidatePlan.target}] (Score: ${bestCandidatePlan.greedScore.toFixed(
+        0,
+      )})`,
+    );
+    removeTargetFn(worstTarget.target, "Evicted: Höherwertiges Ziel gefunden");
+  }
+}
+
+/** Berechnet die maximal simultanen Ziele basierend auf Netzwerk-RAM und Level */
+function getDynamicMaxTargets(
+  totalMaxRam: number,
+  playerHacking: number,
+): number {
+  if (totalMaxRam < 1024) return 1; // < 1 TB RAM
+  if (totalMaxRam < 8192) return 2; // < 8 TB RAM
+  if (totalMaxRam < 65536) return 4; // < 65 TB RAM
+  if (totalMaxRam < 1048576) return 8; // < 1 PB RAM
+
+  return Math.min(24, 8 + Math.floor(playerHacking / 1000));
+}
+
+/** Dynamische Gap-Anpassung zur Vermeidung von Event-Loop Lag */
+function getAdaptiveBatchGap(currentRollingLag: number): number {
+  if (currentRollingLag > 80) return BATCH_GAP * 2.5; // Starke Entlastung
+  if (currentRollingLag > 40) return BATCH_GAP * 1.5; // Leichte Entlastung
+  if (currentRollingLag < 8) return Math.max(5, BATCH_GAP * 0.8); // Maximaler Durchsatz
+  return BATCH_GAP;
 }

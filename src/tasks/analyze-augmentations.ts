@@ -73,7 +73,7 @@ export async function main(ns: NS): Promise<void> {
   // 3. Im State speichern & informativen Log ausgeben
   patchState(ns, { augRoadmap } as any);
   
-  ns.tprint(
+  ns.print(
     `INFO: Augment-Analyse abgeschlossen. ${augRoadmap.length} ausstehende Augments in der Roadmap. (${uninstalledCount} gekaufte Augments bereit zum Installieren)`
   );
 }
