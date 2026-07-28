@@ -1,24 +1,27 @@
-// solveLaika4.ts
 import { NS } from "@ns";
 
 export async function solveLaika4(ns: NS, host: string, details: any): Promise<string | null> {
   const len = details?.passwordLength;
-  
+
+  // Erweitertes Wörterbuch nach Hundenamen / Raumfahrt-Hunden
   const dict: Record<number, string[]> = {
-    3: ["max", "dog"],
-    4: ["fido", "spot", "bark"],
-    5: ["rover", "laika"],
+    3: ["max", "dog", "sam"],
+    4: ["fido", "spot", "bark", "milo", "duke"],
+    5: ["rover", "laika", "belka", "strel", "chayk"],
+    6: ["sputnik", "apollo", "shadow"],
   };
 
-  const candidates = dict[len] || ["rover", "fido", "spot", "max", "laika"];
+  const candidates = (len && dict[len]) ? dict[len] : [
+    "rover", "laika", "fido", "spot", "max", "belka", "strelka", "apollo", "sputnik"
+  ];
 
   for (const guess of candidates) {
     const result = (await ns.dnet.authenticate(host, guess)) as any;
     if (result?.success) {
-      ns.print(`[Laika4] Erfolg mit: ${guess}`);
       return guess;
     }
   }
 
+  ns.print(`[Laika4] ❌ Keiner der ${candidates.length} Kandidaten hat für ${host} funktioniert.`);
   return null;
 }

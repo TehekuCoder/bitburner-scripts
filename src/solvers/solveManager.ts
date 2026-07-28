@@ -1,4 +1,5 @@
 import { NS } from "@ns";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
 
 import { solveAccountsManager } from "./solveAccountsManager";
 import { solveAnagram } from "./solveAnagram";
@@ -48,13 +49,24 @@ export async function runSolver(
   host: string,
   serverType: string,
   details: any,
+  logger?: Logger,
 ): Promise<string | null> {
+  const logInfo = (msg: string) => (logger ? logger.info(msg) : ns.print(msg));
+  const logWarn = (msg: string) => (logger ? logger.warn(msg) : ns.print(msg));
+  const logError = (msg: string) =>
+    logger ? logger.error(msg) : ns.print(msg);
+
   const cleanType = normalizeType(serverType);
   if (!cleanType) {
-    ns.print(`🔴 [Manager] Kein gültiger serverType für Host '${host}' übergeben.`);
+    logError(
+      `🔴 [Manager] Kein gültiger serverType für Host '${host}' übergeben.`,
+    );
     return null;
   }
-
+  // In runSolver (solveManager.ts)
+  logInfo(
+    `🚀 Starte Solver '${cleanType}' für Host '${host}' mit Details: ${JSON.stringify(details)}`,
+  );
   let solver = SOLVER_REGISTRY[cleanType];
 
   if (!solver) {
@@ -63,32 +75,33 @@ export async function runSolver(
     );
     if (matchedKey) {
       solver = SOLVER_REGISTRY[matchedKey];
-      ns.print(`ℹ️ [Manager] Unscharfer Match für '${serverType}': Nutze '${matchedKey}'.`);
+      logInfo(
+        `ℹ️ [Manager] Unscharfer Match für '${serverType}': Nutze '${matchedKey}'.`,
+      );
     }
   }
 
   if (!solver) {
-    ns.print(
+    logWarn(
       `⚠️ Kein passender Solver für Typ '${serverType}' (normalisiert: '${cleanType}') registriert.`,
     );
     return null;
   }
 
-  ns.print(`🚀 Starte Solver '${cleanType}' für Host '${host}'...`);
 
   try {
     const password = await solver(ns, host, details);
 
     if (password !== null) {
-      ns.print(`🎉 [Success] ${host} geknackt! Passwort: ${password}`);
+      logInfo(`🎉 [Success] ${host} geknackt! Passwort: ${password}`);
       return password;
     } else {
-      ns.print(
+      logWarn(
         `❌ [Failed] Solver für ${host} lief durch, konnte aber kein Passwort ermitteln.`,
       );
     }
   } catch (error: any) {
-    ns.print(
+    logError(
       `🔴 [Error] Schwerer Fehler im Solver für ${host}: ${error?.message || error}`,
     );
   }

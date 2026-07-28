@@ -2,79 +2,93 @@ import { NS } from "@ns";
 import { provisionServer } from "./provision.js";
 import { getAllServers } from "/lib/network.js";
 
+interface TargetScore {
+  name: string;
+  score: number;
+  maxMoney: number;
+  weakenTime: number;
+}
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.tprint(
-    "💤 [BitOS] Leite Schlafmodus ein. Initialisiere Multi-Target-Balancing...",
+    "💤 [BitOS] Leite Schlafmodus ein. Initialisiere dynamisches Multi-Target-Balancing...",
   );
 
   // ====================================================================
-  // SCHRITT 1: NUKLEARER SCHLAG GEGEN 'HOME'
+  // SCHRITT 1: CLEANUP AUF HOME
   // ====================================================================
   ns.killall("home", true);
   await ns.sleep(500);
 
   // ====================================================================
-  // SCHRITT 2: DYNAMISCHE ERMITTLUNG DER TOP-ZIELE (LOAD BALANCING)
+  // SCHRITT 2: DYNAMISCHE EVALUIERUNG ALLER ZIELE (SCORE: MONEY / TIME)
   // ====================================================================
   const playerHacking = ns.getPlayer().skills.hacking;
   const allServers = getAllServers(ns);
 
-  const validTargets = allServers
+  // Filtern: Root-Zugriff, Geld vorhanden & Hack-Level erreichbar
+  const validTargets: TargetScore[] = allServers
     .filter(
       (s) =>
         ns.hasRootAccess(s) &&
         ns.getServerMaxMoney(s) > 0 &&
-        ns.getServerRequiredHackingLevel(s) <= playerHacking / 2,
+        ns.getServerRequiredHackingLevel(s) <= playerHacking, // Keine künstliche Halbung mehr!
     )
-    .sort((a, b) => ns.getServerMaxMoney(b) - ns.getServerMaxMoney(a));
+    .map((s) => {
+      const maxMoney = ns.getServerMaxMoney(s);
+      const weakenTime = ns.getWeakenTime(s);
+      // Score = Ertrag pro Sekunde Aufwand
+      const score = maxMoney / Math.max(1, weakenTime);
+      return { name: s, score, maxMoney, weakenTime };
+    })
+    .sort((a, b) => b.score - a.score);
 
   if (validTargets.length === 0) {
     ns.tprint("❌ ERROR: Keine gültigen Hack-Ziele gefunden!");
     return;
   }
 
-  const targetTier1 = validTargets[0];
-  const targetTier2 = validTargets[1] || targetTier1;
-  const targetTier3 = validTargets[2] || targetTier2;
+  // Wähle dynamisch bis zu 8 der besten Ziele
+  const TARGET_COUNT = Math.min(validTargets.length, 8);
+  const topTargets = validTargets.slice(0, TARGET_COUNT);
 
-  ns.tprint(`🎯 [BitOS] Lastverteilung aktiv:`);
-  ns.tprint(
-    `   - Tier 1 (High RAM / Home) -> ${targetTier1} ($${ns.format.number(ns.getServerMaxMoney(targetTier1))})`,
-  );
-  ns.tprint(
-    `   - Tier 2 (Mid-Range/P-Serv) -> ${targetTier2} ($${ns.format.number(ns.getServerMaxMoney(targetTier2))})`,
-  );
-  ns.tprint(
-    `   - Tier 3 (Low-RAM Network)  -> ${targetTier3} ($${ns.format.number(ns.getServerMaxMoney(targetTier3))})`,
-  );
+  ns.tprint(`🎯 [BitOS] Dynamische Lastverteilung gestartet (${topTargets.length} Ziele aktiv):`);
+  topTargets.forEach((t, i) => {
+    ns.tprint(
+      `   [Rank ${i + 1}] ${t.name.padEnd(18)} -> Max: $${ns.format.number(t.maxMoney)} | Weaken: ${Math.round(t.weakenTime / 1000)}s`,
+    );
+  });
 
   // ====================================================================
-  // SCHRITT 3: WORKER-VERTEILUNG NACH LEISTUNGSKLASSE
+  // SCHRITT 3: WORKER-VERTEILUNG NACH RAM-LEISTUNG
   // ====================================================================
   const pServers = ns.cloud.getServerNames();
   const workerScript = "payloads/work.js";
   const workerRam = ns.getScriptRam(workerScript);
 
-  // 🛡️ SICHERHEITS-CHECK: Existiert das Worker-Skript auf 'home'?
   if (!Number.isFinite(workerRam) || workerRam <= 0) {
     ns.tprint(
-      `❌ ERROR: Worker-Skript '${workerScript}' wurde nicht gefunden oder benötigt 0 GB RAM! Checke den Dateipfad (.js vs .ts).`,
+      `❌ ERROR: Worker-Skript '${workerScript}' nicht gefunden oder benötigt 0 GB RAM!`,
     );
     return;
   }
 
-  const hostServers = allServers.filter(
-    (s) =>
-      s === "home" ||
-      pServers.includes(s) ||
-      (ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0),
-  );
+  // Alle verfügbaren Ausführungs-Hosts ermitteln und nach RAM sortieren (stärkste zuerst!)
+  const hostServers = allServers
+    .filter(
+      (s) =>
+        s === "home" ||
+        pServers.includes(s) ||
+        (ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0),
+    )
+    .sort((a, b) => ns.getServerMaxRam(b) - ns.getServerMaxRam(a));
 
   let totalShareThreads = 0;
   const activeTargets = new Set<string>();
 
-  for (const server of hostServers) {
+  for (let i = 0; i < hostServers.length; i++) {
+    const server = hostServers[i];
     const activeProcesses = ns.ps(server);
 
     if (server !== "home") {
@@ -93,7 +107,7 @@ export async function main(ns: NS): Promise<void> {
       await ns.sleep(20);
     }
 
-    // 🛡️ Root-/Provisionierungs-Check
+    // Root / Root-Tools sicherstellen
     await provisionServer(ns, server);
 
     const reserve = server === "home" ? 32 : 0;
@@ -101,20 +115,12 @@ export async function main(ns: NS): Promise<void> {
     const usedRam = ns.getServerUsedRam(server);
     const freeRam = Math.max(0, maxRam - usedRam);
 
-    // 🛡️ Expliziter Guard gegen Division durch Null / Infinity
     const threads = Math.floor(freeRam / workerRam);
 
     if (Number.isFinite(threads) && threads > 0) {
-      let assignedTarget = targetTier3;
-
-      if (server === "home") {
-        assignedTarget = targetTier1;
-      } else if (pServers.includes(server)) {
-        const index = pServers.indexOf(server);
-        assignedTarget = index % 2 === 0 ? targetTier1 : targetTier2;
-      } else if (maxRam >= 64) {
-        assignedTarget = targetTier2;
-      }
+      // Round-Robin Verteilung: Stärkste Hosts bedienen die Top-Ranked Targets!
+      const targetIndex = i % topTargets.length;
+      const assignedTarget = topTargets[targetIndex].name;
 
       activeTargets.add(assignedTarget);
 
@@ -130,7 +136,7 @@ export async function main(ns: NS): Promise<void> {
   }
 
   // ====================================================================
-  // 📊 MONITORING MIT DYNAMISCHER WARTEZEIT-SCHÄTZUNG
+  // SCHRITT 4: MONITORING & KALIBRIERUNG
   // ====================================================================
   if (activeTargets.size === 0) {
     ns.tprint("❌ ERROR: Keine Worker gestartet (unzureichender RAM im Netz).");
@@ -140,7 +146,7 @@ export async function main(ns: NS): Promise<void> {
   ns.tprint("⏳ [BitOS] Multi-Zyklen gestartet. Kalibrierung läuft...");
   ns.ui.openTail();
   ns.ui.setTailTitle("Offline-Modus");
-  ns.ui.resizeTail(583, 312);
+  ns.ui.resizeTail(600, 330);
 
   let stableTicks = 0;
   let lastTotalIncome = 0;
@@ -149,7 +155,6 @@ export async function main(ns: NS): Promise<void> {
   const longestWeakenTime = Math.max(
     ...Array.from(activeTargets).map((t) => ns.getWeakenTime(t)),
   );
-
   const maxWaitTime = longestWeakenTime + 5000;
 
   while (true) {
@@ -158,7 +163,6 @@ export async function main(ns: NS): Promise<void> {
     for (const server of hostServers) {
       for (const target of activeTargets) {
         const income = ns.getScriptIncome(workerScript, server, target);
-
         if (!isNaN(income) && income > 0) {
           currentTotalIncome += income;
         }
@@ -172,11 +176,11 @@ export async function main(ns: NS): Promise<void> {
 
     ns.clearLog();
     ns.print(`============================================================`);
-    ns.print(`🔥 BIT-OS CLUSTER-KALIBRIERUNG (MULTI-TARGET MODUS)`);
+    ns.print(`🔥 BIT-OS CLUSTER-KALIBRIERUNG (${activeTargets.size} TARGETS)`);
     ns.print(`============================================================`);
-    ns.print(`AKTIVE CLUSTER-ZIELE: ${Array.from(activeTargets).join(", ")}`);
+    ns.print(`AKTIVE ZIELE: ${Array.from(activeTargets).join(", ")}`);
     ns.print(
-      `LAUFZEIT:             ${elapsedSecs}s / Failsafe: ${Math.floor(maxWaitTime / 1000)}s`,
+      `LAUFZEIT:     ${elapsedSecs}s / Failsafe: ${Math.floor(maxWaitTime / 1000)}s`,
     );
 
     if (currentTotalIncome === 0) {
@@ -185,7 +189,7 @@ export async function main(ns: NS): Promise<void> {
       );
       ns.print(`                      (Server-Präparation läuft noch)`);
     } else {
-      ns.print(`✅ STATUS:            Netzwerk produziert aktiv.`);
+      ns.print(`✅ STATUS:             Netzwerk produziert aktiv.`);
     }
     ns.print(`------------------------------------------------------------`);
 

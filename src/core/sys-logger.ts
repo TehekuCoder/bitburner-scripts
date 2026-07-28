@@ -6,15 +6,15 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
 
-  // CLI-Flags verarbeiten
+// CLI-Flags verarbeiten
   const flags = ns.flags([
     ["port", 1],
-    ["target", ""], // z. B. --target n00dles,joesguns (Kommagetrennt für mehrere)
-    ["module", ""], // z. B. --module JIT-BATCHER,PREP
-    ["level", "DEBUG"], // Minimales Log-Level: DEBUG, INFO, WARN, ERROR
-    ["fileAll", false], // true = schreibt ALLES in die Datei, filtert nur das UI-Fenster
-    ["tag", ""], // z. B. --tag darknet,auth
-    ["context", ""], // z. B. --context host=darkweb
+    ["target", ""], 
+    ["module", ""], 
+    ["level", "WARN"], 
+    ["fileAll", true], 
+    ["tag", ""], 
+    ["context", ""], 
   ]);
 
   const PORT_NUM = flags.port as number;

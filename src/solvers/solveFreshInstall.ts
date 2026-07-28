@@ -1,21 +1,24 @@
-// solveFreshInstall.ts
 import { NS } from "@ns";
+import { tryAuth } from "/lib/dnet-utils"; // Pfad zu deiner tryAuth-Funktion
 
-export async function solveFreshInstall(ns: NS, host: string, details: any): Promise<string | null> {
-  const len = details?.passwordLength;
-  // Typische Standard-Passwörter
-  const candidates = ["0000", "12345", "admin", "password", "guest", "root", "1234"];
+export async function solveFreshInstall(
+  ns: NS,
+  host: string,
+  details: any
+): Promise<string | null> {
+  // Liste gängiger Standard-Passwörter für FreshInstall
+  const candidates = ["password", "admin", "123456", "root", "guest"];
+
+  ns.print(`[FreshInstall] Starte Prüfung für ${host}...`);
 
   for (const guess of candidates) {
-    // Falls Länge bekannt ist, nur passende Längen testen
-    if (len && guess.length !== len) continue;
-
-    const result = (await ns.dnet.authenticate(host, guess)) as any;
-    if (result?.success) {
-      ns.print(`[FreshInstall] Erfolg mit: ${guess}`);
+    // tryAuth stellt die Verbindung her, falls isConnectedToCurrentServer === false
+    if (await tryAuth(ns, host, guess)) {
+      ns.print(`🎉 [FreshInstall] Erfolgreich authentifiziert auf ${host} mit: "${guess}"`);
       return guess;
     }
   }
 
+  ns.print(`🔴 [FreshInstall] Alle Standard-Passwörter auf ${host} fehlgeschlagen.`);
   return null;
 }

@@ -9,19 +9,34 @@ import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths";
 import { provisionServer } from "/utils/provision";
 
+const CRACK_REQ_PORT = 6;
 let lastLootTime = 0;
+const pendingRequests = new Set<string>();
 
 function isServerInCooldown(ns: NS, host: string): boolean {
+  const currentHost = ns.getHostname();
+
+  // 1. Cooldown-Datei von 'home' auf den lokalen Worker synchronisieren
+  if (currentHost !== "home" && ns.fileExists(COOLDOWN_FILE, "home")) {
+    ns.scp(COOLDOWN_FILE, currentHost, "home");
+  }
+
   if (!ns.fileExists(COOLDOWN_FILE)) return false;
+
   const lines = ns.read(COOLDOWN_FILE).split("\n");
   const now = Date.now();
 
+  // 2. Prüfen, ob ein aktiver Cooldown für das Ziel existiert
   for (const line of lines) {
-    const [cHost, cTime] = line.split(",");
-    if (cHost === host) {
-      return now - Number(cTime) < COOLDOWN_MS;
+    const parts = line.split(",");
+    if (parts.length >= 2) {
+      const [cHost, cTime] = parts;
+      if (cHost === host && now - Number(cTime) < COOLDOWN_MS) {
+        return true;
+      }
     }
   }
+
   return false;
 }
 
@@ -50,13 +65,10 @@ async function ensureSession(
     passwordCandidates.push("");
   }
 
-  passwordCandidates.push("admin");
-  passwordCandidates.push("password");
-  passwordCandidates.push("letmein");
-  passwordCandidates.push("root");
+  passwordCandidates.push("default", "admin", "password", "letmein", "root");
 
   for (const candidate of passwordCandidates) {
-    if (!candidate) continue;
+    if (candidate === null) continue;
 
     try {
       const authResult = await ns.dnet.authenticate(hostname, candidate);
@@ -67,7 +79,7 @@ async function ensureSession(
 
       if (authSuccess) {
         logger.info(
-          `✅ Authentifizierung erfolgreich auf ${hostname} mit Passwort-Variante.`,
+          `✅ Authentifizierung erfolgreich auf ${hostname} mit Bekanntem/Standard-Passwort.`,
           undefined,
           {
             tags: ["darknet", "auth"],
@@ -80,7 +92,7 @@ async function ensureSession(
         return true;
       }
     } catch {
-      // Fallback auf die nächste Variante
+      // Fallback
     }
   }
 
@@ -91,7 +103,6 @@ function getPasswordFromRegistry(ns: NS, host: string): string | null {
   const jsonDbFile = "/dnet-master-db.json";
   const currentHost = ns.getHostname();
 
-  // 🔄 Falls wir nicht auf home sind: Neueste DB von 'home' ziehen
   if (currentHost !== "home" && ns.fileExists(jsonDbFile, "home")) {
     ns.scp(jsonDbFile, currentHost, "home");
   }
@@ -111,28 +122,21 @@ async function deployWorm(
   ns: NS,
   hostname: string,
   scriptName: string,
-  solverScript: string,
-  lootScript: string,
-  phishScript: string,
   logger: Logger,
 ): Promise<boolean> {
   if (hostname === "home" || !ns.serverExists(hostname)) return false;
   if (ns.scriptRunning(scriptName, hostname)) return false;
 
   const isDarkweb = hostname === "darkweb";
-  const minRamRequired = isDarkweb ? 2 : 8;
+  const minRamRequired = isDarkweb ? 2 : 6;
 
   if (ns.getServerMaxRam(hostname) < minRamRequired) {
-    logger.warn(
-      `⚠️ ${hostname} hat zu wenig RAM (${ns.getServerMaxRam(hostname)}GB) für den Crawler.`,
-    );
     return false;
   }
 
   const details = ns.dnet.getServerDetails(hostname) as any;
   const sessionReady = await ensureSession(ns, hostname, details, logger);
 
-  // ✅ Wenn Session steht: Wurm kopieren & starten!
   if (sessionReady) {
     logger.info(
       `🚀 Wurm-Ausbreitung: Infiziere ${hostname} und starte Crawler.`,
@@ -141,8 +145,7 @@ async function deployWorm(
     );
 
     await provisionServer(ns, hostname);
-    await provisionServer(ns, ns.getHostname());
-    ns.scp(scriptName, hostname, ns.getHostname());
+    ns.scp(scriptName, hostname, "home");
 
     const pid = ns.exec(scriptName, hostname, 1);
     return pid > 0;
@@ -150,6 +153,7 @@ async function deployWorm(
 
   return false;
 }
+
 export async function main(ns: NS): Promise<void> {
   const scriptName = ns.getScriptName();
   const currentHost = ns.getHostname();
@@ -168,22 +172,16 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const now = Date.now();
-    const solverScript = PATHS.tasks.solver;
     const lootScript = PATHS.tasks.loot;
     const phishScript = PATHS.tasks.phish;
 
     const maxRam = ns.getServerMaxRam(currentHost);
     let freeRam = maxRam - ns.getServerUsedRam(currentHost);
-    let requiredSolverRam = ns.getScriptRam(solverScript, currentHost);
-    const requiredLootRam = ns.getScriptRam(lootScript, currentHost) || 6.5;
-
-    let isSolverRunning = ns.scriptRunning(solverScript, currentHost);
     const isLootRunning = ns.scriptRunning(lootScript, currentHost);
     const isLootDue =
       now - lastLootTime > LOOT_INTERVAL_MS && currentHost !== "home";
 
     const nearbyServers: string[] = ns.dnet.probe();
-
     const currentTopology = nearbyServers.slice().sort().join(",");
     const lastTopology = lastKnownConnections.slice().sort().join(",");
 
@@ -194,108 +192,38 @@ export async function main(ns: NS): Promise<void> {
     }
     lastKnownConnections = nearbyServers;
 
-    let targetToCrack: string | null = null;
-    let targetDetails: any = null;
+    const allTargets = [...new Set([...nearbyServers, ...processedServers])];
 
-    for (const hostname of nearbyServers) {
+    for (const hostname of allTargets) {
       if (hostname === "home" || !ns.serverExists(hostname)) continue;
 
-      await deployWorm(
-        ns,
-        hostname,
-        scriptName,
-        solverScript,
-        lootScript,
-        phishScript,
-        logger,
-      );
+      // 1. Wurm ausbreiten
+      await deployWorm(ns, hostname, scriptName, logger);
 
-      if (!targetToCrack) {
-        const details = ns.dnet.getServerDetails(hostname) as any;
-        if (
-          details &&
-          !details.hasSession &&
-          !isServerInCooldown(ns, hostname)
-        ) {
-          targetToCrack = hostname;
-          targetDetails = details;
+      // 2. Ungeknackte Server an den Master (Port 6) melden
+      const details = ns.dnet.getServerDetails(hostname) as any;
+      const inCooldown = isServerInCooldown(ns, hostname);
+
+      if (details && !details.hasSession && !inCooldown) {
+        if (!pendingRequests.has(hostname)) {
+          logger.info(
+            `📡 Sende Crack-Anforderung für ${hostname} an Master (Port ${CRACK_REQ_PORT})...`,
+          );
+          ns.writePort(CRACK_REQ_PORT, JSON.stringify({ host: hostname }));
+          pendingRequests.add(hostname);
         }
+      } else if (details?.hasSession || inCooldown) {
+        // Ziel freigeben, sobald Session steht ODER Cooldown aktiv ist
+        pendingRequests.delete(hostname);
       }
     }
 
-    for (const hostname of processedServers) {
-      await deployWorm(
-        ns,
-        hostname,
-        scriptName,
-        solverScript,
-        lootScript,
-        phishScript,
-        logger,
-      );
-    }
-
-    if (isLootDue && !isLootRunning && maxRam >= requiredLootRam) {
-      if (isSolverRunning) {
-        logger.warn(
-          `🚨 Loot-Intervall fällig! Erzwinge RAM-Eviction von Solver auf ${currentHost}.`,
-        );
-        ns.scriptKill(solverScript, currentHost);
-        await ns.sleep(200);
-        isSolverRunning = false;
-        freeRam = maxRam - ns.getServerUsedRam(currentHost);
-      }
-      targetToCrack = null;
-      targetDetails = null;
-    }
-
-    let solverStarted = false;
-
-    if (targetToCrack && targetDetails && !isSolverRunning) {
-      const hasSolverModules = ns.fileExists(solverScript, currentHost);
-
-      if (requiredSolverRam === 0 || !hasSolverModules) {
-        // HIER ANGEPASST: Einfach den Server provisionieren lassen
-        logger.info(
-          `📦 Solver-Abhängigkeiten fehlen auf ${currentHost}. Provisioniere Server von home...`,
-        );
-        await provisionServer(ns, currentHost);
-
-        requiredSolverRam = ns.getScriptRam(solverScript, currentHost);
-      }
-
-      if (requiredSolverRam > 0 && freeRam >= requiredSolverRam) {
-        if (isLootRunning) {
-          ns.scriptKill(lootScript, currentHost);
-          await ns.sleep(200);
-        }
-
-        logger.info(
-          `📡 Target gesichtet: ${targetToCrack} [${targetDetails.modelId}]. Starte Krypto-Solver.`,
-        );
-
-        // HIER AUFGERÄUMT: Die unnötigen Parameter entfernt (wie im letzten Schritt besprochen)
-        ns.exec(solverScript, currentHost, 1, targetToCrack);
-        solverStarted = true;
-      } else {
-        logger.debug(
-          `ℹ️ RAM knapp auf ${currentHost}. Überlasse ${targetToCrack} dem restlichen Botnetz.`,
-        );
-      }
-    }
-
-    if (
-      currentHost !== "home" &&
-      !isSolverRunning &&
-      !solverStarted &&
-      !isLootRunning &&
-      isLootDue
-    ) {
+    // Periodischer Loot / Phishing Zyklus
+    if (currentHost !== "home" && !isLootRunning && isLootDue) {
       if (
         !ns.fileExists(phishScript, currentHost) ||
         !ns.fileExists(lootScript, currentHost)
       ) {
-        // HIER ANGEPASST: provisionServer statt ns.scp
         await provisionServer(ns, currentHost);
       }
 
@@ -308,14 +236,14 @@ export async function main(ns: NS): Promise<void> {
         const phishPid = ns.exec(phishScript, currentHost, 1);
         if (phishPid > 0) {
           while (ns.isRunning(phishPid)) {
-            await ns.sleep(500);
+            await ns.sleep(300);
           }
         }
 
         const lootPid = ns.exec(lootScript, currentHost, 1);
         if (lootPid > 0) {
           while (ns.isRunning(lootPid)) {
-            await ns.sleep(500);
+            await ns.sleep(300);
           }
         }
 
@@ -324,6 +252,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    await ns.sleep(5000);
+    await ns.sleep(4000);
   }
 }

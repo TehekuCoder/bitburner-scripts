@@ -1,8 +1,6 @@
 import { NS } from "@ns";
+import { tryAuth } from "/lib/dnet-utils"; // Pfad ggf. anpassen
 
-/**
- * Konvertiert eine römische Zahl in eine arabische Zahl.
- */
 function romanToArabic(roman: string): number {
   const vals: Record<string, number> = {
     I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000,
@@ -16,7 +14,7 @@ function romanToArabic(roman: string): number {
 
     if (next > cur) {
       total += next - cur;
-      i++; // Nächstes Zeichen überspringen
+      i++;
     } else {
       total += cur;
     }
@@ -37,7 +35,6 @@ export async function solveRoman(
     return null;
   }
 
-  // Römische Zahlenblöcke aus dem Text extrahieren
   const matches = rawText.match(/[IVXLCDM]+/gi) || [];
 
   for (const romanSeq of matches) {
@@ -45,9 +42,9 @@ export async function solveRoman(
     if (arabicValue <= 0) continue;
 
     const guess = arabicValue.toString();
-    const res = (await ns.dnet.authenticate(host, guess)) as any;
 
-    if (res?.success) {
+    // Hier ebenfalls tryAuth nutzen:
+    if (await tryAuth(ns, host, guess)) {
       ns.print(`🎉 [Roman] Römische Zahl '${romanSeq}' als '${guess}' aufgelöst!`);
       return guess;
     }

@@ -12,13 +12,17 @@ export async function main(ns: NS): Promise<void> {
     if (el) el.remove();
   });
 
-  const target = "w0r1d_d43m0n";
-  const hasServer = ns.serverExists(target);
-  const hasRoot = hasServer && ns.hasRootAccess(target);
-  const reqLevel = hasServer
-    ? (ns.getServer(target).requiredHackingSkill ?? 9999)
-    : 9999;
-  const isReadyForApocalypse = hasRoot && ns.getHackingLevel() >= reqLevel;
+  // 🟢 Dynamische Prüfung: Wird erst aufgerufen, wenn der Countdown abläuft
+  const checkApocalypseReady = () => {
+    const target = "w0r1d_d43m0n";
+    const hasServer = ns.serverExists(target);
+    const hasRoot = hasServer && ns.hasRootAccess(target);
+    const reqLevel = hasServer
+      ? (ns.getServer(target).requiredHackingSkill ?? 9999)
+      : 9999;
+    const ready = hasRoot && ns.getHackingLevel() >= reqLevel;
+    return { ready, reqLevel, hasRoot };
+  };
 
   // Altes Element entfernen, falls das Skript neu gestartet wird
   const existing = doc.getElementById(addonId);
@@ -111,10 +115,59 @@ export async function main(ns: NS): Promise<void> {
         } else {
           uiState.trigger = "done";
 
-          if (isReadyForApocalypse) {
+          // 🟢 Live-Prüfung der Bedingungen
+          const { ready, reqLevel, hasRoot } = checkApocalypseReady();
+
+          if (ready) {
             // --- 💥 ECHTER ERFOLG ---
             if (statusEl) statusEl.innerText = "SUCCESS: REDIRECTING...";
             patchState(ns, { strategy: "APOCALYPSE" as any });
+
+            // 🔍 Pfade für dein daemones-Skript prüfen (.ts / .js mit/ohne führenden Slash)
+            const possiblePaths = [
+              "daemons/backdoor.ts",
+              "daemons/backdoor.js",
+              "/daemons/backdoor.ts",
+              "/daemons/backdoor.js",
+            ];
+
+            const validPath = possiblePaths.find((p) => ns.fileExists(p));
+
+            if (!validPath) {
+              ns.tprint(
+                "🛑 [ERR] 'daemones/backdoor.ts' konnte nicht im Dateisystem gefunden werden!",
+              );
+              if (statusEl) statusEl.innerText = "FILE NOT FOUND";
+            } else {
+              // 🛑 Laufende Instanz stoppen, um den 60s Sleep sofort zu durchbrechen
+              ns.scriptKill(validPath, "home");
+
+              // 💾 RAM-Prüfung
+              const reqRam = ns.getScriptRam(validPath);
+              const freeRam =
+                ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+
+              if (freeRam < reqRam) {
+                ns.tprint(
+                  `🛑 [RAM-ERR] Zu wenig RAM auf 'home'! Benötigt: ${reqRam.toFixed(2)} GB | Frei: ${freeRam.toFixed(2)} GB.`,
+                );
+                if (statusEl) statusEl.innerText = "OUT OF RAM";
+              } else {
+                // 🚀 Skript mit dem Flag "APOCALYPSE" neu starten
+                const pid = ns.exec(validPath, "home", 1, "APOCALYPSE");
+
+                if (pid > 0) {
+                  ns.tprint(
+                    `🚀 [APOCALYPSE] '${validPath}' gestartet (PID: ${pid})! Infiltration von w0r1d_d43m0n läuft...`,
+                  );
+                } else {
+                  ns.tprint(
+                    "🛑 [ERR] Unerwarteter Fehler beim Ausführen von ns.exec().",
+                  );
+                }
+              }
+            }
+
             await ns.sleep(2000);
             addon.remove();
             break;
@@ -122,7 +175,6 @@ export async function main(ns: NS): Promise<void> {
             // --- 🛑 FALSCHER ALARM / FAKE APOCALYPSE ---
             if (statusEl) statusEl.innerText = "CRITICAL FAILURE";
 
-            // Erstelle das temporäre Fullscreen-Overlay für den Schockmoment
             const crashOverlay = doc.createElement("div");
             Object.assign(crashOverlay.style, {
               position: "fixed",
@@ -140,7 +192,6 @@ export async function main(ns: NS): Promise<void> {
             const randomEvent = Math.floor(Math.random() * 3);
 
             if (randomEvent === 0) {
-              // 🔴 Event 0: Kritisches Access Denied Terminal
               crashOverlay.style.backgroundColor = "rgba(5, 5, 5, 0.98)";
               crashOverlay.style.color = "#00ff66";
               crashOverlay.style.fontFamily = "'Courier New', monospace";
@@ -158,7 +209,6 @@ export async function main(ns: NS): Promise<void> {
                 </div>
               `;
             } else if (randomEvent === 1) {
-              // 🔵 Event 1: Bitburner OS Bluescreen
               Object.assign(crashOverlay.style, {
                 backgroundColor: "#0078d7",
                 color: "#ffffff",
@@ -181,7 +231,6 @@ export async function main(ns: NS): Promise<void> {
                 </div>
               `;
             } else {
-              // ⚫ Event 2: Kernel Panic / Freeze Trace
               crashOverlay.style.backgroundColor = "#000000";
               crashOverlay.style.color = "#ff3333";
               crashOverlay.style.fontFamily = "'Courier New', monospace";
@@ -196,19 +245,16 @@ export async function main(ns: NS): Promise<void> {
               `;
             }
 
-            // In den DOM einhängen, damit es den ganzen Bildschirm schluckt
             doc.body.appendChild(crashOverlay);
             ns.tprint(
               "💀 [SYS] System-Override blockiert. Addon permanent entfernt.",
             );
 
-            // 5 Sekunden Schock-Effekt wirken lassen
             await ns.sleep(5000);
 
-            // 🧼 GROSSREINEMACHEN: Entfernt das Fullscreen-Overlay UND den Button unter Overview dauerhaft!
             crashOverlay.remove();
             addon.remove();
-            break; // Beendet die while-Schleife, das Skript läuft sauber aus.
+            break;
           }
         }
       }

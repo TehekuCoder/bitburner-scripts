@@ -220,11 +220,12 @@ export function cleanupActiveBatches(
       if (fullyExecuted) {
         activeBatches.delete(bId);
         activeBatchIds.delete(bId);
-        const modeLog = isPrepBatch ? "Prep-Batch" : "HWGW-Batch";
-        logger.debug(`✅ ${modeLog} b${bId} erfolgreich gelandet.`);
+        // 🔕 Erfolgreiche Batches werden geräuschlos aufgeräumt
       } else if (now > bData.landEndTime + 3000) {
         activeBatches.delete(bId);
         activeBatchIds.delete(bId);
+
+        // ⚠️ WICHTIG: Das hier bleibt drin! Das zeigt dir Desyncs & Probleme.
         logger.warn(
           `🧹 Watchdog: Batch b${bId} unvollständig (${bData.executedEventsCount}/${bData.totalEventsCount} Events) zwangsaufgeräumt.`,
         );

@@ -4,6 +4,14 @@ import { COOLDOWN_FILE, COOLDOWN_MS } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { ServerAuthDetails } from "/lib/types.js";
 
+function isAuthSuccess(result: unknown): boolean {
+  if (typeof result === "boolean") return result;
+  if (result && typeof result === "object" && "success" in result) {
+    return Boolean((result as { success?: boolean }).success);
+  }
+  return false;
+}
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
@@ -17,27 +25,18 @@ export async function main(ns: NS): Promise<void> {
 
   const jsonDbFile = "/dnet-master-db.json";
 
-  // 🔄 DB von 'home' kopieren, falls wir auf einem Remote-Node laufen
   if (currentHost !== "home" && ns.fileExists(jsonDbFile, "home")) {
     ns.scp(jsonDbFile, currentHost, "home");
   }
 
-  // Bitburner 3.0: Erstelle zuerst die Session für diesen spezifischen PID, falls Passwort bekannt
+  // Session wiederherstellen, falls Passwort im Cache
   if (ns.fileExists(jsonDbFile)) {
     try {
       const db = JSON.parse(ns.read(jsonDbFile));
       if (db[host] !== undefined) {
-        const authResult = await ns.dnet.authenticate(host, db[host]);
-        const authSuccess =
-          typeof authResult === "boolean"
-            ? authResult
-            : Boolean(authResult?.success);
-
-        if (authSuccess) {
+        if (await tryAuthenticate(ns, host, db[host])) {
           logger.success(
             `🎉 [SUCCESS] Session für ${host} über bekannten Passwort-Cache hergestellt!`,
-            undefined,
-            { tags: ["darknet", "auth", "cache"], context: { host } },
           );
           handleSuccess(ns, host, db[host], logger);
           return;
@@ -52,6 +51,9 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
+  // 🔥 WICHTIG: Verbindungsaufbau ZWINGEND vor runSolver durchführen!
+  await ensureConnected(ns, host, details);
+
   logger.info(`🔨 Krypto-Angriff auf Modell [${details.modelId}] gestartet...`);
 
   let password = await runSolver(
@@ -59,6 +61,7 @@ export async function main(ns: NS): Promise<void> {
     host,
     details.modelId || "Unknown",
     details,
+    logger,
   );
 
   if (password === null) {
@@ -71,31 +74,14 @@ export async function main(ns: NS): Promise<void> {
   }
 
   if (password !== null) {
-    const auth = await ns.dnet.authenticate(host, password);
-    const isSuccess = !!(
-      auth &&
-      typeof auth.success === "boolean" &&
-      auth.success
-    );
-
-    if (isSuccess) {
+    if (await tryAuthenticate(ns, host, password)) {
       handleSuccess(ns, host, password, logger);
-      logger.info(
-        `🔐 Authentifizierung für ${host} erfolgreich abgeschlossen.`,
-        undefined,
-        { tags: ["darknet", "auth"], context: { host } },
-      );
     } else {
       logger.error(
-        `❌ Passwort "${password}" für ${host} ermittelt, aber Authentifizierung fehlgeschlagen.`,
+        `❌ Passwort "${password}" ermittelt, aber Auth fehlgeschlagen.`,
       );
       await setServerCooldown(ns, host);
     }
-  } else {
-    logger.error(
-      `❌ Krypto-Angriff auf ${host} (${details.modelId}) fehlgeschlagen. Cooldown aktiviert.`,
-    );
-    await setServerCooldown(ns, host);
   }
 }
 
@@ -108,26 +94,22 @@ function isServerInCooldown(ns: NS, host: string): boolean {
   if (!ns.fileExists(COOLDOWN_FILE)) return false;
   const lines = ns.read(COOLDOWN_FILE).split("\n");
   const now = Date.now();
+
   for (const line of lines) {
-    const [cHost, cTime] = line.split(",");
-    if (cHost === host && now - Number(cTime) < COOLDOWN_MS) return true;
+    const parts = line.split(",");
+    if (parts.length >= 2) {
+      const [cHost, cTime] = parts;
+      if (cHost === host && now - Number(cTime) < COOLDOWN_MS) {
+        return true;
+      }
+    }
   }
   return false;
 }
 
 async function setServerCooldown(ns: NS, host: string): Promise<void> {
-  let content = "";
   const now = Date.now();
-  if (ns.fileExists(COOLDOWN_FILE)) {
-    const lines = ns.read(COOLDOWN_FILE).split("\n");
-    content = lines
-      .filter(
-        (line) => line.trim() && now - Number(line.split(",")[1]) < COOLDOWN_MS,
-      )
-      .join("\n");
-  }
-  content += (content ? "\n" : "") + `${host},${now}`;
-  await ns.write(COOLDOWN_FILE, content, "w");
+  await ns.write(COOLDOWN_FILE, `${host},${now}\n`, "a");
 }
 
 async function dictionaryAttack(
@@ -151,12 +133,8 @@ async function dictionaryAttack(
         pw.length !== details.passwordLength
       )
         continue;
-      const authResult = await ns.dnet.authenticate(host, pw);
-      const authSuccess =
-        typeof authResult === "boolean"
-          ? authResult
-          : Boolean(authResult?.success);
-      if (authSuccess) return pw;
+      // Nutzt jetzt tryAuthenticate statt rohes ns.dnet.authenticate
+      if (await tryAuthenticate(ns, host, pw)) return pw;
     }
   } catch {}
   return null;
@@ -168,18 +146,48 @@ async function fileLootAttack(
   details: ServerAuthDetails,
 ): Promise<string | null> {
   try {
+    const currentHost = ns.getHostname();
     const files = ns.ls(host, ".txt");
+
     for (const file of files) {
+      ns.scp(file, currentHost, host);
       const content = ns.read(file).trim();
-      if (content.length <= (details.passwordLength || 20)) {
-        const authResult = await ns.dnet.authenticate(host, content);
-        const authSuccess =
-          typeof authResult === "boolean"
-            ? authResult
-            : Boolean(authResult?.success);
-        if (authSuccess) return content;
+      ns.rm(file, currentHost);
+
+      if (content.length <= (details.passwordLength || 30)) {
+        // Nutzt jetzt tryAuthenticate statt rohes ns.dnet.authenticate
+        if (await tryAuthenticate(ns, host, content)) return content;
       }
     }
   } catch {}
   return null;
+}
+
+/**
+ * Stellt sicher, dass die Verbindung zum Zielserver aktiv ist.
+ */
+async function ensureConnected(ns: NS, host: string, details?: any): Promise<void> {
+  try {
+    const d = details || ns.dnet.getServerDetails(host);
+    if (d && !d.isConnectedToCurrentServer) {
+      if (typeof (ns.dnet as any).connect === "function") {
+        await (ns.dnet as any).connect(host);
+      } else if (ns.singularity && typeof ns.singularity.connect === "function") {
+        ns.singularity.connect(host);
+      }
+    }
+  } catch {}
+}
+
+/**
+ * Hilfsfunktion für sichere Authentifizierung inklusive automatischer Verbindung.
+ */
+async function tryAuthenticate(ns: NS, host: string, pw: string): Promise<boolean> {
+  try {
+    await ensureConnected(ns, host);
+    const authResult = await ns.dnet.authenticate(host, pw);
+    return isAuthSuccess(authResult);
+  } catch {
+    return false;
+  }
 }

@@ -14,11 +14,10 @@
     "inlineSources": true,
     "rootDir": "src/",
     "outDir": "dist/",
-    "baseUrl": "src/",
     "paths": {
-      "@ns": ["../NetscriptDefinitions.d.ts", "./NetscriptDefinitions.d.ts"],
-      "/*": ["*"],
-      "*": ["*"]
+      "@ns": ["./NetscriptDefinitions.d.ts"],
+      "/*": ["./src/*"],
+      "*": ["./src/*"]
     }
   },
   "include": [

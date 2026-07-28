@@ -1,5 +1,4 @@
 import { NS } from "@ns";
-import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths";
 
