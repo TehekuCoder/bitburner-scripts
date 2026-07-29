@@ -200,32 +200,57 @@ export async function main(ns: NS): Promise<void> {
       const inCooldown = isServerInCooldown(ns, hostname);
 
       if (details && !details.hasSession && !inCooldown) {
-        // Prüfen, ob für dieses Ziel lokal bereits ein Solver läuft
         const targetSolverNormalized = normalizeScriptPath(solverScript);
-        const isSolverRunning = ns.ps(currentHost).some(
-          (proc) =>
-            normalizeScriptPath(proc.filename) === targetSolverNormalized &&
-            proc.args[0] === hostname,
-        );
 
-        if (!isSolverRunning) {
-          const solverRam = ns.getScriptRam(solverScript, currentHost);
-          const freeRam = ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
+        // 🟢 1. PRÜFEN: Läuft auf diesem Host GERADE SCHON ein Solver?
+        const isAnySolverRunning = ns
+          .ps(currentHost)
+          .some(
+            (proc) =>
+              normalizeScriptPath(proc.filename) === targetSolverNormalized,
+          );
 
-          if (freeRam >= solverRam) {
-            logger.info(`⚡ Starte LOKALEN Solver für '${hostname}' auf ${currentHost}...`);
-            ns.exec(solverScript, currentHost, 1, hostname);
-          } else {
-            logger.warn(
-              `⚠️ Zu wenig RAM auf '${currentHost}' um Solver für '${hostname}' auszuführen.`,
-            );
+        // Wenn bereits ein Solver arbeitet, brechen wir die Target-Suche für diesen Tick ab
+        if (isAnySolverRunning) {
+          logger.info(
+            `⏳ Solver läuft bereits auf ${currentHost}. Warte auf Fertigstellung...`,
+          );
+          break;
+        }
+
+        // 🟢 2. RAM-CHECK INKLUSIVE SUB-SOLVER BUFFER (2.60 GB)
+        const SUB_SOLVER_BUFFER_RAM = 2.6;
+        const solverRam = ns.getScriptRam(solverScript, currentHost);
+        const totalRequiredRam = solverRam + SUB_SOLVER_BUFFER_RAM;
+
+        const freeRam =
+          ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
+
+        if (freeRam >= totalRequiredRam) {
+          logger.info(
+            `⚡ Starte LOKALEN Solver für '${hostname}' auf ${currentHost}...`,
+          );
+          const pid = ns.exec(solverScript, currentHost, 1, hostname);
+
+          if (pid > 0) {
+            // 🟢 3. WICHTIG: Nach erfolgreichem Start Schleife beenden,
+            // damit im selben Tick keine weiteren Ziele gestartet werden!
+            break;
           }
+        } else {
+          logger.warn(
+            `⚠️ Zu wenig RAM auf '${currentHost}' für '${hostname}'. Benötigt: ${totalRequiredRam.toFixed(2)} GB | Frei: ${freeRam.toFixed(2)} GB`,
+          );
         }
       }
     }
 
     // Periodischer Loot / Phishing Zyklus
-    if (currentHost !== "home" && !ns.scriptRunning(lootScript, currentHost) && (now - lastLootTime > LOOT_INTERVAL_MS)) {
+    if (
+      currentHost !== "home" &&
+      !ns.scriptRunning(lootScript, currentHost) &&
+      now - lastLootTime > LOOT_INTERVAL_MS
+    ) {
       if (
         !ns.fileExists(phishScript, currentHost) ||
         !ns.fileExists(lootScript, currentHost)
@@ -233,7 +258,8 @@ export async function main(ns: NS): Promise<void> {
         await provisionServer(ns, currentHost);
       }
 
-      const freeRam = ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
+      const freeRam =
+        ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
       const phishRam = ns.getScriptRam(phishScript, currentHost);
       const lootRam = ns.getScriptRam(lootScript, currentHost);
       const requiredMaxWorkerRam = Math.max(phishRam, lootRam);

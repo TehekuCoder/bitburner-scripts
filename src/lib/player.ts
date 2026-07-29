@@ -1,7 +1,7 @@
 import { NS, Player, FactionName, CompanyName } from "@ns";
 import {
   MEGACORPS,
-  HACKING_FACTIONS,
+  FACTION_ROADMAP,
   COMBAT_FACTION_REQUIREMENTS,
 } from "./constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
@@ -15,17 +15,19 @@ import {
 /**
  * Evaluiert die nächste Fraktion auf der Roadmap, die noch Rep-Bedarf hat.
  * Berücksichtigt ausschließlich Fraktionen, bei denen wir bereits Mitglied sind.
+ * Ignoriert die Gang-Fraktion, da deren Reputation über Gang-Aktivitäten läuft.
  */
 export function findNextRoadmapFaction(
   ns: NS,
   augRoadmap: AugmentTarget[] = [],
+  gangFaction?: string | null,
 ): TargetFactionResult | null {
   const playerFactions = ns.getPlayer().factions;
 
   for (const target of augRoadmap) {
-    // Prüfe nur Fraktionen, bei denen wir bereits Mitglied sind
-    const validFactions = target.factions.filter((f) =>
-      playerFactions.includes(f),
+    // 🛑 GANG-FILTER: Ignoriere die Gang-Fraktion für manuellen Ruf-Grind!
+    const validFactions = target.factions.filter(
+      (f) => playerFactions.includes(f) && f !== gangFaction,
     );
     if (validFactions.length === 0) continue;
 
@@ -183,7 +185,7 @@ export function determineStrategy(
           : Object.values(MEGACORPS)[0];
       }
     } else {
-      const missingCorpFaction = HACKING_FACTIONS.find(
+      const missingCorpFaction = FACTION_ROADMAP.find(
         (f) =>
           !p.factions.includes(f.name) &&
           MEGACORPS[f.name] !== undefined &&

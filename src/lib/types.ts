@@ -242,7 +242,9 @@ export interface BotState
     BotStateProgress,
     BotStateNetwork,
     BotStateMeta,
+    GangState,
     BatcherState {}
+    
 
 export interface SleeveOptions {
   globalMode?: SleeveMode;
@@ -380,3 +382,13 @@ export interface MultiTargetState {
   estimatedIncomePerSec: number;
 }
 
+export interface GangState {
+  hasGang: boolean;
+  gangFaction?: FactionName;
+  isHackingGang?: boolean;
+  gangMembersCount?: number;     // z. B. 8 (von 12)
+  gangRespect?: number;          // Aktueller Ruf der Gang
+  gangWantedPenalty?: number;    // Multiplikator/Penalty (z.B. 0.95 = 5% Makel)
+  gangPhase?: string;            // z. B. "RECRUITING", "TRAINING", "TERRITORY", "FARMIN_REP"
+  gangProgress?: string;         // Für UI/UI-Helper ("12/12 Members | Rep: 2.4M")
+}

@@ -33,7 +33,7 @@ export const MEGACORPS: Record<string, CompanyName> = {
 };
 
 // --- ROADMAP LISTS ---
-export const HACKING_FACTIONS: FactionConfig[] = [
+export const FACTION_ROADMAP: FactionConfig[] = [
   { name: "CyberSec", minStat: 0, priority: 1 },
   { name: "Tian Di Hui", minStat: 0, priority: 2 },
   { name: "Netburners", minStat: 0, priority: 3 },

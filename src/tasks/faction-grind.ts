@@ -1,5 +1,6 @@
 import { NS, FactionName } from "@ns";
-import { loadFactionState, patchFactionState } from "/lib/state.js";
+import { CITY_FACTIONS } from "/lib/constants.js";
+import { loadFactionState, loadGangState, patchFactionState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.print("🧬 Faction-Grinder Subsystem initialisiert.");
@@ -14,11 +15,77 @@ export async function main(ns: NS): Promise<void> {
     }
 
     const faction: FactionName = state.targetFaction as FactionName;
+    const player = ns.getPlayer();
     const sing = ns.singularity;
+
+    // ------------------------------------------------------------------
+    // 🛡️ GANG FACTION LOCKOUT CHECK (Direkt-API + State Fallback)
+    // ------------------------------------------------------------------
+    let isGangFaction = false;
+    try {
+      if (ns.gang.inGang()) {
+        const gangInfo = ns.gang.getGangInformation();
+        if (gangInfo.faction === faction) {
+          isGangFaction = true;
+        }
+      }
+    } catch {
+      // Gang-API (noch) nicht verfügbar oder kein Zugriff
+    }
+
+    const gangState = loadGangState(ns);
+    if (isGangFaction || (gangState?.hasGang && gangState.gangFaction === faction)) {
+      ns.print(
+        `🛑 [GANG LOCKOUT] Manuelle Arbeit für [${faction}] unmöglich (Gang-Fraktion!). Setze Ziel zurück...`
+      );
+      // Ziel im State leeren, damit der Dispatcher ein neues Ziel wählt:
+      patchFactionState(ns, { targetFaction: undefined });
+      await ns.sleep(3000);
+      continue;
+    }
+
+    // ------------------------------------------------------------------
+    // 🛡️ CITY FACTION LOCKOUT CHECK
+    // ------------------------------------------------------------------
+    const isTargetCity = CITY_FACTIONS.includes(faction);
+    const currentCity = CITY_FACTIONS.find((c) => player.factions.includes(c));
+
+    if (isTargetCity && currentCity && currentCity !== faction) {
+      ns.print(
+        `🛑 [CITY LOCKOUT] Arbeit für [${faction}] unmöglich! Bereits bei [${currentCity}]. Setze Ziel zurück...`
+      );
+      patchFactionState(ns, { targetFaction: undefined });
+      await ns.sleep(3000);
+      continue;
+    }
+
+    // ------------------------------------------------------------------
+    // 🛡️ MITGLIEDSCHAFT & AUTO-JOIN
+    // ------------------------------------------------------------------
+    const isMember = player.factions.includes(faction);
+
+    if (!isMember) {
+      const invites = sing.checkFactionInvitations();
+
+      if (invites.includes(faction)) {
+        if (!isTargetCity || currentCity === null) {
+          if (sing.joinFaction(faction)) {
+            ns.print(`🎉 Einladung zu [${faction}] angenommen!`);
+          }
+        }
+      } else {
+        ns.print(`⏳ Keine Einladung für [${faction}] vorhanden. Warte...`);
+        await ns.sleep(5000);
+        continue;
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // 🚀 ARBEIT STARTEN / PRÜFEN
+    // ------------------------------------------------------------------
     const currentWork = sing.getCurrentWork();
 
-    // 🟢 Type-Cast für strict TS
-    let isWorkingCorrectly =
+    const isWorkingCorrectly =
       currentWork &&
       currentWork.type === "FACTION" &&
       (currentWork as any).factionName === faction;
@@ -26,34 +93,28 @@ export async function main(ns: NS): Promise<void> {
     if (!isWorkingCorrectly) {
       ns.print("🚀 Wechsle Arbeit auf Fraktion: " + faction);
 
-      let success = sing.workForFaction(
-        faction,
-        ns.enums.FactionWorkType.hacking,
-        false,
-      );
-      if (!success) {
-        success = sing.workForFaction(
-          faction,
-          ns.enums.FactionWorkType.field,
-          false,
-        );
-      }
-      if (!success) {
+      const success =
+        sing.workForFaction(faction, ns.enums.FactionWorkType.hacking, false) ||
+        sing.workForFaction(faction, ns.enums.FactionWorkType.field, false) ||
         sing.workForFaction(faction, ns.enums.FactionWorkType.security, false);
+
+      if (!success) {
+        ns.print(`❌ Konnte keine gültige Arbeitsart für [${faction}] starten.`);
       }
     }
 
+    // ------------------------------------------------------------------
+    // 📊 STATE UPDATE
+    // ------------------------------------------------------------------
     const currentRep = sing.getFactionRep(faction);
-
-    // 🟢 Korrektur: Wir speichern die aktuelle Rep in 'factionCurrentReps', nicht in 'factionTargets'!
     const updatedCurrentReps = {
       ...(state.factionCurrentReps ?? {}),
     } as Record<FactionName, number>;
+    
     updatedCurrentReps[faction] = currentRep;
 
     patchFactionState(ns, {
-      // progressBar wurde hier entfernt, damit der Dispatcher die Kontrolle behält!
-      factionCurrentReps: updatedCurrentReps, // Verhindert das Zerschießen deiner Kernel-Ziele
+      factionCurrentReps: updatedCurrentReps,
     });
 
     await ns.sleep(2000);

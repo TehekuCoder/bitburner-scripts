@@ -1,4 +1,4 @@
-import { NS, FactionName, CompanyName } from "@ns";
+import { NS, FactionName, CompanyName, ProgramName } from "@ns";
 
 import { generateProgressBar } from "../ui/ui-helper.js";
 import {
@@ -19,11 +19,14 @@ import {
   applyToAllMegacorps,
   determineStrategy,
 } from "/lib/player.js";
-import { loadBnMults, loadState, patchState } from "/lib/state.js";
+import {
+  loadBnMults,
+  loadGangState,
+  loadState,
+  patchState,
+} from "/lib/state.js";
 import { ScriptList, BotStrategy } from "/lib/types.js";
 import { PATHS } from "/lib/paths.js";
-
-import { AugmentTarget } from "/lib/types.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -70,7 +73,7 @@ export async function main(ns: NS): Promise<void> {
     augAnalyze: PATHS.tasks.analyzeAug,
     orchestrator: PATHS.core.orchestrator,
     suites: PATHS.core.suites,
-    gang: PATHS.daemons.gang,
+    gang: PATHS.managers.gang,
   };
 
   let lastAugAnalysis = 0;
@@ -89,6 +92,9 @@ export async function main(ns: NS): Promise<void> {
     }
 
     const currentState = loadState(ns);
+    const gangState = loadGangState(ns);
+    const gangFaction = gangState?.hasGang ? gangState.gangFaction : null;
+
     const factionTargets = (currentState?.factionTargets ?? {}) as Partial<
       Record<FactionName, number>
     >;
@@ -101,15 +107,18 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // Fraktions-Ziel über Roadmap ermitteln
+    // Fraktions-Ziel über Roadmap ermitteln (Gang-Fraktion wird ignoriert)
     const augRoadmap = currentState?.augRoadMap ?? [];
-    const nextRoadmapFaction = findNextRoadmapFaction(ns, augRoadmap);
+    const nextRoadmapFaction = findNextRoadmapFaction(
+      ns,
+      augRoadmap,
+      gangFaction,
+    );
 
     const p = ns.getPlayer();
 
-    // 2. Home-Server optimieren
-
-    handleSingularityPurchases(ns,logger);
+    // 2. Home-Server / Singularity Upgrades & Kaffe
+    handleSingularityPurchases(ns, logger);
 
     // 3. Fraktions-Reputationen & Roadmap evaluieren
     const currentFactionReps: Record<string, number> = {};
@@ -194,10 +203,10 @@ export async function main(ns: NS): Promise<void> {
     ) {
       cachedFallbackTarget = findBestTarget(
         ns,
-        allNetworkServers, // 1. nodes
-        p.skills.hacking, // 2. playerHackingLevel (gefehlt!)
-        bnMults, // 3. bnMults
-        currentState?.batcherTarget ?? null, // 4. blacklistTarget
+        allNetworkServers,
+        p.skills.hacking,
+        bnMults,
+        currentState?.batcherTarget ?? null,
       );
       lastFallbackUpdate = now;
     }
@@ -287,15 +296,12 @@ export async function main(ns: NS): Promise<void> {
       dynamicMaxXp = 1500;
     }
 
-    let isInGang = false;
-    try {
-      isInGang = ns.gang.inGang();
-    } catch (_) {}
-
-    // 💾 2. Zustand im State-Manager speichern
+    // 💾 Zustand im State-Manager speichern
     patchState(ns, {
       strategy: mode,
-      hasGang: isInGang,
+      hasGang: gangState?.hasGang ?? false,
+      gangFaction: gangFaction ?? undefined,
+
       targetFaction: targetFaction || undefined,
       targetCompany: targetCompany,
       targetStat: mode === "TRAIN" ? targetStat : undefined,
@@ -311,16 +317,26 @@ export async function main(ns: NS): Promise<void> {
       homeMaxRam < 128 && (mode === "CRIME" || mode === "KILLS");
 
     if (isEarlyGameCrime) {
-      if (ns.isRunning(PATHS.tasks.augShopping, "home"))
+      if (
+        PATHS.tasks.augShopping &&
+        ns.isRunning(PATHS.tasks.augShopping, "home")
+      ) {
         ns.scriptKill(PATHS.tasks.augShopping, "home");
-      const rogueScripts = ["daemons/hacknet.js", "daemons/hacknet-early.js"];
+      }
+      const rogueScripts = [
+        PATHS.daemons.hacknet,
+        PATHS.daemons.hacknetEarly,
+      ].filter(Boolean) as string[];
+
       for (const script of rogueScripts) {
-        if (ns.fileExists(script, "home") && ns.isRunning(script, "home"))
+        if (ns.fileExists(script, "home") && ns.isRunning(script, "home")) {
           ns.scriptKill(script, "home");
+        }
       }
     } else {
       if (
         getFreeRam() > 12 &&
+        PATHS.tasks.augShopping &&
         ns.fileExists(PATHS.tasks.augShopping, "home") &&
         !ns.isRunning(PATHS.tasks.augShopping, "home")
       ) {
@@ -328,7 +344,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // ⚙️ 3. Microservices verwalten
+    // ⚙️ Microservices verwalten
     manageMicroservices(
       ns,
       mode,
@@ -353,11 +369,11 @@ function manageMicroservices(
   isBatcherActive?: boolean,
 ): void {
   const modeToScript: Record<string, string> = {
-    REP: "tasks/faction-grind.js",
-    CORP: "tasks/corp.js",
-    TRAIN: "tasks/train.js",
-    CRIME: "tasks/crime.js",
-    KILLS: "tasks/crime.js",
+    REP: PATHS.tasks.faction,
+    CORP: PATHS.tasks.corp,
+    TRAIN: PATHS.tasks.train,
+    CRIME: PATHS.tasks.crime,
+    KILLS: PATHS.tasks.crime,
   };
 
   let targetScript = modeToScript[currentMode];
@@ -367,12 +383,12 @@ function manageMicroservices(
     (hasSavingTarget || !ns.isRunning(sysOrchestratorScript, "home")) &&
     !isBatcherActive
   ) {
-    targetScript = "tasks/crime.js";
+    targetScript = PATHS.tasks.crime;
   }
 
   // Nicht mehr benötigte Microservices beenden
   for (const [_, script] of Object.entries(modeToScript)) {
-    if (script !== targetScript && ns.isRunning(script, "home")) {
+    if (script && script !== targetScript && ns.isRunning(script, "home")) {
       ns.scriptKill(script, "home");
       logger.info(`⏹️ Veralteten Microservice beendet: ${script}`);
     }
@@ -448,8 +464,11 @@ function handleSingularityPurchases(ns: NS, logger: Logger): void {
 
     for (const [prog, reqLevel] of Object.entries(programGates)) {
       if (!ns.fileExists(prog, "home") && currentHacking >= reqLevel) {
-        if (sing.purchaseProgram(prog as any)) {
-          logger.success(`💾 Software lizenziert: ${prog}`);
+        const cost = sing.getDarkwebProgramCost(prog as ProgramName);
+        if (cost > 0 && player.money >= cost) {
+          if (sing.purchaseProgram(prog as any)) {
+            logger.success(`💾 Software lizenziert: ${prog}`);
+          }
         }
       }
     }
@@ -461,7 +480,9 @@ function handleSingularityPurchases(ns: NS, logger: Logger): void {
     if (sing.upgradeHomeRam()) {
       const newRam = ns.getServerMaxRam("home");
       ns.toast(`Home RAM erweitert auf ${ns.format.ram(newRam)}!`, "success");
-      logger.success(`🏠 Home-RAM Upgrade durchgeführt: ${ns.format.ram(newRam)}`);
+      logger.success(
+        `🏠 Home-RAM Upgrade durchgeführt: ${ns.format.ram(newRam)}`,
+      );
     }
   }
 }

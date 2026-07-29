@@ -28,7 +28,7 @@ export async function main(ns: NS): Promise<void> {
     augAnalyze: PATHS.tasks.analyzeAug,
     orchestrator: PATHS.core.orchestrator,
     suites: PATHS.core.suites,
-    gang: PATHS.daemons.gang,
+    gang: PATHS.managers.gang,
   };
 
   if (
@@ -91,18 +91,12 @@ export async function main(ns: NS): Promise<void> {
       return effectiveFree >= reqRam && homeFree >= minFreeRamRequirement;
     };
 
-    // 1. HACKING ORCHESTRATOR (Läuft IMMER)
-    if (canRun(scripts.orchestrator)) {
-      logger.success("🚀 Starte Hacking-Orchestrator...");
-      ns.run(scripts.orchestrator, 1);
-    }
-
-    // 2. Suite-Manager Daemon (Ab 16GB)
+    // 1. Suite-Manager Daemon (Ab 16GB)
     if (homeMax >= 16 && canRun(PATHS.core.suites, 12.0)) {
       ns.run(PATHS.core.suites, 1);
     }
 
-    // 3. Infrastruktur-Manager (Ab 64GB)
+    // 2. Infrastruktur-Manager (Ab 64GB)
     if (
       homeMax >= 64 &&
       ns.fileExists(scripts.infra, "home") &&
@@ -113,18 +107,18 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 4. Darknet- & Crawler-Daemons (Erst ab 256 GB RAM!)
+    // 3. Darknet- & Crawler-Daemons (Erst ab 256 GB RAM!)
     if (homeMax >= 256 && hasNavigator) {
       if (canRun(scripts.dnet)) ns.run(scripts.dnet, 1);
       if (canRun(scripts.crawler)) ns.run(scripts.crawler, 1);
     }
 
-    // 5. Automatischer Backdoor-Manager
+    // 4. Automatischer Backdoor-Manager
     if (canRun(scripts.backdoor)) {
       ns.run(scripts.backdoor, 1);
     }
 
-    // 6. DISPATCHER MODUS (Erst ab 256 GB RAM UND SF4 Singularity API)
+    // 5. DISPATCHER MODUS (Erst ab 256 GB RAM UND SF4 Singularity API)
     const isDispatcherReady =
       homeMax >= 256 &&
       hasSingularity &&
@@ -135,7 +129,7 @@ export async function main(ns: NS): Promise<void> {
       ns.run(scripts.dispatcher, 1);
     }
 
-    // 7. Gang-Daemon Management
+    // 6. Gang-Daemon Management
     let isInGang = false;
     try {
       isInGang = ns.gang.inGang();
@@ -143,6 +137,12 @@ export async function main(ns: NS): Promise<void> {
 
     if (isInGang && canRun(scripts.gang)) {
       ns.run(scripts.gang, 1);
+    }
+
+    // 7. HACKING ORCHESTRATOR (Läuft IMMER)
+    if (canRun(scripts.orchestrator)) {
+      logger.success("🚀 Starte Hacking-Orchestrator...");
+      ns.run(scripts.orchestrator, 1);
     }
 
     // 8. End-Game Trigger

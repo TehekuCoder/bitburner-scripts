@@ -31,7 +31,7 @@ export async function main(ns: NS): Promise<void> {
     augAnalyze: PATHS.tasks.analyzeAug,
     orchestrator: PATHS.core.orchestrator,
     suites: PATHS.core.suites,
-    gang: PATHS.daemons.gang
+    gang: PATHS.managers.gang
   };
 
   while (true) {

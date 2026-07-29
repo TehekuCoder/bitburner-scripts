@@ -22,7 +22,6 @@ export const PATHS = {
     hacknet: "daemons/hacknet.js",
     perfMonitor: "daemons/perf-monitor.js",
     suite: "daemons/suite-manager.js",
-    gang: "daemons/gang.js"
   },
   lib: {
     constants: "lib/constants.js",
@@ -36,12 +35,14 @@ export const PATHS = {
     state: "lib/state.js",
     types: "lib/types.js",
     executor: "lib/worker-executor.js",
+    gang: "lib/gang-utils.js"
   },
   managers: {
     dnet: "managers/dnet-master.js",
     finance: "managers/finance-manager.js",
     infra: "managers/infra-manager.js",
     sleeve: "managers/sleeve-manager.js",
+    gang: "managers/gang-manager.js"
   },
   payloads: {
     grow: "payloads/grow.js",
@@ -83,6 +84,7 @@ export const PATHS = {
     batcher: "ui/batcher-ui.js",
     infra: "ui/infra-ui.js",
     sleeve: "ui/sleeve-ui.js",
+    gang: "ui/gang-ui.js",
     helper: "ui/ui-helper.js",
   },
   utils: {

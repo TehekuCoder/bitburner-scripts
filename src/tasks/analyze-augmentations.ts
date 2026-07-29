@@ -1,7 +1,7 @@
 import { NS, FactionName } from "@ns";
 // Direkte Imports statt Barrel-Export
 import { patchAugmentState } from "lib/state.js";
-import { HACKING_FACTIONS } from "lib/constants.js";
+import { FACTION_ROADMAP } from "lib/constants.js";
 // ➕ Import der Player-Helper
 import { getPurchasedUninstalledAugs } from "lib/player.js";
 
@@ -25,7 +25,7 @@ export async function main(ns: NS): Promise<void> {
   const augMap = new Map<string, AugmentTarget>();
 
   // 1. Alle Fraktionen durchsuchen und Augments konsolidieren
-  for (const factionObj of HACKING_FACTIONS) {
+  for (const factionObj of FACTION_ROADMAP) {
     const faction = factionObj.name as FactionName;
     let factionAugs: string[] = [];
 
