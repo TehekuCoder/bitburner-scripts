@@ -182,7 +182,12 @@ function handleTasks(
     }
 
     if (member.task !== targetTask) {
-      ns.gang.setMemberTask(member.name, targetTask);
+      const success = ns.gang.setMemberTask(member.name, targetTask);
+      if (!success) {
+        ns.tprint(
+          `⚠️ [GANG ERROR] Task '${targetTask}' konnte ${member.name} nicht zugewiesen werden!`,
+        );
+      }
     }
   });
 }
@@ -205,7 +210,7 @@ function getMoneyTask(isHacking: boolean, stat: number): string {
     return "Money Laundering";
   } else {
     if (stat < 300) return "Mug People";
-    if (stat < 600) return "Deals";
+    if (stat < 600) return "Deal Drugs"; // 👈 Korrigiert: "Deal Drugs" statt "Deals"
     return "Human Trafficking";
   }
 }

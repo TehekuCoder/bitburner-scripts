@@ -6,10 +6,7 @@ import { PATHS } from "/lib/paths";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  const logger = new Logger(
-    ns,
-    "ShotgunEngine"
-  );
+  const logger = new Logger(ns, "ShotgunEngine");
 
   const target = (ns.args[0] as string) || "n00dles";
 
@@ -21,7 +18,9 @@ export async function main(ns: NS): Promise<void> {
 
   logger.info(`💥 Engine-Shotgun gestartet für Ziel: [${target}]`);
 
-  let lastState: "HEALTHY" | "REPAIR" | null = null;
+  // Startzustand: Wenn wir neu starten, gehen wir erst von REPARATUR aus
+  let currentState: "HEALTHY" | "REPAIR" = "REPAIR";
+  let lastLoggedState: "HEALTHY" | "REPAIR" | null = null;
 
   while (true) {
     if (!ns.serverExists(target)) {
@@ -42,20 +41,26 @@ export async function main(ns: NS): Promise<void> {
     const curMoney = ns.getServerMoneyAvailable(target);
     const maxMoney = ns.getServerMaxMoney(target);
 
-    const isDePrepped =
-      curSec - minSec > 2.0 || (maxMoney > 0 && curMoney / maxMoney < 0.7);
-
     const moneyPctVal = maxMoney > 0 ? (curMoney / maxMoney) * 100 : 100;
     const moneyPct = moneyPctVal.toFixed(1);
     const secDeltaVal = curSec - minSec;
     const secDelta = secDeltaVal.toFixed(2);
 
-    const isHealthy = moneyPctVal >= 85 && secDeltaVal <= 1.5;
-    const currentState: "HEALTHY" | "REPAIR" =
-      isDePrepped || !isHealthy ? "REPAIR" : "HEALTHY";
+    // 🎯 HYSTERESE-LOGIK (Puffer gegen Jojo-Effekt):
+    // - Schalte auf REPARATUR um, wenn Geld unter 70% fällt ODER Security > +2.5 steigt
+    // - Erst wieder zurück auf HEALTHY, wenn Geld wieder >= 92% UND Security <= +0.5 ist!
+    if (currentState === "HEALTHY") {
+      if (moneyPctVal < 70.0 || secDeltaVal > 2.5) {
+        currentState = "REPAIR";
+      }
+    } else {
+      if (moneyPctVal >= 92.0 && secDeltaVal <= 0.5) {
+        currentState = "HEALTHY";
+      }
+    }
 
-    // Statuswechsel loggen
-    if (currentState !== lastState) {
+    // Statuswechsel im Log ausgeben
+    if (currentState !== lastLoggedState) {
       if (currentState === "REPAIR") {
         logger.warn(
           `⚠️ Ziel [${target}] ungesund ($: ${moneyPct}% | Sec: +${secDelta})! Schalte auf Auto-Reparatur um.`,
@@ -65,7 +70,7 @@ export async function main(ns: NS): Promise<void> {
           `🎯 Ziel [${target}] stabil ($: ${moneyPct}% | Sec: +${secDelta}). Starte Shotgun-Feuer!`,
         );
       }
-      lastState = currentState;
+      lastLoggedState = currentState;
     }
 
     patchBatcherState(ns, {
@@ -131,7 +136,7 @@ function deployShotgunWave(
     let wThreads = 0;
 
     if (isRepairing) {
-      // 🛠️ REPARATUR-VERHÄLTNIS: 4x Grow (80%), 1x Weaken (20%)
+      // 🛠️ REPARATUR-VERHÄLTNIS: 4x Grow, 1x Weaken
       const unitCost = 4 * gCost + 1 * wCost;
       const units = Math.floor(freeRam / unitCost);
 
@@ -141,14 +146,20 @@ function deployShotgunWave(
         freeRam -= units * unitCost;
       }
 
-      // Rest-RAM gierig auffüllen (Erst Grow, dann Weaken)
+      // Rest-RAM balanciert auffüllen (1x Weaken pro 4x Grow, um Security nicht steigen zu lassen)
+      while (freeRam >= gCost * 4 + wCost) {
+        gThreads += 4;
+        wThreads += 1;
+        freeRam -= gCost * 4 + wCost;
+      }
+      // Falls noch winziger Rest bleibt: Erst Weaken zum Absichern, dann Grow
+      if (freeRam >= wCost) {
+        wThreads++;
+        freeRam -= wCost;
+      }
       while (freeRam >= gCost) {
         gThreads++;
         freeRam -= gCost;
-      }
-      while (freeRam >= wCost) {
-        wThreads++;
-        freeRam -= wCost;
       }
     } else {
       // 💥 SHOTGUN-VERHÄLTNIS: 1x Hack (10%), 5x Grow (50%), 4x Weaken (40%)
@@ -162,32 +173,44 @@ function deployShotgunWave(
         freeRam -= units * unitCost;
       }
 
-      // Rest-RAM gierig auffüllen (Weaken -> Grow -> Hack)
-      while (freeRam >= wCost) {
+      // 🛑 OPTIMIERUNG REST-RAM:
+      // Keine sture Weaken-Schleife mehr! Wir füllen in Minipaketen auf (1G + 1W oder 1H + 1W).
+      while (freeRam >= gCost + wCost) {
+        gThreads++;
+        wThreads++;
+        freeRam -= gCost + wCost;
+      }
+      if (freeRam >= hCost + wCost) {
+        hThreads++;
+        wThreads++;
+        freeRam -= hCost + wCost;
+      }
+      if (freeRam >= wCost) {
         wThreads++;
         freeRam -= wCost;
-      }
-      while (freeRam >= gCost) {
-        gThreads++;
-        freeRam -= gCost;
-      }
-      while (freeRam >= hCost) {
-        hThreads++;
-        freeRam -= hCost;
       }
     }
 
     // Skripte ausführen
     let nodeUsed = false;
-    if (hThreads > 0 && ns.exec(scripts.hack, node, hThreads, target, 0, Math.random()) > 0) {
+    if (
+      hThreads > 0 &&
+      ns.exec(scripts.hack, node, hThreads, target, 0, Math.random()) > 0
+    ) {
       totalHackThreads += hThreads;
       nodeUsed = true;
     }
-    if (gThreads > 0 && ns.exec(scripts.grow, node, gThreads, target, 0, Math.random()) > 0) {
+    if (
+      gThreads > 0 &&
+      ns.exec(scripts.grow, node, gThreads, target, 0, Math.random()) > 0
+    ) {
       totalGrowThreads += gThreads;
       nodeUsed = true;
     }
-    if (wThreads > 0 && ns.exec(scripts.weaken, node, wThreads, target, 0, Math.random()) > 0) {
+    if (
+      wThreads > 0 &&
+      ns.exec(scripts.weaken, node, wThreads, target, 0, Math.random()) > 0
+    ) {
       totalWeakenThreads += wThreads;
       nodeUsed = true;
     }
@@ -202,7 +225,8 @@ function deployShotgunWave(
       `🌊 Welle gefeuert [${isRepairing ? "REPARATUR" : "SHOTGUN"}] | Nodes: ${activeNodes}/${workerNodes.length} | Threads -> H: ${totalHackThreads} | G: ${totalGrowThreads} | W: ${totalWeakenThreads}`,
     );
   } else {
-    // Nur noch als DEBUG-Log, um das Terminal/Logfile nicht zu spamen, wenn die alten Wellen noch laufen
-    logger.debug(`⏳ Welle abgewartet – Netzwerk-RAM aktuell noch voll ausgelastet.`);
+    logger.debug(
+      `⏳ Welle abgewartet – Netzwerk-RAM aktuell noch voll ausgelastet.`,
+    );
   }
 }

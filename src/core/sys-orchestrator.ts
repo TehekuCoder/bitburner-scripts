@@ -109,9 +109,18 @@ export async function main(ns: NS): Promise<void> {
  */
 function stopAllEngines(ns: NS): void {
   const enginePaths = Object.values(PATHS.core.engines);
-  for (const engineScript of enginePaths) {
-    if (ns.isRunning(engineScript, "home")) {
-      ns.scriptKill(engineScript, "home");
+  const runningProcs = ns.ps("home");
+
+  for (const proc of runningProcs) {
+    if (proc.pid === ns.pid) continue; // Orchestrator nicht selbst beenden
+
+    const isEngine = enginePaths.some(
+      (engineScript) =>
+        proc.filename === engineScript || proc.filename.includes(engineScript),
+    );
+
+    if (isEngine) {
+      ns.kill(proc.pid);
     }
   }
 }
@@ -223,22 +232,20 @@ function selectBestTarget(
   if (currentTarget && ns.serverExists(currentTarget)) {
     const currentMaxMoney = ns.getServerMaxMoney(currentTarget);
     const bestMaxMoney = ns.getServerMaxMoney(bestCandidate);
-    const currentReq = ns.getServerRequiredHackingLevel(currentTarget) ?? 0;
-    const bestReq = ns.getServerRequiredHackingLevel(bestCandidate) ?? 0;
 
     const threshold = playerSkill < 300 ? 1.3 : 1.8;
-    const currentIsStillCompetitive =
-      currentMaxMoney >= bestMaxMoney * threshold ||
-      (currentMaxMoney >= bestMaxMoney && currentReq <= bestReq);
 
-    if (currentIsStillCompetitive) {
+    // 🟢 Nur wechseln, wenn das neue Ziel spürbar mehr Geld bringt
+    const isBestSignificantlyBetter =
+      bestMaxMoney > currentMaxMoney * threshold;
+
+    if (!isBestSignificantlyBetter) {
       return currentTarget;
     }
   }
 
   return bestCandidate;
 }
-
 /**
  * Startet das jeweilige Sub-System als isolierten Prozess.
  */

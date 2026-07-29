@@ -8,13 +8,32 @@ import {
   Player,
 } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { SleeveMode, SleeveData, BotStrategy, SleeveOptions } from "lib/types.js";
+import { SleeveMode, SleeveData, SleeveOptions } from "lib/types.js";
 import { MEGACORPS, COMBAT_STATS, STAT_MAP } from "lib/constants.js";
-
-
+import { loadGangState } from "/lib/state.js";
 
 let lastShoppingScan = 0;
 const SHOPPING_INTERVAL = 15000; // Augmentations-Einkauf nur alle 15 Sek.
+
+/**
+ * Ermittelt sicher den Namen der aktuellen Gang-Fraktion (API + State Fallback).
+ */
+function getGangFactionName(ns: NS): FactionName | null {
+  try {
+    if (ns.gang && ns.gang.inGang()) {
+      return ns.gang.getGangInformation().faction as FactionName;
+    }
+  } catch {
+    /* Gang-API nicht verfügbar/kein Zugriff */
+  }
+
+  const gangState = loadGangState(ns);
+  if (gangState?.hasGang && gangState.gangFaction) {
+    return gangState.gangFaction as FactionName;
+  }
+
+  return null;
+}
 
 export function getFactionsNeedingRep(
   ns: NS,
@@ -25,8 +44,14 @@ export function getFactionsNeedingRep(
 
   const ownedAugsSet = new Set(ownedAugs);
   const factionsNeedingRep: FactionName[] = [];
+  const gangFaction = getGangFactionName(ns);
 
   for (const faction of playerFactions) {
+    // 🛡️ GANG LOCKOUT: Für die eigene Gang-Fraktion können Sleeves nicht arbeiten
+    if (gangFaction && faction === gangFaction) {
+      continue;
+    }
+
     try {
       const factionAugs = ns.singularity.getAugmentationsFromFaction(
         faction as FactionName,
@@ -149,11 +174,7 @@ export function manageAllSleeves(
       handleSleeveShopping(ns, sleeve.index, p, logger, addLocalLog);
     }
 
-    const mode = determineSleeveMode(
-      sleeve.stats,
-      options,
-      factionsNeedingRep,
-    );
+    const mode = determineSleeveMode(sleeve.stats, options, factionsNeedingRep);
 
     manageSingleSleeve(
       ns,
@@ -305,17 +326,21 @@ function tryAssignFactionWork(
   addLocalLog: (msg: string) => void,
 ): boolean {
   let targetFaction: FactionName | null = null;
+  const gangFaction = getGangFactionName(ns);
 
   if (currentTask?.type === "FACTION") {
     const currentFaction = currentTask.factionName as FactionName;
-    if (factionsNeedingRep.includes(currentFaction)) {
+    if (
+      factionsNeedingRep.includes(currentFaction) &&
+      currentFaction !== gangFaction
+    ) {
       targetFaction = currentFaction;
     }
   }
 
   if (!targetFaction) {
     const availableFactions = factionsNeedingRep.filter(
-      (f: FactionName) => !occupiedFactions.includes(f),
+      (f: FactionName) => !occupiedFactions.includes(f) && f !== gangFaction,
     );
     if (availableFactions.length > 0) {
       if (
@@ -366,14 +391,19 @@ function tryAssignFactionWork(
       return true;
     }
 
-    if (ns.sleeve.setToFactionWork(i, targetFaction, work)) {
-      const msg = `🤝 Klon #${i} arbeitet nun für Faction '${targetFaction}' (${work}).`;
-      logger.info(msg);
-      addLocalLog(msg);
-      if (!occupiedFactions.includes(targetFaction)) {
-        occupiedFactions.push(targetFaction);
+    // 🛡️ Safe Execution mit Try/Catch gegen unerwartete API-Excpetions
+    try {
+      if (ns.sleeve.setToFactionWork(i, targetFaction, work)) {
+        const msg = `🤝 Klon #${i} arbeitet nun für Faction '${targetFaction}' (${work}).`;
+        logger.info(msg);
+        addLocalLog(msg);
+        if (!occupiedFactions.includes(targetFaction)) {
+          occupiedFactions.push(targetFaction);
+        }
+        return true;
       }
-      return true;
+    } catch {
+      /* Ignorieren & nächste Arbeitsart versuchen / Fallback nutzen */
     }
   }
 
