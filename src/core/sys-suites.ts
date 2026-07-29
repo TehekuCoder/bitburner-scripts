@@ -14,7 +14,6 @@ export async function main(ns: NS): Promise<void> {
   const scripts: ScriptList = {
     logger: PATHS.core.logger,
     perfMonitor: PATHS.daemons.perfMonitor,
-    earlyFleet: PATHS.daemons.earlyFleet,
     worker: PATHS.payloads.work,
     dispatcher: PATHS.core.dispatcher,
     infra: PATHS.managers.infra,

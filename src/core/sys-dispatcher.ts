@@ -53,7 +53,6 @@ export async function main(ns: NS): Promise<void> {
   const scripts: ScriptList = {
     logger: PATHS.core.logger,
     perfMonitor: PATHS.daemons.perfMonitor,
-    earlyFleet: PATHS.daemons.earlyFleet,
     worker: PATHS.payloads.work,
     dispatcher: PATHS.core.dispatcher,
     infra: PATHS.managers.infra,
@@ -108,7 +107,11 @@ export async function main(ns: NS): Promise<void> {
 
     const p = ns.getPlayer();
 
-    // 2. Fraktions-Reputationen & Roadmap evaluieren
+    // 2. Home-Server optimieren
+
+    handleSingularityPurchases(ns,logger);
+
+    // 3. Fraktions-Reputationen & Roadmap evaluieren
     const currentFactionReps: Record<string, number> = {};
     for (const f of p.factions) {
       currentFactionReps[f] = ns.singularity.getFactionRep(f);
@@ -122,7 +125,7 @@ export async function main(ns: NS): Promise<void> {
       ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
     const currentKarma = (ns as any).heart?.break() ?? 0;
 
-    // 3. Megacorp-Bewerbungen prüfen
+    // 4. Megacorp-Bewerbungen prüfen
     if (
       p.skills.hacking >= 250 &&
       now - lastCorpApplication > REFRESH_INTERVALS.MEGACORP_APPLY
@@ -133,7 +136,7 @@ export async function main(ns: NS): Promise<void> {
 
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-    // 4. Finanz- & Strategie-Schwellenwerte berechnen
+    // 5. Finanz- & Strategie-Schwellenwerte berechnen
     const playerMoney = p.money;
     const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
     const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
@@ -168,7 +171,7 @@ export async function main(ns: NS): Promise<void> {
 
     const isOrchestratorRunning = ns.isRunning(scripts.orchestrator, "home");
 
-    // 5. Strategie ermitteln
+    // 6. Strategie ermitteln
     const strategy = determineStrategy(
       ns,
       p,
@@ -177,14 +180,14 @@ export async function main(ns: NS): Promise<void> {
       currentKarma,
       isOrchestratorRunning,
       factionTargets as Record<FactionName, number>,
-      nextRoadmapFaction, // 👈 Type-Cast verhindert mismatch mit altem FactionConfig-Interface
+      nextRoadmapFaction,
       factionToWorkFor,
       isReadyForFactionGrind,
     );
 
     let { mode, targetFaction, targetCompany, targetStat } = strategy;
 
-    // 6. Fallback-Target ermitteln
+    // 7. Fallback-Target ermitteln
     if (
       now - lastFallbackUpdate > REFRESH_INTERVALS.FALLBACK_TARGET ||
       cachedFallbackTarget === "n00dles"
@@ -199,7 +202,7 @@ export async function main(ns: NS): Promise<void> {
       lastFallbackUpdate = now;
     }
 
-    // 7. Strategie-Oszillation verhindern (Cooldown)
+    // 8. Strategie-Oszillation verhindern (Cooldown)
     const previousStrategy = currentState?.strategy || "MONEY";
 
     if (mode !== previousStrategy) {
@@ -222,7 +225,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 8. Progress Metrics berechnen
+    // 9. Progress Metrics berechnen
     let currentVal = 0;
     let targetVal = 0;
     let label = "";
@@ -282,18 +285,6 @@ export async function main(ns: NS): Promise<void> {
       dynamicMaxXp = 100;
     } else if (p.skills.hacking > 800) {
       dynamicMaxXp = 1500;
-    }
-
-    // 🚀 1. Orchestrator & Dashboard Steuerung
-    if (
-      !isOrchestratorRunning &&
-      ns.fileExists(scripts.orchestrator, "home") &&
-      getFreeRam() >= ns.getScriptRam(scripts.orchestrator, "home")
-    ) {
-      const pid = ns.run(scripts.orchestrator, 1);
-      if (pid > 0) {
-        logger.success(`🚀 Orchestrator gestartet (${scripts.orchestrator})`);
-      }
     }
 
     let isInGang = false;
@@ -430,6 +421,47 @@ function manageMicroservices(
           `RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB.`,
         );
       }
+    }
+  }
+}
+
+function handleSingularityPurchases(ns: NS, logger: Logger): void {
+  const sing = ns.singularity;
+  const player = ns.getPlayer();
+  const currentHacking = player.skills.hacking;
+
+  // 1. TOR Router kaufen
+  if (!ns.hasTorRouter() && player.money >= 200_000 && currentHacking >= 40) {
+    if (sing.purchaseTor()) logger.success("📡 TOR-Router erworben.");
+  }
+
+  // 2. Programme kaufen
+  if (ns.hasTorRouter()) {
+    const programGates: Record<string, number> = {
+      "BruteSSH.exe": 50,
+      "FTPCrack.exe": 150,
+      "relaySMTP.exe": 250,
+      "HTTPWorm.exe": 350,
+      "SQLInject.exe": 500,
+      "Formulas.exe": 0,
+    };
+
+    for (const [prog, reqLevel] of Object.entries(programGates)) {
+      if (!ns.fileExists(prog, "home") && currentHacking >= reqLevel) {
+        if (sing.purchaseProgram(prog as any)) {
+          logger.success(`💾 Software lizenziert: ${prog}`);
+        }
+      }
+    }
+  }
+
+  // 3. Home RAM & Core Upgrades durchführen
+  const ramCost = sing.getUpgradeHomeRamCost();
+  if (ramCost !== Infinity && player.money - 200_000 >= ramCost) {
+    if (sing.upgradeHomeRam()) {
+      const newRam = ns.getServerMaxRam("home");
+      ns.toast(`Home RAM erweitert auf ${ns.format.ram(newRam)}!`, "success");
+      logger.success(`🏠 Home-RAM Upgrade durchgeführt: ${ns.format.ram(newRam)}`);
     }
   }
 }

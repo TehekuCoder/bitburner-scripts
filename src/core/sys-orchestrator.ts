@@ -16,6 +16,9 @@ export async function main(ns: NS): Promise<void> {
   let activeTarget: string | null = null;
   let activeProcessId = 0;
 
+  // 🧹 0. Beim Start des Orchestrators ALLE alten Engines auf home Killen
+  stopAllEngines(ns);
+
   // Multiplikatoren einmalig laden
   let bnMults: Record<string, number> = {};
   try {
@@ -48,18 +51,25 @@ export async function main(ns: NS): Promise<void> {
         `🔄 Statuswechsel: Strategie [${activeStrategy ?? "NONE"} ➡️ ${desiredStrategy}] | Ziel [${activeTarget ?? "NONE"} ➡️ ${target ?? "NONE"}]`,
       );
 
-      // Alt-Engine stoppen
-      if (activeProcessId > 0 && ns.isRunning(activeProcessId)) {
-        ns.kill(activeProcessId);
-      }
-
-      // Worker-Payloads im gesamten Netzwerk säubern
+      // Alt-Engines & Payloads im gesamten Netzwerk radikal säubern
+      stopAllEngines(ns);
       killAllWorkerPayloads(ns, servers);
 
       // Neue Execution Engine starten
-      activeProcessId = switchExecutionEngine(ns, desiredStrategy, target);
-      activeStrategy = desiredStrategy;
-      activeTarget = target;
+      const newPid = switchExecutionEngine(ns, desiredStrategy, target);
+
+      if (newPid > 0) {
+        activeProcessId = newPid;
+        activeStrategy = desiredStrategy;
+        activeTarget = target;
+      } else {
+        logger.error(
+          `❌ Konnte Engine für [${desiredStrategy}] nicht starten! (Zu wenig RAM auf home?)`,
+        );
+        activeStrategy = null;
+        activeTarget = null;
+        activeProcessId = 0;
+      }
 
       // State für Dashboard und Dispatcher aktualisieren
       patchState(ns, {
@@ -95,6 +105,18 @@ export async function main(ns: NS): Promise<void> {
 }
 
 /**
+ * Stoppt rigoros alle bekannten Engine-Skripte auf home.
+ */
+function stopAllEngines(ns: NS): void {
+  const enginePaths = Object.values(PATHS.core.engines);
+  for (const engineScript of enginePaths) {
+    if (ns.isRunning(engineScript, "home")) {
+      ns.scriptKill(engineScript, "home");
+    }
+  }
+}
+
+/**
  * Kernlogik: Wählt die richtige Strategie UND das passendste Ziel aus.
  */
 function evaluateStrategyAndTarget(
@@ -117,7 +139,11 @@ function evaluateStrategyAndTarget(
 
   // Bis 128GB Gesamtsystem-RAM nutzt die Engine BOOTSTRAP / Early-Prep
   if (totalRam < 128) {
-    return { strategy: "BOOTSTRAP", target: "n00dles" };
+    const playerHack = ns.getPlayer().skills.hacking;
+    const canHackJoesguns = ns.hasRootAccess("joesguns") && playerHack >= 10;
+    const bootstrapTarget = canHackJoesguns ? "joesguns" : "n00dles";
+
+    return { strategy: "BOOTSTRAP", target: bootstrapTarget };
   }
 
   const homeRam = ns.getServerMaxRam("home");
@@ -128,22 +154,29 @@ function evaluateStrategyAndTarget(
   }
 
   // ----------------------------------------------------------------------
-  // 2️⃣ ZIEL-ABHÄNGIGE STRATEGIEN (PREP / SHOTGUN)
+  // 2️⃣ HYSTERESE FÜR SHOTGUN_HWGW (Verhindert Target-Jumping)
+  // ----------------------------------------------------------------------
+  if (
+    currentStrategy === "SHOTGUN_HWGW" &&
+    currentTarget &&
+    ns.serverExists(currentTarget)
+  ) {
+    const sObj = ns.getServer(currentTarget);
+    const curDiff = sObj.hackDifficulty ?? 99;
+    const minDiff = sObj.minDifficulty ?? 1;
+
+    // Solange das aktuelle Ziel nicht massiv destabilisiert ist, bleiben wir dabei
+    if (curDiff - minDiff <= 20.0) {
+      return { strategy: "SHOTGUN_HWGW", target: currentTarget };
+    }
+  }
+
+  // ----------------------------------------------------------------------
+  // 3️⃣ ZIEL-EVALUIERUNG (PREP / SHOTGUN)
   // ----------------------------------------------------------------------
   const target = selectBestTarget(ns, servers, currentTarget);
   if (!target) {
     return { strategy: "PREP", target: "n00dles" };
-  }
-
-  // Hysterese für SHOTGUN_HWGW (Vermeidet Target-Jumping)
-  if (currentStrategy === "SHOTGUN_HWGW") {
-    const sObj = ns.getServer(target);
-    const curDiff = sObj.hackDifficulty ?? 99;
-    const minDiff = sObj.minDifficulty ?? 1;
-
-    if (curDiff - minDiff <= 20.0) {
-      return { strategy: "SHOTGUN_HWGW", target };
-    }
   }
 
   const sObj = ns.getServer(target);
@@ -160,7 +193,7 @@ function evaluateStrategyAndTarget(
     return { strategy: "PREP", target };
   }
 
-  // Sobald das Ziel prepped ist, geht es ab 128 GB RAM direkt in die SHOTGUN Engine
+  // Sobald das Ziel prepped ist, geht es in die SHOTGUN Engine
   return { strategy: "SHOTGUN_HWGW", target };
 }
 
@@ -218,7 +251,8 @@ function switchExecutionEngine(
 
   switch (strategy) {
     case "BOOTSTRAP":
-      return ns.run(PATHS.core.engines.prep, 1, "n00dles");
+      // Nutzt jetzt das dynamisch ermittelte targetArg anstelle des hardgecodeten "n00dles"
+      return ns.run(PATHS.core.engines.prep, 1, targetArg);
 
     case "XP_GRIND":
       return ns.run(PATHS.core.engines.xpGrind, 1, "joesguns");

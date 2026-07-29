@@ -6,7 +6,7 @@ import { PATHS } from "/lib/paths";
 
 export function manageSuites(
   ns: NS,
-  scripts: ScriptList, // 👈 Typsicherheit für alle Skripte nutzen
+  scripts: ScriptList,
   state: BotStateNetwork,
   bnMults: any,
   logger: any

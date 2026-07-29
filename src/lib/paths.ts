@@ -17,7 +17,6 @@ export const PATHS = {
   daemons: {
     backdoor: "daemons/backdoor.js",
     crawler: "daemons/dnet-crawler.js",
-    earlyFleet: "daemons/early-fleet.js",
     fillShare: "daemons/fill-share.js",
     hacknetEarly: "daemons/hacknet-early.js",
     hacknet: "daemons/hacknet.js",
@@ -90,7 +89,6 @@ export const PATHS = {
     batchCalculator: "utils/batch-calculator.js",
     deployment: "utils/deployment.js",
     offline: "utils/go-offline.js",
-    infraExecutor: "utils/infra-sing-executor.js",
     internalPlanner: "utils/internal-planner.js",
     probeCorb: "utils/probe-corb.js",
     probeGang: "utils/probe-gang.js",

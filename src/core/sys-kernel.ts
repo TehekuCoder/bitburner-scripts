@@ -2,7 +2,7 @@ import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths";
 
-import { loadState, patchState } from "/lib/state.js";
+import { loadFinanceState, loadState, patchState } from "/lib/state.js";
 import { ScriptList } from "/lib/types.js";
 
 export async function main(ns: NS): Promise<void> {
@@ -11,7 +11,6 @@ export async function main(ns: NS): Promise<void> {
   const scripts: ScriptList = {
     logger: PATHS.core.logger,
     perfMonitor: PATHS.daemons.perfMonitor,
-    earlyFleet: PATHS.daemons.earlyFleet,
     worker: PATHS.payloads.work,
     dispatcher: PATHS.core.dispatcher,
     infra: PATHS.managers.infra,
@@ -32,7 +31,6 @@ export async function main(ns: NS): Promise<void> {
     gang: PATHS.daemons.gang,
   };
 
-  // 1. Logger-Daemon starten
   if (
     ns.fileExists(scripts.logger, "home") &&
     !ns.isRunning(scripts.logger, "home")
@@ -41,7 +39,6 @@ export async function main(ns: NS): Promise<void> {
     await ns.sleep(50);
   }
 
-  // 2. Perf-Monitor starten (sobald der Logger bereit ist)
   if (
     ns.fileExists(scripts.perfMonitor, "home") &&
     !ns.isRunning(scripts.perfMonitor, "home")
@@ -50,7 +47,6 @@ export async function main(ns: NS): Promise<void> {
   }
 
   const logger = new Logger(ns, "Kernel");
-
   logger.info("Kernel gestartet. Überprüfe System-State...");
 
   if (!loadState(ns) && ns.fileExists(PATHS.core.boot, "home")) {
@@ -63,7 +59,6 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
-  // --- 📡 INITIAL STATE SETTING ---
   const existingState = (loadState(ns) || {}) as Record<string, any>;
   patchState(ns, {
     strategy: existingState.strategy || "MONEY",
@@ -74,106 +69,83 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const homeMax = ns.getServerMaxRam("home");
+    const homeUsed = ns.getServerUsedRam("home");
+    const homeFree = homeMax - homeUsed;
     const currentState = loadState(ns);
+    const financeState = loadFinanceState(ns);
     const hasNavigator = ns.fileExists("DarkscapeNavigator.exe", "home");
+    const hasSingularity = ns.singularity !== undefined;
 
-    // --- 🤖 SUBSYSTEM ORCHESTRATION ---
+    const isHomeUnderpowered = homeMax < 256;
+    const isSingularityPending =
+      isHomeUnderpowered || (financeState?.moneyReserve ?? 0) > 0;
 
-    // 1. Suite-Manager Daemon (Ab 16GB)
-    if (homeMax >= 16 && !ns.isRunning(PATHS.core.suites, "home")) {
-      if (homeMax - ns.getServerUsedRam("home") >= 12.0) {
-        ns.run(PATHS.core.suites, 1);
+    const canRun = (scriptPath: string, minFreeRamRequirement = 0): boolean => {
+      if (!ns.fileExists(scriptPath, "home")) return false;
+      if (ns.isRunning(scriptPath, "home")) return false;
+
+      const reqRam = ns.getScriptRam(scriptPath, "home");
+      const singBuffer = isSingularityPending ? 20 : 0;
+      const effectiveFree = homeFree - singBuffer;
+
+      return effectiveFree >= reqRam && homeFree >= minFreeRamRequirement;
+    };
+
+    // 1. HACKING ORCHESTRATOR (Läuft IMMER)
+    if (canRun(scripts.orchestrator)) {
+      logger.success("🚀 Starte Hacking-Orchestrator...");
+      ns.run(scripts.orchestrator, 1);
+    }
+
+    // 2. Suite-Manager Daemon (Ab 16GB)
+    if (homeMax >= 16 && canRun(PATHS.core.suites, 12.0)) {
+      ns.run(PATHS.core.suites, 1);
+    }
+
+    // 3. Infrastruktur-Manager (Ab 64GB)
+    if (
+      homeMax >= 64 &&
+      ns.fileExists(scripts.infra, "home") &&
+      !ns.isRunning(scripts.infra, "home")
+    ) {
+      if (homeFree >= ns.getScriptRam(scripts.infra, "home")) {
+        ns.run(scripts.infra, 1);
       }
     }
 
-    // 2. Infrastruktur-Manager (Ab 64GB für P-Server/Upgrades)
-    if (
-      ns.fileExists(scripts.infra, "home") &&
-      !ns.isRunning(scripts.infra, "home") &&
-      homeMax >= 64
-    ) {
-      ns.run(scripts.infra, 1);
+    // 4. Darknet- & Crawler-Daemons (Erst ab 256 GB RAM!)
+    if (homeMax >= 256 && hasNavigator) {
+      if (canRun(scripts.dnet)) ns.run(scripts.dnet, 1);
+      if (canRun(scripts.crawler)) ns.run(scripts.crawler, 1);
     }
 
-    // 3. Darknet- / Crawler-Daemons (Nur wenn Navigator vorhanden)
-    if (hasNavigator) {
-      if (
-        ns.fileExists(scripts.dnet, "home") &&
-        !ns.isRunning(scripts.dnet, "home")
-      )
-        ns.run(scripts.dnet, 1);
-      if (
-        ns.fileExists(scripts.crawler, "home") &&
-        !ns.isRunning(scripts.crawler, "home")
-      )
-        ns.run(scripts.crawler, 1);
-    }
-
-    // 4. 🟢 Automatischer Backdoor-Manager
-    if (
-      ns.fileExists(scripts.backdoor, "home") &&
-      !ns.isRunning(scripts.backdoor, "home")
-    ) {
-      logger.info("Starte Backdoor-Manager für Netzwerk-Penetration...");
+    // 5. Automatischer Backdoor-Manager
+    if (canRun(scripts.backdoor)) {
       ns.run(scripts.backdoor, 1);
     }
 
-    // --- ⚡ DYNAMISCHER FLOTTEN-MODUS SHIFT ---
+    // 6. DISPATCHER MODUS (Erst ab 256 GB RAM UND SF4 Singularity API)
     const isDispatcherReady =
-      homeMax >= 128 && ns.fileExists(scripts.dispatcher, "home");
+      homeMax >= 256 &&
+      hasSingularity &&
+      ns.fileExists(scripts.dispatcher, "home");
 
-    if (isDispatcherReady) {
-      // Modus: Dispatcher-Kontrolle (128GB+)
-      if (ns.isRunning(scripts.earlyFleet, "home")) {
-        logger.warn(
-          "128 GB+ RAM erreicht! Übergebe Kontrolle an das Hauptgehirn. Stoppe Early-Fleet...",
-        );
-        ns.scriptKill(scripts.earlyFleet, "home");
-      }
-      if (!ns.isRunning(scripts.dispatcher, "home")) {
-        logger.success("Starte zentralen System-Dispatcher...");
-        ns.run(scripts.dispatcher, 1);
-      }
-    } else {
-      // Modus: Ultra-Early Game / Boot-Phase (RAM < 128GB)
-      if (
-        !ns.isRunning(scripts.earlyFleet, "home") &&
-        ns.fileExists(scripts.earlyFleet, "home")
-      ) {
-        logger.info(
-          "Zentraler Dispatcher benötigt mindestens 128GB RAM. Aktiviere temporäre Early-Fleet...",
-        );
-        ns.run(scripts.earlyFleet, 1);
-      }
+    if (isDispatcherReady && canRun(scripts.dispatcher)) {
+      logger.success("Starte zentralen System-Dispatcher (SF4)...");
+      ns.run(scripts.dispatcher, 1);
     }
 
-    // 5. 🦹 Gang-Daemon Management
+    // 7. Gang-Daemon Management
     let isInGang = false;
     try {
       isInGang = ns.gang.inGang();
-    } catch (_) {
-      // Falls SF2/Gang-API im aktuellen BitNode nicht freigeschaltet ist
+    } catch (_) {}
+
+    if (isInGang && canRun(scripts.gang)) {
+      ns.run(scripts.gang, 1);
     }
 
-    if (isInGang) {
-      const gangRam = ns.getScriptRam(scripts.gang);
-      const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
-
-      if (freeRam >= gangRam) {
-        if (!ns.isRunning(scripts.gang, "home")) {
-          logger.success(
-            "Gang-Zugehörigkeit & ausreichend RAM erkannt! Starte Gang-Daemon...",
-          );
-          ns.run(scripts.gang, 1);
-        }
-      } else if (!ns.isRunning(scripts.gang, "home")) {
-        logger.warn(
-          `Gang erkannt, aber zu wenig RAM frei (${freeRam.toFixed(1)}GB / ${gangRam.toFixed(1)}GB benötigt).`,
-        );
-      }
-    }
-
-    // 6. 💥 Automatischer End-Game Trigger (Wenn w0r1d_d43m0n bereit ist)
+    // 8. End-Game Trigger
     const targetNode = "w0r1d_d43m0n";
     if (ns.serverExists(targetNode) && ns.hasRootAccess(targetNode)) {
       const reqSkill = ns.getServerRequiredHackingLevel(targetNode);
@@ -181,14 +153,10 @@ export async function main(ns: NS): Promise<void> {
         ns.getHackingLevel() >= reqSkill &&
         !ns.scriptRunning(PATHS.core.apocalypse, "home")
       ) {
-        logger.success(
-          "!!! KRITISCHER SCHWELLENWERT ERREICHT: W0R1D_D43M0N BEREIT !!!",
-        );
         ns.run(PATHS.core.apocalypse, 1);
       }
     }
 
-    // Passt die globalen Netzwerk-Grunddaten an
     patchState(ns, {
       hasDarkScapeNavigator: hasNavigator,
       totalNodes: currentState?.allServers?.length || 0,

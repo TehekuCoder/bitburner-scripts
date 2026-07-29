@@ -18,7 +18,6 @@ export interface AugmentRoadmapItem {
 export interface ScriptList {
   logger: string;
   perfMonitor: string;
-  earlyFleet: string;
   worker: string;
   dispatcher: string;
   infra: string;
