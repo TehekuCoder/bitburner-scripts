@@ -1,13 +1,14 @@
 import { NS } from "@ns";
+import { LoggerClient } from "/lib/logger-client.js";
 
 export async function solveZeroLogon(
   ns: NS,
   host: string,
-  details: any
+  details: any,
+  logger?: LoggerClient
 ): Promise<string | null> {
   const len = details?.passwordLength;
-  
-  // Kandidaten für ZeroLogon Bypass
+
   const candidates = [
     "",
     "0",
@@ -16,15 +17,16 @@ export async function solveZeroLogon(
   ];
 
   const uniqueCandidates = [...new Set(candidates)];
+  logger?.info(`Starte ZeroLogon-Bypass Prüfungen...`);
 
   for (const guess of uniqueCandidates) {
     const result = (await ns.dnet.authenticate(host, guess)) as any;
     if (result?.success) {
-      ns.print(`🎉 [ZeroLogon] Bypass erfolgreich mit: "${guess}"`);
+      logger?.success(`🎉 Bypass erfolgreich mit: "${guess}"`);
       return guess;
     }
   }
 
-  ns.print(`🔴 [ZeroLogon] Bypass auf ${host} fehlgeschlagen.`);
+  logger?.error(`🔴 Bypass auf ${host} fehlgeschlagen.`);
   return null;
 }

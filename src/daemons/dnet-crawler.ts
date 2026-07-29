@@ -9,14 +9,15 @@ import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths";
 import { provisionServer } from "/utils/provision";
 
-const CRACK_REQ_PORT = 6;
 let lastLootTime = 0;
-const pendingRequests = new Set<string>();
+
+function normalizeScriptPath(path: string): string {
+  return path.replace(/^\//, "").replace(/\.(ts|js)$/, "");
+}
 
 function isServerInCooldown(ns: NS, host: string): boolean {
   const currentHost = ns.getHostname();
 
-  // 1. Cooldown-Datei von 'home' auf den lokalen Worker synchronisieren
   if (currentHost !== "home" && ns.fileExists(COOLDOWN_FILE, "home")) {
     ns.scp(COOLDOWN_FILE, currentHost, "home");
   }
@@ -26,7 +27,6 @@ function isServerInCooldown(ns: NS, host: string): boolean {
   const lines = ns.read(COOLDOWN_FILE).split("\n");
   const now = Date.now();
 
-  // 2. Prüfen, ob ein aktiver Cooldown für das Ziel existiert
   for (const line of lines) {
     const parts = line.split(",");
     if (parts.length >= 2) {
@@ -174,12 +174,7 @@ export async function main(ns: NS): Promise<void> {
     const now = Date.now();
     const lootScript = PATHS.tasks.loot;
     const phishScript = PATHS.tasks.phish;
-
-    const maxRam = ns.getServerMaxRam(currentHost);
-    let freeRam = maxRam - ns.getServerUsedRam(currentHost);
-    const isLootRunning = ns.scriptRunning(lootScript, currentHost);
-    const isLootDue =
-      now - lastLootTime > LOOT_INTERVAL_MS && currentHost !== "home";
+    const solverScript = PATHS.tasks.solver;
 
     const nearbyServers: string[] = ns.dnet.probe();
     const currentTopology = nearbyServers.slice().sort().join(",");
@@ -197,29 +192,40 @@ export async function main(ns: NS): Promise<void> {
     for (const hostname of allTargets) {
       if (hostname === "home" || !ns.serverExists(hostname)) continue;
 
-      // 1. Wurm ausbreiten
+      // 1. Wurm auf bereits zugängliche Server ausbreiten
       await deployWorm(ns, hostname, scriptName, logger);
 
-      // 2. Ungeknackte Server an den Master (Port 6) melden
+      // 2. Ungeknackte DIREKTE Nachbarn LOKAL cracken
       const details = ns.dnet.getServerDetails(hostname) as any;
       const inCooldown = isServerInCooldown(ns, hostname);
 
       if (details && !details.hasSession && !inCooldown) {
-        if (!pendingRequests.has(hostname)) {
-          logger.info(
-            `📡 Sende Crack-Anforderung für ${hostname} an Master (Port ${CRACK_REQ_PORT})...`,
-          );
-          ns.writePort(CRACK_REQ_PORT, JSON.stringify({ host: hostname }));
-          pendingRequests.add(hostname);
+        // Prüfen, ob für dieses Ziel lokal bereits ein Solver läuft
+        const targetSolverNormalized = normalizeScriptPath(solverScript);
+        const isSolverRunning = ns.ps(currentHost).some(
+          (proc) =>
+            normalizeScriptPath(proc.filename) === targetSolverNormalized &&
+            proc.args[0] === hostname,
+        );
+
+        if (!isSolverRunning) {
+          const solverRam = ns.getScriptRam(solverScript, currentHost);
+          const freeRam = ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
+
+          if (freeRam >= solverRam) {
+            logger.info(`⚡ Starte LOKALEN Solver für '${hostname}' auf ${currentHost}...`);
+            ns.exec(solverScript, currentHost, 1, hostname);
+          } else {
+            logger.warn(
+              `⚠️ Zu wenig RAM auf '${currentHost}' um Solver für '${hostname}' auszuführen.`,
+            );
+          }
         }
-      } else if (details?.hasSession || inCooldown) {
-        // Ziel freigeben, sobald Session steht ODER Cooldown aktiv ist
-        pendingRequests.delete(hostname);
       }
     }
 
     // Periodischer Loot / Phishing Zyklus
-    if (currentHost !== "home" && !isLootRunning && isLootDue) {
+    if (currentHost !== "home" && !ns.scriptRunning(lootScript, currentHost) && (now - lastLootTime > LOOT_INTERVAL_MS)) {
       if (
         !ns.fileExists(phishScript, currentHost) ||
         !ns.fileExists(lootScript, currentHost)
@@ -227,6 +233,7 @@ export async function main(ns: NS): Promise<void> {
         await provisionServer(ns, currentHost);
       }
 
+      const freeRam = ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
       const phishRam = ns.getScriptRam(phishScript, currentHost);
       const lootRam = ns.getScriptRam(lootScript, currentHost);
       const requiredMaxWorkerRam = Math.max(phishRam, lootRam);

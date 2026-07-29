@@ -1,9 +1,11 @@
 import { NS } from "@ns";
+import { LoggerClient } from "/lib/logger-client.js";
 
 export async function solveNIL(
   ns: NS,
   hostname: string,
   details: any,
+  logger?: LoggerClient
 ): Promise<string | null> {
   const len = details?.passwordLength || 5;
   const digits = new Array(len).fill(0);
@@ -12,16 +14,18 @@ export async function solveNIL(
   let attempts = 0;
   const maxAttempts = len * 12;
 
+  logger?.info(`Starte iterative Digits-Suche für Länge ${len}...`);
+
   while (locked.includes(false) && attempts < maxAttempts) {
     attempts++;
     const guess = digits.join("");
 
     const result = (await ns.dnet.authenticate(hostname, guess)) as any;
     if (result?.success) {
+      logger?.success(`🎉 Direkt-Erfolg: ${guess}`);
       return guess;
     }
 
-    // Sofortiger Log-Zugriff nach Authentifizierung
     let logObj: any = null;
     for (let check = 0; check < 5; check++) {
       const bleed = (await ns.dnet.heartbleed(hostname)) as any;
@@ -47,7 +51,6 @@ export async function solveNIL(
       continue;
     }
 
-    // Feedback verarbeiten
     const feedback: string[] = Array.isArray(logObj.data)
       ? logObj.data.map((v: unknown) => String(v).trim().toLowerCase())
       : typeof logObj.data === "string"
@@ -66,5 +69,12 @@ export async function solveNIL(
 
   const finalGuess = digits.join("");
   const finalResult = (await ns.dnet.authenticate(hostname, finalGuess)) as any;
-  return finalResult?.success ? finalGuess : null;
+  
+  if (finalResult?.success) {
+    logger?.success(`🎉 Erfolg! Passwort: ${finalGuess}`);
+    return finalGuess;
+  }
+
+  logger?.error(`🔴 Iteration abgebrochen oder Limit überschritten.`);
+  return null;
 }

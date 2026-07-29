@@ -1,4 +1,5 @@
 import { NS } from "@ns";
+import { LoggerClient } from "/lib/logger-client.js";
 
 /**
  * Solver für AccountsManager - Nutzt eine binäre Suche basierend auf Feedback.
@@ -6,18 +7,19 @@ import { NS } from "@ns";
 export async function solveAccountsManager(
   ns: NS,
   host: string,
-  details: any
+  details: any,
+  logger?: LoggerClient
 ): Promise<string | null> {
   let low = 0;
   let high = 100; // Standard-Fallback
 
-  ns.print(`🔢 Starte High/Low-Solver für AccountsManager auf ${host}...`);
+  logger?.info(`🔢 Starte High/Low-Solver für AccountsManager auf ${host}...`);
 
   // 1. Testschuss abgeben, um Bereich und erste Meldung zu prüfen
   const initResult = (await ns.dnet.authenticate(host, "0")) as any;
 
   if (initResult?.code === 351) {
-    ns.print(`❌ [AccountsManager] Fehler auf ${host}: Direct Connection Required!`);
+    logger?.error(`❌ [AccountsManager] Fehler auf ${host}: Direct Connection Required!`);
     return null;
   }
 
@@ -31,27 +33,26 @@ export async function solveAccountsManager(
     if (match) {
       low = parseInt(match[1], 10);
       high = parseInt(match[2], 10);
-      ns.print(`🎯 Suchbereich via Nachricht erkannt: [${low} bis ${high}]`);
+      logger?.debug(`🎯 Suchbereich via Nachricht erkannt: [${low} bis ${high}]`);
     }
   }
 
-  // Da "0" falsch war, können wir die Untergrenze mindestens auf 1 anheben
   if (low === 0) low = 1;
 
   // 2. Binäre Suche
   while (low <= high) {
     const guess = Math.floor((low + high) / 2);
-    ns.print(`[AccountsManager] Teste Zahl: ${guess} (Bereich: [${low}-${high}])`);
+    logger?.debug(`Teste Zahl: ${guess} (Bereich: [${low}-${high}])`);
 
     const result = (await ns.dnet.authenticate(host, guess.toString())) as any;
 
     if (result?.code === 351) {
-      ns.print(`❌ [AccountsManager] Fehler auf ${host}: Direct Connection Required!`);
+      logger?.error(`❌ Fehler auf ${host}: Direct Connection Required!`);
       return null;
     }
 
     if (result?.success) {
-      ns.print(`🎉 [AccountsManager] Erfolg! Passwort ist: ${guess}`);
+      logger?.success(`🎉 Erfolg! Passwort ist: ${guess}`);
       return guess.toString();
     }
 
@@ -66,11 +67,11 @@ export async function solveAccountsManager(
         feedback += " " + bleedData.logs.join(" ");
       }
     } catch (_) {
-      // Falls Heartbleed fehlschlägt oder nicht unterstützt wird
+      // Heartbleed fehlgeschlagen oder nicht unterstützt
     }
 
     feedback = feedback.toLowerCase();
-    ns.print(`[AccountsManager] Combined Feedback: "${feedback.trim()}"`);
+    logger?.debug(`Combined Feedback: "${feedback.trim()}"`);
 
     // Richtung auswerten
     if (
@@ -86,13 +87,13 @@ export async function solveAccountsManager(
     ) {
       high = guess - 1;
     } else {
-      ns.print(`⚠️ [AccountsManager] Keinen eindeutigen Hinweis im Feedback gefunden.`);
-      return null; // Kontrollierter Abbruch statt low++
+      logger?.warn(`⚠️ Keinen eindeutigen Hinweis im Feedback gefunden.`);
+      return null;
     }
 
     await ns.asleep(20);
   }
 
-  ns.print(`❌ [AccountsManager] Zahl im Bereich konnte nicht ermittelt werden.`);
+  logger?.error(`❌ Zahl im Bereich konnte nicht ermittelt werden.`);
   return null;
 }

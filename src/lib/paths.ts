@@ -9,7 +9,6 @@ export const PATHS = {
     suites: "core/sys-suites.js",
     engines: {
       prep: "core/engines/engine-prep.js",
-      proto: "core/engines/engine-proto.js",
       shotgun: "core/engines/engine-shotgun.js",
       xpGrind: "core/engines/engine-xp-grind.js",
       jitBatcher: "core/engines/sys-jit-batcher.js",

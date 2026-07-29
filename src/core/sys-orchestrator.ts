@@ -27,7 +27,7 @@ export async function main(ns: NS): Promise<void> {
     const servers = getAllServers(ns);
     const totalMaxRam = getNetworkMaxRam(ns, servers);
 
-    // 1. Strategie & Target ohne Henne-Ei-Konflikt evaluieren
+    // 1. Strategie & Target evaluieren
     const { strategy: desiredStrategy, target } = evaluateStrategyAndTarget(
       ns,
       servers,
@@ -53,7 +53,7 @@ export async function main(ns: NS): Promise<void> {
         ns.kill(activeProcessId);
       }
 
-      // Worker-Payloads im gesamten Netzwerk säubern (inkl. Early-Fleet Workern)
+      // Worker-Payloads im gesamten Netzwerk säubern
       killAllWorkerPayloads(ns, servers);
 
       // Neue Execution Engine starten
@@ -96,7 +96,6 @@ export async function main(ns: NS): Promise<void> {
 
 /**
  * Kernlogik: Wählt die richtige Strategie UND das passendste Ziel aus.
- * Trennt globale System-Bedingungen sauber von ziel-abhängigen Entscheidungen.
  */
 function evaluateStrategyAndTarget(
   ns: NS,
@@ -110,7 +109,7 @@ function evaluateStrategyAndTarget(
     (bnMults.ServerMaxMoney ?? 1.0) * (bnMults.ScriptHackMoneyGain ?? 1.0);
 
   // ----------------------------------------------------------------------
-  // 1️⃣ GLOBALE STRATEGIEN (Egal welches Ziel)
+  // 1️⃣ GLOBALE STRATEGIEN
   // ----------------------------------------------------------------------
   if (hackingEfficiency === 0 || ns.getPlayer().skills.hacking < 30) {
     return { strategy: "XP_GRIND", target: "joesguns" };
@@ -125,19 +124,18 @@ function evaluateStrategyAndTarget(
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
   if (totalRam >= 512 && homeRam >= 1024 && hasFormulas) {
-    // Bei JIT_HWGW übernimmt der internalPlanner im Batcher die dynamic Target-Wahl.
     return { strategy: "JIT_HWGW", target: currentTarget ?? "n00dles" };
   }
 
   // ----------------------------------------------------------------------
-  // 2️⃣ ZIEL-ABHÄNGIGE STRATEGIEN (PREP, PROTO, SHOTGUN)
+  // 2️⃣ ZIEL-ABHÄNGIGE STRATEGIEN (PREP / SHOTGUN)
   // ----------------------------------------------------------------------
   const target = selectBestTarget(ns, servers, currentTarget);
   if (!target) {
     return { strategy: "PREP", target: "n00dles" };
   }
 
-  // Hysterese für SHOTGUN_HWGW (Vermeidet Target-Jumping bei kleiner Sec-Erhöhung)
+  // Hysterese für SHOTGUN_HWGW (Vermeidet Target-Jumping)
   if (currentStrategy === "SHOTGUN_HWGW") {
     const sObj = ns.getServer(target);
     const curDiff = sObj.hackDifficulty ?? 99;
@@ -162,15 +160,12 @@ function evaluateStrategyAndTarget(
     return { strategy: "PREP", target };
   }
 
-  if (totalRam < 512) {
-    return { strategy: "PROTO_BATCH", target };
-  } else {
-    return { strategy: "SHOTGUN_HWGW", target };
-  }
+  // Sobald das Ziel prepped ist, geht es ab 128 GB RAM direkt in die SHOTGUN Engine
+  return { strategy: "SHOTGUN_HWGW", target };
 }
 
 /**
- * Wählt das lukrativste Ziel für einfache Strategien aus.
+ * Wählt das lukrativste Ziel aus.
  */
 function selectBestTarget(
   ns: NS,
@@ -231,9 +226,6 @@ function switchExecutionEngine(
     case "PREP":
       return ns.run(PATHS.core.engines.prep, 1, targetArg);
 
-    case "PROTO_BATCH":
-      return ns.run(PATHS.core.engines.proto, 1, targetArg);
-
     case "SHOTGUN_HWGW":
       return ns.run(PATHS.core.engines.shotgun, 1, targetArg);
 
@@ -257,7 +249,6 @@ function killAllWorkerPayloads(ns: NS, servers: string[]): void {
     "payloads/grow.js",
     "payloads/hack.js",
     PATHS.payloads.work,
-    "payloads/work.ts",
     "payloads/work.js",
   ];
 

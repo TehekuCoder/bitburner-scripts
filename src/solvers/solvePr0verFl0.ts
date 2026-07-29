@@ -1,9 +1,11 @@
 import { NS } from "@ns";
+import { LoggerClient } from "/lib/logger-client.js";
 
 export async function solvePr0verFl0(
   ns: NS,
   host: string,
-  details: any
+  details: any,
+  logger?: LoggerClient
 ): Promise<string | null> {
   const len = details?.passwordLength || 8;
 
@@ -15,16 +17,16 @@ export async function solvePr0verFl0(
     "0".repeat(len * 2),
   ];
 
-  ns.print(`🌊 [Pr0verFl0] Sende Buffer-Overflow Payloads an ${host}...`);
+  logger?.info(`🌊 Sende Buffer-Overflow Payloads an ${host}...`);
 
   for (const payload of payloads) {
     const result = (await ns.dnet.authenticate(host, payload)) as any;
     if (result?.success) {
-      ns.print(`🎉 [Pr0verFl0] Overflow erfolgreich mit Payload-Länge ${payload.length}`);
+      logger?.success(`🎉 Overflow erfolgreich mit Payload-Länge ${payload.length}!`);
       return payload;
     }
   }
 
-  ns.print(`🔴 [Pr0verFl0] Overflow-Versuche auf ${host} fehlgeschlagen.`);
+  logger?.error(`🔴 Overflow-Versuche auf ${host} fehlgeschlagen.`);
   return null;
 }

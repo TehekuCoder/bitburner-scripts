@@ -1,31 +1,56 @@
 import { NS, ProgramName } from "@ns";
-import { DEFAULT_MULTIPLIERS, TARGET_PROGRAMS } from "/lib/constants";
+import { TARGET_PROGRAMS } from "/lib/constants";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { loadBnMults, patchFinanceState } from "/lib/state.js";
+import { patchFinanceState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new Logger(ns, "Infra-Sing");
-  const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
-
   const currentHacking = ns.getHackingLevel();
 
-  // 1. Programme kaufen
-  handleProgramPurchases(ns, logger, currentHacking);
-
-  // 2. Home Server Upgrades durchführen
+  // 🎯 1. Home Server Upgrade ZUERST ausführen (Priorität vor Software!)
   handleHomeServerPurchases(ns, logger);
 
-  // 3. Kombinierten Home- & Programm-Shield berechnen und wegschreiben
-  const shieldActive = checkUnifiedUpgradeShield(ns);
+  // 🎯 2. Erst DANACH verfügbares Geld für Programme nutzen
+  handleProgramPurchases(ns, logger, currentHacking);
 
-  // 4. Aktuelle CPU-Kerne erfassen
-  const homeCores = ns.getServer("home").cpuCores;
+  // 3. Kombinierten Shield berechnen und Status speichern
+  const shieldActive = checkUnifiedUpgradeShield(ns, currentHacking);
 
   patchFinanceState(ns, {
     isHomePrioritized: shieldActive,
-    homeCores: homeCores,
+    homeCores: ns.getServer("home").cpuCores,
   });
+}
+
+function handleHomeServerPurchases(ns: NS, logger: Logger): void {
+  const sing = ns.singularity;
+  const homeMaxRam = ns.getServerMaxRam("home");
+
+  const safetyBuffer = 200_000;
+  let availableMoney = ns.getPlayer().money - safetyBuffer;
+  if (availableMoney <= 0) return;
+
+  const ramCost = sing.getUpgradeHomeRamCost();
+  const coreCost = sing.getUpgradeHomeCoresCost();
+
+  // RAM-Upgrade durchführen
+  if (ramCost !== Infinity && availableMoney >= ramCost) {
+    if (sing.upgradeHomeRam()) {
+      const newRam = ns.getServerMaxRam("home");
+      ns.toast(`Home RAM erweitert auf ${ns.format.ram(newRam)}!`, "success");
+      logger.success(`🏠 Home-RAM Upgrade durchgeführt: ${ns.format.ram(newRam)}`);
+      availableMoney -= ramCost;
+    }
+  }
+
+  // Cores erst ab 1 TB RAM nachziehen
+  if (homeMaxRam >= 1024 && coreCost !== Infinity && availableMoney >= coreCost) {
+    if (sing.upgradeHomeCores()) {
+      ns.toast(`Home Cores erweitert!`, "success");
+      logger.success("🏠 Home-Cores Upgrade durchgeführt.");
+    }
+  }
 }
 
 function handleProgramPurchases(
@@ -34,13 +59,9 @@ function handleProgramPurchases(
   currentHacking: number,
 ): void {
   const sing = ns.singularity;
-  if (
-    !ns.hasTorRouter() &&
-    ns.getPlayer().money >= 200_000 &&
-    currentHacking >= 40
-  ) {
-    if (sing.purchaseTor())
-      logger.success("📡 TOR-Router erfolgreich erworben.");
+
+  if (!ns.hasTorRouter() && ns.getPlayer().money >= 200_000 && currentHacking >= 40) {
+    if (sing.purchaseTor()) logger.success("📡 TOR-Router erfolgreich erworben.");
   }
 
   if (ns.hasTorRouter()) {
@@ -49,7 +70,6 @@ function handleProgramPurchases(
       "FTPCrack.exe": 150,
       "relaySMTP.exe": 250,
       "HTTPWorm.exe": 350,
-      "DarkscapeNavigator.exe": 0,
       "SQLInject.exe": 500,
       "Formulas.exe": 0,
     };
@@ -67,129 +87,53 @@ function handleProgramPurchases(
   }
 }
 
-function handleHomeServerPurchases(ns: NS, logger: Logger): void {
-  const sing = ns.singularity;
-  const homeMaxRam = ns.getServerMaxRam("home");
-
-  const safetyBuffer = 200_000;
-  let availableMoney = ns.getPlayer().money - safetyBuffer;
-  if (availableMoney <= 0) return;
-
-  const ramCost = sing.getUpgradeHomeRamCost();
-  const coreCost = sing.getUpgradeHomeCoresCost();
-
-  if (homeMaxRam < 256) {
-    if (ramCost !== Infinity && availableMoney >= ramCost) {
-      if (sing.upgradeHomeRam()) {
-        const newRam = ns.getServerMaxRam("home");
-        ns.toast(`Home RAM erweitert!`, "success");
-        logger.success(
-          `🏠 Home-RAM Upgrade durchgeführt. Neuer Wert: ${ns.format.ram(newRam)}`,
-        );
-        availableMoney -= ramCost;
-      }
-    }
-    if (coreCost !== Infinity && availableMoney >= coreCost) {
-      if (ramCost === Infinity || availableMoney - coreCost >= ramCost) {
-        if (sing.upgradeHomeCores()) {
-          ns.toast(`Home Cores erweitert!`, "success");
-          logger.success("🏠 Home-Cores Upgrade durchgeführt.");
-        }
-      }
-    }
-  } else {
-    if (ramCost !== Infinity && availableMoney >= ramCost) {
-      if (sing.upgradeHomeRam()) {
-        const newRam = ns.getServerMaxRam("home");
-        ns.toast(`Home RAM erweitert!`, "success");
-        logger.success(
-          `🏠 Home-RAM Upgrade durchgeführt. Neuer Wert: ${ns.format.ram(newRam)}`,
-        );
-        availableMoney -= ramCost;
-      }
-    }
-    // 🎯 SPRINT-FIX: Cores werden erst gekauft, wenn das 1 TB RAM Ziel steht!
-    if (
-      homeMaxRam >= 1024 &&
-      coreCost !== Infinity &&
-      availableMoney >= coreCost
-    ) {
-      if (sing.upgradeHomeCores()) {
-        ns.toast(`Home Cores erweitert!`, "success");
-        logger.success("🏠 Home-Cores Upgrade durchgeführt.");
-      }
-    }
-  }
-}
-
-function checkUnifiedUpgradeShield(ns: NS): boolean {
+function checkUnifiedUpgradeShield(ns: NS, currentHacking: number): boolean {
   const sing = ns.singularity;
   const nextRamCost = sing.getUpgradeHomeRamCost();
   const nextCoreCost = sing.getUpgradeHomeCoresCost();
   const homeMaxRam = ns.getServerMaxRam("home");
 
-  // --- 📦 HIER IST DIE ZENTRALISIERTE PROGRAMM-RESERVE ---
   let programReserve = 0;
   let targetProgramName = "Keines";
 
-  if (!ns.serverExists("darkweb")) {
+  // 🎯 Shield reserviert nur Geld für Programme, wenn das Hacking-Level AUCH ausreicht!
+  if (!ns.serverExists("darkweb") && currentHacking >= 40) {
     programReserve = 200_000;
     targetProgramName = "TOR Router";
-  } else if (!ns.fileExists("BruteSSH.exe", "home")) {
+  } else if (!ns.fileExists("BruteSSH.exe", "home") && currentHacking >= 50) {
     programReserve = 500_000;
     targetProgramName = "BruteSSH";
-  } else if (!ns.fileExists("FTPCrack.exe", "home")) {
+  } else if (!ns.fileExists("FTPCrack.exe", "home") && currentHacking >= 150) {
     programReserve = 1_500_000;
     targetProgramName = "FTPCrack";
-  } else if (!ns.fileExists("relaySMTP.exe", "home")) {
+  } else if (!ns.fileExists("relaySMTP.exe", "home") && currentHacking >= 250) {
     programReserve = 5_000_000;
     targetProgramName = "relaySMTP";
-  } else if (!ns.fileExists("HTTPWorm.exe", "home")) {
+  } else if (!ns.fileExists("HTTPWorm.exe", "home") && currentHacking >= 350) {
     programReserve = 30_000_000;
     targetProgramName = "HTTPWorm";
-  } else if (!ns.fileExists("SQLInject.exe", "home")) {
+  } else if (!ns.fileExists("SQLInject.exe", "home") && currentHacking >= 500) {
     programReserve = 250_000_000;
     targetProgramName = "SQLInject";
-  } else if (!ns.fileExists("Formulas.exe", "home")) {
-    // 🎯 SPRINT-FIX: Wenn Home unter 1 TB ist, ignorieren wir die 5-Milliarden-Sperre für Formulas
-    if (homeMaxRam < 1024) {
-      programReserve = 0;
-    } else {
-      programReserve = 5_000_000_000;
-      targetProgramName = "Formulas.exe";
-    }
+  } else if (!ns.fileExists("Formulas.exe", "home") && homeMaxRam >= 1024) {
+    programReserve = 5_000_000_000;
+    targetProgramName = "Formulas.exe";
   }
 
   const currentMoney = ns.getPlayer().money;
   let financeProgress = "Infrastruktur stabil";
 
   if (programReserve > 0) {
-    if (currentMoney >= programReserve * 0.5) {
-      financeProgress = `Sichere $${ns.format.number(programReserve, 0)} (${targetProgramName})`;
-    } else {
-      programReserve = currentMoney * 0.1; // Weiches Ansparen
-      financeProgress = `Aufbau f. ${targetProgramName}`;
-    }
-  }
-
-  // --- 🏠 HOME UPGRADE SHIELD EVALUIERUNG ---
-  if (nextRamCost === Infinity && nextCoreCost === Infinity) {
-    patchFinanceState(ns, {
-      moneyReserve: programReserve,
-      financeProgress,
-      isRushModeActive: false,
-    });
-    return false;
+    financeProgress = `Sichere $${ns.format.number(programReserve, 0)} (${targetProgramName})`;
   }
 
   const targetUpgradeCost =
     homeMaxRam < 256 && nextRamCost !== Infinity
       ? nextRamCost
       : Math.min(nextRamCost, nextCoreCost);
-  const shieldActive =
-    homeMaxRam < 256 || currentMoney >= targetUpgradeCost * 0.2;
 
-  // Der finale Schutzwall ist das Maximum aus benötigtem Programmgeld ODER Serverspeicher-Upgrade
+  const shieldActive = homeMaxRam < 128 || currentMoney >= targetUpgradeCost * 0.2;
+
   const finalReserve = Math.max(
     programReserve,
     shieldActive ? targetUpgradeCost : 0,

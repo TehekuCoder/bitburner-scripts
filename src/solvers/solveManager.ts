@@ -49,22 +49,24 @@ export async function runSolver(
   host: string,
   serverType: string,
   details: any,
-  logger?: Logger,
+  parentLogger?: Logger,
 ): Promise<string | null> {
-  const logInfo = (msg: string) => (logger ? logger.info(msg) : ns.print(msg));
-  const logWarn = (msg: string) => (logger ? logger.warn(msg) : ns.print(msg));
-  const logError = (msg: string) =>
-    logger ? logger.error(msg) : ns.print(msg);
+  // ⚡ GANZ WICHTIG: Wenn kein Logger übergeben wurde, erstelle sofort einen temporären
+  // LoggerClient mit PID & Host. Dadurch landest du IMMER im sys-logger!
+  const logger = parentLogger
+    ? parentLogger.child("MANAGER", { serverType })
+    : new Logger(ns, "SOLVER-MANAGER", host, "DEBUG", undefined, { serverType });
+
+  const timerName = `solve-${host}`;
+  logger.time(timerName);
 
   const cleanType = normalizeType(serverType);
   if (!cleanType) {
-    logError(
-      `🔴 [Manager] Kein gültiger serverType für Host '${host}' übergeben.`,
-    );
+    logger.error(`🔴 Kein gültiger serverType für Host '${host}' übergeben.`);
     return null;
   }
-  // In runSolver (solveManager.ts)
-  logInfo(
+
+  logger.info(
     `🚀 Starte Solver '${cleanType}' für Host '${host}' mit Details: ${JSON.stringify(details)}`,
   );
   let solver = SOLVER_REGISTRY[cleanType];
@@ -75,33 +77,37 @@ export async function runSolver(
     );
     if (matchedKey) {
       solver = SOLVER_REGISTRY[matchedKey];
-      logInfo(
-        `ℹ️ [Manager] Unscharfer Match für '${serverType}': Nutze '${matchedKey}'.`,
+      logger.info(
+        `ℹ️ Unscharfer Match für '${serverType}': Nutze '${matchedKey}'.`,
       );
     }
   }
 
   if (!solver) {
-    logWarn(
+    logger.warn(
       `⚠️ Kein passender Solver für Typ '${serverType}' (normalisiert: '${cleanType}') registriert.`,
     );
     return null;
   }
 
-
   try {
-    const password = await solver(ns, host, details);
+    // Erstelle für den konkreten Solver einen Unter-Logger
+    const solverLogger = logger.child(cleanType);
+    const password = await solver(ns, host, details, solverLogger);
 
     if (password !== null) {
-      logInfo(`🎉 [Success] ${host} geknackt! Passwort: ${password}`);
+      logger.timeEnd(timerName, "SUCCESS");
+      logger.success(`🎉 [Success] ${host} geknackt! Passwort: ${password}`);
       return password;
     } else {
-      logWarn(
+      logger.timeEnd(timerName, "WARN");
+      logger.warn(
         `❌ [Failed] Solver für ${host} lief durch, konnte aber kein Passwort ermitteln.`,
       );
     }
   } catch (error: any) {
-    logError(
+    logger.timeEnd(timerName, "ERROR");
+    logger.error(
       `🔴 [Error] Schwerer Fehler im Solver für ${host}: ${error?.message || error}`,
     );
   }

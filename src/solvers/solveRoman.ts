@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { tryAuth } from "/lib/dnet-utils"; // Pfad ggf. anpassen
+import { LoggerClient } from "/lib/logger-client.js";
 
 function romanToArabic(roman: string): number {
   const vals: Record<string, number> = {
@@ -27,11 +27,12 @@ export async function solveRoman(
   ns: NS,
   host: string,
   details: any,
+  logger?: LoggerClient
 ): Promise<string | null> {
   const rawText = String(details?.data || details?.passwordHint || "").trim();
 
   if (!rawText) {
-    ns.print(`🔴 [Roman] Kein Text/Hint auf ${host} übergeben.`);
+    logger?.error(`🔴 Kein Text/Hint auf ${host} übergeben.`);
     return null;
   }
 
@@ -43,13 +44,13 @@ export async function solveRoman(
 
     const guess = arabicValue.toString();
 
-    // Hier ebenfalls tryAuth nutzen:
-    if (await tryAuth(ns, host, guess)) {
-      ns.print(`🎉 [Roman] Römische Zahl '${romanSeq}' als '${guess}' aufgelöst!`);
+    const res = (await ns.dnet.authenticate(host, guess)) as any;
+    if (res === true || res?.success) {
+      logger?.success(`🎉 Römische Zahl '${romanSeq}' als '${guess}' aufgelöst!`);
       return guess;
     }
   }
 
-  ns.print(`🔴 [Roman] Keine passende römische Zahl in "${rawText}" gefunden.`);
+  logger?.error(`🔴 Keine passende römische Zahl in "${rawText}" gefunden.`);
   return null;
 }

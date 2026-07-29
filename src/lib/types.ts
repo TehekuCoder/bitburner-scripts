@@ -6,6 +6,7 @@ import {
   SleevePerson,
   SleeveTask,
 } from "@ns";
+import { LoggerClient } from "./logger-client";
 
 export interface AugmentRoadmapItem {
   faction: FactionName | string;
@@ -322,7 +323,8 @@ export type SolverFunction = (
   ns: NS,
   host: string,
   details: any,
-) => Promise<string | null>;
+  logger?: LoggerClient
+) => Promise<string | null> | string | null;
 
 export interface SleeveData {
   index: number;
@@ -378,3 +380,4 @@ export interface MultiTargetState {
   maxBatches: number;
   estimatedIncomePerSec: number;
 }
+

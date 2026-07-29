@@ -1,16 +1,17 @@
 import { NS } from "@ns";
-import { tryAuth } from "/lib/dnet-utils"; // Pfad ggf. anpassen
+import { LoggerClient } from "/lib/logger-client.js";
 
 export async function solveDeskMemo(
   ns: NS,
   host: string,
-  details: any
+  details: any,
+  logger?: LoggerClient
 ): Promise<string | null> {
   const hint = String(details?.passwordHint || details?.data || "").trim();
   const targetLen = details?.passwordLength;
 
   if (!hint) {
-    ns.print("🔴 [DeskMemo] Fehler: Kein passwordHint oder data vorhanden.");
+    logger?.error("🔴 Fehler: Kein passwordHint oder data vorhanden.");
     return null;
   }
 
@@ -35,16 +36,19 @@ export async function solveDeskMemo(
     });
   }
 
-  ns.print(`📝 [DeskMemo] Teste ${uniqueCandidates.length} Kandidaten aus Hint: "${hint}"`);
+  logger?.info(`📝 Teste ${uniqueCandidates.length} Kandidaten aus Hint: "${hint}"`);
 
   for (const guess of uniqueCandidates) {
-    // Hier die neue tryAuth-Funktion nutzen:
-    if (await tryAuth(ns, host, guess)) {
-      ns.print(`🎉 [DeskMemo] Erfolgreich authentifiziert mit: "${guess}"`);
+    // ⚡ Direktes Authentifizieren ohne Wrapper
+    const res = (await ns.dnet.authenticate(host, guess)) as any;
+    const success = typeof res === "boolean" ? res : Boolean(res?.success);
+
+    if (success) {
+      logger?.success(`🎉 Erfolgreich authentifiziert mit: "${guess}"`);
       return guess;
     }
   }
 
-  ns.print("🔴 [DeskMemo] Fehlgeschlagen. Kein Kandidat war korrekt.");
+  logger?.error("🔴 Fehlgeschlagen. Kein Kandidat war korrekt.");
   return null;
 }

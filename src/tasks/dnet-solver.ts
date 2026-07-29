@@ -25,11 +25,12 @@ export async function main(ns: NS): Promise<void> {
 
   const jsonDbFile = "/dnet-master-db.json";
 
+  // DB von Home holen, falls nicht lokal vorhanden
   if (currentHost !== "home" && ns.fileExists(jsonDbFile, "home")) {
     ns.scp(jsonDbFile, currentHost, "home");
   }
 
-  // Session wiederherstellen, falls Passwort im Cache
+  // 1. Bekannte Passwörter aus Cache prüfen
   if (ns.fileExists(jsonDbFile)) {
     try {
       const db = JSON.parse(ns.read(jsonDbFile));
@@ -48,14 +49,13 @@ export async function main(ns: NS): Promise<void> {
   const details = ns.dnet.getServerDetails(host) as ServerAuthDetails;
   if (!details) {
     logger.error(`❌ Konnte ServerDetails für '${host}' nicht abrufen.`);
+    await setServerCooldown(ns, host);
     return;
   }
 
-  // 🔥 WICHTIG: Verbindungsaufbau ZWINGEND vor runSolver durchführen!
-  await ensureConnected(ns, host, details);
-
   logger.info(`🔨 Krypto-Angriff auf Modell [${details.modelId}] gestartet...`);
 
+  // 2. Krypto-Solver ausführen
   let password = await runSolver(
     ns,
     host,
@@ -64,6 +64,7 @@ export async function main(ns: NS): Promise<void> {
     logger,
   );
 
+  // 3. Fallback: Wörterbuch- & Loot-Angriff
   if (password === null) {
     logger.warn(
       `⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`,
@@ -73,19 +74,24 @@ export async function main(ns: NS): Promise<void> {
       (await fileLootAttack(ns, host, details));
   }
 
+  // 4. Passwort verifizieren & Anmelden
   if (password !== null) {
     if (await tryAuthenticate(ns, host, password)) {
       handleSuccess(ns, host, password, logger);
     } else {
       logger.error(
-        `❌ Passwort "${password}" ermittelt, aber Auth fehlgeschlagen.`,
+        `❌ Passwort "${password}" ermittelt, aber Auth fehlgeschlagen. Setze Cooldown.`,
       );
       await setServerCooldown(ns, host);
     }
+  } else {
+    logger.warn(`⏳ Konnte ${host} nicht knacken. Aktiviere Cooldown.`);
+    await setServerCooldown(ns, host);
   }
 }
 
 function handleSuccess(ns: NS, host: string, pw: string, logger: Logger): void {
+  // Passwort an den zentralen Master senden
   ns.writePort(5, JSON.stringify({ host, password: pw }));
   logger.success(`🎉 [SUCCESS] Server gebrochen! ${host} -> "${pw}"`);
 }
@@ -133,7 +139,6 @@ async function dictionaryAttack(
         pw.length !== details.passwordLength
       )
         continue;
-      // Nutzt jetzt tryAuthenticate statt rohes ns.dnet.authenticate
       if (await tryAuthenticate(ns, host, pw)) return pw;
     }
   } catch {}
@@ -155,7 +160,6 @@ async function fileLootAttack(
       ns.rm(file, currentHost);
 
       if (content.length <= (details.passwordLength || 30)) {
-        // Nutzt jetzt tryAuthenticate statt rohes ns.dnet.authenticate
         if (await tryAuthenticate(ns, host, content)) return content;
       }
     }
@@ -163,28 +167,8 @@ async function fileLootAttack(
   return null;
 }
 
-/**
- * Stellt sicher, dass die Verbindung zum Zielserver aktiv ist.
- */
-async function ensureConnected(ns: NS, host: string, details?: any): Promise<void> {
-  try {
-    const d = details || ns.dnet.getServerDetails(host);
-    if (d && !d.isConnectedToCurrentServer) {
-      if (typeof (ns.dnet as any).connect === "function") {
-        await (ns.dnet as any).connect(host);
-      } else if (ns.singularity && typeof ns.singularity.connect === "function") {
-        ns.singularity.connect(host);
-      }
-    }
-  } catch {}
-}
-
-/**
- * Hilfsfunktion für sichere Authentifizierung inklusive automatischer Verbindung.
- */
 async function tryAuthenticate(ns: NS, host: string, pw: string): Promise<boolean> {
   try {
-    await ensureConnected(ns, host);
     const authResult = await ns.dnet.authenticate(host, pw);
     return isAuthSuccess(authResult);
   } catch {

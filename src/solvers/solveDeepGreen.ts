@@ -1,12 +1,16 @@
 import { NS } from "@ns";
+import { LoggerClient } from "/lib/logger-client.js";
 
 export async function solveDeepGreen(
   ns: NS,
   hostname: string,
   details: any,
+  logger?: LoggerClient
 ): Promise<string | null> {
   const len = details?.passwordLength || 3;
   const currentGuess = new Array(len).fill("0");
+
+  logger?.info(`🧩 Starte Kaskaden-Suche (Länge: ${len})...`);
 
   for (let pos = len - 1; pos >= 0; pos--) {
     const targetCorrectCount = len - pos;
@@ -16,13 +20,12 @@ export async function solveDeepGreen(
       currentGuess[pos] = String(digit);
       const guess = currentGuess.join("");
 
-      // 1. Authentifizierung senden
       const result = (await ns.dnet.authenticate(hostname, guess)) as any;
       if (result?.success) {
+        logger?.success(`🎉 Direkt-Erfolg: ${guess}`);
         return guess;
       }
 
-      // 2. SOFORT ohne Sleep den Log-Puffer abfangen
       let logObj: any = null;
       for (let retry = 0; retry < 5; retry++) {
         const bleed = (await ns.dnet.heartbleed(hostname)) as any;
@@ -41,7 +44,7 @@ export async function solveDeepGreen(
         }
 
         if (logObj) break;
-        await ns.sleep(10); // Minimale Pause nur, falls Log noch nicht in Frame verarbeitet
+        await ns.sleep(10);
       }
 
       if (!logObj || !logObj.data) {
@@ -53,17 +56,24 @@ export async function solveDeepGreen(
 
       if (parseInt(matches[0], 10) === targetCorrectCount) {
         posSolved = true;
+        logger?.debug(`Position ${pos} gelöst mit Ziffer '${digit}'`);
         break;
       }
     }
 
     if (!posSolved) {
-      ns.print(`🔴 [DeepGreen] Kaskade an Position ${pos} fehlgeschlagen.`);
+      logger?.warn(`⚠️ Kaskade an Position ${pos} fehlgeschlagen.`);
     }
   }
 
-  // Finaler Check
   const finalGuess = currentGuess.join("");
   const finalResult = (await ns.dnet.authenticate(hostname, finalGuess)) as any;
-  return finalResult?.success ? finalGuess : null;
+  
+  if (finalResult?.success) {
+    logger?.success(`🎉 Erfolg! Passwort: ${finalGuess}`);
+    return finalGuess;
+  }
+
+  logger?.error(`🔴 Lösung konnte nicht validiert werden.`);
+  return null;
 }
