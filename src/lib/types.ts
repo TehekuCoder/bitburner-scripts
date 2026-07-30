@@ -188,6 +188,7 @@ export interface SleeveState {
 
 export interface AugmentState {
   augRoadMap?: AugmentTarget[];
+  isBN2GangMode?: boolean; // ➕ Hier ergänzt
 }
 
 export interface FactionState {
@@ -243,8 +244,8 @@ export interface BotState
     BotStateNetwork,
     BotStateMeta,
     GangState,
-    BatcherState {}
-    
+    BatcherState,
+    AugmentState {} // ➕ AugmentState hier zur Schnittstelle hinzugefügt
 
 export interface SleeveOptions {
   globalMode?: SleeveMode;

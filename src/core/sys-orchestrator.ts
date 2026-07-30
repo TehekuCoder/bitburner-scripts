@@ -171,6 +171,20 @@ function evaluateStrategyAndTarget(
   const currentMoney = sObj.moneyAvailable ?? 0;
   const maxMoney = sObj.moneyMax ?? 1;
 
+  // Wenn wir BEREITS im SHOTGUN-Modus sind, tolerieren wir Schwankungen!
+  // SHOTGUN hat einen eigenen internen REPAIR-Modus.
+  if (currentStrategy === "SHOTGUN_HWGW" && target === currentTarget) {
+    // Erst abbrechen und zu PREP zurückkehren, wenn das Ziel völlig ruiniert ist
+    const isSeverelyDamaged =
+      (maxMoney > 0 && currentMoney / maxMoney < 0.5) ||
+      currentDiff - minDiff > 5.0;
+
+    if (!isSeverelyDamaged) {
+      return { strategy: "SHOTGUN_HWGW", target };
+    }
+  }
+
+  // Normale Initial-Prüfung für neu gewählte Ziele / Strategie-Wechsel:
   const isPrepped =
     currentDiff - minDiff <= 0.05 &&
     (maxMoney > 0 ? currentMoney / maxMoney >= 0.98 : true);

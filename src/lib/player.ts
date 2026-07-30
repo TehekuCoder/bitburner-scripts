@@ -133,3 +133,32 @@ export function determineStrategy(
   // 3. Standard-Geldbeschaffung
   return { mode: "MONEY" };
 }
+
+/**
+ * Prüft, ob die Gang ALLE Augmentationen des Spiels anbietet.
+ * In BitNode 2 ist dies der Fall (inkl. "The Red Pill").
+ * Außerhalb von BN2 bietet die Gang nur ein klassespezifisches Sub-Set an.
+ */
+export function isGangOfferingAllAugs(ns: NS): boolean {
+  try {
+    // 1. Voraussetzungen prüfen
+    if (!ns.gang || !ns.gang.inGang() || !ns.singularity) {
+      return false;
+    }
+
+    const gangFaction = ns.gang.getGangInformation().faction;
+    const gangAugs = ns.singularity.getAugmentationsFromFaction(gangFaction);
+
+    // 2. Indikator 1: Enthält die Gang "The Red Pill"? (Exklusiv für BN2 Gangs)
+    if (gangAugs.includes("The Red Pill")) {
+      return true;
+    }
+
+    // 3. Indikator 2 (Fallback/Sicherheit): Bietet die Gang mehr als 40 verschiedene Augs an?
+    // Normaler Gang-Shop: ~15-20 Augments | BN2 Gang-Shop: 60+ Augments
+    const nonNfgCount = gangAugs.filter((aug) => aug !== "NeuroFlux Governor").length;
+    return nonNfgCount > 40;
+  } catch {
+    return false;
+  }
+}

@@ -19,6 +19,7 @@ import {
   findNextRoadmapFaction,
   applyToAllMegacorps,
   determineStrategy,
+  isGangOfferingAllAugs, // ➕ Neu: Gang-Augmentation Feature-Detection
 } from "/lib/player.js";
 import {
   loadBnMults,
@@ -98,6 +99,10 @@ export async function main(ns: NS): Promise<void> {
     const gangState = loadGangState(ns);
     const gangFaction = gangState?.hasGang ? gangState.gangFaction : null;
 
+    // ⚡ BN2-Gang Check: Bietet die Gang ALLE Augmentationen an?
+    const isBN2GangMode =
+      currentState?.isBN2GangMode ?? isGangOfferingAllAugs(ns);
+
     const factionTargets = (currentState?.factionTargets ?? {}) as Partial<
       Record<FactionName, number>
     >;
@@ -113,13 +118,16 @@ export async function main(ns: NS): Promise<void> {
     const currentCity = CITY_FACTIONS.find((c) => p.factions.includes(c));
 
     // Fraktions-Ziel über Roadmap ermitteln
+    // 💡 Im BN2-Gang-Modus überspringen wir den Faction-Grind komplett!
     const augRoadmap = currentState?.augRoadMap ?? [];
-    const nextRoadmapFaction = findNextRoadmapFaction(
-      ns,
-      augRoadmap,
-      gangFaction,
-      currentCity,
-    );
+    const nextRoadmapFaction = isBN2GangMode
+      ? null
+      : findNextRoadmapFaction(
+          ns,
+          augRoadmap,
+          gangFaction,
+          currentCity,
+        );
 
     // 2. Home-Server / Singularity Upgrades & Kaffee
     handleSingularityPurchases(ns, logger);
@@ -179,14 +187,15 @@ export async function main(ns: NS): Promise<void> {
     const isReadyForFactionGrind =
       isBatcherActive || playerMoney > effectiveThreshold;
 
-    const factionToWorkFor = factionRepMult > 0.1 ? nextRoadmapFaction : null;
+    const factionToWorkFor =
+      !isBN2GangMode && factionRepMult > 0.1 ? nextRoadmapFaction : null;
     const hasSavingTarget =
       factionToWorkFor !== null && !isReadyForFactionGrind;
 
     const isOrchestratorRunning = ns.isRunning(scripts.orchestrator, "home");
 
     // 6. Strategie ermitteln
-    const strategy = determineStrategy(
+    let strategy = determineStrategy(
       ns,
       p,
       currentState,
@@ -198,6 +207,11 @@ export async function main(ns: NS): Promise<void> {
       factionToWorkFor,
       isReadyForFactionGrind,
     );
+
+    // 💡 Sicherheitsnetz: Falls determineStrategy trotz BN2-Gang auf REP schaltet, erzwingen wir MONEY
+    if (isBN2GangMode && strategy.mode === "REP") {
+      strategy = { mode: "MONEY" };
+    }
 
     let { mode, targetFaction = null, targetCompany, targetStat } = strategy;
 
@@ -305,6 +319,7 @@ export async function main(ns: NS): Promise<void> {
     // 💾 Zustand im State-Manager speichern
     patchState(ns, {
       strategy: mode,
+      isBN2GangMode,
       hasGang: gangState?.hasGang ?? false,
       gangFaction: gangFaction ?? undefined,
 

@@ -18,6 +18,8 @@ const SPARK_CHARS = [" ", " ", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail(); // Öffnet das dedizierte UI-Fenster
+  ns.ui.resizeTail(504, 271);
+  ns.ui.setTailTitle("Performance");
 
   const logger = new LoggerClient(ns, "PERF-MONITOR");
 
@@ -56,7 +58,7 @@ export async function main(ns: NS): Promise<void> {
     // 🚨 Stiller Alarm an sys-logger senden, wenn Spike auftritt
     if (lag > LAG_THRESHOLD && now - lastWarnTime > WARN_COOLDOWN) {
       logger.warn(
-        `🚨 Event-Loop Spike! Lag: +${lag.toFixed(1)}ms (Gemessen: ${actualElapsed.toFixed(1)}ms)`
+        `🚨 Event-Loop Spike! Lag: +${lag.toFixed(1)}ms (Gemessen: ${actualElapsed.toFixed(1)}ms)`,
       );
       lastWarnTime = now;
     }
@@ -82,7 +84,7 @@ function renderDashboard(
   currentLag: number,
   avgLag: number,
   maxLag: number,
-  history: number[]
+  history: number[],
 ): void {
   ns.clearLog();
 
@@ -103,16 +105,20 @@ function renderDashboard(
     .map((val) => {
       const idx = Math.min(
         SPARK_CHARS.length - 1,
-        Math.floor((val / maxInHistory) * SPARK_CHARS.length)
+        Math.floor((val / maxInHistory) * SPARK_CHARS.length),
       );
-      const color = val > 50 ? COLORS.red : val > 15 ? COLORS.yellow : COLORS.green;
+      const color =
+        val > 50 ? COLORS.red : val > 15 ? COLORS.yellow : COLORS.green;
       return `${color}${SPARK_CHARS[idx]}${COLORS.reset}`;
     })
     .join("");
 
   // Health-Bar (0-100ms Relativskala)
   const barLength = 20;
-  const filled = Math.min(barLength, Math.round((currentLag / 100) * barLength));
+  const filled = Math.min(
+    barLength,
+    Math.round((currentLag / 100) * barLength),
+  );
   const healthBar =
     `${statusColor}` +
     "█".repeat(filled) +
@@ -121,24 +127,18 @@ function renderDashboard(
     `${COLORS.reset}`;
 
   // UI Rendern
-  ns.print(`┌─────────────────────────────────────────┐`);
+  ns.print(`====================================================`);
   ns.print(
-    `│ ${COLORS.bold}${COLORS.cyan}SYSTEM PERFORMANCE MONITOR${COLORS.reset}   [${statusColor}${statusText.padEnd(12)}${COLORS.reset}] │`
+    `${COLORS.bold}${COLORS.cyan}SYSTEM PERFORMANCE MONITOR${COLORS.reset}   ${statusColor}${statusText.padEnd(12)}${COLORS.reset}`,
   );
-  ns.print(`├─────────────────────────────────────────┤`);
-  ns.print(
-    `│  Current Lag : ${formatMs(currentLag)} ${healthBar} │`
-  );
-  ns.print(
-    `│  Average Lag : ${formatMs(avgLag)}                      │`
-  );
-  ns.print(
-    `│  Peak Spike  : ${formatMs(maxLag)}                      │`
-  );
-  ns.print(`├─────────────────────────────────────────┤`);
-  ns.print(`│  Live History (20 Ticks):                │`);
-  ns.print(`│  [${sparkline}]             │`);
-  ns.print(`└─────────────────────────────────────────┘`);
+  ns.print(`====================================================`);
+  ns.print(`  Current Lag : ${formatMs(currentLag)} ${healthBar} `);
+  ns.print(`  Average Lag : ${formatMs(avgLag)}                      `);
+  ns.print(`  Peak Spike  : ${formatMs(maxLag)}                      `);
+  ns.print(`----------------------------------------------------`);
+  ns.print(`  Live History (20 Ticks):                          `);
+  ns.print(`  ${sparkline}                                      `);
+  ns.print(`====================================================`);
 }
 
 function formatMs(ms: number): string {

@@ -3,7 +3,10 @@ import { NS, FactionName } from "@ns";
 import { patchAugmentState } from "lib/state.js";
 import { FACTION_ROADMAP } from "lib/constants.js";
 // ➕ Import der Player-Helper
-import { getPurchasedUninstalledAugs } from "lib/player.js";
+import {
+  getPurchasedUninstalledAugs,
+  isGangOfferingAllAugs,
+} from "lib/player.js";
 
 export interface AugmentTarget {
   name: string;
@@ -21,18 +24,26 @@ export async function main(ns: NS): Promise<void> {
   const sing = ns.singularity;
   const ownedAugs = sing.getOwnedAugmentations(true); // inkl. gekaufter/wartender
   const uninstalledCount = getPurchasedUninstalledAugs(ns).length; // ➕ Uninstalled Zähler
-  
+
   const augMap = new Map<string, AugmentTarget>();
 
   // ➕ Gang-Fraktion ermitteln (falls vorhanden)
   const factionsToScan = new Set<FactionName>(
-    FACTION_ROADMAP.map((f) => f.name as FactionName)
+    FACTION_ROADMAP.map((f) => f.name as FactionName),
   );
   try {
     if (ns.gang && ns.gang.inGang()) {
       factionsToScan.add(ns.gang.getGangInformation().faction as FactionName);
     }
   } catch {}
+
+  const isBN2Gang = isGangOfferingAllAugs(ns);
+
+  if (isBN2Gang) {
+    ns.print(
+      "⚡ [ANALYSIS] BitNode 2 Gang-Modus erkannt! Gang liefert alle Augmentations.",
+    );
+  }
 
   // 1. Alle Fraktionen (inkl. Gang) durchsuchen und Augments konsolidieren
   for (const faction of factionsToScan) {
@@ -77,12 +88,17 @@ export async function main(ns: NS): Promise<void> {
   }
 
   // 2. In eine Liste umwandeln und nach Rep-Anforderung sortieren (Aufsteigend)
-  const augRoadmap = Array.from(augMap.values()).sort((a, b) => a.repReq - b.repReq);
+  const augRoadmap = Array.from(augMap.values()).sort(
+    (a, b) => a.repReq - b.repReq,
+  );
 
   // 3. Im State speichern & informativen Log ausgeben
-  patchAugmentState(ns, { augRoadMap: augRoadmap });
-  
+patchAugmentState(ns, { 
+  augRoadMap: augRoadmap,
+  isBN2GangMode: isBN2Gang 
+});
+
   ns.print(
-    `INFO: Augment-Analyse abgeschlossen. ${augRoadmap.length} ausstehende Augments in der Roadmap. (${uninstalledCount} gekaufte Augments bereit zum Installieren)`
+    `INFO: Augment-Analyse abgeschlossen. ${augRoadmap.length} ausstehende Augments in der Roadmap. (${uninstalledCount} gekaufte Augments bereit zum Installieren)`,
   );
 }

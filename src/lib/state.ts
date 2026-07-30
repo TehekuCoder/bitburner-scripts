@@ -136,6 +136,11 @@ export function patchState(ns: NS, partialState: BotStatePatch): void {
     sourceFiles: {},
     hasDarkScapeNavigator: false,
     hasTorRouter: false,
+
+    // Augment / BN2 Gang State Defaults
+    augRoadMap: [],
+    isBN2GangMode: false,
+
     hasGang: false,
     gangFaction: undefined,
     isHackingGang: false,
@@ -270,8 +275,8 @@ export function patchSleeveState(ns: NS, partialState: SleeveStatePatch): void {
 export function loadAugmentState(ns: NS): AugmentState | null {
   const state = loadState(ns);
   if (!state) return null;
-  const { augRoadMap } = state;
-  return { augRoadMap };
+  const { augRoadMap, isBN2GangMode } = state;
+  return { augRoadMap, isBN2GangMode };
 }
 
 export function patchAugmentState(
@@ -317,7 +322,6 @@ export function loadProgressState(ns: NS): BotStateProgress | null {
     fillerConfig,
   };
 }
-
 
 /**
  * Lädt ausschließlich den aktuellen Gang-Zustand aus dem State.
@@ -385,4 +389,3 @@ export function clearState(ns: NS): void {
   ns.getPortHandle(STATE_PORT).clear();
   getLogger(ns).info(`Port ${STATE_PORT} erfolgreich geleert.`);
 }
-

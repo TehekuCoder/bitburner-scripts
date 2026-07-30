@@ -5,6 +5,7 @@ import { LEVEL_RANK } from "/lib/constants";
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
+    ns.ui.setTailTitle("Zentraler Logger");
 
 // CLI-Flags verarbeiten
   const flags = ns.flags([
