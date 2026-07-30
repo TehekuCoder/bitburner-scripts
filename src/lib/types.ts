@@ -153,7 +153,8 @@ export interface BotStateStrategy {
 export interface BatcherState {
   batcherTarget?: string | null;
   batcherProgress: string;
-  batcherActive: boolean;
+  batcherActive?: boolean;
+  batcherActiveBatches?: number; 
   batcherTargetsSummary?: TargetSummary[];
   batcherPlan?: BatchPlan | null;
   batcherDynamicMaxBatches?: number;

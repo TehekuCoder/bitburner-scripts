@@ -112,7 +112,7 @@ export function patchState(ns: NS, partialState: BotStatePatch): void {
     ...cleanedCurrentState
   } = currentState || {};
 
-  // Vollständiger Default-State inkl. Multi-Target & Kernel Feldern
+  // Vollständiger Default-State inkl. Multi-Target, Shotgun & Kernel Feldern
   const baseState: BotStateContent = {
     strategy: "MONEY",
     batchStrategy: "BOOTSTRAP",
@@ -121,6 +121,7 @@ export function patchState(ns: NS, partialState: BotStatePatch): void {
     progressBar: "Prüfe System...",
     batcherProgress: "Inaktiv",
     batcherActive: false,
+    batcherActiveBatches: 0, // ➕ Neu: Aktive Wellen/Batches für Shotgun Monitor
     batcherTargetsSummary: [],
     allServers: [],
     totalNodes: 0,
@@ -189,6 +190,7 @@ export function loadBatcherState(ns: NS): BatcherState | null {
     batcherTarget,
     batcherProgress,
     batcherActive,
+    batcherActiveBatches, // ➕ Neu
     batcherTargetsSummary,
     batcherPlan,
     batcherDynamicMaxBatches,
@@ -199,6 +201,7 @@ export function loadBatcherState(ns: NS): BatcherState | null {
     batcherTarget,
     batcherProgress,
     batcherActive,
+    batcherActiveBatches, // ➕ Neu
     batcherTargetsSummary,
     batcherPlan,
     batcherDynamicMaxBatches,
