@@ -7,6 +7,8 @@ export const PATHS = {
     logger: "core/sys-logger.js",
     orchestrator: "core/sys-orchestrator.js",
     suites: "core/sys-suites.js",
+    jitDashboard: "core/sys-jit-batcher-dashboard.js",
+    shotgutDashboard: "core/sys-shotgut-dashboard.js",
     engines: {
       prep: "core/engines/engine-prep.js",
       proto: "core/engines/engine-proto.js",
@@ -83,6 +85,7 @@ export const PATHS = {
   },
   ui: {
     batcher: "ui/batcher-ui.js",
+    shotgun: "ui/shotgun-ui.js",
     infra: "ui/infra-ui.js",
     sleeve: "ui/sleeve-ui.js",
     gang: "ui/gang-ui.js",

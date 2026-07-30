@@ -10,7 +10,8 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new Logger(ns, "Orchestrator");
 
-  const DASHBOARD_SCRIPT = "core/sys-jit-batcher-dashboard.js";
+  const JIT_DASHBOARD = "core/sys-jit-batcher-dashboard.js";
+  const SHOTGUN_DASHBOARD = "core/sys-shotgun-dashboard.js";
 
   let activeStrategy: BatchStrategy | null = null;
   let activeTarget: string | null = null;
@@ -78,25 +79,38 @@ export async function main(ns: NS): Promise<void> {
       });
     }
 
-    // 3. DASHBOARD LIFECYCLE MANAGEMENT
-    if (activeStrategy === "JIT_HWGW") {
-      if (
-        ns.fileExists(DASHBOARD_SCRIPT, "home") &&
-        !ns.isRunning(DASHBOARD_SCRIPT, "home")
-      ) {
-        const freeRam =
-          ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
-        const reqRam = ns.getScriptRam(DASHBOARD_SCRIPT, "home");
+    // 3. DASHBOARD LIFECYCLE MANAGEMENT (Dynamic Toggle)
+    const activeDashboardScript =
+      activeStrategy === "JIT_HWGW"
+        ? JIT_DASHBOARD
+        : activeStrategy === "SHOTGUN_HWGW"
+        ? SHOTGUN_DASHBOARD
+        : null;
 
-        if (freeRam >= reqRam) {
-          ns.run(DASHBOARD_SCRIPT, 1);
-          logger.info(`📊 JIT-Batcher Dashboard gestartet.`);
+    const knownDashboards = [JIT_DASHBOARD, SHOTGUN_DASHBOARD];
+
+    for (const dashScript of knownDashboards) {
+      if (dashScript === activeDashboardScript) {
+        // Dashboard soll laufen -> Starten falls noch inaktiv
+        if (
+          ns.fileExists(dashScript, "home") &&
+          !ns.isRunning(dashScript, "home")
+        ) {
+          const freeRam =
+            ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+          const reqRam = ns.getScriptRam(dashScript, "home");
+
+          if (freeRam >= reqRam) {
+            ns.run(dashScript, 1);
+            logger.info(`📊 Dashboard gestartet: ${dashScript}`);
+          }
         }
-      }
-    } else {
-      if (ns.isRunning(DASHBOARD_SCRIPT, "home")) {
-        ns.scriptKill(DASHBOARD_SCRIPT, "home");
-        logger.info(`⏹️ JIT-Batcher Dashboard beendet (Inaktive Strategie).`);
+      } else {
+        // Nicht passendes Dashboard beenden
+        if (ns.isRunning(dashScript, "home")) {
+          ns.scriptKill(dashScript, "home");
+          logger.info(`⏹️ Dashboard beendet: ${dashScript}`);
+        }
       }
     }
 
@@ -148,18 +162,17 @@ function evaluateStrategyAndTarget(
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
   // 2️⃣ BOOTSTRAP / PROTO: Solange home < 256 GB RAM hat
-  // (Egal wie viele pservers wir haben: Auf home reicht der RAM noch nicht für HWGW-Orchestrierung)
   if (homeRam < 256) {
     const target = selectBestTarget(ns, servers, currentTarget) ?? "joesguns";
     return { strategy: "BOOTSTRAP", target };
   }
 
-  // 3️⃣ JIT_HWGW: Ab 512 GB home-RAM + Formulas (Perfekt getaktetes HWGW)
+  // 3️⃣ JIT_HWGW: Ab 512 GB home-RAM + Formulas
   if (homeRam >= 512 && hasFormulas) {
     return { strategy: "JIT_HWGW", target: currentTarget ?? "n00dles" };
   }
 
-  // 4️⃣ SHOTGUN / PREP: Für den Übergang (home >= 256 GB, aber kein Formulas oder home < 512 GB)
+  // 4️⃣ SHOTGUN / PREP: Für den Übergang
   const target = selectBestTarget(ns, servers, currentTarget);
   if (!target) {
     return { strategy: "PREP", target: "n00dles" };
@@ -171,10 +184,7 @@ function evaluateStrategyAndTarget(
   const currentMoney = sObj.moneyAvailable ?? 0;
   const maxMoney = sObj.moneyMax ?? 1;
 
-  // Wenn wir BEREITS im SHOTGUN-Modus sind, tolerieren wir Schwankungen!
-  // SHOTGUN hat einen eigenen internen REPAIR-Modus.
   if (currentStrategy === "SHOTGUN_HWGW" && target === currentTarget) {
-    // Erst abbrechen und zu PREP zurückkehren, wenn das Ziel völlig ruiniert ist
     const isSeverelyDamaged =
       (maxMoney > 0 && currentMoney / maxMoney < 0.5) ||
       currentDiff - minDiff > 5.0;
@@ -184,7 +194,6 @@ function evaluateStrategyAndTarget(
     }
   }
 
-  // Normale Initial-Prüfung für neu gewählte Ziele / Strategie-Wechsel:
   const isPrepped =
     currentDiff - minDiff <= 0.05 &&
     (maxMoney > 0 ? currentMoney / maxMoney >= 0.98 : true);
@@ -195,6 +204,7 @@ function evaluateStrategyAndTarget(
 
   return { strategy: "SHOTGUN_HWGW", target };
 }
+
 /**
  * Wählt das lukrativste Ziel aus.
  */
@@ -224,7 +234,6 @@ function selectBestTarget(
 
     const threshold = playerSkill < 300 ? 1.3 : 1.8;
 
-    // 🟢 Nur wechseln, wenn das neue Ziel spürbar mehr Geld bringt
     const isBestSignificantlyBetter =
       bestMaxMoney > currentMaxMoney * threshold;
 
@@ -235,6 +244,7 @@ function selectBestTarget(
 
   return bestCandidate;
 }
+
 /**
  * Startet das jeweilige Sub-System als isolierten Prozess.
  */
@@ -247,7 +257,6 @@ function switchExecutionEngine(
 
   switch (strategy) {
     case "BOOTSTRAP":
-      // Nutzt jetzt das dynamisch ermittelte targetArg anstelle des hardgecodeten "n00dles"
       return ns.run(PATHS.core.engines.proto, 1, targetArg);
 
     case "XP_GRIND":
