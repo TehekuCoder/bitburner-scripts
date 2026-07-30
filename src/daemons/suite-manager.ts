@@ -7,7 +7,7 @@ export function manageSuites(
   scripts: ScriptList,
   state: BotStateNetwork,
   bnMults: any,
-  logger: any
+  logger: any,
 ): void {
   const homeMaxRam = ns.getServerMaxRam("home");
   const homeUsedRam = ns.getServerUsedRam("home");
@@ -24,9 +24,13 @@ export function manageSuites(
   const tryLaunch = (
     scriptPath: string | undefined,
     args: (string | number)[] = [],
-    launchLog?: () => void
+    launchLog?: () => void,
   ): boolean => {
-    if (!scriptPath || !ns.fileExists(scriptPath, "home") || ns.isRunning(scriptPath, "home")) {
+    if (
+      !scriptPath ||
+      !ns.fileExists(scriptPath, "home") ||
+      ns.isRunning(scriptPath, "home")
+    ) {
       return false;
     }
 
@@ -51,12 +55,21 @@ export function manageSuites(
   const currentHackingLevel = ns.getHackingLevel();
 
   for (const node of networkNodes) {
-    if (node === "home" || node === "darkweb" || node.startsWith("hacknet-node")) continue;
+    if (
+      node === "home" ||
+      node === "darkweb" ||
+      node.startsWith("hacknet-node")
+    )
+      continue;
     if (node === "w0r1d_d43m0n") continue;
 
     if (ns.serverExists(node)) {
       const srv = ns.getServer(node);
-      if (srv.hasAdminRights && !srv.backdoorInstalled && !srv.purchasedByPlayer) {
+      if (
+        srv.hasAdminRights &&
+        !srv.backdoorInstalled &&
+        !srv.purchasedByPlayer
+      ) {
         if (currentHackingLevel >= (srv.requiredHackingSkill ?? 0)) {
           backdoorIsNeeded = true;
           break;
@@ -67,7 +80,9 @@ export function manageSuites(
 
   if (backdoorIsNeeded) {
     tryLaunch(scripts.backdoor, [], () => {
-      logger.info("Verifizierte Backdoor-Lücke im Netzwerk entdeckt. Starte Infiltration...");
+      logger.info(
+        "Verifizierte Backdoor-Lücke im Netzwerk entdeckt. Starte Infiltration...",
+      );
     });
   }
 
@@ -88,10 +103,14 @@ export function manageSuites(
   }
 
   // ====================================================================
-  // 4. ⚡ HACKNET LOGIK (Skalierung & Formeln-Check)
+  // 4. ⚡ HACKNET LOGIK (Erst ab 256GB RAM + BruteSSH.exe)
   // ====================================================================
-  const targetHacknetScript = hasFormulas ? PATHS.daemons.hacknet : PATHS.daemons.hacknetEarly;
-  const obsoleteHacknetScript = hasFormulas ? PATHS.daemons.hacknet : PATHS.daemons.hacknetEarly;
+  const targetHacknetScript = hasFormulas
+    ? PATHS.daemons.hacknet
+    : PATHS.daemons.hacknetEarly;
+  const obsoleteHacknetScript = hasFormulas
+    ? PATHS.daemons.hacknetEarly
+    : PATHS.daemons.hacknet;
 
   if (ns.isRunning(obsoleteHacknetScript, "home")) {
     logger.info(`Beende veraltetes Hacknet-Skript (${obsoleteHacknetScript}).`);
@@ -99,9 +118,11 @@ export function manageSuites(
   }
 
   const hasBrute = ns.fileExists("BruteSSH.exe", "home");
-  if (homeMaxRam < 128 || !hasBrute) {
+  if (homeMaxRam < 256 || !hasBrute) {
     if (ns.isRunning(targetHacknetScript, "home")) {
-      logger.warn("Ressourcen unzureichend. Deaktiviere Hacknet.");
+      logger.warn(
+        "Hacknet deaktiviert (benötigt mindestens 256GB RAM & BruteSSH.exe).",
+      );
       ns.scriptKill(targetHacknetScript, "home");
     }
   } else {
@@ -120,7 +141,7 @@ export function manageSuites(
   // ====================================================================
   // 5. 🌐 NETWORK EXPANSION (Darknet & Crawler ab 256GB + Navigator)
   // ====================================================================
-  if (homeMaxRam >= 256 && hasNavigator) {
+  if (homeMaxRam >= 512 && hasNavigator) {
     tryLaunch(scripts.dnet, [], () => {
       logger.info("Starte Darknet-Subsystem...");
     });
@@ -132,7 +153,7 @@ export function manageSuites(
   // ====================================================================
   // 6. ⚡ SINGULARITY DISPATCHER (SF4 Automatisierung ab 256GB RAM)
   // ====================================================================
-  if (homeMaxRam >= 256 && ns.singularity !== undefined) {
+  if (homeMaxRam >= 512 && ns.singularity !== undefined) {
     tryLaunch(scripts.dispatcher, [], () => {
       logger.success("Starte zentralen Singularity-Dispatcher (SF4)...");
     });
@@ -141,12 +162,13 @@ export function manageSuites(
   // ====================================================================
   // 7. 👥 GANG MANAGER
   // ====================================================================
+
   let isInGang = false;
   try {
     isInGang = ns.gang.inGang();
   } catch (_) {}
 
-  if (isInGang) {
+  if (isInGang && homeMaxRam >= 256) {
     tryLaunch(scripts.gang, [], () => {
       logger.info("Gang-Zugehörigkeit bestätigt. Starte Gang-Manager...");
     });
@@ -160,7 +182,9 @@ export function manageSuites(
       logger.success("Initialisiere Finanz-Subsystem...");
     });
   } else if (ns.isRunning(scripts.trade, "home")) {
-    logger.warn(`Erzwinge Stopp von finance.js. Home-RAM (${ns.format.ram(homeMaxRam)}) unter 512GB.`);
+    logger.warn(
+      `Erzwinge Stopp von finance.js. Home-RAM (${ns.format.ram(homeMaxRam)}) unter 512GB.`,
+    );
     ns.scriptKill(scripts.trade, "home");
   }
 
@@ -168,9 +192,13 @@ export function manageSuites(
   // 9. 🧬 SLEEVE LOGIK
   // ====================================================================
   if (ns.sleeve !== undefined) {
-    tryLaunch(scripts.sleeve, [], () => {
-      logger.info("Sleeve-API detektiert. Initialisiere Klon-Automatisierung...");
-    });
+    if (homeMaxRam >= 512) {
+      tryLaunch(scripts.sleeve, [], () => {
+        logger.info(
+          "Sleeve-API detektiert. Initialisiere Klon-Automatisierung...",
+        );
+      });
+    }
   }
 
   // ====================================================================

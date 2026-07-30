@@ -139,50 +139,27 @@ function evaluateStrategyAndTarget(
   const hackingEfficiency =
     (bnMults.ServerMaxMoney ?? 1.0) * (bnMults.ScriptHackMoneyGain ?? 1.0);
 
-  // ----------------------------------------------------------------------
-  // 1️⃣ GLOBALE STRATEGIEN
-  // ----------------------------------------------------------------------
+  // 1️⃣ XP-GRIND Check
   if (hackingEfficiency === 0 || ns.getPlayer().skills.hacking < 30) {
     return { strategy: "XP_GRIND", target: "joesguns" };
-  }
-
-  // Bis 128GB Gesamtsystem-RAM nutzt die Engine BOOTSTRAP / Early-Prep
-  if (totalRam < 128) {
-    const playerHack = ns.getPlayer().skills.hacking;
-    const canHackJoesguns = ns.hasRootAccess("joesguns") && playerHack >= 10;
-    const bootstrapTarget = canHackJoesguns ? "joesguns" : "n00dles";
-
-    return { strategy: "BOOTSTRAP", target: bootstrapTarget };
   }
 
   const homeRam = ns.getServerMaxRam("home");
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  if (totalRam >= 512 && homeRam >= 1024 && hasFormulas) {
+  // 2️⃣ BOOTSTRAP / PROTO: Solange home < 256 GB RAM hat
+  // (Egal wie viele pservers wir haben: Auf home reicht der RAM noch nicht für HWGW-Orchestrierung)
+  if (homeRam < 256) {
+    const target = selectBestTarget(ns, servers, currentTarget) ?? "joesguns";
+    return { strategy: "BOOTSTRAP", target };
+  }
+
+  // 3️⃣ JIT_HWGW: Ab 512 GB home-RAM + Formulas (Perfekt getaktetes HWGW)
+  if (homeRam >= 512 && hasFormulas) {
     return { strategy: "JIT_HWGW", target: currentTarget ?? "n00dles" };
   }
 
-  // ----------------------------------------------------------------------
-  // 2️⃣ HYSTERESE FÜR SHOTGUN_HWGW (Verhindert Target-Jumping)
-  // ----------------------------------------------------------------------
-  if (
-    currentStrategy === "SHOTGUN_HWGW" &&
-    currentTarget &&
-    ns.serverExists(currentTarget)
-  ) {
-    const sObj = ns.getServer(currentTarget);
-    const curDiff = sObj.hackDifficulty ?? 99;
-    const minDiff = sObj.minDifficulty ?? 1;
-
-    // Solange das aktuelle Ziel nicht massiv destabilisiert ist, bleiben wir dabei
-    if (curDiff - minDiff <= 20.0) {
-      return { strategy: "SHOTGUN_HWGW", target: currentTarget };
-    }
-  }
-
-  // ----------------------------------------------------------------------
-  // 3️⃣ ZIEL-EVALUIERUNG (PREP / SHOTGUN)
-  // ----------------------------------------------------------------------
+  // 4️⃣ SHOTGUN / PREP: Für den Übergang (home >= 256 GB, aber kein Formulas oder home < 512 GB)
   const target = selectBestTarget(ns, servers, currentTarget);
   if (!target) {
     return { strategy: "PREP", target: "n00dles" };
@@ -202,10 +179,8 @@ function evaluateStrategyAndTarget(
     return { strategy: "PREP", target };
   }
 
-  // Sobald das Ziel prepped ist, geht es in die SHOTGUN Engine
   return { strategy: "SHOTGUN_HWGW", target };
 }
-
 /**
  * Wählt das lukrativste Ziel aus.
  */
@@ -259,7 +234,7 @@ function switchExecutionEngine(
   switch (strategy) {
     case "BOOTSTRAP":
       // Nutzt jetzt das dynamisch ermittelte targetArg anstelle des hardgecodeten "n00dles"
-      return ns.run(PATHS.core.engines.prep, 1, targetArg);
+      return ns.run(PATHS.core.engines.proto, 1, targetArg);
 
     case "XP_GRIND":
       return ns.run(PATHS.core.engines.xpGrind, 1, "joesguns");
