@@ -21,10 +21,37 @@ function getBitNodeMultipliers(ns: NS): BitNodeMultipliers {
   return DEFAULT_MULTIPLIERS as unknown as BitNodeMultipliers;
 }
 
-function calculateMinBatchSize(augMoneyMult: number): number {
+function calculateDynamicMinBatchSize(
+  ns: NS,
+  augMoneyMult: number,
+  availableCandidatesCount: number
+): number {
+  const sing = ns.singularity;
+
+  // 1. Basis-Batch nach BitNode-Multiplier
   const BASE_BATCH_SIZE = 10;
-  if (augMoneyMult <= 1.0) return BASE_BATCH_SIZE;
-  return Math.max(3, Math.round(BASE_BATCH_SIZE / Math.sqrt(augMoneyMult)));
+  let targetBatch =
+    augMoneyMult <= 1.0
+      ? BASE_BATCH_SIZE
+      : Math.max(3, Math.round(BASE_BATCH_SIZE / Math.sqrt(augMoneyMult)));
+
+  // 2. Achievement Target (40 Augs Ziel)
+  // getOwnedAugmentations(false) = NUR bereits installierte Augs
+  const installedCount = sing.getOwnedAugmentations(false).length;
+  const TARGET_ACHIEVEMENT = 40;
+
+  if (installedCount < TARGET_ACHIEVEMENT) {
+    const neededForAchievement = TARGET_ACHIEVEMENT - installedCount;
+    // Wenn wir weniger als den normalen Batch brauchen, reduzieren wir das Ziel exakt darauf
+    targetBatch = Math.min(targetBatch, neededForAchievement);
+  }
+
+  // 3. Verbleibende Kandidaten Cap
+  if (availableCandidatesCount > 0 && availableCandidatesCount < targetBatch) {
+    targetBatch = availableCandidatesCount;
+  }
+
+  return Math.max(1, targetBatch);
 }
 
 function getIncomePerSecond(ns: NS): number {
@@ -66,7 +93,6 @@ export async function main(ns: NS): Promise<void> {
   const NFG_NAME = "NeuroFlux Governor";
 
   const bnMults = getBitNodeMultipliers(ns);
-  const minBatchSize = calculateMinBatchSize(bnMults.AugmentationMoneyCost ?? 1.0);
   const uninstalledAugs = getPurchasedUninstalledAugs(ns);
   const pendingCount = uninstalledAugs.length;
 
@@ -82,11 +108,6 @@ export async function main(ns: NS): Promise<void> {
     ns.print(msg);
     report.push(msg);
   };
-
-  logReport("==================================================");
-  logReport("🛍️ FACTION SHOPPING REPORT - " + new Date().toLocaleTimeString());
-  logReport(`⚙️ AugCostMult: ${bnMults.AugmentationMoneyCost} | Ziel-Batch: ${minBatchSize} | Bereit für Install: ${pendingCount}`);
-  logReport("==================================================\n");
 
   let shoppingList: AugShoppingItem[] = [];
   const ownedAugs = sing.getOwnedAugmentations(true);
@@ -111,19 +132,6 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
-  logReport(`📋 Scanner-Ergebnis: ${shoppingList.length} einzigartige Augmentations qualifiziert.`);
-
-  // 🛑 EARLY EXIT wenn keine Augmentations verfügbar sind (Gefixter Block!)
-  if (shoppingList.length === 0) {
-    const statusMsg = pendingCount > 0
-      ? `Shop: Bereit für Reset (${pendingCount} Augs ausstehend)`
-      : "Shop: Inaktiv (Keine Augs)";
-    logReport(`ℹ️ Keine weiteren kaufbaren Augmentations vorhanden. (${statusMsg})`);
-    patchFinanceState(ns, { financeProgress: statusMsg });
-    await ns.write("/temp/shop-report.txt", report.join("\n"), "w");
-    return;
-  }
-
   // Prereq-Check
   const validCandidates = shoppingList.filter((item) => {
     const prereqs = sing.getAugmentationPrereq(item.name);
@@ -132,20 +140,53 @@ export async function main(ns: NS): Promise<void> {
     );
   });
 
-  // Sortierung: Teuerste zuerst (Top-Down), aber Prerequisites müssen Priorität haben!
+  // Sortierung: Teuerste zuerst (Top-Down), aber Prerequisites haben Priorität!
   validCandidates.sort((a, b) => {
     const aIsPrereqOfB = sing.getAugmentationPrereq(b.name).includes(a.name);
     const bIsPrereqOfA = sing.getAugmentationPrereq(a.name).includes(b.name);
-    if (aIsPrereqOfB) return -1; // a muss vor b gekauf werden
-    if (bIsPrereqOfA) return 1;  // b muss vor a gekauft werden
-    return b.price - a.price;    // Ansonsten teuerste zuerst
+    if (aIsPrereqOfB) return -1;
+    if (bIsPrereqOfA) return 1;
+    return b.price - a.price;
   });
 
-  // 2. SIMULATION
+  // Dynamischen Batch Threshold anhand der validen Kandidaten berechnen
+  const minBatchSize = calculateDynamicMinBatchSize(
+    ns,
+    bnMults.AugmentationMoneyCost ?? 1.0,
+    validCandidates.length
+  );
+
+  // Initialer Report Header
+  logReport("==================================================");
+  logReport("🛍️ FACTION SHOPPING REPORT - " + new Date().toLocaleTimeString());
+  logReport(
+    `⚙️ AugCostMult: ${bnMults.AugmentationMoneyCost} | Dyn. Ziel-Batch: ${minBatchSize} | Bereit für Install: ${pendingCount}`
+  );
+  logReport("==================================================\n");
+  logReport(
+    `📋 Scanner-Ergebnis: ${validCandidates.length} einzigartige Augmentations qualifiziert.`
+  );
+
+  // 🛑 EARLY EXIT wenn keine Augmentations verfügbar sind
+  if (validCandidates.length === 0) {
+    const statusMsg =
+      pendingCount > 0
+        ? `Shop: Bereit für Reset (${pendingCount} Augs ausstehend)`
+        : "Shop: Inaktiv (Keine Augs)";
+    logReport(
+      `ℹ️ Keine weiteren kaufbaren Augmentations vorhanden. (${statusMsg})`
+    );
+    patchFinanceState(ns, { financeProgress: statusMsg });
+    await ns.write("/temp/shop-report.txt", report.join("\n"), "w");
+    return;
+  }
+
+  // 2. SIMULATION (Einzigartige Augmentations + NFG Pre-Calculation)
   let tempMoney = player.money;
   const affordableBatch: AugShoppingItem[] = [];
   let simulatedMultiplier = 1.0;
 
+  // A) Reguläre Augmentations simulieren
   for (const item of validCandidates) {
     const scaledPrice = item.price * simulatedMultiplier;
     if (tempMoney >= scaledPrice) {
@@ -155,25 +196,59 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
+  // B) NFG-Stufen simulieren, die wir mit dem RESTGELD noch kaufen könnten
+  let simulatedNfgCount = 0;
+  let tempNfgMoney = tempMoney;
+  let nfgRepReq = sing.getAugmentationRepReq(NFG_NAME);
+
+  const validFactions = myFactions.filter((f) => f !== gangFaction);
+  const maxFactionRep =
+    validFactions.length > 0
+      ? Math.max(...validFactions.map((f) => sing.getFactionRep(f)))
+      : 0;
+
+  while (maxFactionRep >= nfgRepReq) {
+    const baseNfgPrice = sing.getAugmentationPrice(NFG_NAME);
+    const scaledNfgPrice = baseNfgPrice * simulatedMultiplier;
+
+    if (tempNfgMoney >= scaledNfgPrice) {
+      tempNfgMoney -= scaledNfgPrice;
+      simulatedNfgCount++;
+      simulatedMultiplier *= AUG_PRICE_MULT;
+      nfgRepReq *= 1.14; // NFG Rep-Requirement Skalierung
+    } else {
+      break;
+    }
+  }
+
   const currentIncome = getIncomePerSecond(ns);
   const canAffordAll = affordableBatch.length === validCandidates.length;
-  const totalBatchSize = pendingCount + affordableBatch.length;
+  const totalBatchSize =
+    pendingCount + affordableBatch.length + simulatedNfgCount;
   const meetsBatchThreshold = totalBatchSize >= minBatchSize;
 
-  logReport(`💡 Bezahlbar im Batch: ${affordableBatch.length} neue (+ ${pendingCount} bereits gekauft = ${totalBatchSize}/${minBatchSize} Ziel)`);
+  logReport(
+    `💡 Bezahlbar im Batch: ${affordableBatch.length} unique + ${simulatedNfgCount} NFG (+ ${pendingCount} bereits gekauft = ${totalBatchSize}/${minBatchSize} Ziel)`
+  );
 
   // 3. KAUF ODER SPAREN
   let boughtCount = 0;
+  let batchApproved = false;
 
   if (meetsBatchThreshold || canAffordAll) {
-    logReport(`🚀 BATCH-KAUF FREIGEGEBEN (${affordableBatch.length} neue Augs bereit)`);
+    batchApproved = true;
+    logReport(
+      `🚀 BATCH-KAUF FREIGEGEBEN (${affordableBatch.length} neue Augs + NFG bereit)`
+    );
 
     for (const item of affordableBatch) {
       const actualPrice = sing.getAugmentationPrice(item.name);
       if (ns.getPlayer().money >= actualPrice) {
         const success = sing.purchaseAugmentation(item.faction, item.name);
         if (success) {
-          logReport(`✅ GEKAUFT: ${item.name} ($${ns.format.number(actualPrice)})`);
+          logReport(
+            `✅ GEKAUFT: ${item.name} ($${ns.format.number(actualPrice)})`
+          );
           boughtCount++;
         }
       }
@@ -185,7 +260,8 @@ export async function main(ns: NS): Promise<void> {
 
     if (nextTarget) {
       const neededMoney = nextTarget.price - ns.getPlayer().money;
-      const waitSeconds = currentIncome > 0 ? neededMoney / currentIncome : Infinity;
+      const waitSeconds =
+        currentIncome > 0 ? neededMoney / currentIncome : Infinity;
 
       if (waitSeconds <= MAX_WAIT_TIME_SECONDS) {
         const waitText = `Spare auf ${nextTarget.name} (~${formatTime(waitSeconds)}) [Batch: ${totalBatchSize}/${minBatchSize}]`;
@@ -194,13 +270,20 @@ export async function main(ns: NS): Promise<void> {
         await ns.write("/temp/shop-report.txt", report.join("\n"), "w");
         return;
       } else {
-        logReport(`ℹ️ Warten auf ${nextTarget.name} dauert zu lange (~${formatTime(waitSeconds)}). Batch-Ziel (${minBatchSize}) noch nicht erreicht.`);
+        logReport(
+          `ℹ️ Warten auf ${nextTarget.name} dauert zu lange (~${formatTime(waitSeconds)}). Batch-Ziel (${minBatchSize}) noch nicht erreicht.`
+        );
       }
     }
   }
 
   // 4. LATE-GAME: NEUROFLUX DUMP
-  if (canAffordAll || boughtCount > 0 || hasPurchasedAugsThisRun(ns)) {
+  if (
+    batchApproved ||
+    canAffordAll ||
+    boughtCount > 0 ||
+    hasPurchasedAugsThisRun(ns)
+  ) {
     logReport("\n🔄 Phase 2: NeuroFlux Governor Dump...");
     let boughtNFG = true;
     let nfgCount = 0;
@@ -239,9 +322,10 @@ export async function main(ns: NS): Promise<void> {
   }
 
   const finalUninstalledCount = getPurchasedUninstalledAugs(ns).length;
-  const finalStatus = boughtCount > 0
-    ? `Shop: ${boughtCount} Augs neu gekauft (${finalUninstalledCount} bereit für Reset)`
-    : `Shop: Warten auf Batch (${finalUninstalledCount}/${minBatchSize})`;
+  const finalStatus =
+    boughtCount > 0
+      ? `Shop: ${boughtCount} Augs neu gekauft (${finalUninstalledCount} bereit für Reset)`
+      : `Shop: Warten auf Batch (${finalUninstalledCount}/${minBatchSize})`;
 
   patchFinanceState(ns, { financeProgress: finalStatus });
   logReport("\n🏁 Report Ende.");

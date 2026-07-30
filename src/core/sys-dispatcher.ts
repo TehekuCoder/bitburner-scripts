@@ -5,6 +5,7 @@ import {
   DEFAULT_MULTIPLIERS,
   REFRESH_INTERVALS,
   COMBAT_STATS,
+  CITY_FACTIONS,
 } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 
@@ -91,6 +92,8 @@ export async function main(ns: NS): Promise<void> {
       lastNetworkScan = now;
     }
 
+    const p = ns.getPlayer();
+
     const currentState = loadState(ns);
     const gangState = loadGangState(ns);
     const gangFaction = gangState?.hasGang ? gangState.gangFaction : null;
@@ -107,20 +110,22 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // Fraktions-Ziel über Roadmap ermitteln (Gang-Fraktion wird ignoriert)
+    const currentCity = CITY_FACTIONS.find((c) => p.factions.includes(c));
+
+    // Fraktions-Ziel über Roadmap ermitteln
     const augRoadmap = currentState?.augRoadMap ?? [];
     const nextRoadmapFaction = findNextRoadmapFaction(
       ns,
       augRoadmap,
       gangFaction,
+      currentCity,
     );
 
-    const p = ns.getPlayer();
-
-    // 2. Home-Server / Singularity Upgrades & Kaffe
+    // 2. Home-Server / Singularity Upgrades & Kaffee
     handleSingularityPurchases(ns, logger);
 
-    // 3. Fraktions-Reputationen & Roadmap evaluieren
+    // 3. Fraktions-Einladungen verarbeiten & Reps erfassen
+    handleFactionInvitations(ns, logger);
     const currentFactionReps: Record<string, number> = {};
     for (const f of p.factions) {
       currentFactionReps[f] = ns.singularity.getFactionRep(f);
@@ -194,7 +199,7 @@ export async function main(ns: NS): Promise<void> {
       isReadyForFactionGrind,
     );
 
-    let { mode, targetFaction, targetCompany, targetStat } = strategy;
+    let { mode, targetFaction = null, targetCompany, targetStat } = strategy;
 
     // 7. Fallback-Target ermitteln
     if (
@@ -240,10 +245,11 @@ export async function main(ns: NS): Promise<void> {
     let label = "";
 
     if (mode === "REP" && targetFaction) {
+      const factionKey = targetFaction as FactionName;
       currentVal =
-        currentFactionReps[targetFaction] ??
-        ns.singularity.getFactionRep(targetFaction);
-      targetVal = factionTargets[targetFaction] ?? 0;
+        currentFactionReps[factionKey] ??
+        ns.singularity.getFactionRep(factionKey);
+      targetVal = factionTargets[factionKey] ?? 0;
       label = `Fraktion: ${targetFaction}`;
     } else if (mode === "CORP" && targetCompany) {
       currentVal = ns.singularity.getCompanyRep(targetCompany);
@@ -273,7 +279,7 @@ export async function main(ns: NS): Promise<void> {
       currentVal,
       targetVal,
       etaStr,
-      targetFaction,
+      targetFaction: targetFaction ?? null,
       playerMoney,
       effectiveThreshold,
       cachedFallbackTarget,
@@ -454,6 +460,7 @@ function handleSingularityPurchases(ns: NS, logger: Logger): void {
   // 2. Programme kaufen
   if (ns.hasTorRouter()) {
     const programGates: Record<string, number> = {
+      "DarkscapeNavigator.exe": 0,
       "BruteSSH.exe": 50,
       "FTPCrack.exe": 150,
       "relaySMTP.exe": 250,
@@ -483,6 +490,40 @@ function handleSingularityPurchases(ns: NS, logger: Logger): void {
       logger.success(
         `🏠 Home-RAM Upgrade durchgeführt: ${ns.format.ram(newRam)}`,
       );
+    }
+  }
+
+  const coresCost = sing.getUpgradeHomeCoresCost();
+  if (coresCost !== Infinity && player.money - 200_000 >= coresCost) {
+    if (sing.upgradeHomeCores()) {
+      const newCores = ns.getServer("home").cpuCores;
+      ns.toast(`Home Cores erweitert auf ${newCores}!`, "success");
+      logger.success(`🖥️ Home-Cores Upgrade durchgeführt: ${newCores} Cores`);
+    }
+  }
+}
+
+function handleFactionInvitations(ns: NS, logger: Logger): void {
+  const sing = ns.singularity;
+  const player = ns.getPlayer();
+  const invites = sing.checkFactionInvitations();
+  if (invites.length === 0) return;
+
+  const currentCity = CITY_FACTIONS.find((c) => player.factions.includes(c));
+
+  for (const invite of invites) {
+    const isCity = CITY_FACTIONS.includes(invite as FactionName);
+
+    // Keine zweite Stadt-Fraktion beitreten!
+    if (isCity && currentCity && currentCity !== invite) {
+      continue;
+    }
+
+    if (sing.joinFaction(invite)) {
+      logger.success(
+        `🎉 Einladung zu Fraktion [${invite}] automatisch angenommen!`,
+      );
+      ns.toast(`Beigetreten: ${invite}`, "success");
     }
   }
 }

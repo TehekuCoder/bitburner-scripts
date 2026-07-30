@@ -1,8 +1,8 @@
-import { NS, Player, FactionName, CompanyName } from "@ns";
+import { NS, Player, FactionName, CompanyName, BitNodeMultipliers } from "@ns";
 import {
   MEGACORPS,
-  FACTION_ROADMAP,
-  COMBAT_FACTION_REQUIREMENTS,
+  COMBAT_STATS,
+  CITY_FACTIONS,
 } from "./constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import {
@@ -10,28 +10,68 @@ import {
   AugmentTarget,
   BotStrategy,
   StrategyResult,
+  BotState,
 } from "./types.js";
 
 /**
- * Evaluiert die nächste Fraktion auf der Roadmap, die noch Rep-Bedarf hat.
- * Berücksichtigt ausschließlich Fraktionen, bei denen wir bereits Mitglied sind.
- * Ignoriert die Gang-Fraktion, da deren Reputation über Gang-Aktivitäten läuft.
+ * Liefert alle gekauften, aber noch nicht installierten Augmentationen.
+ */
+export function getPurchasedUninstalledAugs(ns: NS): string[] {
+  const allOwned = ns.singularity.getOwnedAugmentations(true);
+  const installed = ns.singularity.getOwnedAugmentations(false);
+  return allOwned.filter((aug) => !installed.includes(aug));
+}
+
+/**
+ * Prüft, ob in diesem Run bereits Augmentationen erworben wurden.
+ */
+export function hasPurchasedAugsThisRun(ns: NS): boolean {
+  return getPurchasedUninstalledAugs(ns).length > 0;
+}
+
+/**
+ * Bewirbt sich bei allen Megacorps um Software-Positionen.
+ */
+export function applyToAllMegacorps(ns: NS, player: Player, logger: Logger): void {
+  for (const corp of Object.values(MEGACORPS)) {
+    try {
+      ns.singularity.applyToCompany(corp, "Software");
+    } catch {
+      // Ignoriere Fehler, falls Kriterien noch nicht erfüllt sind
+    }
+  }
+}
+
+/**
+ * Evaluiert die nächste Fraktion auf der Roadmap.
+ * Akzeptiert bis zu 4 Parameter (inkl. optionalem currentCity).
  */
 export function findNextRoadmapFaction(
   ns: NS,
   augRoadmap: AugmentTarget[] = [],
   gangFaction?: string | null,
+  currentCityParam?: string | null
 ): TargetFactionResult | null {
-  const playerFactions = ns.getPlayer().factions;
+  const player = ns.getPlayer();
+  const playerFactions = player.factions;
+  const invites = ns.singularity.checkFactionInvitations();
+  const currentCity = currentCityParam ?? CITY_FACTIONS.find((c) => playerFactions.includes(c));
 
   for (const target of augRoadmap) {
-    // 🛑 GANG-FILTER: Ignoriere die Gang-Fraktion für manuellen Ruf-Grind!
-    const validFactions = target.factions.filter(
-      (f) => playerFactions.includes(f) && f !== gangFaction,
-    );
+    const validFactions = target.factions.filter((f) => {
+      if (f === gangFaction) return false;
+
+      const isCity = CITY_FACTIONS.includes(f as FactionName);
+      if (isCity && currentCity && currentCity !== f) return false;
+
+      const isMember = playerFactions.includes(f);
+      const hasInvite = invites.includes(f);
+
+      return isMember || hasInvite;
+    });
+
     if (validFactions.length === 0) continue;
 
-    // Finde unter deinen beigetretenen Fraktionen die mit der höchsten Rep
     let bestFaction = validFactions[0];
     let maxRep = ns.singularity.getFactionRep(bestFaction);
 
@@ -43,7 +83,6 @@ export function findNextRoadmapFaction(
       }
     }
 
-    // Wenn der Ruf für dieses Augment noch NICHT reicht -> Das ist unser nächstes Grind-Ziel!
     if (maxRep < target.repReq) {
       return {
         name: bestFaction,
@@ -53,176 +92,44 @@ export function findNextRoadmapFaction(
     }
   }
 
-  return null; // Alle erreichbaren Augments der beigetretenen Fraktionen wurden gefarmt!
+  return null;
 }
 
 /**
- * Bewirbt sich automatisch bei allen Megacorps als Software-Entwickler.
- */
-export function applyToAllMegacorps(ns: NS, p: Player, logger: Logger): void {
-  for (const corpName of Object.values(MEGACORPS)) {
-    if (!p.jobs[corpName]) {
-      if (ns.singularity.applyToCompany(corpName, "Software")) {
-        logger.success(
-          `💼 Bewerbung erfolgreich: Anstellung bei '${corpName}' erhalten.`,
-        );
-      }
-    }
-  }
-}
-
-/**
- * Legt fest, was der Spieler machen soll
+ * Ermittelt die globale Bot-Strategie anhand von Karma, Stats, Money & Roadmap.
  */
 export function determineStrategy(
   ns: NS,
-  p: Player,
-  currentState: any,
-  bnMults: any,
+  player: Player,
+  currentState: BotState | null,
+  bnMults: BitNodeMultipliers,
   currentKarma: number,
-  canRunBatcher: boolean,
+  isOrchestratorRunning: boolean,
   factionTargets: Record<FactionName, number>,
   nextRoadmapFaction: TargetFactionResult | null,
   factionToWorkFor: TargetFactionResult | null,
-  isReadyForFactionGrind: boolean,
+  isReadyForFactionGrind: boolean
 ): StrategyResult {
-  let mode: BotStrategy = "MONEY";
-  let targetFaction: FactionName | null = null;
-  let targetCompany: CompanyName | undefined = undefined;
-  let targetStat = 0;
-
-  const roadmapFactionName = nextRoadmapFaction
-    ? nextRoadmapFaction.name
-    : null;
-  const companyRepMult = bnMults.CompanyWorkRepGain ?? 1;
-  const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
-  const homeMaxRam = ns.getServerMaxRam("home");
-
-  // N niedrigster Kampfwert des Spielers ermitteln (Str, Def, Dex, Agi)
-  const minCombatSkill = Math.min(
-    p.skills.strength,
-    p.skills.defense,
-    p.skills.dexterity,
-    p.skills.agility,
-  );
-
-  // Default-Zuweisung für Target-Faction, falls im Roadmap-Modus
-  if (roadmapFactionName && p.factions.includes(roadmapFactionName)) {
-    targetFaction = roadmapFactionName;
+  // 1. Slum Snakes / Gang-Voraussetzung (Karma Grind)
+  if (currentKarma > -54000 && !ns.gang.inGang()) {
+    const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
+    if (minCombat < 30) {
+      return { mode: "TRAIN", targetStat: 30 };
+    }
+    return { mode: "CRIME" };
   }
 
-  // --- ENTSCHEIDUNGSBAUM ---
-  if (p.skills.hacking < 50) {
-    mode = "MONEY";
-  } else if (nextRoadmapFaction && roadmapFactionName) {
-    const isMember = p.factions.includes(roadmapFactionName);
-    const isCombatFaction = roadmapFactionName in COMBAT_FACTION_REQUIREMENTS;
-
-    if (!isMember) {
-      targetFaction = roadmapFactionName;
-      const requiredCombatStat =
-        COMBAT_FACTION_REQUIREMENTS[roadmapFactionName] ?? 0;
-
-      // 🏋️ 1. Prüfen, ob Kampfwerte trainiert werden müssen
-      if (requiredCombatStat > 0 && minCombatSkill < requiredCombatStat) {
-        mode = "TRAIN";
-        targetStat = requiredCombatStat;
-      }
-      // 🔫 2. Prüfen, ob Karma oder Kills fehlen
-      else if (roadmapFactionName === "Slum Snakes" && currentKarma > -9) {
-        mode = "CRIME";
-      } else if (roadmapFactionName === "Tetrads" && currentKarma > -18) {
-        mode = "CRIME";
-      } else if (roadmapFactionName === "The Syndicate" && currentKarma > -90) {
-        mode = "CRIME";
-      } else if (
-        roadmapFactionName === "The Dark Army" &&
-        p.numPeopleKilled < 5
-      ) {
-        mode = "KILLS";
-        targetStat = 5;
-      } else if (
-        roadmapFactionName === "Speakers for the Dead" &&
-        p.numPeopleKilled < 30
-      ) {
-        mode = "KILLS";
-        targetStat = 30;
-      } else {
-        mode = "MONEY";
-      }
-    } else {
-      // Wenn wir bereits Mitglied sind -> direkt Reputational Grind starten!
-      if (isReadyForFactionGrind || isCombatFaction) {
-        mode = "REP";
-        targetFaction = roadmapFactionName;
-      } else {
-        mode = "MONEY";
-      }
+  // 2. Fraktions-Reputation Grind
+  if (factionToWorkFor && isReadyForFactionGrind) {
+    const isMember = player.factions.includes(factionToWorkFor.name as FactionName);
+    if (isMember) {
+      return {
+        mode: "REP",
+        targetFaction: factionToWorkFor.name as FactionName,
+      };
     }
-  } else if (p.skills.hacking >= 250 && companyRepMult > 0.1) {
-    const needsSilhouette =
-      !p.factions.includes("Silhouette" as FactionName) &&
-      (factionTargets["Silhouette"] ?? 0) > 0;
-    const isExecutive = Object.values(p.jobs).some((title) =>
-      [
-        "Chief Technology Officer",
-        "Chief Financial Officer",
-        "Chief Executive Officer",
-      ].includes(title),
-    );
-    const hasEnoughKarma = currentKarma <= -22;
-
-    if (needsSilhouette && (!isExecutive || !hasEnoughKarma)) {
-      if (!hasEnoughKarma) {
-        mode = "CRIME";
-      } else {
-        mode = "CORP";
-        const currentCorpJob = Object.keys(p.jobs).find(
-          (corp) => MEGACORPS[corp] !== undefined,
-        );
-        targetCompany = currentCorpJob
-          ? MEGACORPS[currentCorpJob]
-          : Object.values(MEGACORPS)[0];
-      }
-    } else {
-      const missingCorpFaction = FACTION_ROADMAP.find(
-        (f) =>
-          !p.factions.includes(f.name) &&
-          MEGACORPS[f.name] !== undefined &&
-          ns.singularity.getCompanyRep(MEGACORPS[f.name]) < 400_000 &&
-          (factionTargets[f.name] ?? 0) > 0,
-      );
-
-      if (missingCorpFaction) {
-        mode = "CORP";
-        targetCompany = MEGACORPS[missingCorpFaction.name];
-      } else {
-        mode = canRunBatcher ? "MONEY" : "CRIME";
-      }
-    }
-  } else if (homeMaxRam < 256 || !canRunBatcher || crimeMoneyMult > 5) {
-    mode = "CRIME";
-  } else {
-    mode = "MONEY";
   }
 
-  return { mode, targetFaction, targetCompany, targetStat };
-}
-
-/**
- * Ermittelt alle gekauften, aber noch nicht installierten Augmentations.
- * Verhindert Fehleinsteufe / Kausalitätsfehler bei Neustart-Skripten.
- */
-export function getPurchasedUninstalledAugs(ns: NS): string[] {
-  const allOwned = ns.singularity.getOwnedAugmentations(true);
-  const installed = ns.singularity.getOwnedAugmentations(false);
-
-  return allOwned.filter((aug) => !installed.includes(aug));
-}
-
-/**
- * Prüft, ob seit dem letzten Reset bereits irgendwelche Augmentations gekauft wurden.
- */
-export function hasPurchasedAugsThisRun(ns: NS): boolean {
-  return getPurchasedUninstalledAugs(ns).length > 0;
+  // 3. Standard-Geldbeschaffung
+  return { mode: "MONEY" };
 }

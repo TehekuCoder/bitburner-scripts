@@ -263,9 +263,9 @@ export type SleeveMode =
 
 export interface StrategyResult {
   mode: BotStrategy;
-  targetFaction: FactionName | null;
-  targetCompany: CompanyName | undefined;
-  targetStat: number;
+  targetFaction?: FactionName | null;
+  targetCompany?: CompanyName;
+  targetStat?: number;
 }
 
 export interface UIProgressBarParams {
