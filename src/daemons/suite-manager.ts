@@ -1,8 +1,6 @@
-// src/modules/suite-manager.ts
-
 import { NS } from "@ns";
-import { ScriptList, BotStateNetwork } from "/lib/types.js";
 import { PATHS } from "/lib/paths";
+import { BotStateNetwork, ScriptList } from "/lib/types.js";
 
 export function manageSuites(
   ns: NS,
@@ -13,29 +11,87 @@ export function manageSuites(
 ): void {
   const homeMaxRam = ns.getServerMaxRam("home");
   const homeUsedRam = ns.getServerUsedRam("home");
-  
-  let dynamicFreeRam = homeMaxRam - homeUsedRam;
-  const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  const tryLaunch = (scriptPath: string, args: (string | number)[] = [], launchLog?: () => void): boolean => {
-    if (!ns.fileExists(scriptPath, "home") || ns.isRunning(scriptPath, "home")) return false;
-    
+  // Dynamisches Tracking des freien Speichers innerhalb eines Ausführungs-Ticks
+  let dynamicFreeRam = homeMaxRam - homeUsedRam;
+
+  const hasFormulas = ns.fileExists("Formulas.exe", "home");
+  const hasNavigator = ns.fileExists("DarkscapeNavigator.exe", "home");
+
+  /**
+   * Hilfsfunktion zum Prüfen & Starten von Daemons inkl. RAM-Abzug in Echtzeit.
+   */
+  const tryLaunch = (
+    scriptPath: string | undefined,
+    args: (string | number)[] = [],
+    launchLog?: () => void
+  ): boolean => {
+    if (!scriptPath || !ns.fileExists(scriptPath, "home") || ns.isRunning(scriptPath, "home")) {
+      return false;
+    }
+
     const requiredRam = ns.getScriptRam(scriptPath, "home");
-    if (dynamicFreeRam < requiredRam) return false; 
-    
-    if (launchLog) launchLog(); 
-    
+    if (dynamicFreeRam < requiredRam) return false;
+
+    if (launchLog) launchLog();
+
     const pid = ns.exec(scriptPath, "home", 1, ...args);
     if (pid > 0) {
-      dynamicFreeRam -= requiredRam; 
+      dynamicFreeRam -= requiredRam;
       return true;
     }
     return false;
   };
 
-  // --- ⚡ Hacknet Logik ---
+  // ====================================================================
+  // 1. 🚪 INTELLIGENTE BACKDOOR LOGIK
+  // ====================================================================
+  let backdoorIsNeeded = false;
+  const networkNodes = state?.allServers || [];
+  const currentHackingLevel = ns.getHackingLevel();
+
+  for (const node of networkNodes) {
+    if (node === "home" || node === "darkweb" || node.startsWith("hacknet-node")) continue;
+    if (node === "w0r1d_d43m0n") continue;
+
+    if (ns.serverExists(node)) {
+      const srv = ns.getServer(node);
+      if (srv.hasAdminRights && !srv.backdoorInstalled && !srv.purchasedByPlayer) {
+        if (currentHackingLevel >= (srv.requiredHackingSkill ?? 0)) {
+          backdoorIsNeeded = true;
+          break;
+        }
+      }
+    }
+  }
+
+  if (backdoorIsNeeded) {
+    tryLaunch(scripts.backdoor, [], () => {
+      logger.info("Verifizierte Backdoor-Lücke im Netzwerk entdeckt. Starte Infiltration...");
+    });
+  }
+
+  // ====================================================================
+  // 2. 🚀 HACKING ORCHESTRATOR (Haupt-Pipeline)
+  // ====================================================================
+  tryLaunch(scripts.orchestrator, [], () => {
+    logger.success("Starte Hacking-Orchestrator...");
+  });
+
+  // ====================================================================
+  // 3. 🏗️ INFRASTRUKTUR MANAGER (Ab 64GB RAM)
+  // ====================================================================
+  if (homeMaxRam >= 64) {
+    tryLaunch(scripts.infra, [], () => {
+      logger.info("Initialisiere Infrastruktur-Manager...");
+    });
+  }
+
+  // ====================================================================
+  // 4. ⚡ HACKNET LOGIK (Skalierung & Formeln-Check)
+  // ====================================================================
   const targetHacknetScript = hasFormulas ? PATHS.daemons.hacknet : PATHS.daemons.hacknetEarly;
-  const obsoleteHacknetScript = hasFormulas ? PATHS.daemons.hacknetEarly :  PATHS.daemons.hacknet;
+  const obsoleteHacknetScript = hasFormulas ? PATHS.daemons.hacknet : PATHS.daemons.hacknetEarly;
 
   if (ns.isRunning(obsoleteHacknetScript, "home")) {
     logger.info(`Beende veraltetes Hacknet-Skript (${obsoleteHacknetScript}).`);
@@ -49,7 +105,8 @@ export function manageSuites(
       ns.scriptKill(targetHacknetScript, "home");
     }
   } else {
-    if (bnMults.HacknetNodeMoney < 0.4) {
+    const hacknetMoneyMult = bnMults?.HacknetNodeMoney ?? 1.0;
+    if (hacknetMoneyMult < 0.4) {
       tryLaunch(targetHacknetScript, [4, 100, 8, 4], () => {
         logger.warn("Hacknet-Produktion gedrosselt! Starte im Failsafe-Modus.");
       });
@@ -60,33 +117,44 @@ export function manageSuites(
     }
   }
 
-  // --- 🚪 Intelligente Backdoor Logik ---
-  let backdoorIsNeeded = false;
-  const networkNodes = state.allServers || [];
-  const currentHackingLevel = ns.getHackingLevel();
-
-  for (const node of networkNodes) {
-    if (node === "home" || node === "darkweb" || node.startsWith("hacknet-node")) continue;
-    if (node === "w0r1d_d43m0n") continue; 
-
-    if (ns.serverExists(node)) {
-      const srv = ns.getServer(node);
-      if (srv.hasAdminRights && !srv.backdoorInstalled && !srv.purchasedByPlayer) {
-        if (currentHackingLevel >= (srv.requiredHackingSkill ?? 0)) {
-          backdoorIsNeeded = true;
-          break; 
-        }
-      }
-    }
-  }
-
-  if (backdoorIsNeeded) {
-    tryLaunch(scripts.backdoor, [], () => {
-      logger.info("Verifizierte Backdoor-Lücke im Netzwerk entdeckt. Starte Infiltration...");
+  // ====================================================================
+  // 5. 🌐 NETWORK EXPANSION (Darknet & Crawler ab 256GB + Navigator)
+  // ====================================================================
+  if (homeMaxRam >= 256 && hasNavigator) {
+    tryLaunch(scripts.dnet, [], () => {
+      logger.info("Starte Darknet-Subsystem...");
+    });
+    tryLaunch(scripts.crawler, [], () => {
+      logger.info("Starte Netzwerk-Crawler...");
     });
   }
 
-  // --- 📈 Finance Logik ---
+  // ====================================================================
+  // 6. ⚡ SINGULARITY DISPATCHER (SF4 Automatisierung ab 256GB RAM)
+  // ====================================================================
+  if (homeMaxRam >= 256 && ns.singularity !== undefined) {
+    tryLaunch(scripts.dispatcher, [], () => {
+      logger.success("Starte zentralen Singularity-Dispatcher (SF4)...");
+    });
+  }
+
+  // ====================================================================
+  // 7. 👥 GANG MANAGER
+  // ====================================================================
+  let isInGang = false;
+  try {
+    isInGang = ns.gang.inGang();
+  } catch (_) {}
+
+  if (isInGang) {
+    tryLaunch(scripts.gang, [], () => {
+      logger.info("Gang-Zugehörigkeit bestätigt. Starte Gang-Manager...");
+    });
+  }
+
+  // ====================================================================
+  // 8. 📈 FINANCE LOGIK (Börsen-Trade ab 512GB RAM)
+  // ====================================================================
   if (homeMaxRam >= 512) {
     tryLaunch(scripts.trade, [], () => {
       logger.success("Initialisiere Finanz-Subsystem...");
@@ -96,16 +164,18 @@ export function manageSuites(
     ns.scriptKill(scripts.trade, "home");
   }
 
-  // --- 👥 Sleeve Logik ---
+  // ====================================================================
+  // 9. 🧬 SLEEVE LOGIK
+  // ====================================================================
   if (ns.sleeve !== undefined) {
     tryLaunch(scripts.sleeve, [], () => {
       logger.info("Sleeve-API detektiert. Initialisiere Klon-Automatisierung...");
     });
   }
 
-  // --- 🔄 Share-Filler Logik (Neu) ---
-  // Da fill-share.ts sich selbst stoppt/drosselt, wenn MONEY/JIT aktiv ist,
-  // reicht ein einfacher RAM-Check (mindestens 32GB auf home) zum Starten.
+  // ====================================================================
+  // 10. 🔄 SHARE-FILLER LOGIK (Ab 32GB RAM)
+  // ====================================================================
   if (homeMaxRam >= 32) {
     tryLaunch(scripts.fillShare, [], () => {
       logger.info("Initialisiere Hintergrund-Share-Filler auf home...");

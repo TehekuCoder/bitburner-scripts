@@ -24,9 +24,18 @@ export async function main(ns: NS): Promise<void> {
   
   const augMap = new Map<string, AugmentTarget>();
 
-  // 1. Alle Fraktionen durchsuchen und Augments konsolidieren
-  for (const factionObj of FACTION_ROADMAP) {
-    const faction = factionObj.name as FactionName;
+  // ➕ Gang-Fraktion ermitteln (falls vorhanden)
+  const factionsToScan = new Set<FactionName>(
+    FACTION_ROADMAP.map((f) => f.name as FactionName)
+  );
+  try {
+    if (ns.gang && ns.gang.inGang()) {
+      factionsToScan.add(ns.gang.getGangInformation().faction as FactionName);
+    }
+  } catch {}
+
+  // 1. Alle Fraktionen (inkl. Gang) durchsuchen und Augments konsolidieren
+  for (const faction of factionsToScan) {
     let factionAugs: string[] = [];
 
     try {

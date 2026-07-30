@@ -36,13 +36,11 @@ function calculateDynamicMinBatchSize(
       : Math.max(3, Math.round(BASE_BATCH_SIZE / Math.sqrt(augMoneyMult)));
 
   // 2. Achievement Target (40 Augs Ziel)
-  // getOwnedAugmentations(false) = NUR bereits installierte Augs
   const installedCount = sing.getOwnedAugmentations(false).length;
   const TARGET_ACHIEVEMENT = 40;
 
   if (installedCount < TARGET_ACHIEVEMENT) {
     const neededForAchievement = TARGET_ACHIEVEMENT - installedCount;
-    // Wenn wir weniger als den normalen Batch brauchen, reduzieren wir das Ziel exakt darauf
     targetBatch = Math.min(targetBatch, neededForAchievement);
   }
 
@@ -103,6 +101,11 @@ export async function main(ns: NS): Promise<void> {
     }
   } catch {}
 
+  // ➕ Alle verfügbaren Fraktionen inkl. Gang zusammenführen
+  const availableFactions = Array.from(
+    new Set([...myFactions, gangFaction].filter((f): f is FactionName => Boolean(f)))
+  );
+
   let report: string[] = [];
   const logReport = (msg: string) => {
     ns.print(msg);
@@ -112,10 +115,8 @@ export async function main(ns: NS): Promise<void> {
   let shoppingList: AugShoppingItem[] = [];
   const ownedAugs = sing.getOwnedAugmentations(true);
 
-  // 1. SCANNER: Qualifizierte Augmentations erfassen
-  for (const faction of myFactions) {
-    if (faction === gangFaction) continue;
-
+  // 1. SCANNER: Qualifizierte Augmentations erfassen (inkl. Gang)
+  for (const faction of availableFactions) {
     const factionRep = sing.getFactionRep(faction);
     const factionAugs = sing.getAugmentationsFromFaction(faction);
 
@@ -196,15 +197,14 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
-  // B) NFG-Stufen simulieren, die wir mit dem RESTGELD noch kaufen könnten
+  // B) NFG-Stufen simulieren (Gang wird für Höchstruf mitberücksichtigt)
   let simulatedNfgCount = 0;
   let tempNfgMoney = tempMoney;
   let nfgRepReq = sing.getAugmentationRepReq(NFG_NAME);
 
-  const validFactions = myFactions.filter((f) => f !== gangFaction);
   const maxFactionRep =
-    validFactions.length > 0
-      ? Math.max(...validFactions.map((f) => sing.getFactionRep(f)))
+    availableFactions.length > 0
+      ? Math.max(...availableFactions.map((f) => sing.getFactionRep(f)))
       : 0;
 
   while (maxFactionRep >= nfgRepReq) {
@@ -277,7 +277,7 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
-  // 4. LATE-GAME: NEUROFLUX DUMP
+  // 4. LATE-GAME: NEUROFLUX DUMP (Inkl. Gang als Quelle für NFG)
   if (
     batchApproved ||
     canAffordAll ||
@@ -294,9 +294,7 @@ export async function main(ns: NS): Promise<void> {
       let highestRep = -1;
       const repReq = sing.getAugmentationRepReq(NFG_NAME);
 
-      for (const faction of myFactions) {
-        if (faction === gangFaction) continue;
-
+      for (const faction of availableFactions) {
         const factionRep = sing.getFactionRep(faction);
         if (factionRep >= repReq && factionRep > highestRep) {
           highestRep = factionRep;

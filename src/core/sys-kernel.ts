@@ -1,54 +1,35 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths";
-
-import { loadFinanceState, loadState, patchState } from "/lib/state.js";
-import { ScriptList } from "/lib/types.js";
+import { loadState, patchState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
-  const scripts: ScriptList = {
-    logger: PATHS.core.logger,
-    perfMonitor: PATHS.daemons.perfMonitor,
-    worker: PATHS.payloads.work,
-    dispatcher: PATHS.core.dispatcher,
-    infra: PATHS.managers.infra,
-    backdoor: PATHS.daemons.backdoor,
-    trade: PATHS.managers.finance,
-    hacknet: PATHS.daemons.hacknetEarly,
-    dnet: PATHS.managers.dnet,
-    crawler: PATHS.daemons.crawler,
-    hack: PATHS.payloads.hack,
-    grow: PATHS.payloads.grow,
-    weaken: PATHS.payloads.weaken,
-    sleeve: PATHS.managers.sleeve,
-    fillShare: PATHS.daemons.fillShare,
-    augShopping: PATHS.tasks.augShopping,
-    augAnalyze: PATHS.tasks.analyzeAug,
-    orchestrator: PATHS.core.orchestrator,
-    suites: PATHS.core.suites,
-    gang: PATHS.managers.gang,
-  };
-
+  // ====================================================================
+  // 1. CORE SYSTEM INIT (Logger & Performance Monitor)
+  // ====================================================================
   if (
-    ns.fileExists(scripts.logger, "home") &&
-    !ns.isRunning(scripts.logger, "home")
+    ns.fileExists(PATHS.core.logger, "home") &&
+    !ns.isRunning(PATHS.core.logger, "home")
   ) {
-    ns.run(scripts.logger, 1);
+    ns.run(PATHS.core.logger, 1);
     await ns.sleep(50);
   }
 
   if (
-    ns.fileExists(scripts.perfMonitor, "home") &&
-    !ns.isRunning(scripts.perfMonitor, "home")
+    ns.fileExists(PATHS.daemons.perfMonitor, "home") &&
+    !ns.isRunning(PATHS.daemons.perfMonitor, "home")
   ) {
-    ns.run(scripts.perfMonitor, 1);
+    ns.run(PATHS.daemons.perfMonitor, 1);
   }
 
   const logger = new Logger(ns, "Kernel");
   logger.info("Kernel gestartet. Überprüfe System-State...");
 
+  // ====================================================================
+  // 2. STATE INITIALIZER (One-Time Boot Script)
+  // ====================================================================
   if (!loadState(ns) && ns.fileExists(PATHS.core.boot, "home")) {
     logger.info("Kein State gefunden. Führe Einmal-Initializer aus...");
     const bootPid = ns.run(PATHS.core.boot, 1);
@@ -67,85 +48,55 @@ export async function main(ns: NS): Promise<void> {
     kernelTarget: existingState.kernelTarget || "n00dles",
   });
 
+  // ====================================================================
+  // 3. MAIN KERNEL LOOP (Supervisor & Fallback)
+  // ====================================================================
   while (true) {
     const homeMax = ns.getServerMaxRam("home");
     const homeUsed = ns.getServerUsedRam("home");
     const homeFree = homeMax - homeUsed;
     const currentState = loadState(ns);
-    const financeState = loadFinanceState(ns);
-    const hasNavigator = ns.fileExists("DarkscapeNavigator.exe", "home");
-    const hasSingularity = ns.singularity !== undefined;
 
-    const isHomeUnderpowered = homeMax < 256;
-    const isSingularityPending =
-      isHomeUnderpowered || (financeState?.moneyReserve ?? 0) > 0;
-
-    const canRun = (scriptPath: string, minFreeRamRequirement = 0): boolean => {
-      if (!ns.fileExists(scriptPath, "home")) return false;
-      if (ns.isRunning(scriptPath, "home")) return false;
-
-      const reqRam = ns.getScriptRam(scriptPath, "home");
-      const singBuffer = isSingularityPending ? 20 : 0;
-      const effectiveFree = homeFree - singBuffer;
-
-      return effectiveFree >= reqRam && homeFree >= minFreeRamRequirement;
-    };
-
-    // 1. Suite-Manager Daemon (Ab 16GB)
-    if (homeMax >= 16 && canRun(PATHS.core.suites, 12.0)) {
-      ns.run(PATHS.core.suites, 1);
-    }
-
-    // 2. Infrastruktur-Manager (Ab 64GB)
+    // A. SUITE MANAGER (Steuert alle Feature-Daemons: Backdoor, Gang, Infra, Dispatcher, etc.)
     if (
-      homeMax >= 64 &&
-      ns.fileExists(scripts.infra, "home") &&
-      !ns.isRunning(scripts.infra, "home")
+      homeMax >= 16 &&
+      ns.fileExists(PATHS.core.suites, "home") &&
+      !ns.isRunning(PATHS.core.suites, "home")
     ) {
-      if (homeFree >= ns.getScriptRam(scripts.infra, "home")) {
-        ns.run(scripts.infra, 1);
+      const reqRam = ns.getScriptRam(PATHS.core.suites, "home");
+      if (homeFree >= reqRam) {
+        logger.info("Starte Service Orchestrator (sys-suites)...");
+        ns.run(PATHS.core.suites, 1);
       }
     }
 
-    // 3. Darknet- & Crawler-Daemons (Erst ab 256 GB RAM!)
-    if (homeMax >= 256 && hasNavigator) {
-      if (canRun(scripts.dnet)) ns.run(scripts.dnet, 1);
-      if (canRun(scripts.crawler)) ns.run(scripts.crawler, 1);
+    // B. FALLBACK WORKER (Nutzt freien RAM auf home mit work.ts, solange der Orchestrator nicht läuft)
+    const isOrchestratorRunning = ns.isRunning(PATHS.core.orchestrator, "home");
+
+    if (isOrchestratorRunning) {
+      if (ns.isRunning(PATHS.payloads.work, "home")) {
+        logger.info("Orchestrator aktiv. Stoppe Fallback-Worker...");
+        ns.scriptKill(PATHS.payloads.work, "home");
+      }
+    } else if (ns.fileExists(PATHS.payloads.work, "home")) {
+      const target = currentState?.kernelTarget || "n00dles";
+      const workerRam = ns.getScriptRam(PATHS.payloads.work, "home");
+
+      if (workerRam > 0) {
+        const maxThreads = Math.floor(homeFree / workerRam);
+        const isWorkerRunning = ns.isRunning(PATHS.payloads.work, "home", target);
+
+        if (maxThreads > 0 && !isWorkerRunning) {
+          ns.scriptKill(PATHS.payloads.work, "home");
+          logger.info(
+            `Starte Fallback-Worker auf ${target} mit ${maxThreads} Threads...`
+          );
+          ns.run(PATHS.payloads.work, maxThreads, target);
+        }
+      }
     }
 
-    // 4. Automatischer Backdoor-Manager
-    if (canRun(scripts.backdoor)) {
-      ns.run(scripts.backdoor, 1);
-    }
-
-    // 5. DISPATCHER MODUS (Erst ab 256 GB RAM UND SF4 Singularity API)
-    const isDispatcherReady =
-      homeMax >= 256 &&
-      hasSingularity &&
-      ns.fileExists(scripts.dispatcher, "home");
-
-    if (isDispatcherReady && canRun(scripts.dispatcher)) {
-      logger.success("Starte zentralen System-Dispatcher (SF4)...");
-      ns.run(scripts.dispatcher, 1);
-    }
-
-    // 6. Gang-Daemon Management
-    let isInGang = false;
-    try {
-      isInGang = ns.gang.inGang();
-    } catch (_) {}
-
-    if (isInGang && canRun(scripts.gang)) {
-      ns.run(scripts.gang, 1);
-    }
-
-    // 7. HACKING ORCHESTRATOR (Läuft IMMER)
-    if (canRun(scripts.orchestrator)) {
-      logger.success("🚀 Starte Hacking-Orchestrator...");
-      ns.run(scripts.orchestrator, 1);
-    }
-
-    // 8. End-Game Trigger
+    // C. ENDGAME TRIGGER (WorldDaemon Watchdog)
     const targetNode = "w0r1d_d43m0n";
     if (ns.serverExists(targetNode) && ns.hasRootAccess(targetNode)) {
       const reqSkill = ns.getServerRequiredHackingLevel(targetNode);
@@ -153,14 +104,10 @@ export async function main(ns: NS): Promise<void> {
         ns.getHackingLevel() >= reqSkill &&
         !ns.scriptRunning(PATHS.core.apocalypse, "home")
       ) {
+        logger.success("💥 WorldDaemon gehackt! Leite Apocalypse ein...");
         ns.run(PATHS.core.apocalypse, 1);
       }
     }
-
-    patchState(ns, {
-      hasDarkScapeNavigator: hasNavigator,
-      totalNodes: currentState?.allServers?.length || 0,
-    });
 
     await ns.sleep(5000);
   }
