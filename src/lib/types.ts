@@ -189,7 +189,7 @@ export interface SleeveState {
 
 export interface AugmentState {
   augRoadMap?: AugmentTarget[];
-  isBN2GangMode?: boolean; // ➕ Hier ergänzt
+  isBN2GangMode?: boolean;
 }
 
 export interface FactionState {
@@ -208,7 +208,7 @@ export interface BotStateProgress {
   fillerConfig?: {
     shareMaxRamPercent: number;
     maxXpLevel: number;
-  };
+  } | null;
 }
 
 export interface BotStateNetwork {
@@ -246,7 +246,7 @@ export interface BotState
     BotStateMeta,
     GangState,
     BatcherState,
-    AugmentState {} // ➕ AugmentState hier zur Schnittstelle hinzugefügt
+    AugmentState {}
 
 export interface SleeveOptions {
   globalMode?: SleeveMode;
@@ -393,4 +393,5 @@ export interface GangState {
   gangWantedPenalty?: number;    // Multiplikator/Penalty (z.B. 0.95 = 5% Makel)
   gangPhase?: string;            // z. B. "RECRUITING", "TRAINING", "TERRITORY", "FARMIN_REP"
   gangProgress?: string;         // Für UI/UI-Helper ("12/12 Members | Rep: 2.4M")
+  isBN2GangMode?: boolean;
 }

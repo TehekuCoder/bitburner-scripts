@@ -5,11 +5,30 @@ export const GANG_CONFIG = {
   ASCEND_THRESHOLD: 1.2,
   WANTED_PENALTY_THRESHOLD: 0.95,
   TRAIN_STAT_TARGET: 150,
-  BUY_EQUIP_MONEY_BUFFER: 5,
+
+  // 💰 BUDGETING & RAM-SCHUTZ (Ohne Singularity)
+  BUY_EQUIP_MONEY_BUFFER: 50, // Erst kaufen, wenn Item max. 2% des Vermögens kostet (statt 20%)
+  TARGET_HOME_RAM: 512, // Ziel-RAM für Home
+
   // Warfare Settings
-  WARFARE_WIN_THRESHOLD: 0.85, // Erst ab 85% Gewinnchance Clash aktivieren
+  WARFARE_WIN_THRESHOLD: 0.85,
   MIN_STAT_FOR_WARFARE: 500,
 };
+
+/**
+ * Liest den HomeRAMCost-Multiplikator aus dem boot.ts-Cache (0 GB RAM Kosten).
+ */
+function getHomeRamMultiplier(ns: NS): number {
+  try {
+    const rawData = ns.read("/bn-multipliers.txt");
+    if (!rawData) return 1.0;
+
+    const mults = JSON.parse(rawData);
+    return mults.HomeRAMCost ?? 1.0;
+  } catch {
+    return 1.0; // Fallback, falls Datei korrupt oder noch nicht geschrieben
+  }
+}
 
 // Weitere Gang-Namen für den Gewinnchance-Check
 const RIVAL_GANGS = [
@@ -36,6 +55,39 @@ const GANG_NAMES: string[] = [
   "Frisk",
   "Gaster",
 ];
+
+/**
+ * Errechnet die exakten geschätzten Upgrade-Kosten unter Berücksichtigung des BitNodes.
+ */
+function getEstimatedNextHomeRamCost(ns: NS, currentRam: number): number {
+  const BASE_RAM_COST_LOOKUP: Record<number, number> = {
+    8: 11_000_000, // 8 -> 16 GB (~11M $ Basis)
+    16: 32_000_000, // 16 -> 32 GB (~32M $ Basis)
+    32: 92_000_000, // 32 -> 64 GB (~92M $ Basis)
+    64: 265_000_000, // 64 -> 128 GB (~265M $ Basis)
+    128: 760_000_000, // 128 -> 256 GB (~760M $ Basis)
+    256: 2_190_000_000, // 256 -> 512 GB (~2.19B $ Basis)
+  };
+
+  const baseCost = BASE_RAM_COST_LOOKUP[currentRam] ?? currentRam * 8_500_000;
+  const homeRamMultiplier = getHomeRamMultiplier(ns);
+
+  // Skalierung mit dem BitNode-Multiplikator
+  return baseCost * homeRamMultiplier;
+}
+
+/**
+ * Gibt das maximale Budget pro Equipment-Teil basierend auf dem aktuellen Home-RAM zurück.
+ * Verhindert den Kauf sündhaft teurer Augmentations bei niedrigem RAM.
+ */
+function getMaxEquipCostForRam(homeRam: number): number {
+  if (homeRam < 32) return 1_000_000; // Max 1M $ pro Item
+  if (homeRam < 64) return 3_000_000; // Max 3M $ pro Item
+  if (homeRam < 128) return 10_000_000; // Max 10M $ pro Item
+  if (homeRam < 256) return 25_000_000; // Max 25M $ pro Item
+  if (homeRam < 512) return 50_000_000; // Max 50M $ pro Item
+  return Infinity; // Ab 512 GB RAM: Unbegrenzt
+}
 
 export function manageGang(
   ns: NS,
@@ -262,21 +314,41 @@ function handleAscension(
   }
 }
 
-function handleEquipment(
+export function handleEquipment(
   ns: NS,
   memberNames: string[],
   logger: Logger,
   addLocalLog: (msg: string) => void,
 ): void {
+  const homeRam = ns.getServerMaxRam("home");
+  const playerMoney = ns.getServerMoneyAvailable("home");
+
+  // 🛡️ 1. SPARMODUS-SPERRE mit BN-Multiplikator-Berücksichtigung
+  if (homeRam < GANG_CONFIG.TARGET_HOME_RAM) {
+    const nextRamCost = getEstimatedNextHomeRamCost(ns, homeRam);
+
+    // Sobald wir >= 40% des Geldes für das skalierte RAM-Upgrade haben, Käufe einfrieren
+    if (playerMoney >= nextRamCost * 0.4) {
+      return;
+    }
+  }
+
+  const maxAllowedEquipCost = getMaxEquipCostForRam(homeRam);
   const equipmentList = ns.gang.getEquipmentNames();
 
   for (const equip of equipmentList) {
-    const cost = ns.gang.getEquipmentCost(equip);
+    const cost = ns.gang.getEquipmentCost(equip); // Enthält intern bereits BN-Multiplikatoren!
+
+    // 🛡️ 2. KOSTEN-DECKEL
+    if (cost > maxAllowedEquipCost) {
+      continue;
+    }
 
     for (const name of memberNames) {
-      // Geld direkt vor dem Kauf abfragen:
-      const playerMoney = ns.getServerMoneyAvailable("home");
-      if (playerMoney < cost * GANG_CONFIG.BUY_EQUIP_MONEY_BUFFER) continue;
+      const currentMoney = ns.getServerMoneyAvailable("home");
+
+      // 🛡️ 3. PROZENTUALER BUFFER (max 2% des aktuellen Vermögens)
+      if (currentMoney < cost * GANG_CONFIG.BUY_EQUIP_MONEY_BUFFER) continue;
 
       const memberInfo = ns.gang.getMemberInformation(name);
       if (
@@ -284,7 +356,7 @@ function handleEquipment(
         !memberInfo.augmentations.includes(equip)
       ) {
         if (ns.gang.purchaseEquipment(name, equip)) {
-          const msg = `🛒 ${equip} gekauft für ${name}`;
+          const msg = `🛒 ${equip} gekauft für ${name} (${ns.format.number(cost, 2)}$)`;
           logger.success(msg);
           addLocalLog(msg);
         }

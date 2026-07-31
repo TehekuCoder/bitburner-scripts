@@ -17,6 +17,7 @@ type BotStateContent = Omit<
   BotState,
   "lastUpdate" | "playerHacking" | "sources"
 >;
+
 export type BotStatePatch = Partial<BotStateContent>;
 export type BatcherStatePatch = Partial<BatcherState>;
 export type StrategyStatePatch = Partial<StrategyState>;
@@ -112,25 +113,39 @@ export function patchState(ns: NS, partialState: BotStatePatch): void {
     ...cleanedCurrentState
   } = currentState || {};
 
-  // Vollständiger Default-State inkl. Multi-Target, Shotgun & Kernel Feldern
+  // Vollständiger Default-State inkl. Multi-Target, Shotgun, Sleeve & Gang Feldern
   const baseState: BotStateContent = {
     strategy: "MONEY",
+    targetFaction: undefined,
+    targetCompany: undefined,
+    targetStat: undefined,
+    targetKills: undefined,
+
     batchStrategy: "BOOTSTRAP",
     kernelTarget: "n00dles",
     batcherTarget: "Keines",
     progressBar: "Prüfe System...",
     batcherProgress: "Inaktiv",
     batcherActive: false,
-    batcherActiveBatches: 0, // ➕ Neu: Aktive Wellen/Batches für Shotgun Monitor
+    batcherActiveBatches: 0,
     batcherTargetsSummary: [],
     allServers: [],
     totalNodes: 0,
     batcherPlan: null,
     batcherDynamicMaxBatches: 0,
     batcherRamNeeded: 0,
+
     financeProgress: "Berechne Budget...",
     traderProgress: "Kein Depot",
+    traderMode: undefined,
+    moneyReserve: 0,
+    isHomePrioritized: false,
+    isRushModeActive: false,
+
     hacknetProgress: "Inaktiv",
+
+    sleeveProgress: "Inaktiv",
+    sleeveGlobalMode: undefined,
 
     currentBitNode: 1,
     currentBitNodeLevel: 1,
@@ -138,9 +153,10 @@ export function patchState(ns: NS, partialState: BotStatePatch): void {
     hasDarkScapeNavigator: false,
     hasTorRouter: false,
 
-    // Augment / BN2 Gang State Defaults
     augRoadMap: [],
     isBN2GangMode: false,
+
+    factionCurrentReps: {},
 
     hasGang: false,
     gangFaction: undefined,
@@ -153,6 +169,7 @@ export function patchState(ns: NS, partialState: BotStatePatch): void {
 
     hasCorporation: false,
     hasBladeburner: false,
+    fillerConfig: null,
 
     ...cleanedCurrentState,
   };
@@ -190,7 +207,7 @@ export function loadBatcherState(ns: NS): BatcherState | null {
     batcherTarget,
     batcherProgress,
     batcherActive,
-    batcherActiveBatches, // ➕ Neu
+    batcherActiveBatches,
     batcherTargetsSummary,
     batcherPlan,
     batcherDynamicMaxBatches,
@@ -201,7 +218,7 @@ export function loadBatcherState(ns: NS): BatcherState | null {
     batcherTarget,
     batcherProgress,
     batcherActive,
-    batcherActiveBatches, // ➕ Neu
+    batcherActiveBatches,
     batcherTargetsSummary,
     batcherPlan,
     batcherDynamicMaxBatches,
@@ -342,6 +359,7 @@ export function loadGangState(ns: NS): GangState | null {
     gangWantedPenalty,
     gangPhase,
     gangProgress,
+    isBN2GangMode,
   } = state;
 
   return {
@@ -353,6 +371,7 @@ export function loadGangState(ns: NS): GangState | null {
     gangWantedPenalty,
     gangPhase,
     gangProgress,
+    isBN2GangMode,
   };
 }
 

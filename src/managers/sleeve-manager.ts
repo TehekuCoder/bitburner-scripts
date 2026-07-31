@@ -41,8 +41,8 @@ export async function main(ns: NS): Promise<void> {
     }
 
     const p = ns.getPlayer();
-    
-    // Extrahieren nur der relevanten Optionen aus dem globalen State (ohne festen Fallback-BotState)
+
+    // Extrahieren nur der relevanten Optionen aus dem globalen State
     const botState = loadSleeveState(ns);
     const options: SleeveOptions = {
       globalMode: botState?.sleeveGlobalMode as SleeveMode | undefined,
@@ -66,7 +66,7 @@ export async function main(ns: NS): Promise<void> {
       lastFactionScan = Date.now();
     }
 
-    // 1. Zuweisung & Berechnung (gibt nun direkt den Fortschritts-String zurück)
+    // 1. Zuweisung & Berechnung
     const currentProgress = manageAllSleeves(
       ns,
       p,

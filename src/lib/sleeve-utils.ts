@@ -6,6 +6,7 @@ import {
   SleevePerson,
   SleeveTask,
   Player,
+  CrimeType,
 } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { SleeveMode, SleeveData, SleeveOptions } from "lib/types.js";
@@ -42,12 +43,18 @@ export function getFactionsNeedingRep(
 ): FactionName[] {
   if (!ns.singularity) return [];
 
+  const gangState = loadGangState(ns);
+  // 🛡️ BN2 GANG MODE: Wenn die Gang alle Augmentationen liefert, ist kein Faction-Grind nötig
+  if (gangState?.hasGang && gangState?.isBN2GangMode) {
+    return [];
+  }
+
   const ownedAugsSet = new Set(ownedAugs);
   const factionsNeedingRep: FactionName[] = [];
   const gangFaction = getGangFactionName(ns);
 
   for (const faction of playerFactions) {
-    // 🛡️ GANG LOCKOUT: Für die eigene Gang-Fraktion können Sleeves nicht arbeiten
+    // 🛡️ GANG LOCKOUT: Für die eigene Gang-Fraktion können Sleeves nicht direkt Faction Work machen
     if (gangFaction && faction === gangFaction) {
       continue;
     }
@@ -391,7 +398,6 @@ function tryAssignFactionWork(
       return true;
     }
 
-    // 🛡️ Safe Execution mit Try/Catch gegen unerwartete API-Excpetions
     try {
       if (ns.sleeve.setToFactionWork(i, targetFaction, work)) {
         const msg = `🤝 Klon #${i} arbeitet nun für Faction '${targetFaction}' (${work}).`;
@@ -403,7 +409,7 @@ function tryAssignFactionWork(
         return true;
       }
     } catch {
-      /* Ignorieren & nächste Arbeitsart versuchen / Fallback nutzen */
+      /* Ignorieren & nächste Arbeitsart versuchen */
     }
   }
 
@@ -565,6 +571,10 @@ function handleSleeveShopping(
   }
 }
 
+/**
+ * Weist ein Verbrechen zu. Vor dem Gang-Unlock wird gezielt Karma via Homicide gefarmt.
+ * Nach Freischaltung der Gang schalten die Sleeves auf profitable Verbrechen um.
+ */
 function executeFallbackCrime(
   ns: NS,
   i: number,
@@ -573,14 +583,23 @@ function executeFallbackCrime(
   logger: Logger,
   addLocalLog: (msg: string) => void,
 ): void {
-  const targetCrime = ns.heart.break() > -54 ? "Homicide" : "Mug";
+  const gangState = loadGangState(ns);
+  const hasGang = gangState?.hasGang || (ns.gang && ns.gang.inGang());
+
+  // 🎯 PRE-GANG: Karma-Farmen via Homicide (bis -54 Karma erreicht ist)
+  // 🎯 POST-GANG: Switch auf profitables Verbrechen (z. B. "Deal Drugs")
+  let targetCrime = "Deal Drugs";
+  if (!hasGang && ns.heart.break() > -54) {
+    targetCrime = "Homicide";
+  }
 
   if (currentTask?.type === "CRIME" && currentTask?.crimeType === targetCrime) {
     return;
   }
 
-  ns.sleeve.setToCommitCrime(i, targetCrime);
-  const msg = `🔫 Klon #${i} wechselt auf Fallback-Kriminalität: ${targetCrime}`;
-  logger.warn(msg);
-  addLocalLog(msg);
+  if (ns.sleeve.setToCommitCrime(i, targetCrime as CrimeType)) {
+    const msg = `🔫 Klon #${i} wechselt auf Crime: ${targetCrime}`;
+    logger.info(msg);
+    addLocalLog(msg);
+  }
 }
