@@ -1,89 +1,96 @@
-import { NS } from "@ns";
-import { COMBAT_STATS, CombatStat, STAT_MAP, DISPLAY_MAP } from "/lib/constants";
+import { NS, GymLocationName, GymType, CityName } from "@ns";
+import { COMBAT_STATS, GYM_STAT_MAP, DISPLAY_MAP } from "/lib/constants";
 import { loadStrategyState, patchProgressState } from "/lib/state.js";
+import { LoggerClient } from "/lib/logger-client.js";
 
+const TRAVEL_COST = 200_000;
+const SLEEP_INTERVAL_MS = 2_000;
+const DEFAULT_COMBAT_TARGET = 15;
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  ns.print("🏋️ Training-Worker gestartet...");
+
+  const logger = new LoggerClient(ns, "TRAIN");
+  logger.info("🏋️ Gym-Training-Worker gestartet...");
 
   const sing = ns.singularity;
-  // Augmentations ändern sich im laufenden BitNode-Reset selten spontan.
-  // Das hier einmalig beim Start zu prüfen, ist vollkommen in Ordnung.
   const useFocus = !sing
     .getOwnedAugmentations(false)
     .includes("Neuroreceptor Management Implant");
 
-  // Cache, um unnötige Datei-Schreibzugriffe (I/O) über patchState zu verhindern
   let lastProgressBar = "";
+  let lastActiveStat: string | null = null;
 
   while (true) {
     const state = loadStrategyState(ns);
     const mode = state?.strategy || "IDLE";
-    const targetStat = (ns.args[0] as number) || state?.targetStat || 0;
+
+    const argTarget = typeof ns.args[0] === "number" ? ns.args[0] : 0;
+    const targetStat = argTarget > 0 ? argTarget : (state?.targetStat ?? DEFAULT_COMBAT_TARGET);
 
     if (mode !== "TRAIN") {
-      ns.print(`[EXIT] Modus ist nun ${mode}. Beende Training.`);
+      logger.info(`Modus ist nun '${mode}'. Beende Gym-Worker.`);
       return;
     }
 
-    if (targetStat <= 0) {
-      ns.print(`[WARN] Ungültiges Trainingsziel (${targetStat}). Warte...`);
-      await ns.sleep(2000);
-      continue;
+    const player = ns.getPlayer();
+
+    // Stadt-Wahl: Volhaven (Powerhouse Gym) > Sector-12 (Powerhouse Gym)
+    // 💡 Typisierung explizit als CityName
+    let targetCity: CityName = ns.enums.CityName.Sector12;
+    if (player.money >= TRAVEL_COST || player.city === ns.enums.CityName.Volhaven) {
+      targetCity = ns.enums.CityName.Volhaven;
     }
 
-    const p = ns.getPlayer();
+    if (player.city !== targetCity) {
+      logger.info(`Reise nach ${targetCity} für Gym-Training...`);
+      if (!sing.travelToCity(targetCity)) {
+        logger.error(`Reise nach ${targetCity} fehlgeschlagen.`);
+        await ns.sleep(SLEEP_INTERVAL_MS);
+        continue;
+      }
+    }
 
-    // Dank "as const" in den Constants weiß TS hier automatisch, dass 's' ein CombatStat ist.
-    // Einziger Kniff: find() liefert string | undefined, wir casten das Ergebnis sauber.
-    const lowStat = COMBAT_STATS.find((s) => p.skills[s] < targetStat) as
-      | CombatStat
-      | undefined;
+    const gymName: GymLocationName = "Powerhouse Gym";
+    const lowStat = COMBAT_STATS.find((stat) => player.skills[stat] < targetStat);
 
     if (lowStat) {
-      const shortStat = STAT_MAP[lowStat];
-
-      // Reise-Logik nach Sector-12
-      if (p.city !== ns.enums.CityName.Sector12) {
-        if (p.money < 200000) {
-          ns.print(
-            `[WARN] Zu wenig Geld für die Reise nach Sector-12 ($200k benötigt).`,
-          );
-          await ns.sleep(5000);
-          continue;
-        }
-        sing.travelToCity(ns.enums.CityName.Sector12);
-      }
-
-      // Prüfen, ob wir bereits im richtigen Gym festsitzen
+      const shortStat = GYM_STAT_MAP[lowStat];
       const currentWork = sing.getCurrentWork();
       const isAlreadyTraining =
         currentWork?.type === "CLASS" &&
-        (currentWork as any).classType === shortStat &&
-        (currentWork as any).className === "Powerhouse Gym";
+        currentWork.classType === (shortStat as unknown as GymType) &&
+        currentWork.location === gymName;
 
       if (!isAlreadyTraining) {
-        sing.gymWorkout("Powerhouse Gym", shortStat, useFocus);
+        if (lastActiveStat !== shortStat) {
+          logger.info(`Wechsele Workout auf [${DISPLAY_MAP[lowStat]}] (Ziel: ${targetStat})`);
+          lastActiveStat = shortStat;
+        }
+
+        const success = sing.gymWorkout(gymName, shortStat, useFocus);
+        if (!success) {
+          logger.error(`Konnte gymWorkout("${gymName}", "${shortStat}") nicht ausführen.`);
+        }
       }
 
-      // UI Update vorbereiten
-      const currentLevel = Math.floor(p.skills[lowStat]);
+      const currentLevel = Math.floor(player.skills[lowStat]);
       const nextProgressBar = `🏋️ ${DISPLAY_MAP[lowStat]}: ${currentLevel}/${targetStat}`;
 
-      // Nur patchen, wenn sich die Anzeige wirklich verändert hat (z.B. Level-Up)
       if (nextProgressBar !== lastProgressBar) {
         patchProgressState(ns, { progressBar: nextProgressBar });
         lastProgressBar = nextProgressBar;
       }
     } else {
-      ns.print("[INFO] Alle Stats erreicht. Warte auf Dispatcher...");
       if (lastProgressBar !== "🏋️ Combat Stats [DONE]") {
+        logger.success(`Alle Combat-Stats auf Ziel-Level ${targetStat} trainiert!`);
         patchProgressState(ns, { progressBar: "🏋️ Combat Stats [DONE]" });
         lastProgressBar = "🏋️ Combat Stats [DONE]";
+        sing.stopAction();
       }
+      return;
     }
 
-    await ns.sleep(2000);
+    await ns.sleep(SLEEP_INTERVAL_MS);
   }
 }

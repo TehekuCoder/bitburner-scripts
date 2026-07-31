@@ -374,6 +374,8 @@ export async function main(ns: NS): Promise<void> {
       scripts.orchestrator,
       targetStat,
       isBatcherActive,
+      currentKarma,
+      gangState?.hasGang ?? false,
     );
 
     await ns.sleep(2000);
@@ -388,23 +390,35 @@ function manageMicroservices(
   sysOrchestratorScript: string,
   targetStat?: number,
   isBatcherActive?: boolean,
+  currentKarma: number = 0,
+  hasGang: boolean = false,
 ): void {
   const modeToScript: Record<string, string> = {
     REP: PATHS.tasks.faction,
     CORP: PATHS.tasks.corp,
     TRAIN: PATHS.tasks.train,
+    UNI: PATHS.tasks.uni,         // 🎓 Neuer Uni-Modus
     CRIME: PATHS.tasks.crime,
     KILLS: PATHS.tasks.crime,
   };
 
   let targetScript = modeToScript[currentMode];
+  let overrideArgs: (string | number)[] | undefined = undefined;
 
-  if (
-    currentMode === "MONEY" &&
-    (hasSavingTarget || !ns.isRunning(sysOrchestratorScript, "home")) &&
-    !isBatcherActive
-  ) {
-    targetScript = PATHS.tasks.crime;
+  // 🎯 Dynamische Priorisierung im MONEY-Modus
+  if (currentMode === "MONEY") {
+    const isGangUnlocked = hasGang || currentKarma <= -5400;
+
+    if (!isGangUnlocked) {
+      // 💀 Schritt 1: Karma-Grind via Crime
+      targetScript = PATHS.tasks.crime;
+    } else {
+      // 🎓 Schritt 2: Gang ist frei -> Sauberes Studium an der Uni via PATHS.tasks.uni!
+      targetScript = PATHS.tasks.uni;
+      if (targetStat !== undefined) {
+        overrideArgs = [targetStat];
+      }
+    }
   }
 
   // Nicht mehr benötigte Microservices beenden
@@ -421,14 +435,21 @@ function manageMicroservices(
     const isRunning = runningProc !== undefined;
     let shouldStart = !isRunning;
 
-    if (isRunning && currentMode === "TRAIN" && targetStat !== undefined) {
-      const currentRunningTarget = runningProc?.args[0] as number | undefined;
+    // Dynamische Argumente ermitteln (entweder aus Override oder aus TRAIN-Modus)
+    const effectiveArgs: (string | number)[] = overrideArgs ?? (
+      (currentMode === "TRAIN" && targetStat !== undefined) ? [targetStat] : []
+    );
 
-      if (currentRunningTarget !== targetStat) {
+    // Prüfen, ob das laufende Skript mit abweichenden Argumenten läuft
+    if (isRunning && effectiveArgs.length > 0) {
+      const currentRunningTarget = runningProc?.args[0];
+      const expectedTarget = effectiveArgs[0];
+
+      if (currentRunningTarget !== expectedTarget) {
         ns.scriptKill(targetScript, "home");
         shouldStart = true;
         logger.info(
-          `🔄 Trainingsziel geändert (${currentRunningTarget} ➔ ${targetStat}). Starte Worker neu.`,
+          `🔄 Ziel-Parameter geändert (${currentRunningTarget} ➔ ${expectedTarget}). Starte Worker neu.`,
         );
       }
     }
@@ -438,15 +459,10 @@ function manageMicroservices(
       const requiredRam = ns.getScriptRam(targetScript, "home");
 
       if (freeRam >= requiredRam) {
-        const args: (string | number)[] = [];
-        if (currentMode === "TRAIN" && targetStat !== undefined) {
-          args.push(targetStat);
-        }
-
-        const pid = ns.run(targetScript, 1, ...args);
+        const pid = ns.run(targetScript, 1, ...effectiveArgs);
         if (pid > 0) {
           logger.success(
-            `▶️ Microservice gestartet: ${targetScript} für [${currentMode}] mit Args: ${args}`,
+            `▶️ Microservice gestartet: ${targetScript} für [${currentMode}] mit Args: ${effectiveArgs.join(", ")}`,
           );
         } else {
           logger.error(
@@ -461,7 +477,6 @@ function manageMicroservices(
     }
   }
 }
-
 function handleSingularityPurchases(ns: NS, logger: Logger): void {
   const sing = ns.singularity;
   const player = ns.getPlayer();

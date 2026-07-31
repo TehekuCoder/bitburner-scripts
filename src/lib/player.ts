@@ -111,6 +111,7 @@ export function determineStrategy(
   isReadyForFactionGrind: boolean
 ): StrategyResult {
   // 1. Slum Snakes / Gang-Voraussetzung (Karma Grind)
+  // 💡 Gang-Freischaltung erfordert Karma <= -54000
   if (currentKarma > -54000 && !ns.gang.inGang()) {
     const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
     if (minCombat < 30) {
@@ -119,7 +120,12 @@ export function determineStrategy(
     return { mode: "CRIME" };
   }
 
-  // 2. Fraktions-Reputation Grind
+  // 2. Early-Game Hacking-Leveling via Uni (falls Hacking noch zu niedrig für Basisskripte ist)
+  if (player.skills.hacking < 30) {
+    return { mode: "UNI", targetStat: 30 };
+  }
+
+  // 3. Fraktions-Reputation Grind
   if (factionToWorkFor && isReadyForFactionGrind) {
     const isMember = player.factions.includes(factionToWorkFor.name as FactionName);
     if (isMember) {
@@ -130,7 +136,7 @@ export function determineStrategy(
     }
   }
 
-  // 3. Standard-Geldbeschaffung
+  // 4. Standard-Geldbeschaffung (Money Mode)
   return { mode: "MONEY" };
 }
 

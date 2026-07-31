@@ -85,7 +85,7 @@ export const COMBAT_STATS = [
 
 export type CombatStat = (typeof COMBAT_STATS)[number];
 
-export const STAT_MAP: Record<CombatStat, GymType> = {
+export const GYM_STAT_MAP: Record<CombatStat, GymType> = {
   strength: "str",
   defense: "def",
   dexterity: "dex",

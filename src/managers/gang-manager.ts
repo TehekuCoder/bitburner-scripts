@@ -2,7 +2,7 @@ import { FactionName, NS } from "@ns";
 import { manageGang } from "/lib/gang-utils.js";
 import { printGangDashboard } from "ui/gang-ui.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { patchGangState } from "/lib/state.js";
+import { patchGangState, loadBatcherState } from "/lib/state.js"; // 👈 loadBatcherState importiert
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -27,7 +27,11 @@ export async function main(ns: NS): Promise<void> {
   }
 
   while (true) {
-    // 📊 State synchronisieren (damit Faction-Grinder, Sleeves etc. immer Bescheid wissen)
+    // 📊 Batcher-Status aus dem zentralen State lesen
+    const batcherState = loadBatcherState(ns);
+    const isBatcherActive = batcherState?.batcherActive ?? false;
+
+    // 📊 Gang State synchronisieren
     const info = ns.gang.getGangInformation();
     const members = ns.gang.getMemberNames();
 
@@ -40,7 +44,8 @@ export async function main(ns: NS): Promise<void> {
       gangWantedPenalty: info.wantedPenalty,
     });
 
-    const result = manageGang(ns, logger, addLocalLog);
+    // 🔄 batcherActive-Flag an manageGang übergeben
+    const result = manageGang(ns, logger, addLocalLog, isBatcherActive);
 
     if (result) {
       const { gangInfo, members, minWinChance } = result;

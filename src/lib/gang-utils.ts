@@ -93,6 +93,7 @@ export function manageGang(
   ns: NS,
   logger: Logger,
   addLocalLog: (msg: string) => void,
+  isBatcherActive: boolean = false, // 👈 Neu
 ): {
   gangInfo: GangGenInfo;
   members: GangMemberInfo[];
@@ -113,8 +114,8 @@ export function manageGang(
   // 2. Ascension
   handleAscension(ns, members, gangInfo.isHacking, logger, addLocalLog);
 
-  // 3. Equipment & Augmentations
-  handleEquipment(ns, memberNames, logger, addLocalLog);
+  // 3. Equipment & Augmentations (mit Batcher-Flag)
+  handleEquipment(ns, memberNames, logger, addLocalLog, isBatcherActive);
 
   // 4. Territory Warfare Logik
   const minWinChance = handleTerritoryWarfare(
@@ -124,12 +125,11 @@ export function manageGang(
     addLocalLog,
   );
 
-  // 5. Task-Zuweisung (inkl. Warfare-Unterstützung)
+  // 5. Task-Zuweisung
   handleTasks(ns, members, gangInfo, minWinChance);
 
   return { gangInfo, members, minWinChance };
 }
-
 /**
  * Steuert das An-/Ausschalten des Territory Clashs basierend auf der Gewinnchance.
  */
@@ -319,25 +319,26 @@ export function handleEquipment(
   memberNames: string[],
   logger: Logger,
   addLocalLog: (msg: string) => void,
+  isBatcherActive: boolean = false, // 👈 Neu
 ): void {
   const homeRam = ns.getServerMaxRam("home");
   const playerMoney = ns.getServerMoneyAvailable("home");
 
-  // 🛡️ 1. SPARMODUS-SPERRE mit BN-Multiplikator-Berücksichtigung
-  if (homeRam < GANG_CONFIG.TARGET_HOME_RAM) {
+  // 🛡️ 1. SPARMODUS-SPERRE: Nur aktivieren, wenn KEIN Batcher läuft
+  if (!isBatcherActive && homeRam < GANG_CONFIG.TARGET_HOME_RAM) {
     const nextRamCost = getEstimatedNextHomeRamCost(ns, homeRam);
 
-    // Sobald wir >= 40% des Geldes für das skalierte RAM-Upgrade haben, Käufe einfrieren
     if (playerMoney >= nextRamCost * 0.4) {
       return;
     }
   }
 
-  const maxAllowedEquipCost = getMaxEquipCostForRam(homeRam);
+  // Wenn der Batcher läuft, gibt es kein Limit pro Equip-Cost
+  const maxAllowedEquipCost = isBatcherActive ? Infinity : getMaxEquipCostForRam(homeRam);
   const equipmentList = ns.gang.getEquipmentNames();
 
   for (const equip of equipmentList) {
-    const cost = ns.gang.getEquipmentCost(equip); // Enthält intern bereits BN-Multiplikatoren!
+    const cost = ns.gang.getEquipmentCost(equip);
 
     // 🛡️ 2. KOSTEN-DECKEL
     if (cost > maxAllowedEquipCost) {
@@ -347,8 +348,9 @@ export function handleEquipment(
     for (const name of memberNames) {
       const currentMoney = ns.getServerMoneyAvailable("home");
 
-      // 🛡️ 3. PROZENTUALER BUFFER (max 2% des aktuellen Vermögens)
-      if (currentMoney < cost * GANG_CONFIG.BUY_EQUIP_MONEY_BUFFER) continue;
+      // 🛡️ 3. PROZENTUALER BUFFER (Bei Batcher reicht 1x Kosten statt 50x Puffer)
+      const requiredBuffer = isBatcherActive ? 1.0 : GANG_CONFIG.BUY_EQUIP_MONEY_BUFFER;
+      if (currentMoney < cost * requiredBuffer) continue;
 
       const memberInfo = ns.gang.getMemberInformation(name);
       if (

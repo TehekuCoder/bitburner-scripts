@@ -10,22 +10,36 @@ import {
 } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { SleeveMode, SleeveData, SleeveOptions } from "lib/types.js";
-import { MEGACORPS, COMBAT_STATS, STAT_MAP } from "lib/constants.js";
+import { MEGACORPS, COMBAT_STATS, GYM_STAT_MAP } from "lib/constants.js";
 import { loadGangState } from "/lib/state.js";
 
 let lastShoppingScan = 0;
-const SHOPPING_INTERVAL = 15000; // Augmentations-Einkauf nur alle 15 Sek.
+const SHOPPING_INTERVAL = 15000;
+const TRAVEL_COST = 200_000;
 
 /**
- * Ermittelt sicher den Namen der aktuellen Gang-Fraktion (API + State Fallback).
+ * Hilfsfunktion: Versetzt einen Sleeve nach Volhaven, sofern genug Geld da ist.
  */
+function ensureVolhaven(
+  ns: NS,
+  i: number,
+  stats: SleevePerson,
+  p: Player,
+): boolean {
+  if (stats.city === "Volhaven") return true;
+  if (p.money >= TRAVEL_COST) {
+    return ns.sleeve.travel(i, "Volhaven");
+  }
+  return false;
+}
+
 function getGangFactionName(ns: NS): FactionName | null {
   try {
     if (ns.gang && ns.gang.inGang()) {
       return ns.gang.getGangInformation().faction as FactionName;
     }
   } catch {
-    /* Gang-API nicht verfügbar/kein Zugriff */
+    /* Gang-API nicht verfügbar */
   }
 
   const gangState = loadGangState(ns);
@@ -44,7 +58,6 @@ export function getFactionsNeedingRep(
   if (!ns.singularity) return [];
 
   const gangState = loadGangState(ns);
-  // 🛡️ BN2 GANG MODE: Wenn die Gang alle Augmentationen liefert, ist kein Faction-Grind nötig
   if (gangState?.hasGang && gangState?.isBN2GangMode) {
     return [];
   }
@@ -54,10 +67,7 @@ export function getFactionsNeedingRep(
   const gangFaction = getGangFactionName(ns);
 
   for (const faction of playerFactions) {
-    // 🛡️ GANG LOCKOUT: Für die eigene Gang-Fraktion können Sleeves nicht direkt Faction Work machen
-    if (gangFaction && faction === gangFaction) {
-      continue;
-    }
+    if (gangFaction && faction === gangFaction) continue;
 
     try {
       const factionAugs = ns.singularity.getAugmentationsFromFaction(
@@ -91,20 +101,13 @@ export function determineSleeveMode(
   if (stats.shock > 0) return "RECOVERY";
   if (stats.sync < 100) return "SYNCHRO";
 
-  if (options?.globalMode) {
-    return options.globalMode;
-  }
-
-  if (options?.strategy === "CRIME" || options?.strategy === "KILLS") {
+  if (options?.globalMode) return options.globalMode;
+  if (options?.strategy === "CRIME" || options?.strategy === "KILLS")
     return "CRIME";
-  }
-  if (options?.strategy === "TRAIN") {
-    return "TRAIN";
-  }
+  if (options?.strategy === "TRAIN") return "TRAIN";
+  if (options?.strategy === "UNI") return "UNI"; // 🎓 Neu: Schaltet Sleeves auf Studium um
 
-  if (factionsNeedingRep.length > 0) {
-    return "FACTION";
-  }
+  if (factionsNeedingRep.length > 0) return "FACTION";
 
   return "COMPANY";
 }
@@ -120,9 +123,7 @@ export function manageAllSleeves(
 ): string {
   const numSleeves = ns.sleeve.getNumSleeves();
 
-  if (numSleeves === 0) {
-    return "Keine";
-  }
+  if (numSleeves === 0) return "Keine";
 
   const sleeves: SleeveData[] = Array.from({ length: numSleeves }, (_, i) => ({
     index: i,
@@ -136,7 +137,6 @@ export function manageAllSleeves(
   const occupiedFactions: FactionName[] = [];
   const occupiedCompanies: CompanyName[] = [];
 
-  // 1. Initialer Pre-Scan: Bereits aktive Factions und Companies erfassen
   for (const { stats, task } of sleeves) {
     totalShock += stats.shock;
     totalSync += stats.sync;
@@ -173,7 +173,6 @@ export function manageAllSleeves(
     sleeveProgress = `${activeWorkers}/${numSleeves} Aktiv`;
   }
 
-  // Einkauf gedrosselt ausführen
   const canShop = Date.now() - lastShoppingScan > SHOPPING_INTERVAL;
 
   for (const sleeve of sleeves) {
@@ -224,7 +223,7 @@ export function manageSingleSleeve(
     case "RECOVERY":
       if (currentTask?.type !== "RECOVERY") {
         ns.sleeve.setToShockRecovery(i);
-        const msg = `💔 Klon #${i} geht in die Schock-Therapie.`;
+        const msg = `💔 Klon #${i} geht in Schock-Therapie.`;
         logger.info(msg);
         addLocalLog(msg);
       }
@@ -233,25 +232,76 @@ export function manageSingleSleeve(
     case "SYNCHRO":
       if (currentTask?.type !== "SYNCHRO") {
         ns.sleeve.setToSynchronize(i);
-        const msg = `⚡ Klon #${i} startet Gehirn-Synchronisation.`;
+        const msg = `⚡ Klon #${i} startet Synchronisation.`;
         logger.info(msg);
         addLocalLog(msg);
       }
       break;
 
     case "TRAIN": {
-      const lowestStatName = COMBAT_STATS.reduce((a, b) =>
+      // 🎓/🏋️ TRAIN MODUS: Wählt die schwächste Skill-Gruppe (Combat vs Hacking vs Charisma)
+      const inVolhaven = ensureVolhaven(ns, i, stats, p);
+      const gymName = inVolhaven ? "Powerhouse Gym" : "Iron Gym";
+      const uniName = inVolhaven
+        ? "ZB Institute of Technology"
+        : "Rothman University";
+
+      const lowestCombatStat = COMBAT_STATS.reduce((a, b) =>
         stats.skills[a] < stats.skills[b] ? a : b,
       );
-      const gymName = stats.city === "Volhaven" ? "Powerhouse Gym" : "Iron Gym";
-      const targetGymStat = STAT_MAP[lowestStatName];
+
+      // Falls Hacking unter 200 ist, lernt der Sleeve Hacking an der Uni
+      if (stats.skills.hacking < 200) {
+        if (
+          currentTask?.type !== "CLASS" ||
+          currentTask?.classType !== "Algorithms" ||
+          currentTask?.location !== uniName
+        ) {
+          ns.sleeve.setToUniversityCourse(i, uniName, "Algorithms");
+          const msg = `🎓 Klon #${i}: Lernt Algorithms an der ${uniName}.`;
+          logger.info(msg);
+          addLocalLog(msg);
+        }
+      } else {
+        // Sonst Combat-Gym
+        const targetGymStat = GYM_STAT_MAP[lowestCombatStat];
+        if (
+          currentTask?.type !== "CLASS" ||
+          currentTask?.classType !== targetGymStat ||
+          currentTask?.location !== gymName
+        ) {
+          ns.sleeve.setToGymWorkout(i, gymName, targetGymStat);
+          const msg = `🏋️ Klon #${i}: Trainiert ${targetGymStat} im ${gymName}.`;
+          logger.info(msg);
+          addLocalLog(msg);
+        }
+      }
+      break;
+    }
+
+    case "UNI": {
+      // 🎓 DEDIZIERTER UNI MODUS
+      const inVolhaven = ensureVolhaven(ns, i, stats, p);
+      const uniName = inVolhaven
+        ? "ZB Institute of Technology"
+        : "Rothman University";
+
+      // Dynamische Kurs-Wahl: Schaut ob Hacking oder Charisma trainiert werden soll
+      let courseName: "Algorithms" | "Leadership" = "Algorithms";
+      let statLabel = "Hacking";
+
+      if (stats.skills.hacking >= 200 && stats.skills.charisma < 200) {
+        courseName = "Leadership";
+        statLabel = "Charisma";
+      }
+
       if (
         currentTask?.type !== "CLASS" ||
-        currentTask?.classType !== targetGymStat ||
-        currentTask?.location !== gymName
+        currentTask?.classType !== courseName ||
+        currentTask?.location !== uniName
       ) {
-        ns.sleeve.setToGymWorkout(i, gymName, targetGymStat);
-        const msg = `🏋️ Klon #${i}: Vorab-Bootcamp aktiv! Trainiert ${targetGymStat} im ${gymName}.`;
+        ns.sleeve.setToUniversityCourse(i, uniName, courseName);
+        const msg = `🎓 Klon #${i}: Studiert ${courseName} (${statLabel}) an der ${uniName}.`;
         logger.info(msg);
         addLocalLog(msg);
       }
@@ -259,7 +309,7 @@ export function manageSingleSleeve(
     }
 
     case "CRIME":
-      executeFallbackCrime(ns, i, currentTask, p, logger, addLocalLog);
+      executeFallbackCrime(ns, i, stats, currentTask, p, logger, addLocalLog);
       break;
 
     case "FACTION":
@@ -293,7 +343,7 @@ export function manageSingleSleeve(
       ) {
         return;
       }
-      executeFallbackCrime(ns, i, currentTask, p, logger, addLocalLog);
+      executeFallbackCrime(ns, i, stats, currentTask, p, logger, addLocalLog);
       break;
 
     case "COMPANY":
@@ -312,11 +362,11 @@ export function manageSingleSleeve(
       ) {
         return;
       }
-      executeFallbackCrime(ns, i, currentTask, p, logger, addLocalLog);
+      executeFallbackCrime(ns, i, stats, currentTask, p, logger, addLocalLog);
       break;
 
     default:
-      executeFallbackCrime(ns, i, currentTask, p, logger, addLocalLog);
+      executeFallbackCrime(ns, i, stats, currentTask, p, logger, addLocalLog);
       break;
   }
 }
@@ -372,7 +422,7 @@ function tryAssignFactionWork(
 
   if (minRequiredStat > 0 && lowestSleeveCombatStat < minRequiredStat) {
     const gymName = stats.city === "Volhaven" ? "Powerhouse Gym" : "Iron Gym";
-    const targetGymStat = STAT_MAP[lowestStatName];
+    const targetGymStat = GYM_STAT_MAP[lowestStatName];
 
     if (
       currentTask?.type !== "CLASS" ||
@@ -431,7 +481,6 @@ function tryAssignCompanyWork(
   if (!ns.singularity) return false;
 
   const companyList = Object.values(MEGACORPS);
-
   const employedCorps = Object.keys(p.jobs).filter((job) =>
     companyList.includes(job as CompanyName),
   ) as CompanyName[];
@@ -487,24 +536,10 @@ function tryAssignCompanyWork(
   }
 
   const targetStatThreshold = 300;
-  const targetCity = p.money >= 200_000 ? "Volhaven" : "Sector-12";
-  const bestUniversity =
-    targetCity === "Volhaven"
-      ? "ZB Institute of Technology"
-      : "Rothman University";
-
-  if (
-    (stats.skills.hacking < targetStatThreshold ||
-      stats.skills.charisma < targetStatThreshold) &&
-    stats.city !== targetCity &&
-    p.money >= 200_000
-  ) {
-    if (ns.sleeve.travel(i, targetCity)) {
-      const msg = `✈️ Klon #${i} reist nach ${targetCity} für Uni-Kurse.`;
-      logger.info(msg);
-      addLocalLog(msg);
-    }
-  }
+  const inVolhaven = ensureVolhaven(ns, i, stats, p);
+  const bestUniversity = inVolhaven
+    ? "ZB Institute of Technology"
+    : "Rothman University";
 
   if (stats.skills.hacking < targetStatThreshold) {
     if (
@@ -572,12 +607,15 @@ function handleSleeveShopping(
 }
 
 /**
- * Weist ein Verbrechen zu. Vor dem Gang-Unlock wird gezielt Karma via Homicide gefarmt.
- * Nach Freischaltung der Gang schalten die Sleeves auf profitable Verbrechen um.
+ * Dynamisches Verbrechen:
+ * 1. Schickt den Klon ins Gym, falls Combat-Stats < 35 sind (gleicht Stats automatisch an).
+ * 2. Priorisiert Homicide für den Karma-Grind (Karma > -54000).
+ * 3. Nutzt "Mug People" als verlässlichen Standard-Fallback.
  */
 function executeFallbackCrime(
   ns: NS,
   i: number,
+  stats: SleevePerson,
   currentTask: SleeveTask | null,
   p: Player,
   logger: Logger,
@@ -586,18 +624,52 @@ function executeFallbackCrime(
   const gangState = loadGangState(ns);
   const hasGang = gangState?.hasGang || (ns.gang && ns.gang.inGang());
 
-  // 🎯 PRE-GANG: Karma-Farmen via Homicide (bis -54 Karma erreicht ist)
-  // 🎯 POST-GANG: Switch auf profitables Verbrechen (z. B. "Deal Drugs")
-  let targetCrime = "Deal Drugs";
-  if (!hasGang && ns.heart.break() > -54) {
+  // 1. Schwächsten Combat-Stat ermitteln
+  const lowestStatName = COMBAT_STATS.reduce((a, b) =>
+    stats.skills[a] < stats.skills[b] ? a : b,
+  );
+  const avgCombat =
+    (stats.skills.strength +
+      stats.skills.defense +
+      stats.skills.dexterity +
+      stats.skills.agility) / 4;
+
+  const MIN_COMBAT_FOR_HOMICIDE = 35; // Ab ~35 Combat-Stats wird Homicide verlässlich
+
+  // 🎯 STEP 1: Combat-Bootcamp (Gleicht Stats automatisch ab)
+  // Falls die Combat-Stats noch zu niedrig für verlässliches Homicide sind -> Gym!
+  if (!hasGang && ns.heart.break() > -54000 && avgCombat < MIN_COMBAT_FOR_HOMICIDE) {
+    const inVolhaven = ensureVolhaven(ns, i, stats, p);
+    const gymName = inVolhaven ? "Powerhouse Gym" : "Iron Gym";
+    const targetGymStat = GYM_STAT_MAP[lowestStatName];
+
+    if (
+      currentTask?.type !== "CLASS" ||
+      currentTask?.classType !== targetGymStat ||
+      currentTask?.location !== gymName
+    ) {
+      ns.sleeve.setToGymWorkout(i, gymName, targetGymStat);
+      const msg = `🏋️ Klon #${i}: Combat-Bootcamp (${targetGymStat} ${stats.skills[lowestStatName]}/${MIN_COMBAT_FOR_HOMICIDE}) im ${gymName}.`;
+      logger.info(msg);
+      addLocalLog(msg);
+    }
+    return;
+  }
+
+  // 🎯 STEP 2: Verbrechen-Wahl
+  let targetCrime: CrimeType = "Mug"; // Standard-Fallback anstelle von "Deal Drugs"
+
+  // Solange kein Gang-Beitritt erfolgt ist und Karma fehlt -> Homicide grind
+  if (!hasGang && ns.heart.break() > -54000) {
     targetCrime = "Homicide";
   }
 
+  // 🎯 STEP 3: Ausführung
   if (currentTask?.type === "CRIME" && currentTask?.crimeType === targetCrime) {
     return;
   }
 
-  if (ns.sleeve.setToCommitCrime(i, targetCrime as CrimeType)) {
+  if (ns.sleeve.setToCommitCrime(i, targetCrime)) {
     const msg = `🔫 Klon #${i} wechselt auf Crime: ${targetCrime}`;
     logger.info(msg);
     addLocalLog(msg);

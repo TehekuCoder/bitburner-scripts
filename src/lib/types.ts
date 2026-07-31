@@ -117,7 +117,8 @@ export type BotStrategy =
   | "CORP"
   | "TRAIN"
   | "KILLS"
-  | "CRIME";
+  | "CRIME"
+  |"UNI";
 
 export interface SourceFileProgress {
   [sourceFileNumber: number]: number;
@@ -261,7 +262,8 @@ export type SleeveMode =
   | "TRAIN"
   | "FACTION"
   | "COMPANY"
-  | "CRIME";
+  | "CRIME"
+  | "UNI";
 
 export interface StrategyResult {
   mode: BotStrategy;

@@ -82,6 +82,7 @@ export const PATHS = {
     faction: "tasks/faction-grind.js",
     augShopping: "tasks/faction-shopping.js",
     train: "tasks/train.js",
+    uni: "tasks/uni.js"
   },
   ui: {
     batcher: "ui/batcher-ui.js",
