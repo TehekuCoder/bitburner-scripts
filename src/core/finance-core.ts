@@ -34,7 +34,10 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new Logger(ns, "FINANCE");
   ns.ui.openTail();
+
   ns.ui.setTailTitle("Finance-Core");
+
+    ns.ui.resizeTail(593, 515);
 
   const lastPurchases: string[] = [];
   const lastWarnings: string[] = [];

@@ -47,7 +47,7 @@ function formatPercent(value: number, max: number): string {
 export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   ns.clearLog();
 
-  const W = 60;
+  const W = 64;
   const H_LINE = "=".repeat(W);
   const D_LINE = "-".repeat(W);
 
