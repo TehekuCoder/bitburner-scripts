@@ -23,6 +23,7 @@ export const PATHS = {
     backdoor: "daemons/backdoor.js",
     crawler: "daemons/dnet-crawler.js",
     fillShare: "daemons/fill-share.js",
+    financeManager: "daemons/finance-manager.js",
     perfMonitor: "daemons/perf-monitor.js",
     suite: "daemons/suite-manager.js",
   },

@@ -12,7 +12,7 @@ export async function main(ns: NS): Promise<void> {
   const bnMults = loadBnMults(ns);
 
   const scripts: ScriptList = {
-    financeManager: PATHS.managers.finance,
+    financeManager: PATHS.daemons.financeManager,
     financeCore: PATHS.core.financeCore,
     logger: PATHS.core.logger,
     perfMonitor: PATHS.daemons.perfMonitor,
