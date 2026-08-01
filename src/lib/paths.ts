@@ -1,3 +1,5 @@
+// lib/paths.ts
+
 export const PATHS = {
   core: {
     engines: {
@@ -16,7 +18,7 @@ export const PATHS = {
     kernel: "core/sys-kernel.js",
     logger: "core/sys-logger.js",
     orchestrator: "core/sys-orchestrator.js",
-    shotgutDashboard: "core/sys-shotgut-dashboard.js",
+    shotgutDashboard: "core/sys-shotgun-dashboard.js",
     suites: "core/sys-suites.js",
   },
   daemons: {

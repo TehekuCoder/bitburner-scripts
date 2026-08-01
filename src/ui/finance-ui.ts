@@ -1,4 +1,14 @@
+// ui/finance-ui.ts
+
 import { NS } from "@ns";
+
+export interface PendingRequestSummary {
+  description: string;
+  category: string;
+  priorityLabel: string;
+  cost: number;
+  score?: number;
+}
 
 export interface FinanceDashboardData {
   currentMoney: number;
@@ -15,73 +25,177 @@ export interface FinanceDashboardData {
   suiteManagerActive: boolean;
   activeEvaluators: string[];
   inactiveEvaluators: string[];
-  nextPurchase: string;
-  topPendingRequestLines: string[];
+  nextPurchaseRequest?: PendingRequestSummary;
+  topPendingRequests: PendingRequestSummary[];
   lastPurchases: string[];
   lastWarnings: string[];
 }
 
-function makeShortProgressBar(value: number, max: number, width = 16): string {
-  const filled = Math.round((Math.max(0, Math.min(value, max)) / Math.max(1, max)) * width);
+function makeProgressBar(value: number, max: number, width = 20): string {
+  if (max <= 0) return "░".repeat(width);
+  const ratio = Math.max(0, Math.min(value, max)) / max;
+  const filled = Math.round(ratio * width);
   return "█".repeat(filled) + "░".repeat(width - filled);
+}
+
+function formatPercent(value: number, max: number): string {
+  if (max <= 0) return "0.0%";
+  const pct = (Math.max(0, Math.min(value, max)) / max) * 100;
+  return `${pct.toFixed(1)}%`;
 }
 
 export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   ns.clearLog();
-  ns.print("============================================================");
-  ns.print("⚡ FINANCE-CORE MONITOR");
-  ns.print("============================================================");
-  ns.print(`Home-Cash:    $${ns.format.number(data.currentMoney)}`);
-  ns.print(`Budget:       $${ns.format.number(data.availableMoney)}`);
-  ns.print(`Anfragen:     ${data.pendingCount}`);
-  ns.print("------------------------------------------------------------");
-  ns.print("🏠 Home-System:");
-  ns.print(`   RAM:   ${ns.format.ram(data.homeRamUsed).padEnd(9)} / ${ns.format.ram(data.homeRamTotal).padEnd(9)} ${makeShortProgressBar(data.homeRamUsed, data.homeRamTotal)}`);
-  ns.print(`   CORES: ${data.homeCores}`);
-  ns.print("------------------------------------------------------------");
-  ns.print("🧠 Finance Supervisor:");
-  ns.print(`   Finance-Manager: ${data.financeManagerActive ? "ONLINE" : "offline"}`);
-  ns.print(`   Suite-Manager: ${data.suiteManagerActive ? "ONLINE" : "offline"}`);
-  ns.print(`   Evaluatoren: ${data.activeEvaluators.length}/${data.activeEvaluators.length + data.inactiveEvaluators.length} aktiv`);
-  if (data.activeEvaluators.length > 0) {
-    ns.print(`   ${data.activeEvaluators.join(", ")}`);
-  }
-  if (data.inactiveEvaluators.length > 0) {
-    ns.print(`   offline: ${data.inactiveEvaluators.join(", ")}`);
-  }
-  ns.print("------------------------------------------------------------");
-  ns.print("🖥️  Purchased Server Summary:");
-  ns.print(`   Server: ${data.purchasedServerCount} / ${data.purchasedServerLimit}`);
-  ns.print(`   Größter Server: ${data.largestPurchasedServerName} (${ns.format.ram(data.largestPurchasedServerRam)})`);
-  ns.print("------------------------------------------------------------");
-  ns.print("⏭️ Nächster geplanter Kauf:");
-  ns.print(`   ${data.nextPurchase}`);
-  ns.print("------------------------------------------------------------");
-  ns.print("📌 Top offene Anfragen:");
-  if (data.topPendingRequestLines.length === 0) {
-    ns.print("> Keine offenen Finanzanfragen.");
+
+  const W = 60;
+  const H_LINE = "=".repeat(W);
+  const D_LINE = "-".repeat(W);
+
+  // ------------------------------------------------------------
+  // HEADER (BIT-OS DESIGN)
+  // ------------------------------------------------------------
+  const queueStr = `Queue: ${data.pendingCount} Anfragen`;
+  const headerTitle = `⚡ BIT-OS FINANCE CORE v1.0`;
+  const headerContent = `${headerTitle.padEnd(34)}|  ${queueStr}`;
+
+  ns.print(H_LINE);
+  ns.print(headerContent);
+  ns.print(H_LINE);
+
+  // ------------------------------------------------------------
+  // 1. FINANZ- & SYSTEM-ÜBERSICHT
+  // ------------------------------------------------------------
+  const cashStr = `$${ns.format.number(data.currentMoney)}`;
+  const budgetStr = `$${ns.format.number(data.availableMoney)}`;
+  ns.print(`FINANZ- & SYSTEM-ÜBERSICHT:`);
+  ns.print(`Cash:        ${cashStr}  |  Budget: ${budgetStr}`);
+
+  const ramUsedStr = ns.format.ram(data.homeRamUsed);
+  const ramTotStr = ns.format.ram(data.homeRamTotal);
+  const ramPct = formatPercent(data.homeRamUsed, data.homeRamTotal);
+  const ramBar = makeProgressBar(data.homeRamUsed, data.homeRamTotal, 20);
+  ns.print(`Home RAM:    ${ramUsedStr} / ${ramTotStr} (${ramPct})`);
+  ns.print(`             [${ramBar}]`);
+
+  const pservStr = `${data.purchasedServerCount} / ${data.purchasedServerLimit}`;
+  const pservBar = makeProgressBar(
+    data.purchasedServerCount,
+    data.purchasedServerLimit,
+    12,
+  );
+  const maxRamStr =
+    data.largestPurchasedServerRam > 0
+      ? ns.format.ram(data.largestPurchasedServerRam)
+      : "–";
+  ns.print(
+    `Pserv Pool:  ${pservStr.padEnd(8)} [${pservBar}] (Max: ${maxRamStr})`,
+  );
+  ns.print(
+    `Home Cores:  ${data.homeCores} Core${data.homeCores > 1 ? "s" : ""}`,
+  );
+
+  ns.print(D_LINE);
+
+  // ------------------------------------------------------------
+  // 2. SUPERVISOR & EVALUATOREN STATUS
+  // ------------------------------------------------------------
+  const fMgrStatus = data.financeManagerActive ? "[ONLINE]" : "[OFFLINE]";
+  const sMgrStatus = data.suiteManagerActive ? "[ONLINE]" : "[OFFLINE]";
+  ns.print(`SUPERVISOR & EVALUATOREN STATUS:`);
+  ns.print(`Manager:     ${fMgrStatus.padEnd(10)} |  Suite: ${sMgrStatus}`);
+
+  const allEvaluators = [
+    "home",
+    "hacknet",
+    "stock",
+    "pserv",
+    "programs",
+    "gang",
+    "sleeve",
+    "player",
+  ];
+  const activeSet = new Set(data.activeEvaluators);
+
+  const badges = allEvaluators.map((name) => {
+    const icon = activeSet.has(name) ? "[✓]" : "[✗]";
+    return `${icon} ${name}`.padEnd(13);
+  });
+
+  // Grid ausgeben (4 Stück pro Zeile)
+  ns.print(`Evaluatoren: ${badges.slice(0, 4).join("")}`);
+  ns.print(`             ${badges.slice(4, 8).join("")}`);
+
+  ns.print(D_LINE);
+
+  // ------------------------------------------------------------
+  // 3. NÄCHSTER GEPLANTER KAUF
+  // ------------------------------------------------------------
+  ns.print(`NÄCHSTER GEPLANTER KAUF:`);
+  if (data.nextPurchaseRequest) {
+    const req = data.nextPurchaseRequest;
+    const reqCostStr = `$${ns.format.number(req.cost)}`;
+    const progressPct = Math.min(100, (data.currentMoney / req.cost) * 100);
+    const progressBar = makeProgressBar(data.currentMoney, req.cost, 20);
+    const shortDesc =
+      req.description.length > 44
+        ? req.description.substring(0, 41) + "..."
+        : req.description;
+
+    ns.print(`Ziel:        ${shortDesc}`);
+    ns.print(`Kosten:      ${reqCostStr} (${progressPct.toFixed(1)}%)`);
+    ns.print(
+      `Status:      [${progressBar}] ${progressPct >= 100 ? "Bereit!" : "Sparen..."}`,
+    );
   } else {
-    for (const line of data.topPendingRequestLines) {
-      ns.print(`> ${line}`);
+    ns.print(`Ziel:        Keine offenen Anfragen im Port`);
+    ns.print(`Status:      [${makeProgressBar(1, 1, 20)}] Bereit`);
+  }
+
+  ns.print(D_LINE);
+
+  // ------------------------------------------------------------
+  // 4. TOP ANFRAGEN IN WARTESCHLANGE
+  // ------------------------------------------------------------
+  ns.print(`TOP ANFRAGEN IN WARTESCHLANGE:`);
+  if (data.topPendingRequests.length === 0) {
+    ns.print(`> Keine wartenden Anfragen.`);
+  } else {
+    for (const req of data.topPendingRequests) {
+      const prio = req.priorityLabel.substring(0, 4).padEnd(4);
+      const cat = req.category.substring(0, 14).padEnd(14);
+      const cost = `$${ns.format.number(req.cost)}`;
+      const desc =
+        req.description.length > 22
+          ? req.description.substring(0, 19) + "..."
+          : req.description;
+      ns.print(`> [${prio}] ${cat} | ${desc.padEnd(22)} ${cost.padStart(9)}`);
     }
   }
-  ns.print("------------------------------------------------------------");
-  ns.print("LETZTE KÄUFE:");
-  if (data.lastPurchases.length === 0) {
-    ns.print("> Keine Käufe.");
+
+  ns.print(D_LINE);
+
+  // ------------------------------------------------------------
+  // 5. EREIGNIS-PROTOKOLL
+  // ------------------------------------------------------------
+  ns.print(`EREIGNIS-PROTOKOLL:`);
+  const recentLogs: string[] = [];
+
+  for (const p of data.lastPurchases.slice(-3)) {
+    recentLogs.push(p);
+  }
+  for (const w of data.lastWarnings.slice(-2)) {
+    recentLogs.push(w);
+  }
+
+  if (recentLogs.length === 0) {
+    ns.print(`> Keine aktuellen Ereignisse.`);
   } else {
-    for (const purchase of data.lastPurchases.slice(-4)) {
-      ns.print(`> ${purchase}`);
+    for (const logLine of recentLogs.slice(-4)) {
+      const truncated =
+        logLine.length > 58 ? logLine.substring(0, 55) + "..." : logLine;
+      ns.print(`> ${truncated}`);
     }
   }
-  ns.print("------------------------------------------------------------");
-  ns.print("WARNUNGEN:");
-  if (data.lastWarnings.length === 0) {
-    ns.print("> Keine Warnungen.");
-  } else {
-    for (const warning of data.lastWarnings.slice(-4)) {
-      ns.print(`> ${warning}`);
-    }
-  }
-  ns.print("============================================================");
+
+  ns.print(H_LINE);
 }

@@ -1,66 +1,89 @@
 // lib/evaluators/pserv.ts
 import { NS } from "@ns";
-import { PurchaseEvaluator, PurchaseRequest, PurchasePriority } from "/lib/types/finance.js";
+import {
+  PurchaseEvaluator,
+  PurchaseRequest,
+  PurchasePriority,
+  PurchaseCategory,
+} from "/lib/types/finance.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
 
 const PSERV_PREFIX = "pserv-";
 const INITIAL_RAM = 8;
-const MIN_HOME_RAM_FOR_PSERVS = 256;
+const MIN_HOME_RAM_FOR_PSERVS = 64;
 
 export const PservEvaluator: PurchaseEvaluator = {
   category: "PURCHASED_SERVER",
 
   getRequests(ns: NS): PurchaseRequest[] {
     const limit = ns.cloud.getServerLimit();
-    if (limit === 0) return []; 
+    if (limit === 0) return [];
 
     const maxRam = ns.cloud.getRamLimit();
     const owned = ns.cloud.getServerNames();
-    const isHomeUnderpowered = ns.getServerMaxRam("home") < MIN_HOME_RAM_FOR_PSERVS;
+    const isHomeUnderpowered =
+      ns.getServerMaxRam("home") < MIN_HOME_RAM_FOR_PSERVS;
 
     const requests: PurchaseRequest[] = [];
 
+    // 1. NEUE SERVER KAUFEN (Score 95: Höchste Priorität vor Upgrades)
     if (owned.length < limit) {
       const cost = ns.cloud.getServerCost(INITIAL_RAM);
       if (cost > 0 && Number.isFinite(cost)) {
         let index = 0;
         while (owned.includes(`${PSERV_PREFIX}${index}`)) index++;
-        
-        const priority = isHomeUnderpowered ? PurchasePriority.LOW : (owned.length < 8 ? PurchasePriority.HIGH : PurchasePriority.MEDIUM);
+
+        const priority = isHomeUnderpowered
+          ? PurchasePriority.LOW
+          : PurchasePriority.HIGH;
+        const score = isHomeUnderpowered ? 10 : 95;
 
         requests.push({
           id: `pserv-buy-${PSERV_PREFIX}${index}`,
-          category: "PURCHASED_SERVER",
+          category: "PURCHASED_SERVER" as PurchaseCategory,
           priority,
-          score: isHomeUnderpowered ? 10 : 80,
+          score,
           cost,
-          description: `Server kaufen: ${PSERV_PREFIX}${index} (${INITIAL_RAM}GB)`,
+          description: `Server kaufen: ${PSERV_PREFIX}${index} (${INITIAL_RAM}GB) [${owned.length + 1}/${limit}]`,
           action: {
-            script: "core/purchase-action.js",
+            script: "core/actions/act-cloud.js",
             args: ["pserv-buy", `${PSERV_PREFIX}${index}`, INITIAL_RAM],
           },
         });
       }
     }
 
+    // 2. BESTEHENDE SERVER UPGRADEN (Score max 80: Reiht sich nach Neukäufen ein)
     for (const hostname of owned) {
       const currentRam = ns.getServerMaxRam(hostname);
       const nextRam = currentRam * 2;
 
       if (nextRam <= maxRam) {
         const upgradeCost = ns.cloud.getServerUpgradeCost(hostname, nextRam);
+
         if (upgradeCost > 0 && Number.isFinite(upgradeCost)) {
-          const priority = isHomeUnderpowered ? PurchasePriority.LOW : (currentRam < 128 ? PurchasePriority.MEDIUM : PurchasePriority.LOW);
+          let priority = PurchasePriority.LOW;
+          if (!isHomeUnderpowered) {
+            priority =
+              currentRam < 128
+                ? PurchasePriority.HIGH
+                : currentRam < 1024
+                  ? PurchasePriority.MEDIUM
+                  : PurchasePriority.LOW;
+          }
+
+          const baseScore = Math.max(20, 90 - Math.log2(currentRam) * 2);
+          const score = isHomeUnderpowered ? 5 : Math.min(88, baseScore);
 
           requests.push({
             id: `pserv-upgrade-${hostname}-${nextRam}gb`,
-            category: "PURCHASED_SERVER",
+            category: "PURCHASED_SERVER" as PurchaseCategory,
             priority,
-            score: isHomeUnderpowered ? 5 : Math.max(10, 80 - Math.log2(currentRam) * 5),
+            score,
             cost: upgradeCost,
             description: `Server Upgrade: ${hostname} (${currentRam}GB ➔ ${nextRam}GB)`,
             action: {
-              script: "core/purchase-action.js",
+              script: "core/actions/act-cloud.js",
               args: ["pserv-upgrade", hostname, nextRam],
             },
           });

@@ -23,7 +23,7 @@ export const HomeEvaluator: PurchaseEvaluator = {
         cost: ramCost,
         description: `Home RAM (${ns.format.ram(currentRam)} ➔ ${ns.format.ram(currentRam * 2)})`,
         action: {
-          script: "core/purchase-action.js",
+          script: "core/actions/act-singularity.js",
           args: ["home-upgrade-ram"],
         },
       });
@@ -41,7 +41,7 @@ export const HomeEvaluator: PurchaseEvaluator = {
         cost: coresCost,
         description: `Home Cores (${currentCores} ➔ ${currentCores + 1})`,
         action: {
-          script: "core/purchase-action.js",
+          script: "core/actions/act-singularity.js",
           args: ["home-upgrade-cores"],
         },
       });

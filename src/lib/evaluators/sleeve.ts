@@ -86,7 +86,7 @@ export const SleeveEvaluator: PurchaseEvaluator = {
             cost: aug.cost,
             description: `Sleeve #${sleeveId}: Augmentation '${aug.name}' (${reason})`,
             action: {
-              script: "core/purchase-action.js",
+              script: "core/actions/act-sleeve.js",
               args: ["sleeve-purchase-aug", sleeveId, aug.name],
             },
           });

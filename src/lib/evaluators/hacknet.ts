@@ -44,7 +44,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         roi,
         description: `Hacknet Node #${numNodes + 1} kaufen`,
         action: {
-          script: "core/purchase-action.js",
+          script: "core/actions/act-hacknet.js",
           args: ["hacknet-new-node", numNodes],
         },
       });
@@ -73,7 +73,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
             roi,
             description: `Hacknet Node #${i + 1} ${upg.desc}`,
             action: {
-              script: "core/purchase-action.js",
+              script: "core/actions/act-hacknet.js",
               args: [
                 upg.type === "level"
                   ? "hacknet-upgrade-level"

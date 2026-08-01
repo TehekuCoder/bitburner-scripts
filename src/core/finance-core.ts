@@ -5,15 +5,29 @@ import {
   PurchaseRequest,
   PurchasePriority,
   PurchaseCategory,
+  CATEGORY_WEIGHTS,
 } from "/lib/types/finance.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { drawFinanceDashboard, FinanceDashboardData } from "/ui/finance-ui.js";
+import { PATHS } from "/lib/paths.js";
 
-const FINANCE_PORT = 10; // Port für unsere Microservices
+const FINANCE_PORT = 10;
 
 const CATEGORY_MARGINS: Partial<Record<PurchaseCategory, number>> = {
   STOCK_LICENSE: 1.0,
   STOCK_TRADE: 1.5,
+};
+
+const CATEGORY_TO_EVALUATOR: Partial<Record<PurchaseCategory, string>> = {
+  HOME_SERVER: "home",
+  PURCHASED_SERVER: "pserv",
+  DARKNET_PROGRAM: "programs",
+  GANG_EQUIPMENT: "gang",
+  SLEEVE_AUG: "sleeve",
+  PLAYER_AUG: "player",
+  HACKNET: "hacknet",
+  STOCK_LICENSE: "stock",
+  STOCK_TRADE: "stock",
 };
 
 export async function main(ns: NS): Promise<void> {
@@ -21,10 +35,12 @@ export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "FINANCE");
   ns.ui.openTail();
   ns.ui.setTailTitle("Finance-Core");
-  ns.print("⚡ Finance-Core aktiv (Banker-Modus / ~2GB RAM).");
 
   const lastPurchases: string[] = [];
   const lastWarnings: string[] = [];
+
+  // Tracking wann welcher Evaluator zuletzt eine Anfrage geschickt hat (Timestamp in ms)
+  const evaluatorLastSeen: Record<string, number> = {};
 
   while (true) {
     const rawMoney = ns.getServerMoneyAvailable("home");
@@ -37,7 +53,41 @@ export async function main(ns: NS): Promise<void> {
       const reqData = port.read() as string;
       if (reqData !== "NULL PORT DATA") {
         try {
-          allRequests.push(JSON.parse(reqData));
+          const parsed = JSON.parse(reqData);
+
+          // Bündel-Format aus evaluator-runner: { category: "...", requests: [...] }
+          if (
+            parsed &&
+            typeof parsed === "object" &&
+            Array.isArray(parsed.requests)
+          ) {
+            const cat = parsed.category as PurchaseCategory;
+            const evalName = cat ? CATEGORY_TO_EVALUATOR[cat] : undefined;
+            if (evalName) evaluatorLastSeen[evalName] = Date.now();
+
+            for (const req of parsed.requests as PurchaseRequest[]) {
+              allRequests.push(req);
+            }
+          }
+          // Abwärtskompatibilität: Array von Anfragen
+          else if (Array.isArray(parsed)) {
+            for (const req of parsed as PurchaseRequest[]) {
+              allRequests.push(req);
+              const evalName = req.category
+                ? CATEGORY_TO_EVALUATOR[req.category]
+                : undefined;
+              if (evalName) evaluatorLastSeen[evalName] = Date.now();
+            }
+          }
+          // Abwärtskompatibilität: Einzelne Anfrage
+          else if (parsed && typeof parsed === "object") {
+            const req = parsed as PurchaseRequest;
+            allRequests.push(req);
+            const evalName = req.category
+              ? CATEGORY_TO_EVALUATOR[req.category]
+              : undefined;
+            if (evalName) evaluatorLastSeen[evalName] = Date.now();
+          }
         } catch (e) {
           ns.print(`[ERROR] Ungültiges JSON im Finance-Port: ${e}`);
         }
@@ -63,87 +113,106 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    const financeManagerActive = ns.isRunning("managers/finance-manager.js", "home");
+    const financeManagerActive = ns.isRunning(
+      PATHS.daemons.financeManager,
+      "home",
+    );
     const suiteManagerActive = ns.isRunning("core/sys-suites.js", "home");
 
+    // Evaluatoren-Status: Aktiv wenn innerhalb der letzten 10 Sekunden Anfragen gesendet wurden
     const evaluators = [
-      { name: "home", path: "lib/evaluators/home.js" },
-      { name: "hacknet", path: "lib/evaluators/hacknet.js" },
-      { name: "stock", path: "lib/evaluators/stock.js" },
-      { name: "pserv", path: "lib/evaluators/pserv.js" },
-      { name: "programs", path: "lib/evaluators/programs.js" },
-      { name: "gang", path: "lib/evaluators/gang.js" },
-      { name: "sleeve", path: "lib/evaluators/sleeve.js" },
-      { name: "player", path: "lib/evaluators/player.js" },
+      "home",
+      "hacknet",
+      "stock",
+      "pserv",
+      "programs",
+      "gang",
+      "sleeve",
+      "player",
     ];
-
     const activeEvaluators: string[] = [];
     const inactiveEvaluators: string[] = [];
+    const now = Date.now();
 
-    for (const evaluator of evaluators) {
-      if (ns.fileExists(evaluator.path, "home")) {
-        if (ns.isRunning(evaluator.path, "home")) {
-          activeEvaluators.push(evaluator.name);
-        } else {
-          inactiveEvaluators.push(evaluator.name);
-        }
+    for (const name of evaluators) {
+      const lastSeen = evaluatorLastSeen[name] ?? 0;
+      // Wenn in den letzten 10s Daten kamen ODER das Script gerade exakt läuft:
+      if (
+        now - lastSeen < 10000 ||
+        ns.isRunning(`lib/evaluators/${name}.js`, "home")
+      ) {
+        activeEvaluators.push(name);
+      } else {
+        inactiveEvaluators.push(name);
       }
     }
 
+    // 2. Sortierung der Anfragen
     if (allRequests.length > 0) {
-      // 2. Sortierung: Prio -> Score (ROI) -> Kosten
       allRequests.sort((a, b) => {
         if (a.priority !== b.priority) return a.priority - b.priority;
+
+        const weightA = CATEGORY_WEIGHTS[a.category] ?? 0;
+        const weightB = CATEGORY_WEIGHTS[b.category] ?? 0;
+        if (weightA !== weightB) return weightB - weightA;
+
         const scoreA = a.score ?? 0;
         const scoreB = b.score ?? 0;
         if (scoreA !== scoreB) return scoreB - scoreA;
+
         return a.cost - b.cost;
       });
 
-      // 3. Käufe abarbeiten
+      // 3. Käufe verarbeiten mit intelligentem Blocking
+      const blockedCategories = new Set<PurchaseCategory>();
+
       for (const req of allRequests) {
         const margin = CATEGORY_MARGINS[req.category] ?? 1.0;
         const requiredBudget = req.cost * margin;
 
-        if (availableMoney >= requiredBudget) {
+        // Falls Kategorie blockiert ist, aber wir das Item SOFORT problemlos bezahlen können -> Trotzdem kaufen!
+        const canAffordEasily = availableMoney >= requiredBudget;
+
+        if (blockedCategories.has(req.category) && !canAffordEasily) {
+          continue;
+        }
+
+        if (canAffordEasily) {
           const pid = ns.exec(req.action.script, "home", 1, ...req.action.args);
 
           if (pid > 0) {
-            const purchaseMsg = `🛒 KAUF BEAUFTRAGT: ${req.description} für $${ns.format.number(req.cost)}`;
-            logger.success(purchaseMsg, undefined, { context: { requestId: req.id, category: req.category } });
+            const purchaseMsg = `🛒 KAUF: ${req.description} ($${ns.format.number(req.cost)})`;
+            logger.success(purchaseMsg);
             lastPurchases.push(purchaseMsg);
             if (lastPurchases.length > 6) lastPurchases.shift();
 
             availableMoney -= req.cost;
-            await ns.sleep(50);
+            await ns.sleep(20);
           } else {
-            const errorMsg = `⚠️ Ausführung fehlgeschlagen (RAM voll?): ${req.id}`;
-            logger.warn(errorMsg, undefined, { context: { requestId: req.id } });
+            const errorMsg = `⚠️ Script-Start fehlgeschlagen: ${req.action.script}`;
+            logger.warn(errorMsg);
             lastWarnings.push(errorMsg);
             if (lastWarnings.length > 6) lastWarnings.shift();
           }
         } else {
-          const isPeanuts = req.cost < rawMoney * 0.01;
-          if (req.priority === PurchasePriority.CRITICAL || !isPeanuts) {
-            const savingMsg = `⏳ SPARZIEL: ${req.description} ($${ns.format.number(availableMoney)} / $${ns.format.number(req.cost)})`;
-            logger.info(savingMsg, undefined, { context: { requestId: req.id, category: req.category } });
-            lastWarnings.push(savingMsg);
-            if (lastWarnings.length > 6) lastWarnings.shift();
-            break;
-          }
+          // Geld reicht nicht -> Sparziel setzen und teurere Items dieser Kategorie blockieren
+          const savingMsg = `⏳ SPARZIEL: ${req.description} ($${ns.format.number(availableMoney)} / $${ns.format.number(req.cost)})`;
+          lastWarnings.push(savingMsg);
+          if (lastWarnings.length > 6) lastWarnings.shift();
+
+          blockedCategories.add(req.category);
         }
       }
     }
 
-    const topPendingRequestLines = allRequests.slice(0, 3).map((req) => {
-      const priorityLabel = PurchasePriority[req.priority] ?? req.priority;
-      const scoreLabel = req.score !== undefined ? ` | Score: ${req.score.toFixed(2)}` : "";
-      return `${req.description} (${req.category}, Prio ${priorityLabel}) - $${ns.format.number(req.cost)}${scoreLabel}`;
-    });
-
-    const nextPurchase = allRequests[0]
-      ? `${allRequests[0].description} (${allRequests[0].category}) — $${ns.format.number(allRequests[0].cost)}`
-      : "Keine offenen Anfragen";
+    // UI-Daten vorbereiten
+    const structuredRequests = allRequests.map((req) => ({
+      description: req.description,
+      category: req.category,
+      priorityLabel: PurchasePriority[req.priority] ?? String(req.priority),
+      cost: req.cost,
+      score: req.score,
+    }));
 
     const dashboardData: FinanceDashboardData = {
       currentMoney: rawMoney,
@@ -160,8 +229,8 @@ export async function main(ns: NS): Promise<void> {
       suiteManagerActive,
       activeEvaluators,
       inactiveEvaluators,
-      nextPurchase,
-      topPendingRequestLines,
+      nextPurchaseRequest: structuredRequests[0] ?? undefined,
+      topPendingRequests: structuredRequests.slice(0, 4),
       lastPurchases,
       lastWarnings,
     };

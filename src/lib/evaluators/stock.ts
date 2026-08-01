@@ -24,7 +24,7 @@ export const StockEvaluator: PurchaseEvaluator = {
         cost: 200_000_000, // WSE Account Preis
         description: "Börsenzugang (WSE)",
         action: {
-          script: "core/purchase-action.js",
+          script: "core/actions/act-stock.js",
           args: ["stock-purchase-license", "wse"],
         },
       });
@@ -37,7 +37,7 @@ export const StockEvaluator: PurchaseEvaluator = {
         cost: 5_000_000_000, // 5 Milliarden
         description: "TIX API (Börsen-Automatisierung)",
         action: {
-          script: "core/purchase-action.js",
+          script: "core/actions/act-stock.js",
           args: ["stock-purchase-license", "tix"],
         },
       });
@@ -50,7 +50,7 @@ export const StockEvaluator: PurchaseEvaluator = {
         cost: 1_000_000_000, // 1 Milliarde
         description: "4S Marktdaten (Forecast)",
         action: {
-          script: "core/purchase-action.js",
+          script: "core/actions/act-stock.js",
           args: ["stock-purchase-license", "4s"],
         },
       });
@@ -63,7 +63,7 @@ export const StockEvaluator: PurchaseEvaluator = {
         cost: 25_000_000_000, // 25 Milliarden
         description: "4S TIX API (Forecast Automatisierung)",
         action: {
-          script: "core/purchase-action.js",
+          script: "core/actions/act-stock.js",
           args: ["stock-purchase-license", "4s-tix"],
         },
       });
@@ -130,7 +130,7 @@ export const StockEvaluator: PurchaseEvaluator = {
         cost: targetCost, // Der Core muss uns diese Summe freigeben
         description: `Aktien-Kauf: ${sym} (${candidate.type})`,
         action: {
-          script: "core/purchase-action.js",
+          script: "core/actions/act-stock.js",
           args: ["stock-buy", sym, candidate.type],
         },
       });

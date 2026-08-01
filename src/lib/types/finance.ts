@@ -36,6 +36,24 @@ export enum PurchasePriority {
 }
 
 /**
+ * Priorisierung von Kategorien bei sonst gleichem Status / Score.
+ * Höhere Werte bedeuten höhere Priorität bei Tie-Breaks.
+ */
+export const CATEGORY_WEIGHTS: Record<PurchaseCategory, number> = {
+  HOME_SERVER: 100,      // Home RAM/Cores sind das Nadelöhr
+  PURCHASED_SERVER: 90, // Pservs haben Vorrang vor Gang
+  DARKNET_PROGRAM: 80,
+  GANG_EQUIPMENT: 70,   // Gang Equipment ist stark, aber hinter pserv
+  SLEEVE_AUG: 60,
+  PLAYER_AUG: 50,
+  HACKNET: 40,
+  STOCK_LICENSE: 30,
+  CORP: 20,
+  STOCK_TRADE: 10,
+};
+
+
+/**
  * Struktur einer einzelnen Kaufanfrage
  */
 export interface PurchaseRequest {
@@ -71,8 +89,6 @@ export interface PurchaseRequest {
  */
 export interface PurchaseEvaluator {
   category: PurchaseCategory;
-  /**
-   * Analysiert den Spielzustand und liefert alle aktuell sinnvollen Kaufanfragen.
-   */
+
   getRequests(ns: NS): PurchaseRequest[];
 }

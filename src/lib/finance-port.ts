@@ -1,15 +1,34 @@
+// lib/finance-port.ts
+
 import { NS } from "@ns";
-import { PurchaseRequest } from "/lib/types/finance.js";
+import { PurchaseCategory, PurchaseRequest } from "/lib/types/finance.js";
 
 export const FINANCE_PORT = 10;
 
-export function submitPurchaseRequests(ns: NS, requests: PurchaseRequest[]): void {
+export interface EvaluatorBatch {
+  category: PurchaseCategory;
+  requests: PurchaseRequest[];
+}
+
+export function submitPurchaseRequests(
+  ns: NS,
+  category: PurchaseCategory,
+  requests: PurchaseRequest[]
+): void {
   const port = ns.getPortHandle(FINANCE_PORT);
-  for (const req of requests) {
-    try {
-      port.write(JSON.stringify(req));
-    } catch {
-      ns.print(`[FINANCE-PORT] Konnte Kaufanfrage nicht auf Port ${FINANCE_PORT} schreiben: ${req.id}`);
-    }
+
+  // Erstelle ein einziges Paket für den gesamten Evaluator-Durchlauf
+  const batch: EvaluatorBatch = {
+    category,
+    requests,
+  };
+
+  try {
+    // Schreibt exakt 1 Nachricht in den Port (belegt 1/50 Port-Slots)
+    port.write(JSON.stringify(batch));
+  } catch {
+    ns.print(
+      `[FINANCE-PORT] Konnte Kaufanfragen-Batch nicht auf Port ${FINANCE_PORT} schreiben: ${category}`
+    );
   }
 }

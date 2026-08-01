@@ -92,7 +92,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
         cost: simulatedCost,
         description: `${isAffordable ? 'Augmentation Batch' : 'Sparziel: Aug Batch'} (${batchToBuy.length} Items)`,
         action: {
-          script: "core/purchase-action.js",
+          script: "core/actions/act-singularity.js",
           args: ["player-purchase-aug-batch", JSON.stringify(batchToBuy)],
         },
       });
@@ -107,7 +107,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
           cost: nextTarget.price,
           description: `Batch Dump: ${nextTarget.name}`,
           action: {
-            script: "core/purchase-action.js",
+            script: "core/actions/act-singularity.js",
             args: ["player-purchase-aug", nextTarget.faction, nextTarget.name],
           },
         });
@@ -133,7 +133,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
             cost: sing.getAugmentationPrice("NeuroFlux Governor"),
             description: `NeuroFlux Governor Dump (${bestNFGFaction})`,
             action: {
-              script: "core/purchase-action.js",
+              script: "core/actions/act-singularity.js",
               args: ["player-purchase-nfg", bestNFGFaction],
             },
           });

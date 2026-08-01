@@ -1,6 +1,11 @@
 // lib/evaluators/gang.ts
 import { NS } from "@ns";
-import { PurchaseEvaluator, PurchaseRequest, PurchasePriority, PurchaseCategory } from "/lib/types/finance.js";
+import {
+  PurchaseEvaluator,
+  PurchaseRequest,
+  PurchasePriority,
+  PurchaseCategory,
+} from "/lib/types/finance.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
 
 export const GangEvaluator: PurchaseEvaluator = {
@@ -17,60 +22,77 @@ export const GangEvaluator: PurchaseEvaluator = {
     const equipmentNames = ns.gang.getEquipmentNames();
 
     // Cache Equipment-Daten für bessere Performance
-    const equipCache = equipmentNames.map(equip => {
-      try {
-        return {
-          name: equip,
-          cost: ns.gang.getEquipmentCost(equip),
-          type: ns.gang.getEquipmentType(equip)
-        };
-      } catch {
-        return null;
-      }
-    }).filter(Boolean) as { name: string; cost: number; type: string }[];
+    const equipCache = equipmentNames
+      .map((equip) => {
+        try {
+          return {
+            name: equip,
+            cost: ns.gang.getEquipmentCost(equip),
+            type: ns.gang.getEquipmentType(equip),
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean) as { name: string; cost: number; type: string }[];
 
     for (const equip of equipCache) {
-      for (const memberName of memberNames) {
+      memberNames.forEach((memberName, idx) => {
         try {
           const memberInfo = ns.gang.getMemberInformation(memberName);
 
-          if (memberInfo.upgrades.includes(equip.name) || memberInfo.augmentations.includes(equip.name)) {
-            continue;
+          if (
+            memberInfo.upgrades.includes(equip.name) ||
+            memberInfo.augmentations.includes(equip.name)
+          ) {
+            return;
           }
 
           let priority = PurchasePriority.LOW;
-          let score = 20;
+          let baseScore = 20;
           let reason = "Allgemeines Upgrade";
+
+          // lib/evaluators/gang.ts (Ausschnitt aus getRequests)
 
           if (isHacking) {
             if (equip.type === "Rootkit") {
               priority = PurchasePriority.HIGH;
-              score = 85;
+              baseScore = 85;
               reason = "Essentielles Hacking-Rootkit";
             } else if (equip.type === "Augmentation") {
+              // Multi-Milliarden Upgrades gehören in MEDIUM, um Early/Midgame-Transaktionen nicht zu blockieren!
               priority = PurchasePriority.MEDIUM;
-              score = 70;
+              baseScore = 60;
               reason = "Gang Augmentation (Permanent)";
             } else {
               priority = PurchasePriority.LOW;
-              score = 15;
+              baseScore = 15;
               reason = "Combat-Equipment für Hacking-Gang";
             }
           } else {
-            if (equip.type === "Weapon" || equip.type === "Armor" || equip.type === "Vehicle") {
+            if (
+              equip.type === "Weapon" ||
+              equip.type === "Armor" ||
+              equip.type === "Vehicle"
+            ) {
               priority = PurchasePriority.HIGH;
-              score = 80;
+              baseScore = 80;
               reason = "Kampfausrüstung";
             } else if (equip.type === "Augmentation") {
-              priority = PurchasePriority.HIGH;
-              score = 90;
+              // Multi-Milliarden Upgrades gehören in MEDIUM!
+              priority = PurchasePriority.MEDIUM;
+              baseScore = 65;
               reason = "Combat Augmentation (Permanent)";
             } else if (equip.type === "Rootkit") {
               priority = PurchasePriority.LOW;
-              score = 10;
+              baseScore = 10;
               reason = "Rootkit für Combat-Gang";
             }
           }
+
+          // Staffelung: Frühere Gang-Member leicht bevorzugen (-0.1 Punkte pro Index)
+          // um identische Scores bei allen Members zu vermeiden
+          const score = Math.max(1, baseScore - idx * 1.5);
 
           requests.push({
             id: `gang-${memberName}-${equip.name}`,
@@ -80,17 +102,23 @@ export const GangEvaluator: PurchaseEvaluator = {
             cost: equip.cost,
             description: `Gang '${memberName}': ${equip.name} (${reason})`,
             action: {
-              script: "core/purchase-action.js",
-              args: ["gang-buy-equipment", memberName, equip.name]
-            }
+              script: "core/actions/act-gang.js",
+              args: ["gang-buy-equipment", memberName, equip.name],
+            },
           });
         } catch {
-          continue;
+          // Member-Daten konnten nicht gelesen werden
         }
-      }
+      });
     }
 
-    return requests;
+    // Sortierung innerhalb des Evaluators: Höchster Score zuerst, bei gleichem Score das Günstigste
+    return requests.sort((a, b) => {
+      const scoreA = a.score ?? 0;
+      const scoreB = b.score ?? 0;
+      if (scoreA !== scoreB) return scoreB - scoreA;
+      return a.cost - b.cost;
+    });
   },
 };
 

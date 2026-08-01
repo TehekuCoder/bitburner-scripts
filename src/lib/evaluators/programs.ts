@@ -31,7 +31,7 @@ export const ProgramEvaluator: PurchaseEvaluator = {
           cost: 200_000,
           description: "TOR Router purchase",
           action: {
-            script: "core/purchase-action.js",
+            script: "core/actions/act-singularity.js",
             args: ["program-purchase-tor"],
           },
         });
@@ -50,7 +50,7 @@ export const ProgramEvaluator: PurchaseEvaluator = {
           cost: cost,
           description: `Software: ${prog}`,
           action: {
-            script: "core/purchase-action.js",
+            script: "core/actions/act-singularity.js",
             args: ["program-purchase", prog],
           },
         });
