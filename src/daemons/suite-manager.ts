@@ -1,8 +1,10 @@
+// daemons/suite-manager.ts
+
 import { NS } from "@ns";
 import { PATHS } from "/lib/paths";
 import { ScriptList } from "/lib/types/common";
 import { BotStateNetwork } from "/lib/types/strategy";
-
+import { getAllServers } from "/lib/network.js";
 
 export function manageSuites(
   ns: NS,
@@ -17,7 +19,6 @@ export function manageSuites(
   // Dynamisches Tracking des freien Speichers innerhalb eines Ausführungs-Ticks
   let dynamicFreeRam = homeMaxRam - homeUsedRam;
 
-  const hasFormulas = ns.fileExists("Formulas.exe", "home");
   const hasNavigator = ns.fileExists("DarkscapeNavigator.exe", "home");
 
   /**
@@ -28,20 +29,29 @@ export function manageSuites(
     args: (string | number)[] = [],
     launchLog?: () => void,
   ): boolean => {
-    if (
-      !scriptPath ||
-      !ns.fileExists(scriptPath, "home") ||
-      ns.isRunning(scriptPath, "home")
-    ) {
+    if (!scriptPath) return false;
+
+    // Normalisiere .ts Pfade auf .js für die Bitburner-Runtime
+    const execPath = scriptPath.endsWith(".ts")
+      ? scriptPath.replace(/\.ts$/, ".js")
+      : scriptPath;
+
+    if (!ns.fileExists(execPath, "home") || ns.isRunning(execPath, "home")) {
       return false;
     }
 
-    const requiredRam = ns.getScriptRam(scriptPath, "home");
-    if (dynamicFreeRam < requiredRam) return false;
+    const requiredRam = ns.getScriptRam(execPath, "home");
+    if (dynamicFreeRam < requiredRam) {
+      // Bietet Transparenz, warum ein Daemon nicht startet
+      logger.warn(
+        `Zu wenig RAM für ${execPath} (Benötigt: ${ns.format.ram(requiredRam)}, Frei: ${ns.format.ram(dynamicFreeRam)})`,
+      );
+      return false;
+    }
 
     if (launchLog) launchLog();
 
-    const pid = ns.exec(scriptPath, "home", 1, ...args);
+    const pid = ns.exec(execPath, "home", 1, ...args);
     if (pid > 0) {
       dynamicFreeRam -= requiredRam;
       return true;
@@ -52,40 +62,50 @@ export function manageSuites(
   // ====================================================================
   // 1. 🚪 INTELLIGENTE BACKDOOR LOGIK
   // ====================================================================
-  let backdoorIsNeeded = false;
-  const networkNodes = state?.allServers || [];
-  const currentHackingLevel = ns.getHackingLevel();
+  // Nur ausführen, wenn Singularity API vorhanden ist (SF4)
+  if (ns.singularity !== undefined) {
+    let backdoorIsNeeded = false;
 
-  for (const node of networkNodes) {
-    if (
-      node === "home" ||
-      node === "darkweb" ||
-      node.startsWith("hacknet-node")
-    )
-      continue;
-    if (node === "w0r1d_d43m0n") continue;
+    // Fallback: Wenn state noch leer ist, frische Serverliste ziehen
+    const networkNodes =
+      state?.allServers && state.allServers.length > 0
+        ? state.allServers
+        : getAllServers(ns);
 
-    if (ns.serverExists(node)) {
-      const srv = ns.getServer(node);
+    const currentHackingLevel = ns.getHackingLevel();
+
+    for (const node of networkNodes) {
       if (
-        srv.hasAdminRights &&
-        !srv.backdoorInstalled &&
-        !srv.purchasedByPlayer
+        node === "home" ||
+        node === "darkweb" ||
+        node === "Darknet" ||
+        node.startsWith("hacknet-node") ||
+        node === "w0r1d_d43m0n"
       ) {
-        if (currentHackingLevel >= (srv.requiredHackingSkill ?? 0)) {
+        continue;
+      }
+
+      if (ns.serverExists(node)) {
+        const srv = ns.getServer(node);
+        if (
+          srv.hasAdminRights &&
+          !srv.backdoorInstalled &&
+          !srv.purchasedByPlayer &&
+          currentHackingLevel >= (srv.requiredHackingSkill ?? 0)
+        ) {
           backdoorIsNeeded = true;
           break;
         }
       }
     }
-  }
 
-  if (backdoorIsNeeded) {
-    tryLaunch(scripts.backdoor, [], () => {
-      logger.info(
-        "Verifizierte Backdoor-Lücke im Netzwerk entdeckt. Starte Infiltration...",
-      );
-    });
+    if (backdoorIsNeeded) {
+      tryLaunch(scripts.backdoor, [], () => {
+        logger.info(
+          "Verifizierte Backdoor-Lücke im Netzwerk entdeckt. Starte Infiltration...",
+        );
+      });
+    }
   }
 
   // ====================================================================
@@ -105,14 +125,7 @@ export function manageSuites(
   }
 
   // ====================================================================
-  // 4. ⚡ HACKNET LOGIK (aktuell nicht über den Suite-Manager gesteuert)
-  // ====================================================================
-  // Die Hacknet-Daemons werden derzeit nicht über diesen Manager verwaltet.
-  // Falls später eine zentrale Hacknet-Steuerung hinzugefügt wird, kann
-  // hier wieder auf PATHS.daemons.hacknet / hacknetEarly umgestellt werden.
-
-  // ====================================================================
-  // 5. 🌐 NETWORK EXPANSION (Darknet & Crawler ab 256GB + Navigator)
+  // 5. 🌐 NETWORK EXPANSION (Darknet & Crawler ab 512GB + Navigator)
   // ====================================================================
   if (homeMaxRam >= 512 && hasNavigator) {
     tryLaunch(scripts.dnet, [], () => {
@@ -124,7 +137,7 @@ export function manageSuites(
   }
 
   // ====================================================================
-  // 6. ⚡ SINGULARITY DISPATCHER (SF4 Automatisierung ab 256GB RAM)
+  // 6. ⚡ SINGULARITY DISPATCHER (SF4 Automatisierung ab 512GB RAM)
   // ====================================================================
   if (homeMaxRam >= 512 && ns.singularity !== undefined) {
     tryLaunch(scripts.dispatcher, [], () => {
@@ -135,7 +148,6 @@ export function manageSuites(
   // ====================================================================
   // 7. 👥 GANG MANAGER
   // ====================================================================
-
   let isInGang = false;
   try {
     isInGang = ns.gang.inGang();
@@ -150,14 +162,12 @@ export function manageSuites(
   // ====================================================================
   // 8. 🧬 SLEEVE LOGIK
   // ====================================================================
-  if (ns.sleeve !== undefined) {
-    if (homeMaxRam >= 512) {
-      tryLaunch(scripts.sleeve, [], () => {
-        logger.info(
-          "Sleeve-API detektiert. Initialisiere Klon-Automatisierung...",
-        );
-      });
-    }
+  if (ns.sleeve !== undefined && homeMaxRam >= 512) {
+    tryLaunch(scripts.sleeve, [], () => {
+      logger.info(
+        "Sleeve-API detektiert. Initialisiere Klon-Automatisierung...",
+      );
+    });
   }
 
   // ====================================================================
