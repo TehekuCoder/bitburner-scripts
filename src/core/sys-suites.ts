@@ -1,10 +1,10 @@
 import { NS } from "@ns";
 import { manageSuites } from "daemons/suite-manager.js";
-import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { loadBnMults, loadState } from "/lib/state.js";
-import { ScriptList } from "/lib/types.js";
+import { loadState } from "/lib/state.js";
 import { PATHS } from "/lib/paths";
+import { ScriptList } from "/lib/types/common";
+import { loadBnMults } from "/lib/utils";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -12,14 +12,13 @@ export async function main(ns: NS): Promise<void> {
   const bnMults = loadBnMults(ns);
 
   const scripts: ScriptList = {
+    financeManager: PATHS.managers.finance,
+    financeCore: PATHS.core.financeCore,
     logger: PATHS.core.logger,
     perfMonitor: PATHS.daemons.perfMonitor,
     worker: PATHS.payloads.work,
     dispatcher: PATHS.core.dispatcher,
-    infra: PATHS.managers.infra,
     backdoor: PATHS.daemons.backdoor,
-    trade: PATHS.managers.finance,
-    hacknet: PATHS.daemons.hacknetEarly,
     dnet: PATHS.managers.dnet,
     crawler: PATHS.daemons.crawler,
     hack: PATHS.payloads.hack,
@@ -27,11 +26,10 @@ export async function main(ns: NS): Promise<void> {
     weaken: PATHS.payloads.weaken,
     sleeve: PATHS.managers.sleeve,
     fillShare: PATHS.daemons.fillShare,
-    augShopping: PATHS.tasks.augShopping,
     augAnalyze: PATHS.tasks.analyzeAug,
     orchestrator: PATHS.core.orchestrator,
     suites: PATHS.core.suites,
-    gang: PATHS.managers.gang
+    gang: PATHS.managers.gang,
   };
 
   while (true) {

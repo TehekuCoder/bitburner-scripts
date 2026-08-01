@@ -3,7 +3,7 @@ import { getFactionsNeedingRep, manageAllSleeves } from "/lib/sleeve-utils.js";
 import { printSleeveDashboard } from "ui/sleeve-ui.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { loadSleeveState, patchSleeveState } from "/lib/state.js";
-import { SleeveMode, SleeveOptions } from "lib/types";
+import { SleeveOptions, SleeveMode } from "/lib/types/sleeves.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -27,7 +27,6 @@ export async function main(ns: NS): Promise<void> {
   }
 
   while (true) {
-    // 🛡️ API CHECK 1: Sleeves (SF10)
     if (ns.sleeve === undefined) {
       logger.error("🛑 Keine Sleeve-API (SF10) in diesem Node verfügbar.");
       return;
@@ -42,7 +41,6 @@ export async function main(ns: NS): Promise<void> {
 
     const p = ns.getPlayer();
 
-    // Extrahieren nur der relevanten Optionen aus dem globalen State
     const botState = loadSleeveState(ns);
     const options: SleeveOptions = {
       globalMode: botState?.sleeveGlobalMode as SleeveMode | undefined,
@@ -51,22 +49,20 @@ export async function main(ns: NS): Promise<void> {
       strategy: botState?.strategy,
     };
 
-    // 🛡️ API CHECK 2: Singularity (SF4)
     let ownedAugs: string[] = [];
     if (ns.singularity !== undefined) {
       ownedAugs = ns.singularity.getOwnedAugmentations(true);
     }
 
-    // Faction-Scan Intervall
+    // Fix: Scan-Intervall greift jetzt verlässlich alle 30s (auch wenn das Array leer ist)
     if (
-      Date.now() - lastFactionScan > SCAN_INTERVAL ||
-      factionsNeedingRep.length === 0
+      lastFactionScan === 0 ||
+      Date.now() - lastFactionScan > SCAN_INTERVAL
     ) {
       factionsNeedingRep = getFactionsNeedingRep(ns, p.factions, ownedAugs);
       lastFactionScan = Date.now();
     }
 
-    // 1. Zuweisung & Berechnung
     const currentProgress = manageAllSleeves(
       ns,
       p,
@@ -77,13 +73,11 @@ export async function main(ns: NS): Promise<void> {
       addLocalLog,
     );
 
-    // 2. Nur patchen, wenn sich der Fortschritt verändert hat
     if (currentProgress && currentProgress !== lastStateProgress) {
       patchSleeveState(ns, { sleeveProgress: currentProgress });
       lastStateProgress = currentProgress;
     }
 
-    // 3. Dashboard rendern
     printSleeveDashboard(ns, numSleeves, localLogBuffer);
 
     await ns.sleep(2000);

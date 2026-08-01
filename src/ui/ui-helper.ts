@@ -1,5 +1,5 @@
 import { NS} from "@ns";
-import { UIProgressBarParams } from "/lib/types";
+import { UIProgressBarParams } from "/lib/types/common";
 
 /**
  * Generiert den formatierten Statusbalken (Progress Bar) für das Dashboard.

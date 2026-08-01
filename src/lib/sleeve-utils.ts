@@ -9,28 +9,26 @@ import {
   CrimeType,
 } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { SleeveMode, SleeveData, SleeveOptions } from "lib/types.js";
 import { MEGACORPS, COMBAT_STATS, GYM_STAT_MAP } from "lib/constants.js";
 import { loadGangState } from "/lib/state.js";
+import { SleeveOptions, SleeveMode, SleeveData } from "./types/sleeves.js";
+import { hasSingularity } from "./utils.js";
 
-let lastShoppingScan = 0;
-const SHOPPING_INTERVAL = 15000;
 const TRAVEL_COST = 200_000;
 
-/**
- * Hilfsfunktion: Versetzt einen Sleeve nach Volhaven, sofern genug Geld da ist.
- */
 function ensureVolhaven(
   ns: NS,
   i: number,
   stats: SleevePerson,
-  p: Player,
-): boolean {
-  if (stats.city === "Volhaven") return true;
-  if (p.money >= TRAVEL_COST) {
-    return ns.sleeve.travel(i, "Volhaven");
+  currentMoney: number,
+): { success: boolean; updatedMoney: number } {
+  if (stats.city === "Volhaven") return { success: true, updatedMoney: currentMoney };
+  if (currentMoney >= TRAVEL_COST) {
+    if (ns.sleeve.travel(i, "Volhaven")) {
+      return { success: true, updatedMoney: currentMoney - TRAVEL_COST };
+    }
   }
-  return false;
+  return { success: false, updatedMoney: currentMoney };
 }
 
 function getGangFactionName(ns: NS): FactionName | null {
@@ -105,7 +103,7 @@ export function determineSleeveMode(
   if (options?.strategy === "CRIME" || options?.strategy === "KILLS")
     return "CRIME";
   if (options?.strategy === "TRAIN") return "TRAIN";
-  if (options?.strategy === "UNI") return "UNI"; // 🎓 Neu: Schaltet Sleeves auf Studium um
+  if (options?.strategy === "UNI") return "UNI";
 
   if (factionsNeedingRep.length > 0) return "FACTION";
 
@@ -122,7 +120,6 @@ export function manageAllSleeves(
   addLocalLog: (msg: string) => void,
 ): string {
   const numSleeves = ns.sleeve.getNumSleeves();
-
   if (numSleeves === 0) return "Keine";
 
   const sleeves: SleeveData[] = Array.from({ length: numSleeves }, (_, i) => ({
@@ -134,55 +131,21 @@ export function manageAllSleeves(
   let totalShock = 0;
   let totalSync = 0;
   let activeWorkers = 0;
+  let currentMoney = p.money;
+
   const occupiedFactions: FactionName[] = [];
   const occupiedCompanies: CompanyName[] = [];
 
   for (const { stats, task } of sleeves) {
     totalShock += stats.shock;
     totalSync += stats.sync;
-
     if (task) activeWorkers++;
-
-    if (stats.shock === 0 && stats.sync === 100) {
-      if (task?.type === "FACTION") {
-        const fName = task.factionName as FactionName;
-        if (
-          factionsNeedingRep.includes(fName) &&
-          !occupiedFactions.includes(fName)
-        ) {
-          occupiedFactions.push(fName);
-        }
-      } else if (task?.type === "COMPANY") {
-        const cName = task.companyName as CompanyName;
-        if (!occupiedCompanies.includes(cName)) {
-          occupiedCompanies.push(cName);
-        }
-      }
-    }
   }
-
-  let sleeveProgress = "Inaktiv";
-  const avgShock = totalShock / numSleeves;
-  const avgSync = totalSync / numSleeves;
-
-  if (avgShock > 0) {
-    sleeveProgress = `Shock: ${avgShock.toFixed(1)}%`;
-  } else if (avgSync < 100) {
-    sleeveProgress = `Sync: ${avgSync.toFixed(1)}%`;
-  } else {
-    sleeveProgress = `${activeWorkers}/${numSleeves} Aktiv`;
-  }
-
-  const canShop = Date.now() - lastShoppingScan > SHOPPING_INTERVAL;
 
   for (const sleeve of sleeves) {
-    if (canShop) {
-      handleSleeveShopping(ns, sleeve.index, p, logger, addLocalLog);
-    }
-
     const mode = determineSleeveMode(sleeve.stats, options, factionsNeedingRep);
 
-    manageSingleSleeve(
+    currentMoney = manageSingleSleeve(
       ns,
       sleeve.index,
       mode,
@@ -193,16 +156,18 @@ export function manageAllSleeves(
       occupiedFactions,
       occupiedCompanies,
       p,
+      currentMoney,
       logger,
       addLocalLog,
     );
   }
 
-  if (canShop) {
-    lastShoppingScan = Date.now();
-  }
+  const avgShock = totalShock / numSleeves;
+  const avgSync = totalSync / numSleeves;
 
-  return sleeveProgress;
+  if (avgShock > 0) return `Shock: ${avgShock.toFixed(1)}%`;
+  if (avgSync < 100) return `Sync: ${avgSync.toFixed(1)}%`;
+  return `${activeWorkers}/${numSleeves} Aktiv`;
 }
 
 export function manageSingleSleeve(
@@ -216,9 +181,12 @@ export function manageSingleSleeve(
   occupiedFactions: FactionName[],
   occupiedCompanies: CompanyName[],
   p: Player,
+  currentMoney: number,
   logger: Logger,
   addLocalLog: (msg: string) => void,
-): void {
+): number {
+  let updatedMoney = currentMoney;
+
   switch (mode) {
     case "RECOVERY":
       if (currentTask?.type !== "RECOVERY") {
@@ -239,10 +207,10 @@ export function manageSingleSleeve(
       break;
 
     case "TRAIN": {
-      // 🎓/🏋️ TRAIN MODUS: Wählt die schwächste Skill-Gruppe (Combat vs Hacking vs Charisma)
-      const inVolhaven = ensureVolhaven(ns, i, stats, p);
-      const gymName = inVolhaven ? "Powerhouse Gym" : "Iron Gym";
-      const uniName = inVolhaven
+      const volResult = ensureVolhaven(ns, i, stats, updatedMoney);
+      updatedMoney = volResult.updatedMoney;
+      const gymName = volResult.success ? "Powerhouse Gym" : "Iron Gym";
+      const uniName = volResult.success
         ? "ZB Institute of Technology"
         : "Rothman University";
 
@@ -250,7 +218,6 @@ export function manageSingleSleeve(
         stats.skills[a] < stats.skills[b] ? a : b,
       );
 
-      // Falls Hacking unter 200 ist, lernt der Sleeve Hacking an der Uni
       if (stats.skills.hacking < 200) {
         if (
           currentTask?.type !== "CLASS" ||
@@ -263,7 +230,6 @@ export function manageSingleSleeve(
           addLocalLog(msg);
         }
       } else {
-        // Sonst Combat-Gym
         const targetGymStat = GYM_STAT_MAP[lowestCombatStat];
         if (
           currentTask?.type !== "CLASS" ||
@@ -280,13 +246,12 @@ export function manageSingleSleeve(
     }
 
     case "UNI": {
-      // 🎓 DEDIZIERTER UNI MODUS
-      const inVolhaven = ensureVolhaven(ns, i, stats, p);
-      const uniName = inVolhaven
+      const volResult = ensureVolhaven(ns, i, stats, updatedMoney);
+      updatedMoney = volResult.updatedMoney;
+      const uniName = volResult.success
         ? "ZB Institute of Technology"
         : "Rothman University";
 
-      // Dynamische Kurs-Wahl: Schaut ob Hacking oder Charisma trainiert werden soll
       let courseName: "Algorithms" | "Leadership" = "Algorithms";
       let statLabel = "Hacking";
 
@@ -309,7 +274,15 @@ export function manageSingleSleeve(
     }
 
     case "CRIME":
-      executeFallbackCrime(ns, i, stats, currentTask, p, logger, addLocalLog);
+      updatedMoney = executeFallbackCrime(
+        ns,
+        i,
+        stats,
+        currentTask,
+        updatedMoney,
+        logger,
+        addLocalLog,
+      );
       break;
 
     case "FACTION":
@@ -326,7 +299,7 @@ export function manageSingleSleeve(
           addLocalLog,
         )
       ) {
-        return;
+        return updatedMoney;
       }
       if (
         tryAssignCompanyWork(
@@ -337,38 +310,65 @@ export function manageSingleSleeve(
           options,
           occupiedCompanies,
           p,
+          updatedMoney,
           logger,
           addLocalLog,
-        )
+        ).success
       ) {
-        return;
+        return updatedMoney;
       }
-      executeFallbackCrime(ns, i, stats, currentTask, p, logger, addLocalLog);
+      updatedMoney = executeFallbackCrime(
+        ns,
+        i,
+        stats,
+        currentTask,
+        updatedMoney,
+        logger,
+        addLocalLog,
+      );
       break;
 
     case "COMPANY":
-      if (
-        tryAssignCompanyWork(
-          ns,
-          i,
-          stats,
-          currentTask,
-          options,
-          occupiedCompanies,
-          p,
-          logger,
-          addLocalLog,
-        )
-      ) {
-        return;
-      }
-      executeFallbackCrime(ns, i, stats, currentTask, p, logger, addLocalLog);
+      const compResult = tryAssignCompanyWork(
+        ns,
+        i,
+        stats,
+        currentTask,
+        options,
+        occupiedCompanies,
+        p,
+        updatedMoney,
+        logger,
+        addLocalLog,
+      );
+      updatedMoney = compResult.updatedMoney;
+      if (compResult.success) return updatedMoney;
+
+      updatedMoney = executeFallbackCrime(
+        ns,
+        i,
+        stats,
+        currentTask,
+        updatedMoney,
+        logger,
+        addLocalLog,
+      );
       break;
 
     default:
-      executeFallbackCrime(ns, i, stats, currentTask, p, logger, addLocalLog);
+      updatedMoney = executeFallbackCrime(
+        ns,
+        i,
+        stats,
+        currentTask,
+        updatedMoney,
+        logger,
+        addLocalLog,
+      );
       break;
   }
+
+  return updatedMoney;
 }
 
 function tryAssignFactionWork(
@@ -430,24 +430,25 @@ function tryAssignFactionWork(
       currentTask?.location !== gymName
     ) {
       ns.sleeve.setToGymWorkout(i, gymName, targetGymStat);
-      const msg = `🏋️ Klon #${i}: Live-Bootcamp für ${targetFaction} -> Trainiert ${targetGymStat} (Ziel: ${minRequiredStat}).`;
+      const msg = `🏋️ Klon #${i}: Bootcamp für ${targetFaction} -> ${targetGymStat} (Ziel: ${minRequiredStat}).`;
       logger.info(msg);
       addLocalLog(msg);
     }
     return true;
   }
 
+  if (
+    currentTask?.type === "FACTION" &&
+    currentTask.factionName === targetFaction
+  ) {
+    if (!occupiedFactions.includes(targetFaction)) {
+      occupiedFactions.push(targetFaction);
+    }
+    return true;
+  }
+
   const workTypes: FactionWorkType[] = ["hacking", "field", "security"];
   for (const work of workTypes) {
-    if (
-      currentTask?.type === "FACTION" &&
-      currentTask.factionName === targetFaction &&
-      "factionWorkType" in currentTask &&
-      currentTask.factionWorkType === work
-    ) {
-      return true;
-    }
-
     try {
       if (ns.sleeve.setToFactionWork(i, targetFaction, work)) {
         const msg = `🤝 Klon #${i} arbeitet nun für Faction '${targetFaction}' (${work}).`;
@@ -459,7 +460,7 @@ function tryAssignFactionWork(
         return true;
       }
     } catch {
-      /* Ignorieren & nächste Arbeitsart versuchen */
+      /* Nächste Arbeitsart */
     }
   }
 
@@ -474,18 +475,22 @@ function tryAssignCompanyWork(
   options: SleeveOptions | undefined,
   occupiedCompanies: CompanyName[],
   p: Player,
+  currentMoney: number,
   logger: Logger,
   addLocalLog: (msg: string) => void,
-): boolean {
-  if (options?.strategy === "MONEY") return false;
-  if (!ns.singularity) return false;
+): { success: boolean; updatedMoney: number } {
+  if (options?.strategy === "MONEY" || !ns.singularity) {
+    return { success: false, updatedMoney: currentMoney };
+  }
 
   const companyList = Object.values(MEGACORPS);
   const employedCorps = Object.keys(p.jobs).filter((job) =>
     companyList.includes(job as CompanyName),
   ) as CompanyName[];
 
-  if (employedCorps.length === 0) return false;
+  if (employedCorps.length === 0) {
+    return { success: false, updatedMoney: currentMoney };
+  }
 
   let targetCorp: CompanyName | null = null;
 
@@ -508,36 +513,18 @@ function tryAssignCompanyWork(
 
     if (availableCorps.length > 0) {
       const preferredCorp = employedCorps[i % employedCorps.length];
-      if (availableCorps.includes(preferredCorp)) {
-        targetCorp = preferredCorp;
-      } else {
-        targetCorp = availableCorps[0];
-      }
+      targetCorp = availableCorps.includes(preferredCorp)
+        ? preferredCorp
+        : availableCorps[0];
     }
   }
 
-  if (!targetCorp) return false;
-
-  if (
-    currentTask?.type === "COMPANY" &&
-    currentTask?.companyName === targetCorp
-  ) {
-    return true;
-  }
-
-  if (ns.sleeve.setToCompanyWork(i, targetCorp)) {
-    const msg = `🏢 Klon #${i} farmt jetzt Ruf bei ${targetCorp}.`;
-    logger.info(msg);
-    addLocalLog(msg);
-    if (!occupiedCompanies.includes(targetCorp)) {
-      occupiedCompanies.push(targetCorp);
-    }
-    return true;
-  }
+  if (!targetCorp) return { success: false, updatedMoney: currentMoney };
 
   const targetStatThreshold = 300;
-  const inVolhaven = ensureVolhaven(ns, i, stats, p);
-  const bestUniversity = inVolhaven
+  const volResult = ensureVolhaven(ns, i, stats, currentMoney);
+  let updatedMoney = volResult.updatedMoney;
+  const bestUniversity = volResult.success
     ? "ZB Institute of Technology"
     : "Rothman University";
 
@@ -547,13 +534,13 @@ function tryAssignCompanyWork(
       currentTask?.classType === "Algorithms" &&
       currentTask?.location === bestUniversity
     ) {
-      return true;
+      return { success: true, updatedMoney };
     }
     if (ns.sleeve.setToUniversityCourse(i, bestUniversity, "Algorithms")) {
-      const msg = `🎓 Klon #${i} lernt Algorithms an der ${bestUniversity} (Vorbereitung für ${targetCorp}).`;
+      const msg = `🎓 Klon #${i} lernt Algorithms an der ${bestUniversity} (für ${targetCorp}).`;
       logger.info(msg);
       addLocalLog(msg);
-      return true;
+      return { success: true, updatedMoney };
     }
   }
 
@@ -563,84 +550,66 @@ function tryAssignCompanyWork(
       currentTask?.classType === "Leadership" &&
       currentTask?.location === bestUniversity
     ) {
-      return true;
+      return { success: true, updatedMoney };
     }
     if (ns.sleeve.setToUniversityCourse(i, bestUniversity, "Leadership")) {
-      const msg = `🎓 Klon #${i} lernt Leadership an der ${bestUniversity} (Vorbereitung für ${targetCorp}).`;
+      const msg = `🎓 Klon #${i} lernt Leadership an der ${bestUniversity} (für ${targetCorp}).`;
       logger.info(msg);
       addLocalLog(msg);
-      return true;
+      return { success: true, updatedMoney };
     }
   }
 
-  return false;
-}
-
-function handleSleeveShopping(
-  ns: NS,
-  i: number,
-  p: Player,
-  logger: Logger,
-  addLocalLog: (msg: string) => void,
-): void {
-  const BUDGET_MULTIPLIER = 10;
-  try {
-    const purchasableAugs = ns.sleeve.getSleevePurchasableAugs(i);
-    if (purchasableAugs.length === 0) return;
-
-    purchasableAugs.sort((a, b) => a.cost - b.cost);
-
-    for (const aug of purchasableAugs) {
-      if (p.money > aug.cost * BUDGET_MULTIPLIER) {
-        if (ns.sleeve.purchaseSleeveAug(i, aug.name)) {
-          const msg = `🛒 Klon #${i}: Augment erworben -> ${aug.name}`;
-          logger.success(msg);
-          addLocalLog(msg);
-        }
-      } else {
-        break;
-      }
+  if (
+    currentTask?.type === "COMPANY" &&
+    currentTask?.companyName === targetCorp
+  ) {
+    if (!occupiedCompanies.includes(targetCorp)) {
+      occupiedCompanies.push(targetCorp);
     }
-  } catch {
-    /* Safe ignore */
+    return { success: true, updatedMoney };
   }
+
+  if (ns.sleeve.setToCompanyWork(i, targetCorp)) {
+    const msg = `🏢 Klon #${i} farmt jetzt Ruf bei ${targetCorp}.`;
+    logger.info(msg);
+    addLocalLog(msg);
+    if (!occupiedCompanies.includes(targetCorp)) {
+      occupiedCompanies.push(targetCorp);
+    }
+    return { success: true, updatedMoney };
+  }
+
+  return { success: false, updatedMoney };
 }
 
-/**
- * Dynamisches Verbrechen:
- * 1. Schickt den Klon ins Gym, falls Combat-Stats < 35 sind (gleicht Stats automatisch an).
- * 2. Priorisiert Homicide für den Karma-Grind (Karma > -54000).
- * 3. Nutzt "Mug People" als verlässlichen Standard-Fallback.
- */
 function executeFallbackCrime(
   ns: NS,
   i: number,
   stats: SleevePerson,
   currentTask: SleeveTask | null,
-  p: Player,
+  currentMoney: number,
   logger: Logger,
   addLocalLog: (msg: string) => void,
-): void {
+): number {
   const gangState = loadGangState(ns);
   const hasGang = gangState?.hasGang || (ns.gang && ns.gang.inGang());
+  let targetCrime: CrimeType = "Mug";
 
-  // 1. Schwächsten Combat-Stat ermitteln
-  const lowestStatName = COMBAT_STATS.reduce((a, b) =>
-    stats.skills[a] < stats.skills[b] ? a : b,
-  );
-  const avgCombat =
-    (stats.skills.strength +
-      stats.skills.defense +
-      stats.skills.dexterity +
-      stats.skills.agility) / 4;
+  if (!hasGang && ns.heart.break() > -54000) {
+    targetCrime = getBestKarmaCrime(ns, stats);
+  } else {
+    targetCrime = "Homicide";
+  }
 
-  const MIN_COMBAT_FOR_HOMICIDE = 35; // Ab ~35 Combat-Stats wird Homicide verlässlich
+  const chance = calculateSleeveCrimeChance(ns, stats, targetCrime);
 
-  // 🎯 STEP 1: Combat-Bootcamp (Gleicht Stats automatisch ab)
-  // Falls die Combat-Stats noch zu niedrig für verlässliches Homicide sind -> Gym!
-  if (!hasGang && ns.heart.break() > -54000 && avgCombat < MIN_COMBAT_FOR_HOMICIDE) {
-    const inVolhaven = ensureVolhaven(ns, i, stats, p);
-    const gymName = inVolhaven ? "Powerhouse Gym" : "Iron Gym";
+  if (chance < 0.4) {
+    const lowestStatName = COMBAT_STATS.reduce((a, b) =>
+      stats.skills[a] < stats.skills[b] ? a : b,
+    );
+    const volResult = ensureVolhaven(ns, i, stats, currentMoney);
+    const gymName = volResult.success ? "Powerhouse Gym" : "Iron Gym";
     const targetGymStat = GYM_STAT_MAP[lowestStatName];
 
     if (
@@ -649,29 +618,100 @@ function executeFallbackCrime(
       currentTask?.location !== gymName
     ) {
       ns.sleeve.setToGymWorkout(i, gymName, targetGymStat);
-      const msg = `🏋️ Klon #${i}: Combat-Bootcamp (${targetGymStat} ${stats.skills[lowestStatName]}/${MIN_COMBAT_FOR_HOMICIDE}) im ${gymName}.`;
+      const msg = `🏋️ Klon #${i}: Not-Bootcamp (${targetGymStat}, ${targetCrime} Chance: ${(chance * 100).toFixed(1)}%) im ${gymName}.`;
       logger.info(msg);
       addLocalLog(msg);
     }
-    return;
+    return volResult.updatedMoney;
   }
 
-  // 🎯 STEP 2: Verbrechen-Wahl
-  let targetCrime: CrimeType = "Mug"; // Standard-Fallback anstelle von "Deal Drugs"
-
-  // Solange kein Gang-Beitritt erfolgt ist und Karma fehlt -> Homicide grind
-  if (!hasGang && ns.heart.break() > -54000) {
-    targetCrime = "Homicide";
-  }
-
-  // 🎯 STEP 3: Ausführung
   if (currentTask?.type === "CRIME" && currentTask?.crimeType === targetCrime) {
-    return;
+    return currentMoney;
   }
 
   if (ns.sleeve.setToCommitCrime(i, targetCrime)) {
-    const msg = `🔫 Klon #${i} wechselt auf Crime: ${targetCrime}`;
+    const msg = `🔫 Klon #${i} optimiert Karma mit: ${targetCrime} (${(chance * 100).toFixed(1)}% Chance)`;
     logger.info(msg);
     addLocalLog(msg);
   }
+
+  return currentMoney;
+}
+
+export function calculateSleeveCrimeChance(
+  ns: NS,
+  stats: SleevePerson,
+  crime: CrimeType,
+): number {
+  const avgCombat =
+    (stats.skills.strength +
+      stats.skills.defense +
+      stats.skills.dexterity +
+      stats.skills.agility) / 4;
+
+  if (!hasSingularity(ns)) {
+    switch (crime) {
+      case "Mug":
+        return Math.min(avgCombat / 20, 1.0);
+      case "Homicide":
+        return Math.min(avgCombat / 75, 1.0);
+      default:
+        return avgCombat >= 50 ? 0.75 : 0.25;
+    }
+  }
+
+  const crimeStats = ns.singularity.getCrimeStats(crime);
+  const s = stats.skills;
+
+  const weightedStatSum =
+    crimeStats.hacking_success_weight * s.hacking +
+    crimeStats.strength_success_weight * s.strength +
+    crimeStats.defense_success_weight * s.defense +
+    crimeStats.dexterity_success_weight * s.dexterity +
+    crimeStats.agility_success_weight * s.agility +
+    crimeStats.charisma_success_weight * s.charisma;
+
+  const chance = weightedStatSum / (975 * crimeStats.difficulty);
+  return Math.min(Math.max(chance, 0), 1);
+}
+
+export function getBestKarmaCrime(ns: NS, stats: SleevePerson): CrimeType {
+  const avgCombat =
+    (stats.skills.strength +
+      stats.skills.defense +
+      stats.skills.dexterity +
+      stats.skills.agility) / 4;
+
+  if (!hasSingularity(ns)) {
+    return avgCombat >= 35 ? "Homicide" : "Mug";
+  }
+
+  const crimesToEvaluate: CrimeType[] = [
+    "Mug",
+    "Homicide",
+    "Larceny",
+    "Assassination",
+    "Heist",
+  ];
+
+  let bestCrime: CrimeType = "Mug";
+  let maxKarmaPerSecond = -1;
+
+  for (const crime of crimesToEvaluate) {
+    const statsObj = ns.singularity.getCrimeStats(crime);
+    const chance = calculateSleeveCrimeChance(ns, stats, crime);
+
+    if (chance < 0.15) continue;
+
+    const karmaYield = Math.abs(statsObj.karma);
+    const timeInSeconds = statsObj.time / 1000;
+    const karmaPerSecond = (karmaYield * chance) / timeInSeconds;
+
+    if (karmaPerSecond > maxKarmaPerSecond) {
+      maxKarmaPerSecond = karmaPerSecond;
+      bestCrime = crime;
+    }
+  }
+
+  return bestCrime;
 }

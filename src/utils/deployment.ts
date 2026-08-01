@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { ScriptList } from "/lib/types";
+import { ScriptList } from "/lib/types/common";
 
 /**
  * Verteilt Worker-Skripte auf einem Ziel-Server und maximiert die Thread-Auslastung.

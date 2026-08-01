@@ -1,4 +1,4 @@
-import { NS, FactionName, CompanyName, ProgramName } from "@ns";
+import { NS, FactionName, CompanyName } from "@ns";
 
 import { generateProgressBar } from "../ui/ui-helper.js";
 import {
@@ -19,16 +19,13 @@ import {
   findNextRoadmapFaction,
   applyToAllMegacorps,
   determineStrategy,
-  isGangOfferingAllAugs, // ➕ Neu: Gang-Augmentation Feature-Detection
+  isGangOfferingAllAugs,
 } from "/lib/player.js";
-import {
-  loadBnMults,
-  loadGangState,
-  loadState,
-  patchState,
-} from "/lib/state.js";
-import { ScriptList, BotStrategy } from "/lib/types.js";
+import { loadGangState, loadState, patchState } from "/lib/state.js";
+import { loadBnMults } from "/lib/utils.js";
 import { PATHS } from "/lib/paths.js";
+import { ScriptList } from "/lib/types/common.js";
+import { BotStrategy } from "/lib/types/strategy.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -43,7 +40,7 @@ export async function main(ns: NS): Promise<void> {
   }
 
   logger.info("Initialisiere Dispatcher & Lade Multiplikatoren...");
-  const bnMults = loadBnMults(ns) || DEFAULT_MULTIPLIERS;
+  const bnMults = loadBnMults(ns);
 
   const metricTracker = new MetricTracker();
 
@@ -56,14 +53,12 @@ export async function main(ns: NS): Promise<void> {
   let lastNetworkScan = 0;
 
   const scripts: ScriptList = {
+    financeCore: PATHS.core.financeCore,
     logger: PATHS.core.logger,
     perfMonitor: PATHS.daemons.perfMonitor,
     worker: PATHS.payloads.work,
     dispatcher: PATHS.core.dispatcher,
-    infra: PATHS.managers.infra,
     backdoor: PATHS.daemons.backdoor,
-    trade: PATHS.managers.finance,
-    hacknet: PATHS.daemons.hacknetEarly,
     dnet: PATHS.managers.dnet,
     crawler: PATHS.daemons.crawler,
     hack: PATHS.payloads.hack,
@@ -71,7 +66,6 @@ export async function main(ns: NS): Promise<void> {
     weaken: PATHS.payloads.weaken,
     sleeve: PATHS.managers.sleeve,
     fillShare: PATHS.daemons.fillShare,
-    augShopping: PATHS.tasks.augShopping,
     augAnalyze: PATHS.tasks.analyzeAug,
     orchestrator: PATHS.core.orchestrator,
     suites: PATHS.core.suites,
@@ -118,28 +112,20 @@ export async function main(ns: NS): Promise<void> {
     const currentCity = CITY_FACTIONS.find((c) => p.factions.includes(c));
 
     // Fraktions-Ziel über Roadmap ermitteln
-    // 💡 Im BN2-Gang-Modus überspringen wir den Faction-Grind komplett!
     const augRoadmap = currentState?.augRoadMap ?? [];
     const nextRoadmapFaction = isBN2GangMode
       ? null
-      : findNextRoadmapFaction(
-          ns,
-          augRoadmap,
-          gangFaction,
-          currentCity,
-        );
+      : findNextRoadmapFaction(ns, augRoadmap, gangFaction, currentCity);
 
-    // 2. Home-Server / Singularity Upgrades & Kaffee
-    handleSingularityPurchases(ns, logger);
-
-    // 3. Fraktions-Einladungen verarbeiten & Reps erfassen
+    // 2. Fraktions-Einladungen verarbeiten & Reps erfassen
     handleFactionInvitations(ns, logger);
     const currentFactionReps: Record<string, number> = {};
     for (const f of p.factions) {
       currentFactionReps[f] = ns.singularity.getFactionRep(f);
     }
     if (nextRoadmapFaction) {
-      factionTargets[nextRoadmapFaction.name] = nextRoadmapFaction.targetRep;
+      factionTargets[nextRoadmapFaction.name as FactionName] =
+        nextRoadmapFaction.targetRep;
     }
 
     const homeMaxRam = ns.getServerMaxRam("home");
@@ -147,7 +133,7 @@ export async function main(ns: NS): Promise<void> {
       ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
     const currentKarma = (ns as any).heart?.break() ?? 0;
 
-    // 4. Megacorp-Bewerbungen prüfen
+    // 3. Megacorp-Bewerbungen prüfen
     if (
       p.skills.hacking >= 250 &&
       now - lastCorpApplication > REFRESH_INTERVALS.MEGACORP_APPLY
@@ -158,7 +144,7 @@ export async function main(ns: NS): Promise<void> {
 
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-    // 5. Finanz- & Strategie-Schwellenwerte berechnen
+    // 4. Finanz- & Strategie-Schwellenwerte berechnen
     const playerMoney = p.money;
     const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
     const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
@@ -194,7 +180,7 @@ export async function main(ns: NS): Promise<void> {
 
     const isOrchestratorRunning = ns.isRunning(scripts.orchestrator, "home");
 
-    // 6. Strategie ermitteln
+    // 5. Strategie ermitteln
     let strategy = determineStrategy(
       ns,
       p,
@@ -208,14 +194,13 @@ export async function main(ns: NS): Promise<void> {
       isReadyForFactionGrind,
     );
 
-    // 💡 Sicherheitsnetz: Falls determineStrategy trotz BN2-Gang auf REP schaltet, erzwingen wir MONEY
     if (isBN2GangMode && strategy.mode === "REP") {
       strategy = { mode: "MONEY" };
     }
 
     let { mode, targetFaction = null, targetCompany, targetStat } = strategy;
 
-    // 7. Fallback-Target ermitteln
+    // 6. Fallback-Target ermitteln
     if (
       now - lastFallbackUpdate > REFRESH_INTERVALS.FALLBACK_TARGET ||
       cachedFallbackTarget === "n00dles"
@@ -230,7 +215,7 @@ export async function main(ns: NS): Promise<void> {
       lastFallbackUpdate = now;
     }
 
-    // 8. Strategie-Oszillation verhindern (Cooldown)
+    // 7. Strategie-Oszillation verhindern (Cooldown)
     const previousStrategy = currentState?.strategy || "MONEY";
 
     if (mode !== previousStrategy) {
@@ -253,7 +238,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 9. Progress Metrics berechnen
+    // 8. Progress Metrics berechnen
     let currentVal = 0;
     let targetVal = 0;
     let label = "";
@@ -316,7 +301,7 @@ export async function main(ns: NS): Promise<void> {
       dynamicMaxXp = 1500;
     }
 
-    // 💾 Zustand im State-Manager speichern
+    // Zustand im State-Manager speichern
     patchState(ns, {
       strategy: mode,
       isBN2GangMode,
@@ -334,38 +319,7 @@ export async function main(ns: NS): Promise<void> {
       },
     });
 
-    const isEarlyGameCrime =
-      homeMaxRam < 128 && (mode === "CRIME" || mode === "KILLS");
-
-    if (isEarlyGameCrime) {
-      if (
-        PATHS.tasks.augShopping &&
-        ns.isRunning(PATHS.tasks.augShopping, "home")
-      ) {
-        ns.scriptKill(PATHS.tasks.augShopping, "home");
-      }
-      const rogueScripts = [
-        PATHS.daemons.hacknet,
-        PATHS.daemons.hacknetEarly,
-      ].filter(Boolean) as string[];
-
-      for (const script of rogueScripts) {
-        if (ns.fileExists(script, "home") && ns.isRunning(script, "home")) {
-          ns.scriptKill(script, "home");
-        }
-      }
-    } else {
-      if (
-        getFreeRam() > 12 &&
-        PATHS.tasks.augShopping &&
-        ns.fileExists(PATHS.tasks.augShopping, "home") &&
-        !ns.isRunning(PATHS.tasks.augShopping, "home")
-      ) {
-        ns.run(PATHS.tasks.augShopping, 1);
-      }
-    }
-
-    // ⚙️ Microservices verwalten
+    // Microservices verwalten
     manageMicroservices(
       ns,
       mode,
@@ -397,7 +351,7 @@ function manageMicroservices(
     REP: PATHS.tasks.faction,
     CORP: PATHS.tasks.corp,
     TRAIN: PATHS.tasks.train,
-    UNI: PATHS.tasks.uni,         // 🎓 Neuer Uni-Modus
+    UNI: PATHS.tasks.uni,
     CRIME: PATHS.tasks.crime,
     KILLS: PATHS.tasks.crime,
   };
@@ -405,15 +359,12 @@ function manageMicroservices(
   let targetScript = modeToScript[currentMode];
   let overrideArgs: (string | number)[] | undefined = undefined;
 
-  // 🎯 Dynamische Priorisierung im MONEY-Modus
   if (currentMode === "MONEY") {
     const isGangUnlocked = hasGang || currentKarma <= -5400;
 
     if (!isGangUnlocked) {
-      // 💀 Schritt 1: Karma-Grind via Crime
       targetScript = PATHS.tasks.crime;
     } else {
-      // 🎓 Schritt 2: Gang ist frei -> Sauberes Studium an der Uni via PATHS.tasks.uni!
       targetScript = PATHS.tasks.uni;
       if (targetStat !== undefined) {
         overrideArgs = [targetStat];
@@ -421,7 +372,6 @@ function manageMicroservices(
     }
   }
 
-  // Nicht mehr benötigte Microservices beenden
   for (const [_, script] of Object.entries(modeToScript)) {
     if (script && script !== targetScript && ns.isRunning(script, "home")) {
       ns.scriptKill(script, "home");
@@ -429,18 +379,15 @@ function manageMicroservices(
     }
   }
 
-  // Gewünschten Target-Script starten oder neu ausrichten
   if (targetScript && ns.fileExists(targetScript, "home")) {
     const runningProc = ns.ps("home").find((p) => p.filename === targetScript);
     const isRunning = runningProc !== undefined;
     let shouldStart = !isRunning;
 
-    // Dynamische Argumente ermitteln (entweder aus Override oder aus TRAIN-Modus)
-    const effectiveArgs: (string | number)[] = overrideArgs ?? (
-      (currentMode === "TRAIN" && targetStat !== undefined) ? [targetStat] : []
-    );
+    const effectiveArgs: (string | number)[] =
+      overrideArgs ??
+      (currentMode === "TRAIN" && targetStat !== undefined ? [targetStat] : []);
 
-    // Prüfen, ob das laufende Skript mit abweichenden Argumenten läuft
     if (isRunning && effectiveArgs.length > 0) {
       const currentRunningTarget = runningProc?.args[0];
       const expectedTarget = effectiveArgs[0];
@@ -477,61 +424,6 @@ function manageMicroservices(
     }
   }
 }
-function handleSingularityPurchases(ns: NS, logger: Logger): void {
-  const sing = ns.singularity;
-  const player = ns.getPlayer();
-  const currentHacking = player.skills.hacking;
-
-  // 1. TOR Router kaufen
-  if (!ns.hasTorRouter() && player.money >= 200_000 && currentHacking >= 40) {
-    if (sing.purchaseTor()) logger.success("📡 TOR-Router erworben.");
-  }
-
-  // 2. Programme kaufen
-  if (ns.hasTorRouter()) {
-    const programGates: Record<string, number> = {
-      "DarkscapeNavigator.exe": 0,
-      "BruteSSH.exe": 50,
-      "FTPCrack.exe": 150,
-      "relaySMTP.exe": 250,
-      "HTTPWorm.exe": 350,
-      "SQLInject.exe": 500,
-      "Formulas.exe": 0,
-    };
-
-    for (const [prog, reqLevel] of Object.entries(programGates)) {
-      if (!ns.fileExists(prog, "home") && currentHacking >= reqLevel) {
-        const cost = sing.getDarkwebProgramCost(prog as ProgramName);
-        if (cost > 0 && player.money >= cost) {
-          if (sing.purchaseProgram(prog as any)) {
-            logger.success(`💾 Software lizenziert: ${prog}`);
-          }
-        }
-      }
-    }
-  }
-
-  // 3. Home RAM & Core Upgrades durchführen
-  const ramCost = sing.getUpgradeHomeRamCost();
-  if (ramCost !== Infinity && player.money - 200_000 >= ramCost) {
-    if (sing.upgradeHomeRam()) {
-      const newRam = ns.getServerMaxRam("home");
-      ns.toast(`Home RAM erweitert auf ${ns.format.ram(newRam)}!`, "success");
-      logger.success(
-        `🏠 Home-RAM Upgrade durchgeführt: ${ns.format.ram(newRam)}`,
-      );
-    }
-  }
-
-  const coresCost = sing.getUpgradeHomeCoresCost();
-  if (coresCost !== Infinity && player.money - 200_000 >= coresCost) {
-    if (sing.upgradeHomeCores()) {
-      const newCores = ns.getServer("home").cpuCores;
-      ns.toast(`Home Cores erweitert auf ${newCores}!`, "success");
-      logger.success(`🖥️ Home-Cores Upgrade durchgeführt: ${newCores} Cores`);
-    }
-  }
-}
 
 function handleFactionInvitations(ns: NS, logger: Logger): void {
   const sing = ns.singularity;
@@ -544,7 +436,6 @@ function handleFactionInvitations(ns: NS, logger: Logger): void {
   for (const invite of invites) {
     const isCity = CITY_FACTIONS.includes(invite as FactionName);
 
-    // Keine zweite Stadt-Fraktion beitreten!
     if (isCity && currentCity && currentCity !== invite) {
       continue;
     }

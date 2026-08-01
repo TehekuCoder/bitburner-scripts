@@ -1,7 +1,7 @@
-import { NS, Player } from "@ns";
-import { JitEvent } from "lib/types.js";
+import { NS } from "@ns";
 import { HOME_RAM_RESERVE } from "lib/constants.js";
 import { provisionServer } from "/utils/provision.js";
+import { JitEvent } from "./types/batcher";
 
 const MAX_REASONABLE_RAM_GB = 100_000;
 

@@ -6,7 +6,7 @@ import {
   PATH_GROW,
   PATH_WEAKEN,
 } from "/lib/constants.js";
-import { BatchPlan } from "/lib/types.js";
+import { BatchPlan } from "/lib/types/batcher.js";
 
 export function calculateBatch(
   ns: NS,

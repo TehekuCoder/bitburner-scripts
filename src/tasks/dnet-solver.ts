@@ -2,7 +2,7 @@ import { NS } from "@ns";
 import { runSolver } from "solvers/solveManager.js";
 import { COOLDOWN_FILE, COOLDOWN_MS } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { ServerAuthDetails } from "/lib/types.js";
+import { ServerAuthDetails } from "/lib/types/network";
 
 function isAuthSuccess(result: unknown): boolean {
   if (typeof result === "boolean") return result;

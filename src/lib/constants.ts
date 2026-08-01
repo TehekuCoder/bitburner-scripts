@@ -4,8 +4,9 @@ import {
   GymType,
   BitNodeMultipliers,
 } from "@ns";
-import type { FactionConfig, LogLevel } from "./types.js";
 import { PATHS } from "./paths.js";
+import { FactionConfig } from "./types/factions.js";
+import { LogLevel } from "./types/logger.js";
 
 // --- REFRESH INTERVALS ---
 export const REFRESH_INTERVALS = {
@@ -192,7 +193,17 @@ export const PAYLOADS: string[] = [
   PATHS.lib.constants,
   PATHS.lib.logger,
   PATHS.lib.paths,
-  PATHS.lib.types,
+  
+  PATHS.lib.types.batcher,
+  PATHS.lib.types.common,
+  PATHS.lib.types.factions,
+  PATHS.lib.types.finance,
+  PATHS.lib.types.gang,
+  PATHS.lib.types.logger,
+  PATHS.lib.types.network,
+  PATHS.lib.types.sleeves,
+  PATHS.lib.types.strategy,
+
   PATHS.utils.provision,
 
   // 3. Alle Solver-Module für den DNet-Solver

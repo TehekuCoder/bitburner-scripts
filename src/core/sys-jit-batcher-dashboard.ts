@@ -3,7 +3,7 @@ import { drawBatcherDashboard } from "ui/batcher-ui.js";
 import { HOME_RAM_RESERVE } from "/lib/constants.js";
 import { getAllServers } from "/lib/network.js";
 import { loadBatcherState } from "/lib/state.js";
-import { DashboardData } from "/lib/types.js";
+import { DashboardData } from "/lib/types/common";
 
 /** Hilfsfunktion: Entfernt Countdown-Klammern für den Event-Log-Vergleich */
 function cleanProgressString(str: string): string {

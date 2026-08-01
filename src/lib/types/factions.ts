@@ -1,0 +1,48 @@
+import { FactionName } from "@ns";
+import { BotStrategy } from "./strategy";
+
+export interface FactionConfig {
+  name: FactionName;
+  minStat: number;
+  priority: number;
+}
+
+export interface AugmentRoadmapItem {
+  faction: FactionName | string;
+  augmentation: string;
+  repRequired: number;
+  cost: number;
+}
+
+export interface AugmentTarget {
+  name: string;
+  repReq: number;
+  basePrice: number;
+  prereqs: string[];
+  factions: FactionName[];
+  bestFaction: FactionName;
+}
+
+export interface TargetFactionResult {
+  name: FactionName;
+  targetRep: number;
+  augName: string;
+}
+
+export interface AugShoppingItem {
+  faction: FactionName;
+  name: string;
+  price: number;
+  repReq: number;
+}
+
+export interface FactionState {
+  targetFaction?: string | FactionName | null;
+  factionCurrentReps?: Partial<Record<FactionName, number>>;
+  strategy: BotStrategy;
+}
+
+export interface AugmentState {
+  augRoadMap?: AugmentTarget[];
+  isBN2GangMode?: boolean;
+}

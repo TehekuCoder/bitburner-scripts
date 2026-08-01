@@ -2,7 +2,7 @@ import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { getAllServers, getNetworkMaxRam } from "/lib/network.js";
 import { patchState } from "/lib/state.js";
-import { BatchStrategy } from "/lib/types.js";
+import { BatchStrategy } from "/lib/types/batcher.js";
 import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants.js";
 import { PATHS } from "/lib/paths";
 

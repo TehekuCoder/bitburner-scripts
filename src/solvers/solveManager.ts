@@ -16,7 +16,8 @@ import { solvePHP54 } from "./solvePHP54";
 import { solvePr0verFl0 } from "./solvePr0verFl0";
 import { solveRoman } from "./solveRoman";
 import { solveZeroLogon } from "./solveZeroLogon";
-import { SolverFunction } from "/lib/types";
+import { SolverFunction } from "/lib/types/common";
+
 
 const SOLVER_REGISTRY: Record<string, SolverFunction> = {
   accountsmanager: solveAccountsManager,

@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { LogLevel, LogPayload } from "lib/types.js";
+import { LogLevel, LogPayload } from "lib/types/logger";
 import { LEVEL_RANK } from "/lib/constants";
 
 export async function main(ns: NS): Promise<void> {

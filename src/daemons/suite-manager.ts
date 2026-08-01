@@ -1,6 +1,8 @@
 import { NS } from "@ns";
 import { PATHS } from "/lib/paths";
-import { BotStateNetwork, ScriptList } from "/lib/types.js";
+import { ScriptList } from "/lib/types/common";
+import { BotStateNetwork } from "/lib/types/strategy";
+
 
 export function manageSuites(
   ns: NS,
@@ -94,49 +96,20 @@ export function manageSuites(
   });
 
   // ====================================================================
-  // 3. 🏗️ INFRASTRUKTUR MANAGER (Ab 64GB RAM)
+  // 3. 🏗️ FINANCE MANAGER (Ab 64GB RAM)
   // ====================================================================
   if (homeMaxRam >= 64) {
-    tryLaunch(scripts.infra, [], () => {
-      logger.info("Initialisiere Infrastruktur-Manager...");
+    tryLaunch(scripts.financeManager, [], () => {
+      logger.info("Initialisiere Finanz-Manager...");
     });
   }
 
   // ====================================================================
-  // 4. ⚡ HACKNET LOGIK (Erst ab 256GB RAM + BruteSSH.exe)
+  // 4. ⚡ HACKNET LOGIK (aktuell nicht über den Suite-Manager gesteuert)
   // ====================================================================
-  const targetHacknetScript = hasFormulas
-    ? PATHS.daemons.hacknet
-    : PATHS.daemons.hacknetEarly;
-  const obsoleteHacknetScript = hasFormulas
-    ? PATHS.daemons.hacknetEarly
-    : PATHS.daemons.hacknet;
-
-  if (ns.isRunning(obsoleteHacknetScript, "home")) {
-    logger.info(`Beende veraltetes Hacknet-Skript (${obsoleteHacknetScript}).`);
-    ns.scriptKill(obsoleteHacknetScript, "home");
-  }
-
-  const hasBrute = ns.fileExists("BruteSSH.exe", "home");
-  if (homeMaxRam < 256 || !hasBrute) {
-    if (ns.isRunning(targetHacknetScript, "home")) {
-      logger.warn(
-        "Hacknet deaktiviert (benötigt mindestens 256GB RAM & BruteSSH.exe).",
-      );
-      ns.scriptKill(targetHacknetScript, "home");
-    }
-  } else {
-    const hacknetMoneyMult = bnMults?.HacknetNodeMoney ?? 1.0;
-    if (hacknetMoneyMult < 0.4) {
-      tryLaunch(targetHacknetScript, [4, 100, 8, 4], () => {
-        logger.warn("Hacknet-Produktion gedrosselt! Starte im Failsafe-Modus.");
-      });
-    } else {
-      tryLaunch(targetHacknetScript, [], () => {
-        logger.success("Starte unlimitiertes Hacknet-Subsystem...");
-      });
-    }
-  }
+  // Die Hacknet-Daemons werden derzeit nicht über diesen Manager verwaltet.
+  // Falls später eine zentrale Hacknet-Steuerung hinzugefügt wird, kann
+  // hier wieder auf PATHS.daemons.hacknet / hacknetEarly umgestellt werden.
 
   // ====================================================================
   // 5. 🌐 NETWORK EXPANSION (Darknet & Crawler ab 256GB + Navigator)
@@ -175,21 +148,7 @@ export function manageSuites(
   }
 
   // ====================================================================
-  // 8. 📈 FINANCE LOGIK (Börsen-Trade ab 512GB RAM)
-  // ====================================================================
-  if (homeMaxRam >= 512) {
-    tryLaunch(scripts.trade, [], () => {
-      logger.success("Initialisiere Finanz-Subsystem...");
-    });
-  } else if (ns.isRunning(scripts.trade, "home")) {
-    logger.warn(
-      `Erzwinge Stopp von finance.js. Home-RAM (${ns.format.ram(homeMaxRam)}) unter 512GB.`,
-    );
-    ns.scriptKill(scripts.trade, "home");
-  }
-
-  // ====================================================================
-  // 9. 🧬 SLEEVE LOGIK
+  // 8. 🧬 SLEEVE LOGIK
   // ====================================================================
   if (ns.sleeve !== undefined) {
     if (homeMaxRam >= 512) {

@@ -1,17 +1,21 @@
-import { NS, BitNodeMultipliers } from "@ns";
-import { DEFAULT_MULTIPLIERS, STATE_PORT } from "lib/constants";
-import { LoggerClient as Logger } from "lib/logger-client";
-import {
-  BotState,
-  BatcherState,
-  StrategyState,
-  FinanceState,
-  SleeveState,
-  AugmentState,
-  FactionState,
-  BotStateProgress,
-  GangState,
-} from "lib/types";
+import { NS } from "@ns";
+import { STATE_PORT } from "/lib/constants.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
+
+// Re-Export für Rückwärtskompatibilität (Logik liegt in lib/utils.ts)
+
+
+// Direkte Typ-Imports aus den jeweiligen Dateien (mit .js Endung für Bitburner)
+import { 
+  BotState, 
+  StrategyState, 
+  BotStateProgress 
+} from "/lib/types/strategy.js";
+import { BatcherState } from "/lib/types/batcher.js";
+import { FinanceState } from "/lib/types/common.js";
+import { SleeveState } from "/lib/types/sleeves.js";
+import { AugmentState, FactionState } from "/lib/types/factions.js";
+import { GangState } from "/lib/types/gang.js";
 
 type BotStateContent = Omit<
   BotState,
@@ -27,22 +31,6 @@ export type AugmentStatePatch = Partial<AugmentState>;
 export type FactionStatePatch = Partial<FactionState>;
 export type ProgressStatePatch = Partial<BotStateProgress>;
 export type GangStatePatch = Partial<GangState>;
-
-export function loadBnMults(ns: NS): Record<keyof BitNodeMultipliers, number> {
-  if (ns.fileExists("bn-multipliers.txt", "home")) {
-    try {
-      const fileContent = ns.read("bn-multipliers.txt");
-      if (fileContent) {
-        return { ...DEFAULT_MULTIPLIERS, ...JSON.parse(fileContent) };
-      }
-    } catch {
-      ns.print(
-        "⚠️ [LIB] Fehler beim Parsen der bn-multipliers.txt. Nutze harten FailSafe.",
-      );
-    }
-  }
-  return DEFAULT_MULTIPLIERS;
-}
 
 let _logger: Logger | null = null;
 function getLogger(ns: NS): Logger {
@@ -88,7 +76,7 @@ export function saveState(ns: NS, state: BotStateContent): void {
     port.write(fullState);
   } catch (error) {
     getLogger(ns).error(
-      `Zustand konnte nicht in Port geschrieben werden: ${error}`,
+      `Zustand konnte nicht in Port geschrieben werden: ${error}`
     );
   }
 }
@@ -113,7 +101,7 @@ export function patchState(ns: NS, partialState: BotStatePatch): void {
     ...cleanedCurrentState
   } = currentState || {};
 
-  // Vollständiger Default-State inkl. Multi-Target, Shotgun, Sleeve & Gang Feldern
+  // Vollständiger Default-State
   const baseState: BotStateContent = {
     strategy: "MONEY",
     targetFaction: undefined,
@@ -192,52 +180,33 @@ export function patchState(ns: NS, partialState: BotStatePatch): void {
   port.write(fullState);
 }
 
-export function patchBatcherState(
-  ns: NS,
-  partialState: BatcherStatePatch,
-): void {
+// --- Specific Loader & Patcher Wrappers ---
+
+export function patchBatcherState(ns: NS, partialState: BatcherStatePatch): void {
   patchState(ns, partialState as BotStatePatch);
 }
 
 export function loadBatcherState(ns: NS): BatcherState | null {
   const state = loadState(ns);
   if (!state) return null;
-
   const {
-    batcherTarget,
-    batcherProgress,
-    batcherActive,
-    batcherActiveBatches,
-    batcherTargetsSummary,
-    batcherPlan,
-    batcherDynamicMaxBatches,
-    batcherRamNeeded,
+    batcherTarget, batcherProgress, batcherActive, batcherActiveBatches,
+    batcherTargetsSummary, batcherPlan, batcherDynamicMaxBatches, batcherRamNeeded,
   } = state;
-
   return {
-    batcherTarget,
-    batcherProgress,
-    batcherActive,
-    batcherActiveBatches,
-    batcherTargetsSummary,
-    batcherPlan,
-    batcherDynamicMaxBatches,
-    batcherRamNeeded,
+    batcherTarget, batcherProgress, batcherActive, batcherActiveBatches,
+    batcherTargetsSummary, batcherPlan, batcherDynamicMaxBatches, batcherRamNeeded,
   };
 }
 
 export function loadStrategyState(ns: NS): StrategyState | null {
   const state = loadState(ns);
   if (!state) return null;
-  const { strategy, targetFaction, targetCompany, targetStat, targetKills } =
-    state;
+  const { strategy, targetFaction, targetCompany, targetStat, targetKills } = state;
   return { strategy, targetFaction, targetCompany, targetStat, targetKills };
 }
 
-export function patchStrategyState(
-  ns: NS,
-  partialState: StrategyStatePatch,
-): void {
+export function patchStrategyState(ns: NS, partialState: StrategyStatePatch): void {
   patchState(ns, partialState as BotStatePatch);
 }
 
@@ -245,47 +214,22 @@ export function loadFinanceState(ns: NS): FinanceState | null {
   const state = loadState(ns);
   if (!state) return null;
   const {
-    traderMode,
-    traderProgress,
-    financeProgress,
-    moneyReserve,
-    isHomePrioritized,
-    isRushModeActive,
+    traderMode, traderProgress, financeProgress, moneyReserve, isHomePrioritized, isRushModeActive,
   } = state;
   return {
-    traderMode,
-    traderProgress,
-    financeProgress,
-    moneyReserve,
-    isHomePrioritized,
-    isRushModeActive,
+    traderMode, traderProgress, financeProgress, moneyReserve, isHomePrioritized, isRushModeActive,
   };
 }
 
-export function patchFinanceState(
-  ns: NS,
-  partialState: FinanceStatePatch,
-): void {
+export function patchFinanceState(ns: NS, partialState: FinanceStatePatch): void {
   patchState(ns, partialState as BotStatePatch);
 }
 
 export function loadSleeveState(ns: NS): SleeveState | null {
   const state = loadState(ns);
   if (!state) return null;
-  const {
-    sleeveGlobalMode,
-    targetFaction,
-    targetStat,
-    strategy,
-    sleeveProgress,
-  } = state;
-  return {
-    sleeveGlobalMode,
-    targetFaction,
-    targetStat,
-    strategy,
-    sleeveProgress,
-  };
+  const { sleeveGlobalMode, targetFaction, targetStat, strategy, sleeveProgress } = state;
+  return { sleeveGlobalMode, targetFaction, targetStat, strategy, sleeveProgress };
 }
 
 export function patchSleeveState(ns: NS, partialState: SleeveStatePatch): void {
@@ -299,10 +243,7 @@ export function loadAugmentState(ns: NS): AugmentState | null {
   return { augRoadMap, isBN2GangMode };
 }
 
-export function patchAugmentState(
-  ns: NS,
-  partialState: AugmentStatePatch,
-): void {
+export function patchAugmentState(ns: NS, partialState: AugmentStatePatch): void {
   patchState(ns, partialState as BotStatePatch);
 }
 
@@ -313,10 +254,7 @@ export function loadFactionState(ns: NS): FactionState | null {
   return { targetFaction, factionCurrentReps, strategy };
 }
 
-export function patchFactionState(
-  ns: NS,
-  partialState: FactionStatePatch,
-): void {
+export function patchFactionState(ns: NS, partialState: FactionStatePatch): void {
   patchState(ns, partialState as BotStatePatch);
 }
 
@@ -324,68 +262,33 @@ export function loadProgressState(ns: NS): BotStateProgress | null {
   const state = loadState(ns);
   if (!state) return null;
   const {
-    progressBar,
-    financeProgress,
-    traderProgress,
-    hacknetProgress,
-    sleeveProgress,
-    sleeveGlobalMode,
-    fillerConfig,
+    progressBar, financeProgress, traderProgress, hacknetProgress,
+    sleeveProgress, sleeveGlobalMode, fillerConfig,
   } = state;
   return {
-    progressBar,
-    financeProgress,
-    traderProgress,
-    hacknetProgress,
-    sleeveProgress,
-    sleeveGlobalMode,
-    fillerConfig,
+    progressBar, financeProgress, traderProgress, hacknetProgress,
+    sleeveProgress, sleeveGlobalMode, fillerConfig,
   };
 }
 
-/**
- * Lädt ausschließlich den aktuellen Gang-Zustand aus dem State.
- */
-export function loadGangState(ns: NS): GangState | null {
-  const state = loadState(ns);
-  if (!state) return null;
-
-  const {
-    hasGang,
-    gangFaction,
-    isHackingGang,
-    gangMembersCount,
-    gangRespect,
-    gangWantedPenalty,
-    gangPhase,
-    gangProgress,
-    isBN2GangMode,
-  } = state;
-
-  return {
-    hasGang,
-    gangFaction,
-    isHackingGang,
-    gangMembersCount,
-    gangRespect,
-    gangWantedPenalty,
-    gangPhase,
-    gangProgress,
-    isBN2GangMode,
-  };
-}
-
-/**
- * Patcht einzelne Felder im GangState atomar.
- */
-export function patchGangState(ns: NS, partialState: GangStatePatch): void {
+export function patchProgressState(ns: NS, partialState: ProgressStatePatch): void {
   patchState(ns, partialState as BotStatePatch);
 }
 
-export function patchProgressState(
-  ns: NS,
-  partialState: ProgressStatePatch,
-): void {
+export function loadGangState(ns: NS): GangState | null {
+  const state = loadState(ns);
+  if (!state) return null;
+  const {
+    hasGang, gangFaction, isHackingGang, gangMembersCount, gangRespect,
+    gangWantedPenalty, gangPhase, gangProgress, isBN2GangMode,
+  } = state;
+  return {
+    hasGang, gangFaction, isHackingGang, gangMembersCount, gangRespect,
+    gangWantedPenalty, gangPhase, gangProgress, isBN2GangMode,
+  };
+}
+
+export function patchGangState(ns: NS, partialState: GangStatePatch): void {
   patchState(ns, partialState as BotStatePatch);
 }
 
@@ -393,16 +296,10 @@ export function loadState(ns: NS): BotState | null {
   try {
     const port = ns.getPortHandle(STATE_PORT);
     const data = port.peek();
-
-    if (isPortEmpty(data)) {
-      return null;
-    }
-
+    if (isPortEmpty(data)) return null;
     return data as BotState;
   } catch (error) {
-    getLogger(ns).error(
-      `Port ${STATE_PORT} konnte nicht gelesen werden: ${error}`,
-    );
+    getLogger(ns).error(`Port ${STATE_PORT} konnte nicht gelesen werden: ${error}`);
     return null;
   }
 }

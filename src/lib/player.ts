@@ -5,13 +5,9 @@ import {
   CITY_FACTIONS,
 } from "./constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import {
-  TargetFactionResult,
-  AugmentTarget,
-  BotStrategy,
-  StrategyResult,
-  BotState,
-} from "./types.js";
+import { AugmentTarget, TargetFactionResult } from "./types/factions.js";
+import { BotState, StrategyResult } from "./types/strategy.js";
+
 
 /**
  * Liefert alle gekauften, aber noch nicht installierten Augmentationen.

@@ -6,8 +6,9 @@ import {
   PATH_WEAKEN,
   SPACER,
 } from "/lib/constants.js";
-import { WorkerNode, JitEvent, ActiveBatch } from "./types.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
+import { JitEvent, ActiveBatch } from "./types/batcher";
+import { WorkerNode } from "./types/network";
 
 // Statisches RAM Lookup zur Vermeidung träger File-System API Calls
 const SCRIPT_RAM_MAP: Record<string, number> = {

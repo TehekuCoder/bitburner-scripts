@@ -17,8 +17,10 @@ import {
   getQueueRam,
   getNetworkMaxRam,
 } from "/lib/network.js";
-import { loadBnMults, patchBatcherState } from "/lib/state.js";
-import { JitEvent, ActiveBatch } from "/lib/types.js";
+import { ActiveBatch, JitEvent } from "/lib/types/batcher.js";
+import { patchBatcherState } from "/lib/state.js";
+import { loadBnMults } from "/lib/utils";
+
 
 type PlannerPlan = NonNullable<ReturnType<typeof internalPlanner>>;
 
@@ -530,3 +532,5 @@ function getAdaptiveBatchGap(currentRollingLag: number): number {
   if (currentRollingLag < 8) return Math.max(5, BATCH_GAP * 0.8); // Maximaler Durchsatz
   return BATCH_GAP;
 }
+
+
