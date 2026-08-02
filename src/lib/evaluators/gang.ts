@@ -52,8 +52,6 @@ export const GangEvaluator: PurchaseEvaluator = {
           let baseScore = 20;
           let reason = "Allgemeines Upgrade";
 
-          // lib/evaluators/gang.ts (Ausschnitt aus getRequests)
-
           if (isHacking) {
             if (equip.type === "Rootkit") {
               priority = PurchasePriority.HIGH;

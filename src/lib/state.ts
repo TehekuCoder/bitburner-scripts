@@ -105,6 +105,7 @@ export function patchState(ns: NS, partialState: BotStatePatch): void {
   const baseState: BotStateContent = {
     strategy: "MONEY",
     targetFaction: undefined,
+    isGrindingNFG: false,
     targetCompany: undefined,
     targetStat: undefined,
     targetKills: undefined,
@@ -250,8 +251,8 @@ export function patchAugmentState(ns: NS, partialState: AugmentStatePatch): void
 export function loadFactionState(ns: NS): FactionState | null {
   const state = loadState(ns);
   if (!state) return null;
-  const { targetFaction, factionCurrentReps, strategy } = state;
-  return { targetFaction, factionCurrentReps, strategy };
+  const { targetFaction, factionCurrentReps, strategy, isGrindingNFG } = state; // <-- isGrindingNFG hinzugefügt
+  return { targetFaction, factionCurrentReps, strategy, isGrindingNFG };
 }
 
 export function patchFactionState(ns: NS, partialState: FactionStatePatch): void {

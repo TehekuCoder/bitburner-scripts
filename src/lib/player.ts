@@ -1,13 +1,8 @@
 import { NS, Player, FactionName, CompanyName, BitNodeMultipliers } from "@ns";
-import {
-  MEGACORPS,
-  COMBAT_STATS,
-  CITY_FACTIONS,
-} from "./constants.js";
+import { MEGACORPS, COMBAT_STATS, CITY_FACTIONS } from "./constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { AugmentTarget, TargetFactionResult } from "./types/factions.js";
 import { BotState, StrategyResult } from "./types/strategy.js";
-
 
 /**
  * Liefert alle gekauften, aber noch nicht installierten Augmentationen.
@@ -28,7 +23,11 @@ export function hasPurchasedAugsThisRun(ns: NS): boolean {
 /**
  * Bewirbt sich bei allen Megacorps um Software-Positionen.
  */
-export function applyToAllMegacorps(ns: NS, player: Player, logger: Logger): void {
+export function applyToAllMegacorps(
+  ns: NS,
+  player: Player,
+  logger: Logger,
+): void {
   for (const corp of Object.values(MEGACORPS)) {
     try {
       ns.singularity.applyToCompany(corp, "Software");
@@ -46,12 +45,13 @@ export function findNextRoadmapFaction(
   ns: NS,
   augRoadmap: AugmentTarget[] = [],
   gangFaction?: string | null,
-  currentCityParam?: string | null
+  currentCityParam?: string | null,
 ): TargetFactionResult | null {
   const player = ns.getPlayer();
   const playerFactions = player.factions;
   const invites = ns.singularity.checkFactionInvitations();
-  const currentCity = currentCityParam ?? CITY_FACTIONS.find((c) => playerFactions.includes(c));
+  const currentCity =
+    currentCityParam ?? CITY_FACTIONS.find((c) => playerFactions.includes(c));
 
   for (const target of augRoadmap) {
     const validFactions = target.factions.filter((f) => {
@@ -80,10 +80,14 @@ export function findNextRoadmapFaction(
     }
 
     if (maxRep < target.repReq) {
+      // Prüft, ob das Augment NeuroFlux Governor ist
+      const isNFG = target.name.includes("NeuroFlux Governor");
+
       return {
         name: bestFaction,
         targetRep: target.repReq,
         augName: target.name,
+        isNFG,
       };
     }
   }
@@ -104,7 +108,7 @@ export function determineStrategy(
   factionTargets: Record<FactionName, number>,
   nextRoadmapFaction: TargetFactionResult | null,
   factionToWorkFor: TargetFactionResult | null,
-  isReadyForFactionGrind: boolean
+  isReadyForFactionGrind: boolean,
 ): StrategyResult {
   // 1. Slum Snakes / Gang-Voraussetzung (Karma Grind)
   // 💡 Gang-Freischaltung erfordert Karma <= -54000
@@ -123,7 +127,9 @@ export function determineStrategy(
 
   // 3. Fraktions-Reputation Grind
   if (factionToWorkFor && isReadyForFactionGrind) {
-    const isMember = player.factions.includes(factionToWorkFor.name as FactionName);
+    const isMember = player.factions.includes(
+      factionToWorkFor.name as FactionName,
+    );
     if (isMember) {
       return {
         mode: "REP",
@@ -158,7 +164,9 @@ export function isGangOfferingAllAugs(ns: NS): boolean {
 
     // 3. Indikator 2 (Fallback/Sicherheit): Bietet die Gang mehr als 40 verschiedene Augs an?
     // Normaler Gang-Shop: ~15-20 Augments | BN2 Gang-Shop: 60+ Augments
-    const nonNfgCount = gangAugs.filter((aug) => aug !== "NeuroFlux Governor").length;
+    const nonNfgCount = gangAugs.filter(
+      (aug) => aug !== "NeuroFlux Governor",
+    ).length;
     return nonNfgCount > 40;
   } catch {
     return false;

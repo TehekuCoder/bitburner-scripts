@@ -1,7 +1,7 @@
 import { FactionName, CompanyName } from "@ns";
 import { BatchStrategy, BatcherState } from "./batcher";
 import { GangState } from "./gang";
-import { AugmentState, AugmentTarget } from "./factions";
+import { AugmentState, AugmentTarget, FactionState } from "./factions";
 
 export type BotStrategy =
   | "MONEY"
@@ -85,4 +85,5 @@ export interface BotState
     BotStateMeta,
     GangState,
     BatcherState,
+    FactionState,
     AugmentState {}

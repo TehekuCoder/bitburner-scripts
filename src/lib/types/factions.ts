@@ -1,3 +1,5 @@
+// lib/types/factions.ts
+
 import { FactionName } from "@ns";
 import { BotStrategy } from "./strategy";
 
@@ -27,6 +29,7 @@ export interface TargetFactionResult {
   name: FactionName;
   targetRep: number;
   augName: string;
+  isNFG?: boolean;
 }
 
 export interface AugShoppingItem {
@@ -36,13 +39,36 @@ export interface AugShoppingItem {
   repReq: number;
 }
 
-export interface FactionState {
-  targetFaction?: string | FactionName | null;
-  factionCurrentReps?: Partial<Record<FactionName, number>>;
-  strategy: BotStrategy;
-}
-
 export interface AugmentState {
   augRoadMap?: AugmentTarget[];
   isBN2GangMode?: boolean;
 }
+
+export interface NFGFactionWhitelist {
+  hackingGangDefault: FactionName;
+  combatGangDefault: FactionName;
+  fallbackWhitelist: FactionName[];
+}
+
+/**
+ * Zustand des Faction-Subsystems
+ */
+export interface FactionState {
+  targetFaction?: string | FactionName | null;
+  factionCurrentReps?: Partial<Record<FactionName, number>>;
+  strategy: BotStrategy;
+  /** Gibt an, ob aktuell gezielt NFG gefarmt wird */
+  isGrindingNFG?: boolean;
+}
+
+export const NFG_WHITELIST_CONFIG: NFGFactionWhitelist = {
+  hackingGangDefault: "Slum Snakes" as FactionName,
+  combatGangDefault: "CyberSec" as FactionName,
+  fallbackWhitelist: [
+    "CyberSec" as FactionName,
+    "Slum Snakes" as FactionName,
+    "Tian Di Hui" as FactionName,
+    "NiteSec" as FactionName,
+    "Netburners" as FactionName,
+  ],
+};

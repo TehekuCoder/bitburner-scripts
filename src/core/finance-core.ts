@@ -37,7 +37,7 @@ export async function main(ns: NS): Promise<void> {
 
   ns.ui.setTailTitle("Finance-Core");
 
-    ns.ui.resizeTail(618, 515);
+  ns.ui.resizeTail(618, 515);
 
   const lastPurchases: string[] = [];
   const lastWarnings: string[] = [];
@@ -169,6 +169,9 @@ export async function main(ns: NS): Promise<void> {
       // 3. Käufe verarbeiten mit intelligentem Blocking
       const blockedCategories = new Set<PurchaseCategory>();
 
+      // Das höchste unerfüllte Prioritäts-Level finden
+      let highestUnsatisfiedPriority = PurchasePriority.IDLE;
+
       for (const req of allRequests) {
         const margin = CATEGORY_MARGINS[req.category] ?? 1.0;
         const requiredBudget = req.cost * margin;
@@ -176,7 +179,14 @@ export async function main(ns: NS): Promise<void> {
         // Falls Kategorie blockiert ist, aber wir das Item SOFORT problemlos bezahlen können -> Trotzdem kaufen!
         const canAffordEasily = availableMoney >= requiredBudget;
 
+        // 1. Wenn die Kategorie bereits gesperrt ist und es teuer ist -> Überspringen
         if (blockedCategories.has(req.category) && !canAffordEasily) {
+          continue;
+        }
+
+        // 2. SPARRULE: Wenn wir auf ein CRITICAL/HIGH Ziel sparen,
+        // blockieren wir alle Käufe mit WENIGER Dringlichkeit (höherer Prio-Zahl)
+        if (req.priority > highestUnsatisfiedPriority) {
           continue;
         }
 
@@ -204,6 +214,12 @@ export async function main(ns: NS): Promise<void> {
           if (lastWarnings.length > 6) lastWarnings.shift();
 
           blockedCategories.add(req.category);
+
+          // Sparmodus aktivieren: Merken, welche hohe Priorität gerade spart.
+          // Verhindert, dass nachfolgende MEDIUM/LOW/IDLE Anfragen Geld ausgeben.
+          if (req.priority < highestUnsatisfiedPriority) {
+            highestUnsatisfiedPriority = req.priority;
+          }
         }
       }
     }

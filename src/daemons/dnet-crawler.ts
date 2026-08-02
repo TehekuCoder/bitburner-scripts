@@ -7,7 +7,7 @@ import {
 } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths";
-import { provisionServer } from "/utils/provision";
+import { provisionServer } from "../lib/utils/provision";
 
 let lastLootTime = 0;
 

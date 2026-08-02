@@ -301,6 +301,11 @@ export async function main(ns: NS): Promise<void> {
       dynamicMaxXp = 1500;
     }
 
+    // ------------------------------------------------------------------
+    // NFG-Status aus der Roadmap ermitteln
+    // ------------------------------------------------------------------
+    const isGrindingNFG = nextRoadmapFaction?.isNFG ?? false;
+
     // Zustand im State-Manager speichern
     patchState(ns, {
       strategy: mode,
@@ -309,6 +314,7 @@ export async function main(ns: NS): Promise<void> {
       gangFaction: gangFaction ?? undefined,
 
       targetFaction: targetFaction || undefined,
+      isGrindingNFG: isGrindingNFG,
       targetCompany: targetCompany,
       targetStat: mode === "TRAIN" ? targetStat : undefined,
       targetKills: mode === "KILLS" ? targetStat : undefined,
