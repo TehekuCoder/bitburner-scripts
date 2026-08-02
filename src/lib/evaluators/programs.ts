@@ -1,15 +1,51 @@
 // lib/evaluators/program.ts
 import { NS, ProgramName } from "@ns";
-import { PurchaseEvaluator, PurchaseRequest, PurchasePriority } from "/lib/types/finance.js";
+import {
+  PurchaseEvaluator,
+  PurchaseRequest,
+  PurchasePriority,
+} from "/lib/types/finance.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
 
-const PROGRAM_GATES: Record<string, { reqHacking: number; priority: PurchasePriority; score: number }> = {
-  "BruteSSH.exe":    { reqHacking: 50,  priority: PurchasePriority.CRITICAL, score: 95 },
-  "FTPCrack.exe":    { reqHacking: 150, priority: PurchasePriority.CRITICAL, score: 90 },
-  "relaySMTP.exe":   { reqHacking: 250, priority: PurchasePriority.HIGH,     score: 85 },
-  "HTTPWorm.exe":    { reqHacking: 350, priority: PurchasePriority.HIGH,     score: 80 },
-  "SQLInject.exe":   { reqHacking: 500, priority: PurchasePriority.HIGH,     score: 75 },
-  "Formulas.exe":    { reqHacking: 0,   priority: PurchasePriority.MEDIUM,   score: 60 },
+const PROGRAM_GATES: Record<
+  string,
+  { reqHacking: number; priority: PurchasePriority; score: number }
+> = {
+  "BruteSSH.exe": {
+    reqHacking: 50,
+    priority: PurchasePriority.CRITICAL,
+    score: 95,
+  },
+  "FTPCrack.exe": {
+    reqHacking: 150,
+    priority: PurchasePriority.CRITICAL,
+    score: 90,
+  },
+  "DarkscapeNavigator.exe": {
+    reqHacking: 0,
+    priority: PurchasePriority.CRITICAL,
+    score: 90,
+  },
+  "relaySMTP.exe": {
+    reqHacking: 250,
+    priority: PurchasePriority.HIGH,
+    score: 85,
+  },
+  "HTTPWorm.exe": {
+    reqHacking: 350,
+    priority: PurchasePriority.HIGH,
+    score: 80,
+  },
+  "SQLInject.exe": {
+    reqHacking: 500,
+    priority: PurchasePriority.HIGH,
+    score: 75,
+  },
+  "Formulas.exe": {
+    reqHacking: 0,
+    priority: PurchasePriority.MEDIUM,
+    score: 60,
+  },
 };
 
 export const ProgramEvaluator: PurchaseEvaluator = {

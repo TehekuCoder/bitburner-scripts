@@ -1,29 +1,24 @@
+// lib/gang-utils.ts
+
 import { NS, GangMemberInfo, GangGenInfo } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 
 export const GANG_CONFIG = {
-  ASCEND_THRESHOLD: 1.2,
+  ASCEND_THRESHOLD: 1.5,
   WANTED_PENALTY_THRESHOLD: 0.95,
-  TRAIN_STAT_TARGET: 150,
+  TRAIN_STAT_TARGET: 350,
 
   // Warfare Settings
   WARFARE_WIN_THRESHOLD: 0.85,
   MIN_STAT_FOR_WARFARE: 500,
+
+  // Ab diesem Ruf-Wert wird Ruf-Farmen komplett eingestellt
+  MAX_REP_TARGET: 2_500_000,
 };
 
 const GANG_NAMES: string[] = [
-  "Papyrus",
-  "Sans",
-  "Undyne",
-  "Alphys",
-  "Mettaton",
-  "Muffet",
-  "Asgore",
-  "Toriel",
-  "Flowey",
-  "Chara",
-  "Frisk",
-  "Gaster",
+  "Papyrus", "Sans", "Undyne", "Alphys", "Mettaton",
+  "Muffet", "Asgore", "Toriel", "Flowey", "Chara", "Frisk", "Gaster",
 ];
 
 export function manageGang(
@@ -65,9 +60,6 @@ export function manageGang(
   return { gangInfo, members, minWinChance };
 }
 
-/**
- * Steuert das An-/Ausschalten des Territory Clashs basierend auf der Gewinnchance.
- */
 function handleTerritoryWarfare(
   ns: NS,
   gangInfo: GangGenInfo,
@@ -137,7 +129,11 @@ function handleTasks(
     gangInfo.wantedPenalty < GANG_CONFIG.WANTED_PENALTY_THRESHOLD &&
     gangInfo.wantedLevel > 1;
 
-  const vigilanteCount = isWantedPenHigh ? Math.ceil(members.length * 0.3) : 0;
+  // Dynamisch berechnen: Brauchen wir noch Ruf?
+  const needsRespect = !isMaxMembers || gangInfo.respect < GANG_CONFIG.MAX_REP_TARGET;
+
+  // Bis zu 35% der Gang für Reduzierung des Wanted Levels einsetzen, falls die Strafe hoch ist
+  const vigilanteCount = isWantedPenHigh ? Math.ceil(members.length * 0.35) : 0;
 
   const needPower =
     isMaxMembers &&
@@ -150,16 +146,32 @@ function handleTasks(
       ? member.hack
       : (member.str + member.def + member.dex + member.agi) / 4;
 
+    // 1. Vigilante / Ethical Hacking bei hohem Wanted Level
     if (index >= members.length - vigilanteCount) {
       targetTask = isHacking ? "Ethical Hacking" : "Vigilante Justice";
-    } else if (primaryStat < GANG_CONFIG.TRAIN_STAT_TARGET) {
+    } 
+    // 2. Training bis Mindest-Stat erreicht ist
+    else if (primaryStat < GANG_CONFIG.TRAIN_STAT_TARGET) {
       targetTask = isHacking ? "Train Hacking" : "Train Combat";
-    } else if (needPower && primaryStat >= GANG_CONFIG.MIN_STAT_FOR_WARFARE) {
-      targetTask = "Territory Warfare";
-    } else if (!isMaxMembers) {
-      targetTask = getRespectTask(isHacking, primaryStat);
-    } else {
+    } 
+    // 3. Territory Warfare (falls Macht benötigt wird)
+    else if (needPower && primaryStat >= GANG_CONFIG.MIN_STAT_FOR_WARFARE) {
+      if (index % 2 === 0) {
+        targetTask = "Territory Warfare";
+      } else {
+        // Falls wir noch Ruf brauchen -> Ruf, ansonsten 100% Geld
+        targetTask = needsRespect
+          ? getRespectTask(isHacking, primaryStat)
+          : getMoneyTask(isHacking, primaryStat);
+      }
+    } 
+    // 4. Volle Gang & Ruf erreicht -> 100% FOKUS AUF GELD
+    else if (!needsRespect) {
       targetTask = getMoneyTask(isHacking, primaryStat);
+    } 
+    // 5. Noch nicht max. Mitglieder / Ruf gefordert -> Fokus auf Ruf
+    else {
+      targetTask = getRespectTask(isHacking, primaryStat);
     }
 
     if (member.task !== targetTask) {
@@ -179,19 +191,24 @@ function getRespectTask(isHacking: boolean, stat: number): string {
     if (stat < 600) return "Phishing";
     return "Cyberterrorism";
   } else {
-    if (stat < 200) return "Mug People";
-    if (stat < 500) return "Strongarm Civilians";
+    if (stat < 300) return "Mug People";
+    if (stat < 600) return "Strongarm Civilians";
     return "Terrorism";
   }
 }
 
 function getMoneyTask(isHacking: boolean, stat: number): string {
   if (isHacking) {
-    if (stat < 400) return "Phishing";
+    if (stat < 300) return "Phishing";
+    if (stat < 600) return "Identity Theft";
+    if (stat < 1000) return "Fraud & Counterfeiting";
     return "Money Laundering";
   } else {
     if (stat < 300) return "Mug People";
-    if (stat < 600) return "Deal Drugs";
+    if (stat < 500) return "Strongarm Civilians";
+    if (stat < 800) return "Deal Drugs";
+    if (stat < 1200) return "Armed Robbery";
+    if (stat < 1800) return "Traffic Illegal Arms";
     return "Human Trafficking";
   }
 }

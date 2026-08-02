@@ -37,7 +37,7 @@ export async function main(ns: NS): Promise<void> {
 
   ns.ui.setTailTitle("Finance-Core");
 
-    ns.ui.resizeTail(593, 515);
+    ns.ui.resizeTail(618, 515);
 
   const lastPurchases: string[] = [];
   const lastWarnings: string[] = [];

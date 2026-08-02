@@ -1,3 +1,5 @@
+// lib/sleeve-utils.ts
+
 import {
   NS,
   FactionName,
@@ -7,6 +9,8 @@ import {
   SleeveTask,
   Player,
   CrimeType,
+  GymLocationName,
+  UniversityLocationName,
 } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { MEGACORPS, COMBAT_STATS, GYM_STAT_MAP } from "lib/constants.js";
@@ -16,19 +20,42 @@ import { hasSingularity } from "./utils.js";
 
 const TRAVEL_COST = 200_000;
 
+// Zuordnung von Städten zu Muckibuden und Unis mit exakten Typen
+const CITY_GYMS: Record<string, GymLocationName> = {
+  Volhaven: "Powerhouse Gym",
+  "Sector-12": "Iron Gym",
+  Aevum: "Crush Fitness Gym",
+};
+
+const CITY_UNIS: Record<string, UniversityLocationName> = {
+  Volhaven: "ZB Institute of Technology",
+  "Sector-12": "Rothman University",
+  Aevum: "Summit University",
+};
+
 function ensureVolhaven(
   ns: NS,
   i: number,
   stats: SleevePerson,
   currentMoney: number,
-): { success: boolean; updatedMoney: number } {
-  if (stats.city === "Volhaven") return { success: true, updatedMoney: currentMoney };
+): { success: boolean; updatedMoney: number; currentCity: string } {
+  if (stats.city === "Volhaven") {
+    return { success: true, updatedMoney: currentMoney, currentCity: "Volhaven" };
+  }
   if (currentMoney >= TRAVEL_COST) {
     if (ns.sleeve.travel(i, "Volhaven")) {
-      return { success: true, updatedMoney: currentMoney - TRAVEL_COST };
+      return { success: true, updatedMoney: currentMoney - TRAVEL_COST, currentCity: "Volhaven" };
     }
   }
-  return { success: false, updatedMoney: currentMoney };
+  return { success: false, updatedMoney: currentMoney, currentCity: stats.city };
+}
+
+function getGymForCity(city: string): GymLocationName {
+  return CITY_GYMS[city] ?? "Iron Gym";
+}
+
+function getUniForCity(city: string): UniversityLocationName {
+  return CITY_UNIS[city] ?? "Rothman University";
 }
 
 function getGangFactionName(ns: NS): FactionName | null {
@@ -209,10 +236,8 @@ export function manageSingleSleeve(
     case "TRAIN": {
       const volResult = ensureVolhaven(ns, i, stats, updatedMoney);
       updatedMoney = volResult.updatedMoney;
-      const gymName = volResult.success ? "Powerhouse Gym" : "Iron Gym";
-      const uniName = volResult.success
-        ? "ZB Institute of Technology"
-        : "Rothman University";
+      const gymName = getGymForCity(volResult.currentCity);
+      const uniName = getUniForCity(volResult.currentCity);
 
       const lowestCombatStat = COMBAT_STATS.reduce((a, b) =>
         stats.skills[a] < stats.skills[b] ? a : b,
@@ -221,25 +246,27 @@ export function manageSingleSleeve(
       if (stats.skills.hacking < 200) {
         if (
           currentTask?.type !== "CLASS" ||
-          currentTask?.classType !== "Algorithms" ||
-          currentTask?.location !== uniName
+          currentTask.classType !== "Algorithms" ||
+          currentTask.location !== uniName
         ) {
-          ns.sleeve.setToUniversityCourse(i, uniName, "Algorithms");
-          const msg = `🎓 Klon #${i}: Lernt Algorithms an der ${uniName}.`;
-          logger.info(msg);
-          addLocalLog(msg);
+          if (ns.sleeve.setToUniversityCourse(i, uniName, "Algorithms")) {
+            const msg = `🎓 Klon #${i}: Lernt Algorithms an der ${uniName}.`;
+            logger.info(msg);
+            addLocalLog(msg);
+          }
         }
       } else {
         const targetGymStat = GYM_STAT_MAP[lowestCombatStat];
         if (
           currentTask?.type !== "CLASS" ||
-          currentTask?.classType !== targetGymStat ||
-          currentTask?.location !== gymName
+          currentTask.classType !== targetGymStat ||
+          currentTask.location !== gymName
         ) {
-          ns.sleeve.setToGymWorkout(i, gymName, targetGymStat);
-          const msg = `🏋️ Klon #${i}: Trainiert ${targetGymStat} im ${gymName}.`;
-          logger.info(msg);
-          addLocalLog(msg);
+          if (ns.sleeve.setToGymWorkout(i, gymName, targetGymStat)) {
+            const msg = `🏋️ Klon #${i}: Trainiert ${targetGymStat} im ${gymName}.`;
+            logger.info(msg);
+            addLocalLog(msg);
+          }
         }
       }
       break;
@@ -248,9 +275,7 @@ export function manageSingleSleeve(
     case "UNI": {
       const volResult = ensureVolhaven(ns, i, stats, updatedMoney);
       updatedMoney = volResult.updatedMoney;
-      const uniName = volResult.success
-        ? "ZB Institute of Technology"
-        : "Rothman University";
+      const uniName = getUniForCity(volResult.currentCity);
 
       let courseName: "Algorithms" | "Leadership" = "Algorithms";
       let statLabel = "Hacking";
@@ -262,13 +287,14 @@ export function manageSingleSleeve(
 
       if (
         currentTask?.type !== "CLASS" ||
-        currentTask?.classType !== courseName ||
-        currentTask?.location !== uniName
+        currentTask.classType !== courseName ||
+        currentTask.location !== uniName
       ) {
-        ns.sleeve.setToUniversityCourse(i, uniName, courseName);
-        const msg = `🎓 Klon #${i}: Studiert ${courseName} (${statLabel}) an der ${uniName}.`;
-        logger.info(msg);
-        addLocalLog(msg);
+        if (ns.sleeve.setToUniversityCourse(i, uniName, courseName)) {
+          const msg = `🎓 Klon #${i}: Studiert ${courseName} (${statLabel}) an der ${uniName}.`;
+          logger.info(msg);
+          addLocalLog(msg);
+        }
       }
       break;
     }
@@ -421,18 +447,19 @@ function tryAssignFactionWork(
   const lowestSleeveCombatStat = stats.skills[lowestStatName];
 
   if (minRequiredStat > 0 && lowestSleeveCombatStat < minRequiredStat) {
-    const gymName = stats.city === "Volhaven" ? "Powerhouse Gym" : "Iron Gym";
+    const gymName = getGymForCity(stats.city);
     const targetGymStat = GYM_STAT_MAP[lowestStatName];
 
     if (
       currentTask?.type !== "CLASS" ||
-      currentTask?.classType !== targetGymStat ||
-      currentTask?.location !== gymName
+      currentTask.classType !== targetGymStat ||
+      currentTask.location !== gymName
     ) {
-      ns.sleeve.setToGymWorkout(i, gymName, targetGymStat);
-      const msg = `🏋️ Klon #${i}: Bootcamp für ${targetFaction} -> ${targetGymStat} (Ziel: ${minRequiredStat}).`;
-      logger.info(msg);
-      addLocalLog(msg);
+      if (ns.sleeve.setToGymWorkout(i, gymName, targetGymStat)) {
+        const msg = `🏋️ Klon #${i}: Bootcamp für ${targetFaction} -> ${targetGymStat} (Ziel: ${minRequiredStat}).`;
+        logger.info(msg);
+        addLocalLog(msg);
+      }
     }
     return true;
   }
@@ -524,15 +551,13 @@ function tryAssignCompanyWork(
   const targetStatThreshold = 300;
   const volResult = ensureVolhaven(ns, i, stats, currentMoney);
   let updatedMoney = volResult.updatedMoney;
-  const bestUniversity = volResult.success
-    ? "ZB Institute of Technology"
-    : "Rothman University";
+  const bestUniversity = getUniForCity(volResult.currentCity);
 
   if (stats.skills.hacking < targetStatThreshold) {
     if (
       currentTask?.type === "CLASS" &&
-      currentTask?.classType === "Algorithms" &&
-      currentTask?.location === bestUniversity
+      currentTask.classType === "Algorithms" &&
+      currentTask.location === bestUniversity
     ) {
       return { success: true, updatedMoney };
     }
@@ -547,8 +572,8 @@ function tryAssignCompanyWork(
   if (stats.skills.charisma < targetStatThreshold) {
     if (
       currentTask?.type === "CLASS" &&
-      currentTask?.classType === "Leadership" &&
-      currentTask?.location === bestUniversity
+      currentTask.classType === "Leadership" &&
+      currentTask.location === bestUniversity
     ) {
       return { success: true, updatedMoney };
     }
@@ -562,7 +587,7 @@ function tryAssignCompanyWork(
 
   if (
     currentTask?.type === "COMPANY" &&
-    currentTask?.companyName === targetCorp
+    currentTask.companyName === targetCorp
   ) {
     if (!occupiedCompanies.includes(targetCorp)) {
       occupiedCompanies.push(targetCorp);
@@ -609,28 +634,38 @@ function executeFallbackCrime(
       stats.skills[a] < stats.skills[b] ? a : b,
     );
     const volResult = ensureVolhaven(ns, i, stats, currentMoney);
-    const gymName = volResult.success ? "Powerhouse Gym" : "Iron Gym";
+    const gymName = getGymForCity(volResult.currentCity);
     const targetGymStat = GYM_STAT_MAP[lowestStatName];
 
+    let gymSuccess = false;
     if (
-      currentTask?.type !== "CLASS" ||
-      currentTask?.classType !== targetGymStat ||
-      currentTask?.location !== gymName
+      currentTask?.type === "CLASS" &&
+      currentTask.classType === targetGymStat &&
+      currentTask.location === gymName
     ) {
-      ns.sleeve.setToGymWorkout(i, gymName, targetGymStat);
-      const msg = `🏋️ Klon #${i}: Not-Bootcamp (${targetGymStat}, ${targetCrime} Chance: ${(chance * 100).toFixed(1)}%) im ${gymName}.`;
-      logger.info(msg);
-      addLocalLog(msg);
+      gymSuccess = true;
+    } else {
+      gymSuccess = ns.sleeve.setToGymWorkout(i, gymName, targetGymStat);
+      if (gymSuccess) {
+        const msg = `🏋️ Klon #${i}: Not-Bootcamp (${targetGymStat}, ${targetCrime} Chance: ${(chance * 100).toFixed(1)}%) im ${gymName}.`;
+        logger.info(msg);
+        addLocalLog(msg);
+      }
     }
-    return volResult.updatedMoney;
+
+    if (gymSuccess) {
+      return volResult.updatedMoney;
+    }
   }
 
-  if (currentTask?.type === "CRIME" && currentTask?.crimeType === targetCrime) {
+  const fallbackCrime = chance >= 0.4 ? targetCrime : "Mug";
+
+  if (currentTask?.type === "CRIME" && currentTask.crimeType === fallbackCrime) {
     return currentMoney;
   }
 
-  if (ns.sleeve.setToCommitCrime(i, targetCrime)) {
-    const msg = `🔫 Klon #${i} optimiert Karma mit: ${targetCrime} (${(chance * 100).toFixed(1)}% Chance)`;
+  if (ns.sleeve.setToCommitCrime(i, fallbackCrime)) {
+    const msg = `🔫 Klon #${i} begeht Verbrechen: ${fallbackCrime} (${(calculateSleeveCrimeChance(ns, stats, fallbackCrime) * 100).toFixed(1)}% Chance)`;
     logger.info(msg);
     addLocalLog(msg);
   }
