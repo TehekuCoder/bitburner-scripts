@@ -1,6 +1,6 @@
 import { NS } from "@ns";
-import { provisionServer } from "./provision.js";
 import { getAllServers } from "/lib/network.js";
+import { provisionServer } from "/lib/utils/provision";
 
 interface TargetScore {
   name: string;

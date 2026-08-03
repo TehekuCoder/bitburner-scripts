@@ -119,10 +119,14 @@ export const PATHS = {
   utils: {
     batchCalculator: "utils/batch-calculator.js",
     deployment: "utils/deployment.js",
-    offline: "utils/go-offline.js",
     internalPlanner: "utils/internal-planner.js",
     progress: "utils/progress.js",
     provision: "utils/provision.js",
-    starter: "utils/starter.js",
+  },
+  tools: {
+    findPath: "tools/find-path.js",
+    goOffline: "tools/go-offline.js",
+    karma: "tools/karma.js",
+    starter: "tools/starter.js",
   },
 } as const;
