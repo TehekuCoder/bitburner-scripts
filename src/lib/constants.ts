@@ -204,7 +204,12 @@ export const PAYLOADS: string[] = [
   PATHS.lib.types.sleeves,
   PATHS.lib.types.strategy,
 
-  PATHS.utils.provision,
+  PATHS.lib.utils.provision,
+
+  PATHS.tools.allocateDarkRam,
+  PATHS.tools.findDarknetPath,
+  PATHS.tools.lootDarknetServer,
+  PATHS.tools.manDnetCrawler,
 
   // 3. Alle Solver-Module für den DNet-Solver
   ...Object.values(PATHS.solvers),

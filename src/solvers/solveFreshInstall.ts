@@ -7,7 +7,7 @@ export async function solveFreshInstall(
   details: any,
   logger?: LoggerClient,
 ): Promise<string | null> {
-  const candidates = ["password", "admin", "123456", "root", "guest"];
+  const candidates = ["password", "admin", "12345", "root","0000"];
 
   logger?.info(`Starte Prüfung gängiger Passwörter für ${host}...`);
 

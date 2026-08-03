@@ -51,6 +51,13 @@ export const PATHS = {
       sleeves: "lib/types/sleeves.js",
       strategy: "lib/types/strategy.js",
     },
+    utils: {
+      batchCalculator: "lib/utils/batch-calculator.js",
+      deployment: "lib/utils/deployment.js",
+      internalPlanner: "lib/utils/internal-planner.js",
+      progress: "lib/utils/progress.js",
+      provision: "lib/utils/provision.js",
+    },
     constants: "lib/constants.js",
     faction: "lib/faction-helpers.js",
     format: "lib/format.js",
@@ -62,7 +69,7 @@ export const PATHS = {
     player: "lib/player.js",
     sleeve: "lib/sleeve-utils.js",
     state: "lib/state.js",
-    utils: "lib/utils.js",
+    utilities: "lib/utils.js",
     executor: "lib/worker-executor.js",
   },
   managers: {
@@ -116,17 +123,14 @@ export const PATHS = {
     sleeve: "ui/sleeve-ui.js",
     helper: "ui/ui-helper.js",
   },
-  utils: {
-    batchCalculator: "utils/batch-calculator.js",
-    deployment: "utils/deployment.js",
-    internalPlanner: "utils/internal-planner.js",
-    progress: "utils/progress.js",
-    provision: "utils/provision.js",
-  },
   tools: {
+    allocateDarkRam: "tools/allocate-darknet-ram.js",
+    findDarknetPath: "tools/find-darknet-path.js",
     findPath: "tools/find-path.js",
     goOffline: "tools/go-offline.js",
     karma: "tools/karma.js",
+    lootDarknetServer: "tools/loot-darknet-server.js",
     starter: "tools/starter.js",
+    manDnetCrawler: "tools/manual-darknet-crawler.js"
   },
 } as const;
