@@ -111,14 +111,16 @@ export function manageSuites(
   // ====================================================================
   // 2. 🚀 HACKING ORCHESTRATOR (Haupt-Pipeline)
   // ====================================================================
-  tryLaunch(scripts.orchestrator, [], () => {
-    logger.success("Starte Hacking-Orchestrator...");
-  });
+  if (homeMaxRam >= 64) {
+    tryLaunch(scripts.orchestrator, [], () => {
+      logger.success("Starte Hacking-Orchestrator...");
+    });
+  }
 
   // ====================================================================
   // 3. 🏗️ FINANCE MANAGER (Ab 64GB RAM)
   // ====================================================================
-  if (homeMaxRam >= 64) {
+  if (homeMaxRam >= 128) {
     tryLaunch(scripts.financeManager, [], () => {
       logger.info("Initialisiere Finanz-Manager...");
     });
@@ -173,7 +175,7 @@ export function manageSuites(
   // ====================================================================
   // 10. 🔄 SHARE-FILLER LOGIK (Ab 32GB RAM)
   // ====================================================================
-  if (homeMaxRam >= 32) {
+  if (homeMaxRam >= 128) {
     tryLaunch(scripts.fillShare, [], () => {
       logger.info("Initialisiere Hintergrund-Share-Filler auf home...");
     });

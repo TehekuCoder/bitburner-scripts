@@ -2,11 +2,7 @@
 
 import { NS } from "@ns";
 import { PATHS } from "/lib/paths.js";
-import { 
-  hasGang, 
-  hasSleeve, 
-  hasSingularity 
-} from "/lib/utils.js";
+import { hasGang, hasSleeve, hasSingularity } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -28,25 +24,42 @@ export async function main(ns: NS): Promise<void> {
   };
 
   while (true) {
+    const homeMaxRam = ns.getServerMaxRam("home");
+
     // 0. Zentrale Finance-Core starten
     tryLaunch(PATHS.core.financeCore);
 
     // 1. Basis-Evaluatoren starten (brauchen keine speziellen APIs)
-    tryLaunch(PATHS.lib.evaluators.home);
-    tryLaunch(PATHS.lib.evaluators.hacknet);
-    tryLaunch(PATHS.lib.evaluators.stock);
     tryLaunch(PATHS.lib.evaluators.pserv);
-    tryLaunch(PATHS.lib.evaluators.programs);
+    tryLaunch(PATHS.lib.evaluators.hacknet);
 
     // 2. Bedingte Evaluatoren starten (Sparen extrem viel RAM im Early-Node!)
-    if (hasGang(ns)) {
+    if (hasSingularity(ns)) {
+      tryLaunch(PATHS.lib.evaluators.home);
+      tryLaunch(PATHS.lib.evaluators.programs);
+      if (homeMaxRam >= 512) {
+        tryLaunch(PATHS.lib.evaluators.player);
+      }
+    }
+
+    if (hasGang(ns) && ns.isRunning(PATHS.managers.gang)) {
       tryLaunch(PATHS.lib.evaluators.gang);
     }
-    if (hasSleeve(ns)) {
+
+    if (hasSleeve(ns) && ns.isRunning(PATHS.managers.sleeve)) {
       tryLaunch(PATHS.lib.evaluators.sleeve);
     }
-    if (hasSingularity(ns)) {
-      tryLaunch(PATHS.lib.evaluators.player);
+
+    const hasWse = () => {
+      try {
+        return ns.stock.hasWseAccount();
+      } catch {
+        return false;
+      }
+    };
+
+    if (hasWse()) {
+      tryLaunch(PATHS.lib.evaluators.stock);
     }
 
     // Warte 2 Sekunden, bevor die nächste Runde getriggert wird

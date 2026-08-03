@@ -41,6 +41,8 @@ export function applyToAllMegacorps(
  * Evaluiert die nächste Fraktion auf der Roadmap.
  * Akzeptiert bis zu 4 Parameter (inkl. optionalem currentCity).
  */
+// lib/player.ts
+
 export function findNextRoadmapFaction(
   ns: NS,
   augRoadmap: AugmentTarget[] = [],
@@ -50,24 +52,32 @@ export function findNextRoadmapFaction(
   const player = ns.getPlayer();
   const playerFactions = player.factions;
   const invites = ns.singularity.checkFactionInvitations();
-  const currentCity =
-    currentCityParam ?? CITY_FACTIONS.find((c) => playerFactions.includes(c));
+  const isBN2 = isGangOfferingAllAugs(ns);
+
+  // 1. Wenn wir in BN2 sind UND bereits in einer Gang, ignorieren wir normale Fraktionen
+  // UNTENSEITIG: Wenn Daedalus bereits freigeschaltet ist, nutzen wir Daedalus für NFG!
+  const hasDaedalus =
+    playerFactions.includes("Daedalus") || invites.includes("Daedalus");
 
   for (const target of augRoadmap) {
-    const validFactions = target.factions.filter((f) => {
-      if (f === gangFaction) return false;
+    // In BN2 springen wir direkt zu NFG über Daedalus/Gang, wenn TRP bereits vorhanden/kaufbar ist
+    if (isBN2 && !hasDaedalus && target.name !== "The Red Pill") {
+      // BN2-Gang erledigt normale Augs
+      continue;
+    }
 
-      const isCity = CITY_FACTIONS.includes(f as FactionName);
-      if (isCity && currentCity && currentCity !== f) return false;
+    const validFactions = target.factions.filter((f) => {
+      if (f === gangFaction && target.name === "The Red Pill" && !isBN2)
+        return false;
 
       const isMember = playerFactions.includes(f);
       const hasInvite = invites.includes(f);
-
       return isMember || hasInvite;
     });
 
     if (validFactions.length === 0) continue;
 
+    // Höchste Reputation wählen
     let bestFaction = validFactions[0];
     let maxRep = ns.singularity.getFactionRep(bestFaction);
 
@@ -80,21 +90,17 @@ export function findNextRoadmapFaction(
     }
 
     if (maxRep < target.repReq) {
-      // Prüft, ob das Augment NeuroFlux Governor ist
-      const isNFG = target.name.includes("NeuroFlux Governor");
-
       return {
         name: bestFaction,
         targetRep: target.repReq,
         augName: target.name,
-        isNFG,
+        isNFG: target.name.includes("NeuroFlux Governor"),
       };
     }
   }
 
   return null;
 }
-
 /**
  * Ermittelt die globale Bot-Strategie anhand von Karma, Stats, Money & Roadmap.
  */
@@ -171,4 +177,17 @@ export function isGangOfferingAllAugs(ns: NS): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Prüft, ob die Daedalus-Kriterien bereits erfüllt sind oder kurz bevorstehen.
+ */
+export function isReadyForDaedalus(ns: NS, player: Player): boolean {
+  const installedAugs = ns.singularity.getOwnedAugmentations(false).length;
+  const hasMoney = player.money >= 100e9; // 100 Milliarden $
+  const hasSkill =
+    player.skills.hacking >= 2500 ||
+    COMBAT_STATS.every((s) => player.skills[s] >= 1500);
+
+  return installedAugs >= 30 && hasMoney && hasSkill;
 }
