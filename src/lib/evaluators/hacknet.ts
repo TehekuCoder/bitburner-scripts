@@ -6,142 +6,174 @@ import {
   PurchasePriority,
 } from "/lib/types/finance.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
-import { loadBnMults } from "../utils";
+import { loadBnMults } from "../utils.js";
 
 interface HacknetRequest extends PurchaseRequest {
   roi: number;
+}
+
+// 1 Hash entspricht im Basis-Verkauf ("Sell for Money") genau 250.000 $
+const HASH_TO_MONEY_VALUE = 250_000;
+
+/**
+ * Berechnet die erwartete Einnahme-Rate ($/s) für Nodes oder Server.
+ */
+function getEstimatedMoneyGain(
+  ns: NS,
+  level: number,
+  ram: number,
+  cores: number,
+  mult: number,
+  isServerMode: boolean,
+  hasFormulas: boolean
+): number {
+  if (isServerMode) {
+    let hashRate = 0;
+    if (hasFormulas && ns.formulas?.hacknetServers) {
+      // API: hashGainRate(level, ramUsed, maxRam, cores, mult)
+      hashRate = ns.formulas.hacknetServers.hashGainRate(level, 0, ram, cores, mult);
+    } else {
+      // Empirische Näherung für Hacknet-Server (Hashes/s)
+      hashRate = 0.25 * level * Math.pow(1.6, Math.log2(ram)) * (1 + (cores - 1) * 0.2) * mult;
+    }
+    return hashRate * HASH_TO_MONEY_VALUE;
+  } else {
+    if (hasFormulas && ns.formulas?.hacknetNodes) {
+      return ns.formulas.hacknetNodes.moneyGainRate(level, ram, cores, mult);
+    }
+    // Empirische Näherung für normale Hacknet-Nodes ($/s)
+    return 1.5 * level * Math.pow(1.5, Math.log2(ram)) * (1 + (cores - 1) * 0.2) * mult;
+  }
 }
 
 export const HacknetEvaluator: PurchaseEvaluator = {
   category: "HACKNET",
 
   getRequests(ns: NS): PurchaseRequest[] {
+    // 1. Modus-Erkennung: Sind wir im Hacknet-Server Modus (BN9 / SF9)?
+    const isServerMode = typeof (ns.hacknet as any).hashCapacity === "function";
+
+    // Multiplier-Check nur im alten Node-Modus anwenden
     const bnMults = loadBnMults(ns);
-    if (bnMults.HacknetNodeMoney === 0) return [];
+    if (!isServerMode && bnMults.HacknetNodeMoney === 0) return [];
 
     const requests: HacknetRequest[] = [];
     const numNodes = ns.hacknet.numNodes();
+    const maxNodes = ns.hacknet.maxNumNodes();
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
-    const hNetMults = hasFormulas ? ns.getHacknetMultipliers() : null;
+    const hNetMults = ns.getHacknetMultipliers();
+    const prodMult = hNetMults?.production ?? 1;
 
-    const calculateRoi = (
-      cost: number,
-      currentGain: number,
-      nextGain: number,
-    ): number => {
+    const calculateRoi = (cost: number, currentGain: number, nextGain: number): number => {
       if (cost <= 0 || !Number.isFinite(cost)) return 0;
-      return hasFormulas && nextGain > currentGain
-        ? (nextGain - currentGain) / cost
-        : 1 / cost;
+      const deltaGain = nextGain - currentGain;
+      return deltaGain > 0 ? deltaGain / cost : (currentGain * 0.05) / cost;
     };
 
-    // Helfer für das Mapping von ROI auf den Standard-Score (0-100)
     const normalizeRoiToScore = (roi: number) =>
       Math.min(100, Math.max(1, Math.floor(roi * 10000)));
 
-    const newNodeCost = ns.hacknet.getPurchaseNodeCost();
-    if (newNodeCost > 0 && Number.isFinite(newNodeCost)) {
-      const newNodeGain =
-        hasFormulas && hNetMults
-          ? ns.formulas.hacknetNodes.moneyGainRate(
-              1,
-              1,
-              1,
-              hNetMults.production,
-            )
-          : 1.5;
+    // 2. NEUEN NODE / SERVER KAUFEN
+    if (numNodes < maxNodes) {
+      const newNodeCost = ns.hacknet.getPurchaseNodeCost();
+      if (newNodeCost > 0 && Number.isFinite(newNodeCost)) {
+        const newNodeGain = getEstimatedMoneyGain(ns, 1, 1, 1, prodMult, isServerMode, hasFormulas);
+        const roi = calculateRoi(newNodeCost, 0, newNodeGain);
 
-      const roi = calculateRoi(newNodeCost, 0, newNodeGain);
-      requests.push({
-        id: `hacknet-new-node-${numNodes}`,
-        category: "HACKNET",
-        priority:
-          numNodes === 0
-            ? PurchasePriority.HIGH
-            : numNodes < 4
-              ? PurchasePriority.MEDIUM
-              : PurchasePriority.LOW,
-        score: normalizeRoiToScore(roi),
-        cost: newNodeCost,
-        roi,
-        description: `Hacknet Node #${numNodes + 1} kaufen`,
-        action: {
-          script: "core/actions/act-hacknet.js",
-          args: ["hacknet-new-node", numNodes],
-        },
-      });
+        // In BN9 / Early Game sind Server extrem wertvoll
+        let priority = PurchasePriority.LOW;
+        if (numNodes === 0) priority = PurchasePriority.HIGH;
+        else if (numNodes < 4) priority = PurchasePriority.MEDIUM;
+
+        requests.push({
+          id: `hacknet-new-node-${numNodes}`,
+          category: "HACKNET",
+          priority,
+          score: normalizeRoiToScore(roi),
+          cost: newNodeCost,
+          roi,
+          description: `Hacknet ${isServerMode ? "Server" : "Node"} #${numNodes + 1} kaufen`,
+          action: {
+            script: "core/actions/act-hacknet.js",
+            args: ["hacknet-new-node", numNodes],
+          },
+        });
+      }
     }
 
+    // 3. EXISTIERENDE NODES / SERVER UPGRADEN
     for (let i = 0; i < numNodes; i++) {
       const stats = ns.hacknet.getNodeStats(i);
+      const currentGain = isServerMode
+        ? stats.production * HASH_TO_MONEY_VALUE
+        : stats.production;
 
-      const upgrades = [
+      const upgradeCandidates = [
         {
           type: "level",
           cost: ns.hacknet.getLevelUpgradeCost(i, 1),
-          action: () => ns.hacknet.upgradeLevel(i, 1),
-          nextGainFn: () =>
-            ns.formulas.hacknetNodes.moneyGainRate(
-              stats.level + 1,
-              stats.ram,
-              stats.cores,
-              hNetMults!.production,
-            ),
+          nextGain: getEstimatedMoneyGain(ns, stats.level + 1, stats.ram, stats.cores, prodMult, isServerMode, hasFormulas),
           desc: `Level (${stats.level} ➔ ${stats.level + 1})`,
+          actArg: "hacknet-upgrade-level",
         },
         {
           type: "ram",
           cost: ns.hacknet.getRamUpgradeCost(i, 1),
-          action: () => ns.hacknet.upgradeRam(i, 1),
-          nextGainFn: () =>
-            ns.formulas.hacknetNodes.moneyGainRate(
-              stats.level,
-              stats.ram * 2,
-              stats.cores,
-              hNetMults!.production,
-            ),
+          nextGain: getEstimatedMoneyGain(ns, stats.level, stats.ram * 2, stats.cores, prodMult, isServerMode, hasFormulas),
           desc: `RAM (${stats.ram}GB ➔ ${stats.ram * 2}GB)`,
+          actArg: "hacknet-upgrade-ram",
         },
         {
           type: "core",
           cost: ns.hacknet.getCoreUpgradeCost(i, 1),
-          action: () => ns.hacknet.upgradeCore(i, 1),
-          nextGainFn: () =>
-            ns.formulas.hacknetNodes.moneyGainRate(
-              stats.level,
-              stats.ram,
-              stats.cores + 1,
-              hNetMults!.production,
-            ),
+          nextGain: getEstimatedMoneyGain(ns, stats.level, stats.ram, stats.cores + 1, prodMult, isServerMode, hasFormulas),
           desc: `Core (${stats.cores} ➔ ${stats.cores + 1})`,
+          actArg: "hacknet-upgrade-core",
         },
       ];
 
-      for (const upg of upgrades) {
+      // Cache-Upgrades (NUR im Server-Modus)
+      if (isServerMode && "cache" in stats) {
+        const cacheCost = ns.hacknet.getCacheUpgradeCost(i, 1);
+        if (cacheCost > 0 && Number.isFinite(cacheCost)) {
+          const currentCache = (stats as any).cache ?? 1;
+          // Cache erhöht nicht direkt $/s, verhindert aber Hash-Verlust bei vollem Speicher.
+          // Hohe Priorität, wenn der Cache sehr klein (< 10) ist.
+          const cacheRoi = currentCache < 10
+            ? (currentGain * 0.15) / cacheCost
+            : (currentGain * 0.02) / cacheCost;
+
+          requests.push({
+            id: `hacknet-node-${i}-cache`,
+            category: "HACKNET",
+            priority: numNodes < 4 ? PurchasePriority.MEDIUM : PurchasePriority.LOW,
+            score: normalizeRoiToScore(cacheRoi),
+            cost: cacheCost,
+            roi: cacheRoi,
+            description: `Hacknet Server #${i + 1} Cache (${currentCache} ➔ ${currentCache + 1})`,
+            action: {
+              script: "core/actions/act-hacknet.js",
+              args: ["hacknet-upgrade-cache", i, 1],
+            },
+          });
+        }
+      }
+
+      for (const upg of upgradeCandidates) {
         if (upg.cost > 0 && Number.isFinite(upg.cost)) {
-          const nextGain = hasFormulas && hNetMults ? upg.nextGainFn() : 0;
-          const roi = calculateRoi(upg.cost, stats.production, nextGain);
+          const roi = calculateRoi(upg.cost, currentGain, upg.nextGain);
 
           requests.push({
             id: `hacknet-node-${i}-${upg.type}`,
             category: "HACKNET",
-            priority:
-              numNodes < 4 ? PurchasePriority.MEDIUM : PurchasePriority.LOW,
+            priority: numNodes < 4 ? PurchasePriority.MEDIUM : PurchasePriority.LOW,
             score: normalizeRoiToScore(roi),
             cost: upg.cost,
             roi,
-            description: `Hacknet Node #${i + 1} ${upg.desc}`,
+            description: `Hacknet ${isServerMode ? "Server" : "Node"} #${i + 1} ${upg.desc}`,
             action: {
               script: "core/actions/act-hacknet.js",
-              args: [
-                upg.type === "level"
-                  ? "hacknet-upgrade-level"
-                  : upg.type === "ram"
-                    ? "hacknet-upgrade-ram"
-                    : "hacknet-upgrade-core",
-                i,
-                1,
-              ],
+              args: [upg.actArg, i, 1],
             },
           });
         }

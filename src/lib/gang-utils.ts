@@ -208,7 +208,7 @@ function getMoneyTask(isHacking: boolean, stat: number): string {
     if (stat < 500) return "Strongarm Civilians";
     if (stat < 800) return "Deal Drugs";
     if (stat < 1200) return "Armed Robbery";
-    if (stat < 1800) return "Traffic Illegal Arms";
+    if (stat < 1800) return "Traffick Illegal Arms";
     return "Human Trafficking";
   }
 }

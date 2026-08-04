@@ -11,6 +11,7 @@ import { runEvaluator } from "/lib/evaluator-runner.js";
 const PSERV_PREFIX = "pserv-";
 const INITIAL_RAM = 8;
 const MIN_HOME_RAM_FOR_PSERVS = 64;
+const BASELINE_TARGET_RAM = 32; // 🎯 Ziel-RAM vor regulärer Staffelung
 
 export const PservEvaluator: PurchaseEvaluator = {
   category: "PURCHASED_SERVER",
@@ -26,7 +27,7 @@ export const PservEvaluator: PurchaseEvaluator = {
 
     const requests: PurchaseRequest[] = [];
 
-    // 1. NEUE SERVER KAUFEN (Score 95: Höchste Priorität vor Upgrades)
+    // 1. NEUE SERVER KAUFEN (HIGH Priority)
     if (owned.length < limit) {
       const cost = ns.cloud.getServerCost(INITIAL_RAM);
       if (cost > 0 && Number.isFinite(cost)) {
@@ -53,7 +54,7 @@ export const PservEvaluator: PurchaseEvaluator = {
       }
     }
 
-    // 2. BESTEHENDE SERVER UPGRADEN (Score max 80: Reiht sich nach Neukäufen ein)
+    // 2. BESTEHENDE SERVER UPGRADEN
     for (const hostname of owned) {
       const currentRam = ns.getServerMaxRam(hostname);
       const nextRam = currentRam * 2;
@@ -62,18 +63,27 @@ export const PservEvaluator: PurchaseEvaluator = {
         const upgradeCost = ns.cloud.getServerUpgradeCost(hostname, nextRam);
 
         if (upgradeCost > 0 && Number.isFinite(upgradeCost)) {
-          let priority = PurchasePriority.LOW;
-          if (!isHomeUnderpowered) {
-            priority =
-              currentRam < 128
-                ? PurchasePriority.HIGH
-                : currentRam < 1024
-                  ? PurchasePriority.MEDIUM
-                  : PurchasePriority.LOW;
-          }
+          const isUnderBaseline = currentRam < BASELINE_TARGET_RAM;
 
-          const baseScore = Math.max(20, 90 - Math.log2(currentRam) * 2);
-          const score = isHomeUnderpowered ? 5 : Math.min(88, baseScore);
+          let priority = PurchasePriority.LOW;
+          let score = 5;
+
+          if (!isHomeUnderpowered) {
+            if (isUnderBaseline) {
+              priority = PurchasePriority.HIGH;
+              score = 90;
+            } else {
+              priority =
+                currentRam < 128
+                  ? PurchasePriority.HIGH
+                  : currentRam < 1024
+                    ? PurchasePriority.MEDIUM
+                    : PurchasePriority.LOW;
+
+              const baseScore = Math.max(20, 90 - Math.log2(currentRam) * 2);
+              score = Math.min(85, baseScore);
+            }
+          }
 
           requests.push({
             id: `pserv-upgrade-${hostname}-${nextRam}gb`,
@@ -81,7 +91,7 @@ export const PservEvaluator: PurchaseEvaluator = {
             priority,
             score,
             cost: upgradeCost,
-            description: `Server Upgrade: ${hostname} (${currentRam}GB ➔ ${nextRam}GB)`,
+            description: `Server Upgrade: ${hostname} (${currentRam}GB ➔ ${nextRam}GB)${isUnderBaseline ? " ⚡ [Baseline Push]" : ""}`,
             action: {
               script: "core/actions/act-cloud.js",
               args: ["pserv-upgrade", hostname, nextRam],

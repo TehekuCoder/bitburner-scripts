@@ -168,25 +168,26 @@ export async function main(ns: NS): Promise<void> {
 
       // 3. Käufe verarbeiten mit intelligentem Blocking
       const blockedCategories = new Set<PurchaseCategory>();
-
-      // Das höchste unerfüllte Prioritäts-Level finden
       let highestUnsatisfiedPriority = PurchasePriority.IDLE;
+
+      const POCKET_CHANGE_RATIO = 0.01; // 1% des aktuellen Vermögens gilt als "Kleingeld"
 
       for (const req of allRequests) {
         const margin = CATEGORY_MARGINS[req.category] ?? 1.0;
         const requiredBudget = req.cost * margin;
 
-        // Falls Kategorie blockiert ist, aber wir das Item SOFORT problemlos bezahlen können -> Trotzdem kaufen!
         const canAffordEasily = availableMoney >= requiredBudget;
+        // 💡 Neu: Ist es spottbillig im Vergleich zu unserem Vermögen?
+        const isPocketChange = req.cost <= rawMoney * POCKET_CHANGE_RATIO;
 
         // 1. Wenn die Kategorie bereits gesperrt ist und es teuer ist -> Überspringen
         if (blockedCategories.has(req.category) && !canAffordEasily) {
           continue;
         }
 
-        // 2. SPARRULE: Wenn wir auf ein CRITICAL/HIGH Ziel sparen,
-        // blockieren wir alle Käufe mit WENIGER Dringlichkeit (höherer Prio-Zahl)
-        if (req.priority > highestUnsatisfiedPriority) {
+        // 2. SPARRULE: Wenn wir auf ein Ziel sparen...
+        // Blockieren wir nachfolgende Items NUR DANN, wenn es KEIN Kleingeld ist!
+        if (req.priority > highestUnsatisfiedPriority && !isPocketChange) {
           continue;
         }
 
@@ -208,15 +209,13 @@ export async function main(ns: NS): Promise<void> {
             if (lastWarnings.length > 6) lastWarnings.shift();
           }
         } else {
-          // Geld reicht nicht -> Sparziel setzen und teurere Items dieser Kategorie blockieren
+          // Geld reicht nicht -> Sparziel setzen und Kategorie blockieren
           const savingMsg = `⏳ SPARZIEL: ${req.description} ($${ns.format.number(availableMoney)} / $${ns.format.number(req.cost)})`;
           lastWarnings.push(savingMsg);
           if (lastWarnings.length > 6) lastWarnings.shift();
 
           blockedCategories.add(req.category);
 
-          // Sparmodus aktivieren: Merken, welche hohe Priorität gerade spart.
-          // Verhindert, dass nachfolgende MEDIUM/LOW/IDLE Anfragen Geld ausgeben.
           if (req.priority < highestUnsatisfiedPriority) {
             highestUnsatisfiedPriority = req.priority;
           }

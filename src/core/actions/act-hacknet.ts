@@ -18,5 +18,8 @@ export async function main(ns: NS): Promise<void> {
     case "hacknet-upgrade-core":
       if (index >= 0) ns.hacknet.upgradeCore(index, amount);
       break;
+    case "hacknet-upgrade-cache":
+      if (index >= 0) ns.hacknet.upgradeCache(index, amount);
+      break;
   }
 }

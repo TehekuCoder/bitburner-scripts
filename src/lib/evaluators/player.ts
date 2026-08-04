@@ -1,7 +1,11 @@
 // lib/evaluators/player.ts
 import { NS, FactionName } from "@ns";
 import { getPurchasedUninstalledAugs } from "/lib/player.js";
-import { PurchaseEvaluator, PurchaseRequest, PurchasePriority } from "/lib/types/finance.js";
+import {
+  PurchaseEvaluator,
+  PurchaseRequest,
+  PurchasePriority,
+} from "/lib/types/finance.js";
 import { AUG_PRICE_MULT } from "/lib/constants.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
 
@@ -30,7 +34,8 @@ function updateGangVelocity(ns: NS): void {
       const dRep = currentRep - lastGangRep;
       if (dt > 0 && dRep >= 0) {
         const instantRate = dRep / dt;
-        gangRepPerSec = gangRepPerSec === 0 ? instantRate : gangRepPerSec * 0.7 + instantRate * 0.3;
+        gangRepPerSec =
+          gangRepPerSec === 0 ? instantRate : gangRepPerSec * 0.7 + instantRate * 0.3;
       }
     }
 
@@ -39,6 +44,39 @@ function updateGangVelocity(ns: NS): void {
   } catch {
     gangRepPerSec = 0;
   }
+}
+
+/**
+ * Sortiert Augmentations streng nach Prerequisites (Abhängigkeiten) und danach
+ * absteigend nach Preis (teuerste zuerst), um den 1.9x-Multiplikator zu minimieren.
+ */
+function sortAugsWithPrereqs(
+  augs: AugCandidate[],
+  sing: NS["singularity"],
+  ownedAugs: string[]
+): AugCandidate[] {
+  const result: AugCandidate[] = [];
+  const remaining = [...augs];
+
+  while (remaining.length > 0) {
+    const validNext = remaining.filter((aug) => {
+      const prereqs = sing.getAugmentationPrereq(aug.name);
+      return prereqs.every(
+        (p) => ownedAugs.includes(p) || result.some((r) => r.name === p)
+      );
+    });
+
+    if (validNext.length === 0) break; // Schutz vor unerfüllbaren Prerequisites
+
+    validNext.sort((a, b) => b.price - a.price);
+    const chosen = validNext[0];
+
+    result.push(chosen);
+    const idx = remaining.findIndex((r) => r.name === chosen.name);
+    if (idx !== -1) remaining.splice(idx, 1);
+  }
+
+  return result;
 }
 
 export const PlayerEvaluator: PurchaseEvaluator = {
@@ -73,7 +111,12 @@ export const PlayerEvaluator: PurchaseEvaluator = {
       const currentRep = sing.getFactionRep(faction);
 
       for (const aug of sing.getAugmentationsFromFaction(faction)) {
-        if (aug === "NeuroFlux Governor" || ownedAugs.includes(aug) || scannedAugNames.has(aug)) continue;
+        if (
+          aug === "NeuroFlux Governor" ||
+          ownedAugs.includes(aug) ||
+          scannedAugNames.has(aug)
+        )
+          continue;
 
         const repReq = sing.getAugmentationRepReq(aug);
         let etaSeconds = 0;
@@ -86,36 +129,43 @@ export const PlayerEvaluator: PurchaseEvaluator = {
           }
         }
 
+        // Augments berücksichtigen, die sofort oder in max. 180s freigeschaltet sind
         if (etaSeconds <= 180) {
           const price = sing.getAugmentationPrice(aug);
           if (Number.isFinite(price) && price > 0) {
-            candidates.push({ name: aug, faction, price, repReq, isGang, etaSeconds });
+            candidates.push({
+              name: aug,
+              faction,
+              price,
+              repReq,
+              isGang,
+              etaSeconds,
+            });
             scannedAugNames.add(aug);
           }
         }
       }
     }
 
-    const pendingHighTierGangAug = candidates.some((c) => c.isGang && c.etaSeconds > 0 && c.price > 1_000_000_000);
+    if (candidates.length === 0) return requests;
 
-    const readyCandidates = candidates.filter((item) => {
-      if (item.etaSeconds > 0) return false;
-      return sing.getAugmentationPrereq(item.name).every((p) => ownedAugs.includes(p) || scannedAugNames.has(p));
-    });
-
-    readyCandidates.sort((a, b) => {
-      if (sing.getAugmentationPrereq(b.name).includes(a.name)) return -1;
-      if (sing.getAugmentationPrereq(a.name).includes(b.name)) return 1;
-      return b.price - a.price;
-    });
-
-    if (readyCandidates.length === 0) return requests;
-
+    // Nur Augments wählen, deren Ruf JETZT schon ausreicht (ETA = 0)
+    const readyCandidates = candidates.filter((item) => item.etaSeconds === 0);
     const currentMoney = ns.getServerMoneyAvailable("home");
 
-    // FALL 1: Wir haben bereits angefangen zu kaufen
+    // -------------------------------------------------------------
+    // FALL 1: BEREITS IM KAUFMODUS (Uninstalled Augs bereits im Inventar)
+    // -------------------------------------------------------------
     if (hasStartedBuying) {
-      const nextTarget = readyCandidates[0];
+      const immediateBuyable = readyCandidates.filter((aug) =>
+        sing.getAugmentationPrereq(aug.name).every((p) => ownedAugs.includes(p))
+      );
+
+      if (immediateBuyable.length === 0) return requests;
+
+      immediateBuyable.sort((a, b) => b.price - a.price);
+      const nextTarget = immediateBuyable[0];
+
       requests.push({
         id: `player-aug-dump-${nextTarget.name}`,
         category: "PLAYER_AUG",
@@ -131,65 +181,40 @@ export const PlayerEvaluator: PurchaseEvaluator = {
       return requests;
     }
 
-    // FALL 2: Noch nichts gekauft -> Warten auf optimalen Batch
-    if (pendingHighTierGangAug && currentMoney < 50_000_000_000) {
-      return requests;
-    }
+    // -------------------------------------------------------------
+    // FALL 2: WARTEN BIS GENUG GELD FÜR 10 AUGMENTS BZW. ALLE RESTLICHEN DA IST
+    // -------------------------------------------------------------
+    // 1. Die bis zu 10 günstigsten verbleibenden Augmentations auswählen
+    const cheapestCandidates = [...readyCandidates]
+      .sort((a, b) => a.price - b.price)
+      .slice(0, 10);
 
-    // KORRIGIERTE BATCH-BERECHNUNG
-    let simulatedCost = 0;
+    // 2. Unter Berücksichtigung von Prerequisites & Preis-Abstieg sortieren
+    const orderedBatch = sortAugsWithPrereqs(cheapestCandidates, sing, ownedAugs);
+
+    // 3. Exakte Gesamtkosten inkl. 1.9x Multiplikator berechnen
+    let totalBatchCost = 0;
     let currentMult = 1.0;
-    const batchToBuy: AugCandidate[] = [];
-    const MAX_BATCH_SIZE = 6; // Verhindert Systemüberlastung durch zu große Pakete
-
-    for (const aug of readyCandidates) {
-      const scaledPrice = aug.price * currentMult;
-      const nextTotalCost = simulatedCost + scaledPrice;
-
-      // Prüfen, ob das nächste Augment unser aktuelles Geld übersteigen würde
-      if (nextTotalCost > currentMoney) {
-        // Haben wir bereits 3 oder mehr Augs, die wir uns JETZT leisten können?
-        if (batchToBuy.length >= 3) {
-          // Stopp! Wir kaufen JETZT genau diese bezahlbare Menge!
-          break;
-        }
-
-        // Falls wir noch keine 3 Items haben, fügen wir es als Sparziel hinzu
-        batchToBuy.push(aug);
-        simulatedCost = nextTotalCost;
-        currentMult *= AUG_PRICE_MULT;
-
-        // Sparziel fest auf maximal 3 Items deckeln, damit das Ziel nicht wegläuft!
-        if (batchToBuy.length >= 3) {
-          break;
-        }
-      } else {
-        // Wir können es uns leisten -> Hinzufügen
-        batchToBuy.push(aug);
-        simulatedCost = nextTotalCost;
-        currentMult *= AUG_PRICE_MULT;
-
-        // Maximal-Limit für einen einzelnen Kauf-Batch erreicht
-        if (batchToBuy.length >= MAX_BATCH_SIZE) {
-          break;
-        }
-      }
+    for (const aug of orderedBatch) {
+      totalBatchCost += aug.price * currentMult;
+      currentMult *= AUG_PRICE_MULT;
     }
 
-    const isAffordable = currentMoney >= simulatedCost;
-    const includesRedPill = batchToBuy.some((a) => a.name === "The Red Pill");
+    const hasRedPill = orderedBatch.some((a) => a.name === "The Red Pill");
+    const canAffordFullBatch = currentMoney >= totalBatchCost;
 
-    if (batchToBuy.length >= 2 || includesRedPill || currentMoney > 100_000_000_000) {
+    // 4. NUR KAUFEN, wenn das Geld für das GESAMTE Paket reicht (oder Red Pill bereitsteht)
+    if (canAffordFullBatch || hasRedPill) {
       requests.push({
-        id: isAffordable ? "player-aug-batch" : "player-aug-saving",
+        id: "player-aug-batch",
         category: "PLAYER_AUG",
-        priority: isAffordable ? PurchasePriority.CRITICAL : PurchasePriority.HIGH,
-        score: isAffordable ? 100 : 90,
-        cost: simulatedCost,
-        description: `${isAffordable ? "Augmentation Batch" : "Sparziel: Aug Batch"} (${batchToBuy.length} Items)`,
+        priority: PurchasePriority.CRITICAL,
+        score: 100,
+        cost: totalBatchCost,
+        description: `Augmentation Batch (${orderedBatch.length} Items)`,
         action: {
           script: "core/actions/act-singularity.js",
-          args: ["player-purchase-aug-batch", JSON.stringify(batchToBuy)],
+          args: ["player-purchase-aug-batch", JSON.stringify(orderedBatch)],
         },
       });
     }
