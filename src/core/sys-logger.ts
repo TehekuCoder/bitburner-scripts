@@ -12,7 +12,7 @@ export async function main(ns: NS): Promise<void> {
     ["port", 1],
     ["target", ""], 
     ["module", ""], 
-    ["level", "WARN"], 
+    ["level", "ERROR"], 
     ["fileAll", true], 
     ["tag", ""], 
     ["context", ""], 

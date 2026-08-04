@@ -1,4 +1,4 @@
-// managers/finance-manager.ts
+// daemons/finance-manager.ts
 
 import { NS } from "@ns";
 import { PATHS } from "/lib/paths.js";
@@ -33,7 +33,7 @@ export async function main(ns: NS): Promise<void> {
     tryLaunch(PATHS.lib.evaluators.pserv);
     tryLaunch(PATHS.lib.evaluators.hacknet);
 
-    // 2. Bedingte Evaluatoren starten (Sparen extrem viel RAM im Early-Node!)
+    // 2. Bedingte Evaluatoren starten (Singularity / RAM-Thresholds)
     if (hasSingularity(ns)) {
       tryLaunch(PATHS.lib.evaluators.home);
       tryLaunch(PATHS.lib.evaluators.programs);
@@ -50,19 +50,13 @@ export async function main(ns: NS): Promise<void> {
       tryLaunch(PATHS.lib.evaluators.sleeve);
     }
 
-    const hasWse = () => {
-      try {
-        return ns.stock.hasWseAccount();
-      } catch {
-        return false;
-      }
-    };
-
-    if (hasWse()) {
+    // 3. Stock-Evaluator starten, sobald ns.stock technisch verfügbar ist
+    // (Der Evaluator selbst entscheidet dann, ob er Lizenzen kauft oder Aktien handelt)
+    if (Boolean(ns.stock)) {
       tryLaunch(PATHS.lib.evaluators.stock);
     }
 
-    // Warte 2 Sekunden, bevor die nächste Runde getriggert wird
+    // Warte 2 Sekunden bis zum nächsten Check
     await ns.sleep(2000);
   }
 }
