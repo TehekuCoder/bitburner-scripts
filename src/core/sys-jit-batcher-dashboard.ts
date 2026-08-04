@@ -5,12 +5,10 @@ import { getAllServers } from "/lib/network.js";
 import { loadBatcherState } from "/lib/state.js";
 import { DashboardData } from "/lib/types/common";
 
-/** Hilfsfunktion: Entfernt Countdown-Klammern für den Event-Log-Vergleich */
 function cleanProgressString(str: string): string {
   return str.replace(/\s*\([^)]*?\d+s[^)]*?\)/g, "").trim();
 }
 
-/** Hilfsfunktion: Liefert den ersten validen Servernamen aus einer kommasparierten Liste */
 function getPrimaryTarget(rawTarget: string): string {
   if (!rawTarget) return "Keines";
   if (rawTarget.includes(",")) {
@@ -22,7 +20,7 @@ function getPrimaryTarget(rawTarget: string): string {
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
-  ns.ui.resizeTail(579, 492);
+  ns.ui.resizeTail(610, 520);
 
   const eventLog: string[] = [];
   let lastTarget = "";
@@ -33,7 +31,6 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     const state = loadBatcherState(ns);
 
-    // Failsafe, falls der JIT-Batcher inaktiv ist
     if (!state || !state.batcherActive) {
       ns.clearLog();
       ns.print("============================================================");
@@ -50,7 +47,7 @@ export async function main(ns: NS): Promise<void> {
     const progressStr = state.batcherProgress ?? "";
     const targetsSummary = state.batcherTargetsSummary ?? [];
 
-    // 1. Dynamic Event-Logging für Zustandsänderungen
+    // 1. Event-Logging
     if (
       rawTarget !== lastTarget &&
       rawTarget !== "Suche..." &&
@@ -79,9 +76,9 @@ export async function main(ns: NS): Promise<void> {
       lastStateString = progressStr;
     }
 
-    if (eventLog.length > 4) eventLog.shift();
+    if (eventLog.length > 3) eventLog.shift();
 
-    // 2. Live RAM-Metriken berechnen
+    // 2. RAM-Metriken
     let totalMaxRam = 0;
     let totalUsedRam = 0;
     const servers = getAllServers(ns);
@@ -95,44 +92,40 @@ export async function main(ns: NS): Promise<void> {
     }
     const ramFree = Math.max(0, totalMaxRam - totalUsedRam);
 
-    // 3. Multi-Target Metriken aufsummieren
+    // 3. Multi-Target Metriken
     let totalActiveBatches = 0;
     let totalMaxBatches = 0;
-    let totalProgressPercent = 0;
     let averageGreed = 0;
+    let totalRamNeeded = state.batcherRamNeeded ?? 0;
 
     if (targetsSummary.length > 0) {
       for (const t of targetsSummary) {
         totalActiveBatches += t.activeBatches;
         totalMaxBatches += t.maxBatches;
         averageGreed += t.greed;
+        if (t.batchRam) totalRamNeeded += t.batchRam;
       }
       averageGreed /= targetsSummary.length;
-      totalProgressPercent =
-        totalMaxBatches > 0 ? totalActiveBatches / totalMaxBatches : 0;
     } else {
       totalMaxBatches = state.batcherDynamicMaxBatches ?? 100;
       averageGreed =
         state.batcherPlan?.greed ?? state.batcherPlan?.greedFactor ?? 0;
     }
 
-    // 4. Gewinn-Schätzung pro Welle via Formulas-API (über alle HWGW-Ziele)
+    const totalProgressPercent =
+      totalMaxBatches > 0 ? totalActiveBatches / totalMaxBatches : 0;
+
+    // 4. Gewinn-Schätzung pro Welle
     let totalWaveProfit = 0;
     if (ns.formulas && ns.formulas.hacking) {
-      const playerObj = ns.getPlayer();
-
       for (const t of targetsSummary) {
         if (t.mode === "HWGW" && ns.serverExists(t.target)) {
           const serverObj = ns.getServer(t.target);
-
-          // Schätzung basierend auf dem Greed-Faktor des Ziels
           totalWaveProfit += (serverObj.moneyMax ?? 0) * t.greed;
         }
       }
     }
 
-    // 5. UI-Daten-Objekt füttern
-    // Falls ein Einzel-Target übergeben wird, nutzen wir primaryTarget, sonst zeigen wir die Zusammenfassung
     const displayTarget =
       targetsSummary.length > 1
         ? `${primaryTarget} (+${targetsSummary.length - 1})`
@@ -142,9 +135,9 @@ export async function main(ns: NS): Promise<void> {
       status: `Multi-Target (${targetsSummary.length} aktiv)`,
       target: displayTarget,
       progress: Math.min(1.0, Math.max(0, totalProgressPercent)),
-      progressText: `${totalActiveBatches} / ${totalMaxBatches} Batches`,
+      progressText: `${totalActiveBatches} Batches (${targetsSummary.length} Ziele)`,
       greed: averageGreed,
-      ramNeeded: state.batcherRamNeeded ?? 0,
+      ramNeeded: totalRamNeeded,
       ramFree: ramFree,
       ramTotal: totalMaxRam,
       batchesSent: totalActiveBatches,
@@ -155,7 +148,6 @@ export async function main(ns: NS): Promise<void> {
     };
 
     drawBatcherDashboard(ns, uiData);
-
     await ns.sleep(500);
   }
 }

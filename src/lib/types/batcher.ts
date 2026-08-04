@@ -69,6 +69,7 @@ export interface TargetSummary {
   maxBatches: number;
   prepEndTime: number;
   greed: number;
+  batchRam?: number; // 🟢 Neu für genaue RAM-Metriken im Dashboard
 }
 
 export interface ActiveBatch {

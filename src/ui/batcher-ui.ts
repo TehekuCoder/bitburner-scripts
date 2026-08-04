@@ -10,35 +10,9 @@ function makeProgressBar(progress: number, width = 20): string {
 export function drawBatcherDashboard(ns: NS, data: DashboardData): void {
   ns.clearLog();
 
-  // 🟢 FIX: Prüfe mit ns.serverExists, ob das Ziel ein echter Servername ist.
-  // Falls data.target ein kombinierter String ist, versuche das erste Target aus targetsSummary zu nutzen.
-  let statsTarget = "";
-  if (ns.serverExists(data.target)) {
-    statsTarget = data.target;
-  } else if (
-    data.targetsSummary &&
-    data.targetsSummary.length > 0 &&
-    ns.serverExists(data.targetsSummary[0].target)
-  ) {
-    statsTarget = data.targetsSummary[0].target;
-  }
-
-  const hasValidTarget = statsTarget !== "";
-
-  const curSec = hasValidTarget ? ns.getServerSecurityLevel(statsTarget) : 0;
-  const minSec = hasValidTarget ? ns.getServerMinSecurityLevel(statsTarget) : 0;
-  const curMoney = hasValidTarget ? ns.getServerMoneyAvailable(statsTarget) : 0;
-  const maxMoney = hasValidTarget ? ns.getServerMaxMoney(statsTarget) : 0;
-
-  const moneyPercent = maxMoney > 0 ? (curMoney / maxMoney) * 100 : 0;
   const ramUsed = data.ramTotal - data.ramFree;
   const ramPercent = data.ramTotal > 0 ? (ramUsed / data.ramTotal) * 100 : 0;
   const bar = makeProgressBar(data.progress, 20);
-
-  const targetHeader =
-    data.targetsSummary && data.targetsSummary.length > 1
-      ? `ZIELSERVER-ZUSTAND (${statsTarget}):`
-      : `ZIELSERVER-ZUSTAND:`;
 
   ns.print(`============================================================`);
   ns.print(
@@ -54,14 +28,55 @@ export function drawBatcherDashboard(ns: NS, data: DashboardData): void {
     `RAM Pool:    ${ns.format.ram(ramUsed)} / ${ns.format.ram(data.ramTotal)} (${ramPercent.toFixed(1)}%)`,
   );
   ns.print(
-    `Wellen-Ram:  ${ns.format.ram(data.ramNeeded)} Benötigt | Frei gepoolt: ${ns.format.ram(data.ramFree)}`,
+    `Wellen-RAM:  ${ns.format.ram(data.ramNeeded)} pro Set | Frei: ${ns.format.ram(data.ramFree)}`,
   );
   ns.print(`------------------------------------------------------------`);
-  ns.print(targetHeader);
-  ns.print(`Sicherheit:  ${curSec.toFixed(2)} / ${minSec.toFixed(2)} (Min)`);
-  ns.print(
-    `Finanzen:    $${ns.format.number(curMoney)} / $${ns.format.number(maxMoney)} (${moneyPercent.toFixed(1)}%)`,
-  );
+
+  // Dynamischer Umschalter: Einzel-Target Detail VS Multi-Target Übersicht
+  if (data.targetsSummary && data.targetsSummary.length > 1) {
+    ns.print(`AKTIVE ZIELE (${data.targetsSummary.length}):`);
+    ns.print(`ZIEL             MODE   BATCHES     MONEY      SEC`);
+    
+    for (const t of data.targetsSummary.slice(0, 8)) {
+      const hasTarget = ns.serverExists(t.target);
+      const curSec = hasTarget ? ns.getServerSecurityLevel(t.target) : 0;
+      const minSec = hasTarget ? ns.getServerMinSecurityLevel(t.target) : 0;
+      const curMoney = hasTarget ? ns.getServerMoneyAvailable(t.target) : 0;
+      const maxMoney = hasTarget ? ns.getServerMaxMoney(t.target) : 0;
+
+      const secDiff = curSec - minSec;
+      const secStr = secDiff <= 0.05 ? "MIN" : `+${secDiff.toFixed(1)}`;
+      const moneyPct = maxMoney > 0 ? ((curMoney / maxMoney) * 100).toFixed(0) + "%" : "0%";
+
+      const namePadded = t.target.padEnd(16, " ").slice(0, 16);
+      const modePadded = t.mode.padEnd(6, " ");
+      const batchPadded = `${t.activeBatches}/${t.maxBatches}`.padEnd(11, " ");
+      const moneyPadded = moneyPct.padEnd(10, " ");
+
+      ns.print(`${namePadded} ${modePadded} ${batchPadded} ${moneyPadded} ${secStr}`);
+    }
+  } else {
+    let statsTarget = "";
+    if (ns.serverExists(data.target)) {
+      statsTarget = data.target;
+    } else if (data.targetsSummary && data.targetsSummary.length > 0 && ns.serverExists(data.targetsSummary[0].target)) {
+      statsTarget = data.targetsSummary[0].target;
+    }
+
+    const hasValidTarget = statsTarget !== "";
+    const curSec = hasValidTarget ? ns.getServerSecurityLevel(statsTarget) : 0;
+    const minSec = hasValidTarget ? ns.getServerMinSecurityLevel(statsTarget) : 0;
+    const curMoney = hasValidTarget ? ns.getServerMoneyAvailable(statsTarget) : 0;
+    const maxMoney = hasValidTarget ? ns.getServerMaxMoney(statsTarget) : 0;
+    const moneyPercent = maxMoney > 0 ? (curMoney / maxMoney) * 100 : 0;
+
+    ns.print(`ZIELSERVER-ZUSTAND (${statsTarget || "Keins"}):`);
+    ns.print(`Sicherheit:  ${curSec.toFixed(2)} / ${minSec.toFixed(2)} (Min)`);
+    ns.print(
+      `Finanzen:    $${ns.format.number(curMoney)} / $${ns.format.number(maxMoney)} (${moneyPercent.toFixed(1)}%)`,
+    );
+  }
+
   ns.print(`------------------------------------------------------------`);
   ns.print(`EREIGNIS-PROTOKOLL:`);
   if (data.eventLog.length === 0) {

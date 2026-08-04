@@ -27,10 +27,7 @@ import { ActiveBatch, JitEvent, TargetContext } from "/lib/types/batcher.js";
 import { patchBatcherState } from "/lib/state.js";
 import { loadBnMults } from "/lib/utils.js";
 
-
 type PlannerPlan = NonNullable<ReturnType<typeof internalPlanner>>;
-
-
 
 const MAX_SAFE_CONCURRENT_SCRIPTS = 10000;
 
@@ -39,7 +36,10 @@ export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "JIT-Batcher");
 
   let bnMults: BitNodeMultipliers = loadBnMults(ns);
-  patchBatcherState(ns, { batcherActive: true, batcherProgress: "Initialisiere..." });
+  patchBatcherState(ns, {
+    batcherActive: true,
+    batcherProgress: "Initialisiere...",
+  });
 
   let servers = getAllServers(ns);
   let lastServerScan = Date.now();
@@ -80,7 +80,10 @@ export async function main(ns: NS): Promise<void> {
     }
 
     activeTargets.delete(targetName);
-    logger.warn(`🛑 Ziel [${targetName}] isoliert zurückgesetzt: ${reason}`, targetName);
+    logger.warn(
+      `🛑 Ziel [${targetName}] isoliert zurückgesetzt: ${reason}`,
+      targetName,
+    );
   }
 
   function resetAllTargets(reason: string): void {
@@ -143,7 +146,9 @@ export async function main(ns: NS): Promise<void> {
 
     if (levelDelta >= minAbsDelta) {
       lastHackingLevel = currentLevel;
-      resetAllTargets(`Major Level-Up (${currentLevel - levelDelta} -> ${currentLevel})`);
+      resetAllTargets(
+        `Major Level-Up (${currentLevel - levelDelta} -> ${currentLevel})`,
+      );
     }
 
     // 🩺 3. HEALTH-CHECK (Kein Array.from nötig)
@@ -158,7 +163,10 @@ export async function main(ns: NS): Promise<void> {
 
         if (secDiff > 0.5) {
           targetBlacklist.set(ctx.target, now + 45000);
-          removeTarget(ctx.target, `Desynchronisation (+${secDiff.toFixed(2)} Sec)`);
+          removeTarget(
+            ctx.target,
+            `Desynchronisation (+${secDiff.toFixed(2)} Sec)`,
+          );
         }
       }
     }
@@ -178,23 +186,44 @@ export async function main(ns: NS): Promise<void> {
     // 💓 HEARTBEAT-LOG
     if (now - lastHeartbeatTime > 10000) {
       lastHeartbeatTime = now;
-      const targetNames = Array.from(activeTargets.keys()).join(", ") || "Keine";
+      const targetNames =
+        Array.from(activeTargets.keys()).join(", ") || "Keine";
       logger.debug(
         `💓 Ziele: [${targetNames}] | Queue: ${eventQueue.length} (${queueRam.toFixed(0)}GB) | Lag: ${rollingLag.toFixed(1)}ms | Freier RAM: ${virtualFreeRam.toFixed(0)}GB`,
       );
     }
 
     // 🔄 4. TARGET EVICTION CHECK (ALLE 20s)
-    const dynamicMaxTargets = getDynamicMaxTargets(totalNetworkMaxRam, currentLevel);
+    const dynamicMaxTargets = getDynamicMaxTargets(
+      totalNetworkMaxRam,
+      currentLevel,
+    );
 
-    if (now - lastEvictionCheck > 20000 && activeTargets.size >= dynamicMaxTargets) {
-      const candidateServers = servers.filter((s) => !targetBlacklist.has(s) && !activeTargets.has(s));
-      checkTargetEviction(ns, activeTargets, candidateServers, virtualFreeRam, bnMults, logger, removeTarget);
+    if (
+      now - lastEvictionCheck > 20000 &&
+      activeTargets.size >= dynamicMaxTargets
+    ) {
+      const candidateServers = servers.filter(
+        (s) => !targetBlacklist.has(s) && !activeTargets.has(s),
+      );
+      checkTargetEviction(
+        ns,
+        activeTargets,
+        candidateServers,
+        virtualFreeRam,
+        bnMults,
+        logger,
+        removeTarget,
+      );
       lastEvictionCheck = now;
     }
 
     // ⚖️ 5. DYNAMISCHE RAM-VERTEILUNG
-    updateDynamicBatchCaps(activeTargets, virtualFreeRam, MAX_SAFE_CONCURRENT_SCRIPTS);
+    updateDynamicBatchCaps(
+      activeTargets,
+      virtualFreeRam,
+      MAX_SAFE_CONCURRENT_SCRIPTS,
+    );
 
     // 🔍 6. MULTI-TARGET PLANNER EVALUIERUNG (Getrottelt auf max. 1x pro Sekunde)
     if (
@@ -203,7 +232,9 @@ export async function main(ns: NS): Promise<void> {
       virtualFreeRam > 10
     ) {
       lastPlannerRunTime = now;
-      const candidateServers = servers.filter((s) => !targetBlacklist.has(s) && !activeTargets.has(s));
+      const candidateServers = servers.filter(
+        (s) => !targetBlacklist.has(s) && !activeTargets.has(s),
+      );
 
       const planning = internalPlanner(
         ns,
@@ -289,10 +320,17 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    // RAM-Bedarf über alle aktiven Wellen berechnen
+    const totalRamNeeded = Array.from(activeTargets.values()).reduce(
+      (sum, ctx) => sum + ctx.plan.batchRam,
+      0,
+    );
+
     // Dashboard State Update
     patchBatcherState(ns, {
       batcherTarget: Array.from(activeTargets.keys()).join(", ") || "Suche...",
       batcherProgress: `Multi-Target (${activeTargets.size} aktiv)`,
+      batcherRamNeeded: totalRamNeeded, // 🟢 Gefixt
       batcherTargetsSummary: Array.from(activeTargets.values()).map((ctx) => ({
         target: ctx.target,
         mode: ctx.plan.hackThreads === 0 ? "PREP" : "HWGW",
@@ -300,6 +338,7 @@ export async function main(ns: NS): Promise<void> {
         maxBatches: ctx.dynamicMaxBatches,
         prepEndTime: ctx.prepEndTime,
         greed: (ctx.plan as { greed?: number }).greed ?? 0,
+        batchRam: ctx.plan.batchRam, // 🟢 Gefixt
       })),
     });
 
@@ -315,7 +354,10 @@ export async function main(ns: NS): Promise<void> {
         rollingLag = rollingLag * 0.9 + lag * 0.1;
 
         if (lag > 150) {
-          logger.warn(`⏳ Lag (${lag}ms) bei Batch b${event.batchId} [${event.target}].`, event.target);
+          logger.warn(
+            `⏳ Lag (${lag}ms) bei Batch b${event.batchId} [${event.target}].`,
+            event.target,
+          );
           if (batchState && batchState.executedEventsCount > 0) {
             targetBlacklist.set(event.target, now + 5000);
             removeTarget(event.target, "Event verworfen wegen Lag");
@@ -334,7 +376,10 @@ export async function main(ns: NS): Promise<void> {
         if (dispatched) {
           if (batchState) batchState.executedEventsCount++;
         } else {
-          logger.error(`🛑 Ausführungsfehler auf Workers für ${event.target}. Target isoliert pausiert.`, event.target);
+          logger.error(
+            `🛑 Ausführungsfehler auf Workers für ${event.target}. Target isoliert pausiert.`,
+            event.target,
+          );
           targetBlacklist.set(event.target, now + 45000);
           removeTarget(event.target, "Worker Exec Error");
           break;
