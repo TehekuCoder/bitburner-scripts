@@ -4,11 +4,10 @@ import {
   PATH_HACK,
   PATH_GROW,
   PATH_WEAKEN,
-  SPACER,
 } from "/lib/constants.js";
-import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { JitEvent, ActiveBatch } from "./types/batcher";
-import { WorkerNode } from "./types/network";
+import { JitEvent } from "/lib/types/batcher.js";
+import { WorkerNode } from "/lib/types/network.js";
+import { getUsableThreads } from "./batcher-helpers.js";
 
 // Statisches RAM Lookup zur Vermeidung träger File-System API Calls
 const SCRIPT_RAM_MAP: Record<string, number> = {
@@ -17,18 +16,7 @@ const SCRIPT_RAM_MAP: Record<string, number> = {
   [PATH_WEAKEN]: 1.75,
 };
 
-function getUsableThreads(freeRam: number, scriptRam: number): number {
-  if (
-    !Number.isFinite(freeRam) ||
-    !Number.isFinite(scriptRam) ||
-    scriptRam <= 0
-  ) {
-    return 0;
-  }
-  // Vernachlässigbarer epsilon-Toleranzwert gegen JS-Fließkomma-Ungenauigkeiten
-  return Math.floor((freeRam + 1e-5) / scriptRam);
-}
-
+/** Scanned das Netzwerk nach gerooteten Servern mit freiem RAM */
 export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   const nodes: WorkerNode[] = [];
   for (const s of servers) {
@@ -50,10 +38,7 @@ export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   return nodes.sort((a, b) => b.freeRam - a.freeRam);
 }
 
-/**
- * Killt gezielt nur Worker-Payloads auf ALLEN Servern (inklusive home),
- * ohne den Batcher, den Orchestrator oder Daemons zu beenden.
- */
+/** Killt gezielt Worker-Payloads auf allen Servern */
 export function killWorkerPayloads(ns: NS, servers: string[]): void {
   const payloadScripts = [PATH_HACK, PATH_GROW, PATH_WEAKEN];
   for (const server of servers) {
@@ -68,9 +53,7 @@ export function killWorkerPayloads(ns: NS, servers: string[]): void {
   }
 }
 
-/**
- * Synchronisiert die Payload-Skripte auf alle gerooteten Netzwerk-Server.
- */
+/** Synchronisiert Payload-Skripte im Netzwerk */
 export function syncPayloads(ns: NS, serverList: string[]): void {
   for (const s of serverList) {
     if (s !== "home" && ns.hasRootAccess(s)) {
@@ -80,8 +63,8 @@ export function syncPayloads(ns: NS, serverList: string[]): void {
 }
 
 /**
- * Führt ein Event atomar auf den verfügbaren Workers aus (mit Thread-Splitting).
- * Garantiert: Entweder werden ALLE Threads gestartet oder GAR KEINE.
+ * Führt ein Event atomar auf den verfügbaren Workers aus (Thread-Splitting).
+ * Transaktionssicher: Entweder werden ALLE Threads gestartet oder GAR KEINE (Rollback).
  */
 export function executeOnWorkers(
   ns: NS,
@@ -129,7 +112,7 @@ export function executeOnWorkers(
 
     if (pid > 0) {
       const ramUsed = toRun * scriptRam;
-      w.freeRam -= ramUsed; // Zieht RAM lokal vom Worker-Objekt ab
+      w.freeRam -= ramUsed;
       launchedPids.push({ pid, worker: w, allocatedRam: ramUsed });
       remainingThreads -= toRun;
     } else {
@@ -148,113 +131,4 @@ export function executeOnWorkers(
   }
 
   return remainingThreads === 0;
-}
-
-/** Erstellt die Liste der JIT-Events für einen einzelnen Batch */
-export function createBatchEvents(
-  bId: number,
-  target: string,
-  tLand: number,
-  plan: {
-    hackThreads: number;
-    weaken1Threads: number;
-    growThreads: number;
-    weaken2Threads: number;
-    hackTime: number;
-    weakenTime: number;
-    growTime: number;
-  },
-): JitEvent[] {
-  const prefix = `${target}-b${bId}`;
-  return [
-    {
-      id: `${prefix}-h`,
-      batchId: bId,
-      script: PATH_HACK,
-      threads: plan.hackThreads,
-      target,
-      startTime: tLand - SPACER - plan.hackTime,
-      landTime: tLand - SPACER,
-    },
-    {
-      id: `${prefix}-w1`,
-      batchId: bId,
-      script: PATH_WEAKEN,
-      threads: plan.weaken1Threads,
-      target,
-      startTime: tLand - plan.weakenTime,
-      landTime: tLand,
-    },
-    {
-      id: `${prefix}-g`,
-      batchId: bId,
-      script: PATH_GROW,
-      threads: plan.growThreads,
-      target,
-      startTime: tLand + SPACER - plan.growTime,
-      landTime: tLand + SPACER,
-    },
-    {
-      id: `${prefix}-w2`,
-      batchId: bId,
-      script: PATH_WEAKEN,
-      threads: plan.weaken2Threads,
-      target,
-      startTime: tLand + 2 * SPACER - plan.weakenTime,
-      landTime: tLand + 2 * SPACER,
-    },
-  ].filter((ev) => ev.threads > 0);
-}
-
-/** Überprüft aktive Batches auf Abschluss oder Hängenbleiben und räumt sie auf */
-export function cleanupActiveBatches(
-  activeBatches: Map<number, ActiveBatch>,
-  activeBatchIds: Set<number>,
-  now: number,
-  isPrepBatch: boolean,
-  logger: Logger,
-): void {
-  for (const [bId, bData] of activeBatches.entries()) {
-    if (now >= bData.landEndTime) {
-      const fullyExecuted = bData.executedEventsCount >= bData.totalEventsCount;
-
-      if (fullyExecuted) {
-        activeBatches.delete(bId);
-        activeBatchIds.delete(bId);
-        // 🔕 Erfolgreiche Batches werden geräuschlos aufgeräumt
-      } else if (now > bData.landEndTime + 3000) {
-        activeBatches.delete(bId);
-        activeBatchIds.delete(bId);
-
-        // ⚠️ WICHTIG: Das hier bleibt drin! Das zeigt dir Desyncs & Probleme.
-        logger.warn(
-          `🧹 Watchdog: Batch b${bId} unvollständig (${bData.executedEventsCount}/${bData.totalEventsCount} Events) zwangsaufgeräumt.`,
-        );
-      }
-    }
-  }
-}
-
-/** In-place Queue-Bereinigung ohne Garbage Collection Overhead */
-export function pruneBatchFromQueue(queue: JitEvent[], batchId: number): void {
-  let writeIndex = 0;
-  for (let readIndex = 0; readIndex < queue.length; readIndex++) {
-    if (queue[readIndex].batchId !== batchId) {
-      queue[writeIndex] = queue[readIndex];
-      writeIndex++;
-    }
-  }
-  queue.length = writeIndex;
-}
-
-/** Sortiertes Einfügen via Binärsuche O(log N) */
-export function insertEventSorted(queue: JitEvent[], event: JitEvent): void {
-  let low = 0;
-  let high = queue.length;
-  while (low < high) {
-    const mid = (low + high) >>> 1;
-    if (queue[mid].startTime < event.startTime) low = mid + 1;
-    else high = mid;
-  }
-  queue.splice(low, 0, event);
 }

@@ -11,26 +11,37 @@ export interface BatchPlan {
 
   // Threads
   hackThreads: number;
-  weakenThreads1: number;
+  weaken1Threads: number;
   growThreads: number;
-  weakenThreads2: number;
+  weaken2Threads: number;
 
-  // Delays & Laufzeiten
-  hackDelay: number;
-  weaken1Delay: number;
-  growDelay: number;
-  weaken2Delay: number;
+  // Delays & Laufzeiten (Optional für JIT-Batching)
+  hackDelay?: number;
+  weaken1Delay?: number;
+  growDelay?: number;
+  weaken2Delay?: number;
   hackTime: number;
   growTime: number;
   weakenTime: number;
-  executionTime: number;
+  executionTime?: number;
 
   // RAM & Orchestrierung
-  totalRam: number;
+  totalRam?: number;
   batchRam: number;
   maxBatches?: number;
   greed?: number;
+  greedScore?: number;
   greedFactor?: number;
+}
+
+export interface TargetContext {
+  target: string;
+  plan: BatchPlan;
+  dynamicMaxBatches: number;
+  batchesSent: number;
+  nextAvailableLandTime: number;
+  prepEndTime: number;
+  activeBatchIds: Set<number>;
 }
 
 export interface InFlightBatch {
