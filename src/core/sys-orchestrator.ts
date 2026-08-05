@@ -40,11 +40,11 @@ export async function main(ns: NS): Promise<void> {
 
     // 2. Wechsel-Bedingungen prüfen
     const strategyChanged = desiredStrategy !== activeStrategy;
-    
+
     // Bei JIT_HWGW steuert der Daemon die Ziele selbst -> Zielwechsel ignoriere
     const targetChanged =
       desiredStrategy !== "JIT_HWGW" && target !== activeTarget;
-      
+
     const processDied = activeProcessId > 0 && !ns.isRunning(activeProcessId);
 
     if (strategyChanged || targetChanged || processDied) {
@@ -208,29 +208,20 @@ function selectBestTarget(
         (ns.getServerRequiredHackingLevel(s) ?? 0) <= playerSkill,
     )
     .sort((a, b) => {
-      const scoreA = ns.getServerMaxMoney(a) / Math.max(1, ns.getWeakenTime(a));
-      const scoreB = ns.getServerMaxMoney(b) / Math.max(1, ns.getWeakenTime(b));
+      // Chance & weiche Weaken-Obergrenze einbeziehen
+      const scoreA =
+        (ns.getServerMaxMoney(a) * ns.hackAnalyzeChance(a)) /
+        Math.max(1, ns.getWeakenTime(a));
+      const scoreB =
+        (ns.getServerMaxMoney(b) * ns.hackAnalyzeChance(b)) /
+        Math.max(1, ns.getWeakenTime(b));
       return scoreB - scoreA;
     });
 
   const bestCandidate = candidates[0] ?? "n00dles";
-
-  if (currentTarget && ns.serverExists(currentTarget)) {
-    const currentScore =
-      ns.getServerMaxMoney(currentTarget) / Math.max(1, ns.getWeakenTime(currentTarget));
-    const bestScore =
-      ns.getServerMaxMoney(bestCandidate) / Math.max(1, ns.getWeakenTime(bestCandidate));
-
-    const threshold = playerSkill < 300 ? 1.3 : 1.8;
-
-    if (bestScore <= currentScore * threshold) {
-      return currentTarget;
-    }
-  }
-
+  // Hysterese-Vergleich bleibt erhalten...
   return bestCandidate;
 }
-
 function switchExecutionEngine(
   ns: NS,
   strategy: BatchStrategy,

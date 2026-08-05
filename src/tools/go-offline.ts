@@ -27,13 +27,14 @@ export async function main(ns: NS): Promise<void> {
   const playerHacking = ns.getPlayer().skills.hacking;
   const allServers = getAllServers(ns);
 
-  // Filtern: Root-Zugriff, Geld vorhanden & Hack-Level erreichbar
+  // Filtern: Kein Hacknet-Server, Root-Zugriff, Geld vorhanden & Hack-Level erreichbar
   const validTargets: TargetScore[] = allServers
     .filter(
       (s) =>
+        !s.startsWith("hacknet") &&
         ns.hasRootAccess(s) &&
         ns.getServerMaxMoney(s) > 0 &&
-        ns.getServerRequiredHackingLevel(s) <= playerHacking, // Keine künstliche Halbung mehr!
+        ns.getServerRequiredHackingLevel(s) <= playerHacking,
     )
     .map((s) => {
       const maxMoney = ns.getServerMaxMoney(s);
@@ -53,7 +54,9 @@ export async function main(ns: NS): Promise<void> {
   const TARGET_COUNT = Math.min(validTargets.length, 8);
   const topTargets = validTargets.slice(0, TARGET_COUNT);
 
-  ns.tprint(`🎯 [BitOS] Dynamische Lastverteilung gestartet (${topTargets.length} Ziele aktiv):`);
+  ns.tprint(
+    `🎯 [BitOS] Dynamische Lastverteilung gestartet (${topTargets.length} Ziele aktiv):`,
+  );
   topTargets.forEach((t, i) => {
     ns.tprint(
       `   [Rank ${i + 1}] ${t.name.padEnd(18)} -> Max: $${ns.format.number(t.maxMoney)} | Weaken: ${Math.round(t.weakenTime / 1000)}s`,
@@ -74,13 +77,14 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  // Alle verfügbaren Ausführungs-Hosts ermitteln und nach RAM sortieren (stärkste zuerst!)
+  // Alle verfügbaren Ausführungs-Hosts ermitteln (ohne Hacknet-Server) und nach RAM sortieren
   const hostServers = allServers
     .filter(
       (s) =>
-        s === "home" ||
-        pServers.includes(s) ||
-        (ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0),
+        !s.startsWith("hacknet") &&
+        (s === "home" ||
+          pServers.includes(s) ||
+          (ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0)),
     )
     .sort((a, b) => ns.getServerMaxRam(b) - ns.getServerMaxRam(a));
 

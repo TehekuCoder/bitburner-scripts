@@ -5,6 +5,10 @@ import { patchBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
 import { HOME_RAM_RESERVE } from "/lib/constants.js";
 
+// Modul-Konstanten für schnelle Namens-Vergleiche ohne RegEx-Overhead
+const WEAKEN_NAME = PATHS.payloads.weaken.split("/").pop()!;
+const GROW_NAME = PATHS.payloads.grow.split("/").pop()!;
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new Logger(ns, "PrepEngine");
@@ -55,13 +59,11 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // 3. IN-FLIGHT-ANALYSE
+    // 3. IN-FLIGHT-ANALYSE (Nur 3 Argumente)
     const { inFlightGrowThreads, inFlightWeakenThreads } = getInFlightThreads(
       ns,
       workerNodes,
       target,
-      weakenScript,
-      growScript,
     );
 
     const inFlightSecEffect =
@@ -136,8 +138,6 @@ function getInFlightThreads(
   ns: NS,
   workerNodes: string[],
   target: string,
-  weakenScript: string,
-  growScript: string,
 ): { inFlightGrowThreads: number; inFlightWeakenThreads: number } {
   let inFlightGrowThreads = 0;
   let inFlightWeakenThreads = 0;
@@ -145,9 +145,9 @@ function getInFlightThreads(
   for (const node of workerNodes) {
     for (const proc of ns.ps(node)) {
       if (proc.args[0] === target) {
-        if (proc.filename.endsWith(growScript.replace(/^.*[\\/]/, ""))) {
+        if (proc.filename.endsWith(GROW_NAME)) {
           inFlightGrowThreads += proc.threads;
-        } else if (proc.filename.endsWith(weakenScript.replace(/^.*[\\/]/, ""))) {
+        } else if (proc.filename.endsWith(WEAKEN_NAME)) {
           inFlightWeakenThreads += proc.threads;
         }
       }
@@ -176,23 +176,12 @@ function deployPrepWorkers(
 
   for (const node of workerNodes) {
     if (mode === "WEAKEN_ONLY" && remainingWeakenCap <= 0) break;
-    if (
-      mode === "GROW_AND_WEAKEN" &&
-      remainingGrowCap <= 0 &&
-      remainingWeakenCap <= 0
-    )
-      break;
-
-    if (node !== "home") {
-      if (!ns.fileExists(weakenScript, node))
-        ns.scp(weakenScript, node, "home");
-      if (!ns.fileExists(growScript, node)) ns.scp(growScript, node, "home");
-    }
+    if (mode === "GROW_AND_WEAKEN" && remainingGrowCap <= 0 && remainingWeakenCap <= 0) break;
 
     const maxRam = ns.getServerMaxRam(node);
     const usedRam = ns.getServerUsedRam(node);
     const reservedRam = node === "home" ? HOME_RAM_RESERVE : 0;
-    let freeRam = Math.max(0, maxRam - usedRam - reservedRam);
+    const freeRam = Math.max(0, maxRam - usedRam - reservedRam);
 
     if (freeRam < Math.min(weakenCost, growCost)) continue;
 
@@ -205,31 +194,32 @@ function deployPrepWorkers(
         remainingWeakenCap -= threadsToRun;
       }
     } else {
-      const unitCost = 12 * growCost + 1 * weakenCost;
+      // Exakte Ratio: 25 Grow zu 2 Weaken (12.5 : 1)
+      const unitCost = 25 * growCost + 2 * weakenCost;
       const unitsPossible = Math.floor(freeRam / unitCost);
 
-      // Falls verbleibender Grow-Bedarf < 12 ist, direkt feingranular auffüllen
       const maxUnitsByCap = Math.min(
-        Math.floor(remainingGrowCap / 12),
-        remainingWeakenCap,
+        Math.floor(remainingGrowCap / 25),
+        Math.floor(remainingWeakenCap / 2),
       );
+
       const units = Math.max(0, Math.min(unitsPossible, maxUnitsByCap));
 
-      let gThreads = units * 12;
-      let wThreads = units * 1;
-      let remainingRam = freeRam - units * unitCost;
+      let gThreads = units * 25;
+      let wThreads = units * 2;
+      let remainingRam = freeRam - (gThreads * growCost + wThreads * weakenCost);
 
-      while (
-        remainingRam >= growCost &&
-        remainingGrowCap - gThreads > 0
-      ) {
+      // Rest-RAM feingranular mit Grow auffüllen
+      while (remainingRam >= growCost && remainingGrowCap - gThreads > 0) {
         gThreads++;
         remainingRam -= growCost;
       }
 
+      // Weaken auffüllen, um Sec-Increase durch Grow zu kompensieren
+      const requiredWeakenForGrows = Math.ceil(gThreads * 0.08); // 0.004 / 0.05
       while (
         remainingRam >= weakenCost &&
-        remainingWeakenCap - wThreads > 0
+        (wThreads < requiredWeakenForGrows || remainingWeakenCap - wThreads > 0)
       ) {
         wThreads++;
         remainingRam -= weakenCost;

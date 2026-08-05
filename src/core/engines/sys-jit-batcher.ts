@@ -27,8 +27,6 @@ import { ActiveBatch, JitEvent, TargetContext } from "/lib/types/batcher.js";
 import { patchBatcherState } from "/lib/state.js";
 import { loadBnMults } from "/lib/utils.js";
 
-type PlannerPlan = NonNullable<ReturnType<typeof internalPlanner>>;
-
 const MAX_SAFE_CONCURRENT_SCRIPTS = 10000;
 
 export async function main(ns: NS): Promise<void> {
@@ -39,6 +37,7 @@ export async function main(ns: NS): Promise<void> {
   patchBatcherState(ns, {
     batcherActive: true,
     batcherProgress: "Initialisiere...",
+    batcherTarget: "Suche...",
   });
 
   let servers = getAllServers(ns);
@@ -93,6 +92,13 @@ export async function main(ns: NS): Promise<void> {
     eventQueue.length = 0;
     activeBatches.clear();
     activeBatchIdsSet.clear();
+
+    patchBatcherState(ns, {
+      batcherTarget: "Reset...",
+      batcherProgress: "State Reset",
+      batcherRamNeeded: 0,
+      batcherTargetsSummary: [],
+    });
   }
 
   logger.info("🚀 Multi-Target JIT-Batcher Daemon erfolgreich gestartet.");
@@ -101,6 +107,8 @@ export async function main(ns: NS): Promise<void> {
     const now = Date.now();
 
     // 🧹 1. BATCH-ABSCHLUSS & CLEANUP
+    const completedPrepTargets: { target: string; reason: string }[] = [];
+
     for (const ctx of activeTargets.values()) {
       const isPrepBatch = ctx.plan.hackThreads === 0;
       cleanupActiveBatches(
@@ -128,8 +136,16 @@ export async function main(ns: NS): Promise<void> {
           `✨ Prep-Phase beendet! Target ${ctx.target} ist vollständig präpariert.`,
           ctx.target,
         );
-        removeTarget(ctx.target, "Prep abgeschlossen – Re-Evaluation für HWGW");
+        completedPrepTargets.push({
+          target: ctx.target,
+          reason: "Prep abgeschlossen – Re-Evaluation für HWGW",
+        });
       }
+    }
+
+    // Sicheres Entfernen nach der Loop-Iteration
+    for (const item of completedPrepTargets) {
+      removeTarget(item.target, item.reason);
     }
 
     if (now - lastServerScan > 10000) {
@@ -151,7 +167,9 @@ export async function main(ns: NS): Promise<void> {
       );
     }
 
-    // 🩺 3. HEALTH-CHECK (Kein Array.from nötig)
+    // 🩺 3. HEALTH-CHECK
+    const desyncedTargets: { target: string; reason: string }[] = [];
+
     for (const ctx of activeTargets.values()) {
       const isPrepping = now < ctx.prepEndTime && ctx.activeBatchIds.size > 0;
       const isHWGWActive = ctx.plan.hackThreads > 0;
@@ -163,12 +181,16 @@ export async function main(ns: NS): Promise<void> {
 
         if (secDiff > 0.5) {
           targetBlacklist.set(ctx.target, now + 45000);
-          removeTarget(
-            ctx.target,
-            `Desynchronisation (+${secDiff.toFixed(2)} Sec)`,
-          );
+          desyncedTargets.push({
+            target: ctx.target,
+            reason: `Desynchronisation (+${secDiff.toFixed(2)} Sec)`,
+          });
         }
       }
+    }
+
+    for (const item of desyncedTargets) {
+      removeTarget(item.target, item.reason);
     }
 
     for (const [t, exp] of targetBlacklist.entries()) {
@@ -226,10 +248,14 @@ export async function main(ns: NS): Promise<void> {
     );
 
     // 🔍 6. MULTI-TARGET PLANNER EVALUIERUNG (Getrottelt auf max. 1x pro Sekunde)
+    // Dynamische Sicherheitsreserve: Max. 16 GB oder 5% des Netzwerks reservieren
+    const safetyBuffer = Math.min(16, totalNetworkMaxRam * 0.05);
+    const safePlannerRam = Math.max(0, virtualFreeRam - safetyBuffer);
+
     if (
       now - lastPlannerRunTime > 1000 &&
       activeTargets.size < dynamicMaxTargets &&
-      virtualFreeRam > 10
+      safePlannerRam > 10
     ) {
       lastPlannerRunTime = now;
       const candidateServers = servers.filter(
@@ -240,7 +266,7 @@ export async function main(ns: NS): Promise<void> {
         ns,
         candidateServers,
         totalNetworkMaxRam,
-        virtualFreeRam,
+        safePlannerRam, // 👈 Nutzt das reale/sichere Limit für exaktes Greed-Scaling
         bnMults,
         ns.getPlayer(),
         logger,
@@ -271,19 +297,23 @@ export async function main(ns: NS): Promise<void> {
     for (const ctx of activeTargets.values()) {
       const plan = ctx.plan;
       const isPrep = plan.hackThreads === 0;
-      const ramMultiplier = isPrep ? 0.95 : 0.8;
       const batchGap = Math.max(currentAdaptiveGap, SPACER * 4);
       const planRam = plan.batchRam;
 
       while (ctx.activeBatchIds.size < ctx.dynamicMaxBatches) {
         const currentQueueRam = getQueueRam(ns, eventQueue);
-        const safeVirtualRam = (realFreeRam - currentQueueRam) * ramMultiplier;
+        const unreservedFreeRam = realFreeRam - currentQueueRam;
 
-        if (safeVirtualRam < planRam) {
+        // Reserviere festen Puffer (z.B. 16GB). Falls 0 Batches aktiv sind, erlaube vollen Zugriff.
+        const safeVirtualRam = Math.max(0, unreservedFreeRam - safetyBuffer);
+        const effectiveRamLimit =
+          ctx.activeBatchIds.size === 0 ? unreservedFreeRam : safeVirtualRam;
+
+        if (effectiveRamLimit < planRam) {
           if (now - lastRamThrottleLogTime > 5000) {
             lastRamThrottleLogTime = now;
             logger.debug(
-              `⏸️ RAM-Engpass für ${ctx.target}. Benötigt: ${planRam.toFixed(1)}GB | Frei: ${safeVirtualRam.toFixed(1)}GB`,
+              `⏸️ RAM-Engpass für ${ctx.target}. Benötigt: ${planRam.toFixed(1)}GB | Verfügbar: ${effectiveRamLimit.toFixed(1)}GB`,
               ctx.target,
             );
           }
@@ -330,15 +360,15 @@ export async function main(ns: NS): Promise<void> {
     patchBatcherState(ns, {
       batcherTarget: Array.from(activeTargets.keys()).join(", ") || "Suche...",
       batcherProgress: `Multi-Target (${activeTargets.size} aktiv)`,
-      batcherRamNeeded: totalRamNeeded, // 🟢 Gefixt
+      batcherRamNeeded: totalRamNeeded,
       batcherTargetsSummary: Array.from(activeTargets.values()).map((ctx) => ({
         target: ctx.target,
         mode: ctx.plan.hackThreads === 0 ? "PREP" : "HWGW",
         activeBatches: ctx.activeBatchIds.size,
         maxBatches: ctx.dynamicMaxBatches,
         prepEndTime: ctx.prepEndTime,
-        greed: (ctx.plan as { greed?: number }).greed ?? 0,
-        batchRam: ctx.plan.batchRam, // 🟢 Gefixt
+        greed: ctx.plan.greed ?? 0,
+        batchRam: ctx.plan.batchRam,
       })),
     });
 
