@@ -10,10 +10,7 @@ import {
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 
 import { MetricTracker } from "/lib/metrics.js";
-import {
-  getAllServers,
-  findBestTarget,
-} from "/lib/network.js";
+import { getAllServers, findBestTarget } from "/lib/network.js";
 import {
   findNextRoadmapFaction,
   applyToAllMegacorps,
@@ -52,6 +49,7 @@ export async function main(ns: NS): Promise<void> {
   let lastNetworkScan = 0;
 
   const scripts: ScriptList = {
+    financeManager: PATHS.daemons.financeManager,
     financeCore: PATHS.core.financeCore,
     logger: PATHS.core.logger,
     perfMonitor: PATHS.daemons.perfMonitor,
@@ -69,6 +67,7 @@ export async function main(ns: NS): Promise<void> {
     orchestrator: PATHS.core.orchestrator,
     suites: PATHS.core.suites,
     gang: PATHS.managers.gang,
+    hashManager: PATHS.managers.hash,
   };
 
   let lastAugAnalysis = 0;

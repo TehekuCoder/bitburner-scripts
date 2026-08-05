@@ -30,6 +30,7 @@ export async function main(ns: NS): Promise<void> {
     orchestrator: PATHS.core.orchestrator,
     suites: PATHS.core.suites,
     gang: PATHS.managers.gang,
+    hashManager: PATHS.managers.hash,
   };
 
   while (true) {

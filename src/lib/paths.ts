@@ -2,6 +2,14 @@
 
 export const PATHS = {
   core: {
+    actions: {
+      cloud: "core/actions/act-cloud.ts",
+      gang: "core/actions/act-gang.ts",
+      hacknet: "core/actions/act-hacknet.ts",
+      singularity: "core/actions/act-singularity.ts",
+      sleeve: "core/actions/act-sleeve.ts",
+      stock: "core/actions/act-stock.ts",
+    },
     engines: {
       prep: "core/engines/engine-prep.js",
       proto: "core/engines/engine-proto.js",
@@ -18,7 +26,7 @@ export const PATHS = {
     kernel: "core/sys-kernel.js",
     logger: "core/sys-logger.js",
     orchestrator: "core/sys-orchestrator.js",
-    shotgutDashboard: "core/sys-shotgun-dashboard.js",
+    shotgunDashboard: "core/sys-shotgun-dashboard.js",
     suites: "core/sys-suites.js",
   },
   daemons: {
@@ -54,12 +62,15 @@ export const PATHS = {
     utils: {
       batchCalculator: "lib/utils/batch-calculator.js",
       deployment: "lib/utils/deployment.js",
+      factionHelpers: "lib/utils/faction-helpers.js",
       internalPlanner: "lib/utils/internal-planner.js",
       progress: "lib/utils/progress.js",
       provision: "lib/utils/provision.js",
     },
+    batcherHelpers: "lib/batcher-helpers.js",
     constants: "lib/constants.js",
-    faction: "lib/faction-helpers.js",
+    evaluatorRunner: "lib/evaluator-runner.js",
+    financePorts: "lib/finance-port.js",
     format: "lib/format.js",
     gang: "lib/gang-utils.js",
     logger: "lib/logger-client.js",
@@ -74,9 +85,8 @@ export const PATHS = {
   },
   managers: {
     dnet: "managers/dnet-master.js",
-    finance: "managers/finance-manager.js",
     gang: "managers/gang-manager.js",
-    infra: "managers/infra-manager.js",
+    hash: "managers/hash-manager.js",
     sleeve: "managers/sleeve-manager.js",
   },
   payloads: {
@@ -115,14 +125,6 @@ export const PATHS = {
     train: "tasks/train.js",
     uni: "tasks/uni.js",
   },
-  ui: {
-    batcher: "ui/batcher-ui.js",
-    gang: "ui/gang-ui.js",
-    infra: "ui/infra-ui.js",
-    shotgun: "ui/shotgun-ui.js",
-    sleeve: "ui/sleeve-ui.js",
-    helper: "ui/ui-helper.js",
-  },
   tools: {
     allocateDarkRam: "tools/allocate-darknet-ram.js",
     findDarknetPath: "tools/find-darknet-path.js",
@@ -130,7 +132,15 @@ export const PATHS = {
     goOffline: "tools/go-offline.js",
     karma: "tools/karma.js",
     lootDarknetServer: "tools/loot-darknet-server.js",
+    manDnetCrawler: "tools/manual-darknet-crawler.js",
     starter: "tools/starter.js",
-    manDnetCrawler: "tools/manual-darknet-crawler.js"
+  },
+  ui: {
+    batcher: "ui/batcher-ui.js",
+    gang: "ui/gang-ui.js",
+    infra: "ui/infra-ui.js",
+    shotgun: "ui/shotgun-ui.js",
+    sleeve: "ui/sleeve-ui.js",
+    helper: "ui/ui-helper.js",
   },
 } as const;

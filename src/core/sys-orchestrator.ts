@@ -84,8 +84,8 @@ export async function main(ns: NS): Promise<void> {
       activeStrategy === "JIT_HWGW"
         ? JIT_DASHBOARD
         : activeStrategy === "SHOTGUN_HWGW"
-        ? SHOTGUN_DASHBOARD
-        : null;
+          ? SHOTGUN_DASHBOARD
+          : null;
 
     const knownDashboards = [JIT_DASHBOARD, SHOTGUN_DASHBOARD];
 
@@ -218,6 +218,9 @@ function selectBestTarget(
   const candidates = servers
     .filter(
       (s) =>
+        !s.startsWith("hacknet-") && // 👈 FIX: Hacknet-Server als Target ignorieren
+        !s.startsWith("pserv-") && // (Optional: Pservs sind auch keine Targets)
+        s !== "home" && // (Optional: Home ist kein Target)
         ns.hasRootAccess(s) &&
         ns.getServerMaxMoney(s) > 0 &&
         (ns.getServerRequiredHackingLevel(s) ?? 0) <= playerSkill,

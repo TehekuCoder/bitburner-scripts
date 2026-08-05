@@ -42,7 +42,6 @@ export function manageSuites(
 
     const requiredRam = ns.getScriptRam(execPath, "home");
     if (dynamicFreeRam < requiredRam) {
-      // Bietet Transparenz, warum ein Daemon nicht startet
       logger.warn(
         `Zu wenig RAM für ${execPath} (Benötigt: ${ns.format.ram(requiredRam)}, Frei: ${ns.format.ram(dynamicFreeRam)})`,
       );
@@ -62,11 +61,9 @@ export function manageSuites(
   // ====================================================================
   // 1. 🚪 INTELLIGENTE BACKDOOR LOGIK
   // ====================================================================
-  // Nur ausführen, wenn Singularity API vorhanden ist (SF4)
   if (ns.singularity !== undefined) {
     let backdoorIsNeeded = false;
 
-    // Fallback: Wenn state noch leer ist, frische Serverliste ziehen
     const networkNodes =
       state?.allServers && state.allServers.length > 0
         ? state.allServers
@@ -118,12 +115,25 @@ export function manageSuites(
   }
 
   // ====================================================================
-  // 3. 🏗️ FINANCE MANAGER (Ab 64GB RAM)
+  // 3. 🏗️ FINANCE MANAGER (Ab 128GB RAM)
   // ====================================================================
   if (homeMaxRam >= 128) {
     tryLaunch(scripts.financeManager, [], () => {
       logger.info("Initialisiere Finanz-Manager...");
     });
+  }
+
+  // ====================================================================
+  // 4. 🎰 HASH MANAGER (Hacknet Servers / BN9 Automatisierung ab 32GB RAM)
+  // ====================================================================
+  try {
+    if (homeMaxRam >= 32 && ns.hacknet.hashCapacity() > 0) {
+      tryLaunch(scripts.hashManager, [], () => {
+        logger.info("Hacknet-Hash-Kapazität erkannt. Starte Hash-Manager...");
+      });
+    }
+  } catch (_) {
+    /* Fallback für Umgebungen ohne Hacknet API */
   }
 
   // ====================================================================
@@ -173,7 +183,7 @@ export function manageSuites(
   }
 
   // ====================================================================
-  // 10. 🔄 SHARE-FILLER LOGIK (Ab 32GB RAM)
+  // 10. 🔄 SHARE-FILLER LOGIK (Ab 128GB RAM)
   // ====================================================================
   if (homeMaxRam >= 128) {
     tryLaunch(scripts.fillShare, [], () => {

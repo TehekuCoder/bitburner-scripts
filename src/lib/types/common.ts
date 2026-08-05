@@ -24,6 +24,7 @@ export interface ScriptList {
   gang: string;
   hacknet?: string;
   hacknetEarly?: string;
+  hashManager?:string;
 }
 
 export interface SourceFileProgress {

@@ -1,9 +1,7 @@
 import { NS } from "@ns";
 
 const CONFIG = {
-  // Schwellenwert in % der Hash-Kapazität (0.8 = 80%)
   capacityThreshold: 0.8,
-  // Limit für Max Money Upgrades pro Ziel-Server (10 Trillionen $)
   maxMoneyCap: 1e13,
 };
 
@@ -35,7 +33,7 @@ function processHashSpends(ns: NS): void {
     if (minSec > 1 && ns.hacknet.numHashes() >= 50) {
       if (ns.hacknet.spendHashes("Reduce Minimum Security", target)) {
         ns.print(
-          `[Hash-Manager] Min-Security für ${target} gesenkt (neu: ${minSec - 2})`
+          `[Hash-Manager] Min-Security für ${target} gesenkt (neu: ${minSec - 2})`,
         );
         return;
       }
@@ -43,12 +41,14 @@ function processHashSpends(ns: NS): void {
   }
 
   // 2. Bladeburner Rank / SP pushen (falls aktiv)
-  if (ns.bladeburner?.inBladeburner() && ns.hacknet.numHashes() >= 250) {
-    if (ns.hacknet.spendHashes("Exchange for Bladeburner Rank")) {
-      ns.print("[Hash-Manager] Hashes in Bladeburner Rank investiert.");
-      return;
+  try {
+    if (ns.bladeburner?.inBladeburner() && ns.hacknet.numHashes() >= 250) {
+      if (ns.hacknet.spendHashes("Exchange for Bladeburner Rank")) {
+        ns.print("[Hash-Manager] Hashes in Bladeburner Rank investiert.");
+        return;
+      }
     }
-  }
+  } catch (_) {}
 
   // 3. Max Money auf dem besten Ziel-Server erhöhen (50 Hashes pro Stufe)
   if (target && ns.hacknet.numHashes() >= 50) {
@@ -56,7 +56,7 @@ function processHashSpends(ns: NS): void {
     if (currentMaxMoney < CONFIG.maxMoneyCap) {
       if (ns.hacknet.spendHashes("Increase Maximum Money", target)) {
         ns.print(
-          `[Hash-Manager] Max-Money für ${target} erhöht ($${currentMaxMoney.toLocaleString()})`
+          `[Hash-Manager] Max-Money für ${target} erhöht ($${ns.format.number(currentMaxMoney)})`,
         );
         return;
       }
@@ -69,28 +69,23 @@ function processHashSpends(ns: NS): void {
     const amountToSpend = Math.floor(currentHashes / 4);
     if (ns.hacknet.spendHashes("Sell for Money", "", amountToSpend)) {
       ns.print(
-        `[Hash-Manager] ${amountToSpend * 4} Hashes für $${(
-          amountToSpend * 250000
-        ).toLocaleString()} verkauft.`
+        `[Hash-Manager] ${amountToSpend * 4} Hashes für $${ns.format.number(
+          amountToSpend * 250000,
+        )} verkauft.`,
       );
     }
   }
 }
 
-/**
- * Ermittelt das wertvollste Ziel im Netzwerk:
- * - Benötigt Root-Zugriff
- * - Hacking-Level reicht aus (requiredHackingSkill <= playerHackingLevel)
- * - Ignoriert Home, Darkweb und eigene Server
- * - Sortiert nach dem höchsten Max-Geld
- */
 function getBestTarget(ns: NS): string | null {
   const playerHackLevel = ns.getHackingLevel();
   const visited = new Set<string>();
   const queue: string[] = ["home"];
   visited.add("home");
 
-  const purchasedServers = new Set(ns.cloud.getServerNames());
+  const purchasedServers = new Set(
+    ns.cloud?.getServerNames() ?? ns.cloud.getServerNames(),
+  );
   let bestTarget: string | null = null;
   let maxMoney = 0;
 
@@ -104,9 +99,10 @@ function getBestTarget(ns: NS): string | null {
       visited.add(neighbor);
       queue.push(neighbor);
 
-      // Ausschluss-Filter
+      // Ausschluss-Filter: Darkweb, Hacknet-Server/Nodes, eigene Server & un-gehackte Server
       if (
         neighbor === "darkweb" ||
+        neighbor.startsWith("hacknet-") ||
         purchasedServers.has(neighbor) ||
         !ns.hasRootAccess(neighbor)
       ) {
@@ -116,7 +112,6 @@ function getBestTarget(ns: NS): string | null {
       const reqHack = ns.getServerRequiredHackingLevel(neighbor);
       const serverMaxMoney = ns.getServerMaxMoney(neighbor);
 
-      // Nur Server wählen, die hackbar sind und Basis-Geld besitzen
       if (reqHack <= playerHackLevel && serverMaxMoney > maxMoney) {
         maxMoney = serverMaxMoney;
         bestTarget = neighbor;
