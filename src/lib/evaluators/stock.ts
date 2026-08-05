@@ -1,3 +1,4 @@
+// lib/evaluators/stock.ts
 import { NS } from "@ns";
 import {
   PurchaseEvaluator,
@@ -7,6 +8,7 @@ import {
 } from "/lib/types/finance.js";
 import { TRANSACTION_FEE } from "/lib/constants.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
+import { loadBnMults, adjustPriorityByMult } from "../utils.js";
 
 export const StockEvaluator: PurchaseEvaluator = {
   category: "STOCK_LICENSE",
@@ -15,8 +17,16 @@ export const StockEvaluator: PurchaseEvaluator = {
     const requests: PurchaseRequest[] = [];
     if (!ns.stock) return requests;
 
+    const bnMults = loadBnMults(ns);
+
+    // 🔴 Dynamische Exakte Lizenzkosten basierend auf BitNode Multiplikatoren
+    const fourSigmaCostMult = bnMults.FourSigmaMarketDataCost ?? 1.0;
+    const fourSigmaApiCostMult = bnMults.FourSigmaMarketDataApiCost ?? 1.0;
+
+    const fourSigmaDataCost = 1_000_000_000 * fourSigmaCostMult;
+    const fourSigmaTixCost = 25_000_000_000 * fourSigmaApiCostMult;
+
     // --- 1. LIZENZEN VERWALTEN ---
-    // Wichtig: Prioritäten auf LOW/IDLE setzen, damit teure Lizenzen NICHT das Home-RAM oder Hacknet blockieren!
     let fullyUnlocked = true;
 
     if (!ns.stock.hasWseAccount()) {
@@ -47,12 +57,18 @@ export const StockEvaluator: PurchaseEvaluator = {
       });
     } else if (!ns.stock.has4SData()) {
       fullyUnlocked = false;
+      // Priorität weiter absenken, falls der Multiplikator extrem hoch ausfällt
+      const priority = adjustPriorityByMult(
+        PurchasePriority.IDLE,
+        fourSigmaCostMult > 0 ? 1 / fourSigmaCostMult : 1.0
+      );
+
       requests.push({
         id: "stock-4s-data",
         category: "STOCK_LICENSE" as PurchaseCategory,
-        priority: PurchasePriority.IDLE, // IDLE: Nur kaufen, wenn wirklich Geld über ist!
-        cost: 1_000_000_000, // 1 Mrd.
-        description: "4S Marktdaten (Forecast)",
+        priority,
+        cost: fourSigmaDataCost,
+        description: `4S Marktdaten (Forecast) [Mult: ${fourSigmaCostMult.toFixed(2)}x]`,
         action: {
           script: "core/actions/act-stock.js",
           args: ["stock-purchase-license", "4s"],
@@ -60,12 +76,17 @@ export const StockEvaluator: PurchaseEvaluator = {
       });
     } else if (!ns.stock.has4SDataTixApi()) {
       fullyUnlocked = false;
+      const priority = adjustPriorityByMult(
+        PurchasePriority.IDLE,
+        fourSigmaApiCostMult > 0 ? 1 / fourSigmaApiCostMult : 1.0
+      );
+
       requests.push({
         id: "stock-4s-tix-api",
         category: "STOCK_LICENSE" as PurchaseCategory,
-        priority: PurchasePriority.IDLE, // 25 Mrd. NIEMALS auf HIGH setzen!
-        cost: 25_000_000_000, // 25 Mrd.
-        description: "4S TIX API (Forecast Automatisierung)",
+        priority,
+        cost: fourSigmaTixCost,
+        description: `4S TIX API (Forecast Automatisierung) [Mult: ${fourSigmaApiCostMult.toFixed(2)}x]`,
         action: {
           script: "core/actions/act-stock.js",
           args: ["stock-purchase-license", "4s-tix"],
@@ -132,11 +153,9 @@ export const StockEvaluator: PurchaseEvaluator = {
 
     buyCandidates.sort((a, b) => b.strength - a.strength);
 
-    // Barmittel sinnvoll portionieren (max. 20% des verfügbaren Geldes pro Investment)
     const playerMoney = ns.getServerMoneyAvailable("home");
     const tradeBudget = playerMoney * 0.2;
 
-    // Nur investieren, wenn das Budget mindestens 10x höher als die Transaktionsgebühr ist
     if (tradeBudget > TRANSACTION_FEE * 10) {
       for (const candidate of buyCandidates.slice(0, 2)) {
         const sym = candidate.sym;
@@ -146,7 +165,6 @@ export const StockEvaluator: PurchaseEvaluator = {
             ? ns.stock.getAskPrice(sym)
             : ns.stock.getBidPrice(sym);
 
-        // Berechne wie viele Aktien wir uns mit dem Budget leisten können
         const affordableShares = Math.min(
           maxShares,
           Math.floor((tradeBudget - TRANSACTION_FEE) / sharePrice)

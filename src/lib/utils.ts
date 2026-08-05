@@ -1,5 +1,6 @@
 import { NS, BitNodeMultipliers } from "@ns";
 import { DEFAULT_MULTIPLIERS } from "/lib/constants.js";
+import { PurchasePriority } from "./types/finance";
 
 // ============================================================================
 // 1. BitNode & System Helpers
@@ -153,3 +154,15 @@ export function hasbladeburner(ns: NS): boolean {
   return ns.bladeburner !== undefined;
 }
 
+export function adjustPriorityByMult(
+  basePriority: PurchasePriority,
+  mult: number
+): PurchasePriority {
+  if (mult <= 0) return PurchasePriority.IDLE;
+  if (mult < 0.1) return Math.min(PurchasePriority.IDLE, basePriority + 2); // Stark ge-nerft (z.B. 2 Stufen schlechter)
+  if (mult < 0.5) return Math.min(PurchasePriority.IDLE, basePriority + 1); // Moderat ge-nerft
+  if (mult >= 2.0 && basePriority > PurchasePriority.CRITICAL) {
+    return Math.max(PurchasePriority.CRITICAL, basePriority - 1); // Gebufft -> Dringlicher
+  }
+  return basePriority;
+}

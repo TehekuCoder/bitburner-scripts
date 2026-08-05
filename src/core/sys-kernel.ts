@@ -1,7 +1,9 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { PATHS } from "/lib/paths";
+import { PATHS } from "/lib/paths.js";
 import { loadState, patchState } from "/lib/state.js";
+import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
+import { REFRESH_INTERVALS } from "/lib/constants.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -48,16 +50,30 @@ export async function main(ns: NS): Promise<void> {
     kernelTarget: existingState.kernelTarget || "n00dles",
   });
 
+  let lastNetworkScan = 0;
+
   // ====================================================================
-  // 3. MAIN KERNEL LOOP (Supervisor & Fallback)
+  // 3. MAIN KERNEL LOOP (Supervisor & Network & Fallback)
   // ====================================================================
   while (true) {
+    const now = Date.now();
     const homeMax = ns.getServerMaxRam("home");
     const homeUsed = ns.getServerUsedRam("home");
     const homeFree = homeMax - homeUsed;
     const currentState = loadState(ns);
 
-    // A. SUITE MANAGER (Steuert alle Feature-Daemons: Backdoor, Gang, Infra, Dispatcher, etc.)
+    // A. NETWORK BREACH & INFECT (Zentrale Infiltration & Root-Rechte)
+    if (
+      now - lastNetworkScan > (REFRESH_INTERVALS?.NETWORK_SCAN ?? 10_000) ||
+      !currentState?.allServers?.length
+    ) {
+      await breakAndInfectNetwork(ns);
+      const allServers = getAllServers(ns);
+      patchState(ns, { allServers });
+      lastNetworkScan = now;
+    }
+
+    // B. SUITE MANAGER (Steuert alle Feature-Daemons: Backdoor, Gang, Infra, Dispatcher, etc.)
     if (
       homeMax >= 16 &&
       ns.fileExists(PATHS.core.suites, "home") &&
@@ -70,7 +86,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // B. FALLBACK WORKER (Nutzt freien RAM auf home mit work.ts, solange der Orchestrator nicht läuft)
+    // C. FALLBACK WORKER (Nutzt freien RAM auf home mit work.ts, solange der Orchestrator nicht läuft)
     const isOrchestratorRunning = ns.isRunning(PATHS.core.orchestrator, "home");
 
     if (isOrchestratorRunning) {
@@ -96,7 +112,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // C. ENDGAME TRIGGER (WorldDaemon Watchdog)
+    // D. ENDGAME TRIGGER (WorldDaemon Watchdog)
     const targetNode = "w0r1d_d43m0n";
     if (ns.serverExists(targetNode) && ns.hasRootAccess(targetNode)) {
       const reqSkill = ns.getServerRequiredHackingLevel(targetNode);

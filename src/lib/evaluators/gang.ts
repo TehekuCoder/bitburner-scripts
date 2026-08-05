@@ -1,4 +1,3 @@
-// lib/evaluators/gang.ts
 import { NS } from "@ns";
 import {
   PurchaseEvaluator,
@@ -7,12 +6,17 @@ import {
   PurchaseCategory,
 } from "/lib/types/finance.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
+import { loadBnMults, adjustPriorityByMult } from "/lib/utils.js";
 
 export const GangEvaluator: PurchaseEvaluator = {
-  category: "GANG_EQUIPMENT",
+  category: "GANG_EQUIPMENT" as PurchaseCategory,
 
   getRequests(ns: NS): PurchaseRequest[] {
     if (!ns.gang || !ns.gang.inGang()) return [];
+
+    const bnMults = loadBnMults(ns);
+    const gangAugMult = bnMults.GangUniqueAugs ?? 1.0;
+    const gangAugEfficiency = gangAugMult > 0 ? 1 / gangAugMult : 1.0;
 
     const requests: PurchaseRequest[] = [];
     const info = ns.gang.getGangInformation();
@@ -37,6 +41,9 @@ export const GangEvaluator: PurchaseEvaluator = {
       .filter(Boolean) as { name: string; cost: number; type: string }[];
 
     for (const equip of equipCache) {
+      const isAugmentation = equip.type === "Augmentation";
+      const effMult = isAugmentation ? gangAugEfficiency : 1.0;
+
       memberNames.forEach((memberName, idx) => {
         try {
           const memberInfo = ns.gang.getMemberInformation(memberName);
@@ -48,22 +55,21 @@ export const GangEvaluator: PurchaseEvaluator = {
             return;
           }
 
-          let priority = PurchasePriority.LOW;
+          let basePriority = PurchasePriority.LOW;
           let baseScore = 20;
           let reason = "Allgemeines Upgrade";
 
           if (isHacking) {
             if (equip.type === "Rootkit") {
-              priority = PurchasePriority.HIGH;
+              basePriority = PurchasePriority.HIGH;
               baseScore = 85;
               reason = "Essentielles Hacking-Rootkit";
-            } else if (equip.type === "Augmentation") {
-              // Multi-Milliarden Upgrades gehören in MEDIUM, um Early/Midgame-Transaktionen nicht zu blockieren!
-              priority = PurchasePriority.MEDIUM;
+            } else if (isAugmentation) {
+              basePriority = PurchasePriority.MEDIUM;
               baseScore = 60;
               reason = "Gang Augmentation (Permanent)";
             } else {
-              priority = PurchasePriority.LOW;
+              basePriority = PurchasePriority.LOW;
               baseScore = 15;
               reason = "Combat-Equipment für Hacking-Gang";
             }
@@ -73,24 +79,26 @@ export const GangEvaluator: PurchaseEvaluator = {
               equip.type === "Armor" ||
               equip.type === "Vehicle"
             ) {
-              priority = PurchasePriority.HIGH;
+              basePriority = PurchasePriority.HIGH;
               baseScore = 80;
               reason = "Kampfausrüstung";
-            } else if (equip.type === "Augmentation") {
-              // Multi-Milliarden Upgrades gehören in MEDIUM!
-              priority = PurchasePriority.MEDIUM;
+            } else if (isAugmentation) {
+              basePriority = PurchasePriority.MEDIUM;
               baseScore = 65;
               reason = "Combat Augmentation (Permanent)";
             } else if (equip.type === "Rootkit") {
-              priority = PurchasePriority.LOW;
+              basePriority = PurchasePriority.LOW;
               baseScore = 10;
               reason = "Rootkit für Combat-Gang";
             }
           }
 
-          // Staffelung: Frühere Gang-Member leicht bevorzugen (-0.1 Punkte pro Index)
-          // um identische Scores bei allen Members zu vermeiden
-          const score = Math.max(1, baseScore - idx * 1.5);
+          // Staffelung nach Member-Index
+          const memberScore = Math.max(1, baseScore - idx * 1.5);
+
+          // BitNode-Multiplikator berücksichtigen
+          const priority = adjustPriorityByMult(basePriority, effMult);
+          const score = Math.max(1, Math.floor(memberScore * effMult));
 
           requests.push({
             id: `gang-${memberName}-${equip.name}`,
@@ -110,7 +118,6 @@ export const GangEvaluator: PurchaseEvaluator = {
       });
     }
 
-    // Sortierung innerhalb des Evaluators: Höchster Score zuerst, bei gleichem Score das Günstigste
     return requests.sort((a, b) => {
       const scoreA = a.score ?? 0;
       const scoreB = b.score ?? 0;

@@ -11,7 +11,6 @@ import { LoggerClient as Logger } from "/lib/logger-client.js";
 
 import { MetricTracker } from "/lib/metrics.js";
 import {
-  breakAndInfectNetwork,
   getAllServers,
   findBestTarget,
 } from "/lib/network.js";
@@ -76,20 +75,21 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const now = Date.now();
+    const currentState = loadState(ns);
 
-    // 1. Periodischer Netzwerk-Scan & Infektion
+    // 1. Aktualisierung der Serverliste aus dem Kernel-State (oder Fallback-Scan)
     if (
       now - lastNetworkScan > REFRESH_INTERVALS.NETWORK_SCAN ||
       allNetworkServers.length === 0
     ) {
-      await breakAndInfectNetwork(ns);
-      allNetworkServers = getAllServers(ns);
+      allNetworkServers =
+        currentState?.allServers && currentState.allServers.length > 0
+          ? currentState.allServers
+          : getAllServers(ns);
       lastNetworkScan = now;
     }
 
     const p = ns.getPlayer();
-
-    const currentState = loadState(ns);
     const gangState = loadGangState(ns);
     const gangFaction = gangState?.hasGang ? gangState.gangFaction : null;
 
@@ -301,9 +301,7 @@ export async function main(ns: NS): Promise<void> {
       dynamicMaxXp = 1500;
     }
 
-    // ------------------------------------------------------------------
     // NFG-Status aus der Roadmap ermitteln
-    // ------------------------------------------------------------------
     const isGrindingNFG = nextRoadmapFaction?.isNFG ?? false;
 
     // Zustand im State-Manager speichern

@@ -1,8 +1,6 @@
 import { FactionName, SleevePerson, SleeveTask } from "@ns";
 import { BotStrategy } from "./strategy";
 
-
-
 export type SleeveMode =
   | "RECOVERY"
   | "SYNCHRO"

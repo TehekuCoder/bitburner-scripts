@@ -7,6 +7,7 @@ import {
   PurchaseCategory,
 } from "/lib/types/finance.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
+import { loadBnMults, adjustPriorityByMult } from "../utils.js";
 
 const PSERV_PREFIX = "pserv-";
 const INITIAL_RAM = 8;
@@ -17,8 +18,16 @@ export const PservEvaluator: PurchaseEvaluator = {
   category: "PURCHASED_SERVER",
 
   getRequests(ns: NS): PurchaseRequest[] {
+    const bnMults = loadBnMults(ns);
+
+    // 🔴 Hard Check: Falls Server-Limit 0 ist
+    const limitMult = bnMults.CloudServerLimit ?? 1.0;
     const limit = ns.cloud.getServerLimit();
-    if (limit === 0) return [];
+    if (limit === 0 || limitMult <= 0) return [];
+
+    // Kosten-Multiplikator berechnen: Höhere Kosten verringern die relativen Erträge
+    const costMult = bnMults.CloudServerCost ?? 1.0;
+    const efficiencyMult = costMult > 0 ? 1 / costMult : 1.0;
 
     const maxRam = ns.cloud.getRamLimit();
     const owned = ns.cloud.getServerNames();
@@ -27,17 +36,21 @@ export const PservEvaluator: PurchaseEvaluator = {
 
     const requests: PurchaseRequest[] = [];
 
-    // 1. NEUE SERVER KAUFEN (HIGH Priority)
+    // 1. NEUE SERVER KAUFEN
     if (owned.length < limit) {
       const cost = ns.cloud.getServerCost(INITIAL_RAM);
       if (cost > 0 && Number.isFinite(cost)) {
         let index = 0;
         while (owned.includes(`${PSERV_PREFIX}${index}`)) index++;
 
-        const priority = isHomeUnderpowered
+        const basePriority = isHomeUnderpowered
           ? PurchasePriority.LOW
           : PurchasePriority.HIGH;
-        const score = isHomeUnderpowered ? 10 : 95;
+
+        // Priorität & Score dämpfen, falls Cloud-Server teurer ge-nerft wurden
+        const priority = adjustPriorityByMult(basePriority, efficiencyMult);
+        const baseScore = isHomeUnderpowered ? 10 : 95;
+        const score = Math.max(1, Math.floor(baseScore * efficiencyMult));
 
         requests.push({
           id: `pserv-buy-${PSERV_PREFIX}${index}`,
@@ -65,25 +78,28 @@ export const PservEvaluator: PurchaseEvaluator = {
         if (upgradeCost > 0 && Number.isFinite(upgradeCost)) {
           const isUnderBaseline = currentRam < BASELINE_TARGET_RAM;
 
-          let priority = PurchasePriority.LOW;
+          let basePriority = PurchasePriority.LOW;
           let score = 5;
 
           if (!isHomeUnderpowered) {
             if (isUnderBaseline) {
-              priority = PurchasePriority.HIGH;
+              basePriority = PurchasePriority.HIGH;
               score = 90;
             } else {
-              priority =
+              basePriority =
                 currentRam < 128
                   ? PurchasePriority.HIGH
                   : currentRam < 1024
                     ? PurchasePriority.MEDIUM
                     : PurchasePriority.LOW;
 
-              const baseScore = Math.max(20, 90 - Math.log2(currentRam) * 2);
-              score = Math.min(85, baseScore);
+              const rawScore = Math.max(20, 90 - Math.log2(currentRam) * 2);
+              score = Math.min(85, rawScore);
             }
           }
+
+          const priority = adjustPriorityByMult(basePriority, efficiencyMult);
+          score = Math.max(1, Math.floor(score * efficiencyMult));
 
           requests.push({
             id: `pserv-upgrade-${hostname}-${nextRam}gb`,

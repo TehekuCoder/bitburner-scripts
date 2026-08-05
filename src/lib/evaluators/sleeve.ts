@@ -1,7 +1,13 @@
 import { NS } from "@ns";
-import { PurchaseEvaluator, PurchaseRequest, PurchasePriority } from "/lib/types/finance.js";
+import {
+  PurchaseEvaluator,
+  PurchaseRequest,
+  PurchasePriority,
+  PurchaseCategory,
+} from "/lib/types/finance.js";
 import { SleeveMode } from "/lib/types/sleeves.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
+import { loadBnMults, adjustPriorityByMult } from "/lib/utils.js";
 
 export interface SleeveStateEvaluation {
   sleeveId: number;
@@ -50,10 +56,14 @@ export function evaluateSleeveStates(ns: NS): SleeveStateEvaluation[] {
  * Generiert zentral gesteuerte Kaufanträge für Sleeve-Augmentations.
  */
 export const SleeveEvaluator: PurchaseEvaluator = {
-  category: "SLEEVE_AUG",
+  category: "SLEEVE_AUG" as PurchaseCategory,
 
   getRequests(ns: NS): PurchaseRequest[] {
     if (!ns.sleeve) return [];
+
+    const bnMults = loadBnMults(ns);
+    const costMult = bnMults.AugmentationMoneyCost ?? 1.0;
+    const efficiencyMult = costMult > 0 ? 1 / costMult : 1.0;
 
     const requests: PurchaseRequest[] = [];
     const numSleeves = ns.sleeve.getNumSleeves();
@@ -63,24 +73,27 @@ export const SleeveEvaluator: PurchaseEvaluator = {
         const purchasableAugs = ns.sleeve.getSleevePurchasableAugs(sleeveId);
 
         for (const aug of purchasableAugs) {
-          let priority = PurchasePriority.LOW;
-          let score = 10;
+          let basePriority = PurchasePriority.LOW;
+          let baseScore = 10;
           let reason = "Stat Enhancement";
 
           // Priorisierung nach Nutzen
           if (aug.name.includes("Memory") || aug.name.includes("Synchro")) {
-            priority = PurchasePriority.HIGH;
-            score = 90;
+            basePriority = PurchasePriority.HIGH;
+            baseScore = 90;
             reason = "Essentielles Memory/Sync Upgrade";
           } else if (aug.name.includes("NeuroLink") || aug.name.includes("BitWire")) {
-            priority = PurchasePriority.MEDIUM;
-            score = 60;
+            basePriority = PurchasePriority.MEDIUM;
+            baseScore = 60;
             reason = "Hacking Efficiency Upgrade";
           }
 
+          const priority = adjustPriorityByMult(basePriority, efficiencyMult);
+          const score = Math.max(1, Math.floor(baseScore * efficiencyMult));
+
           requests.push({
             id: `sleeve-${sleeveId}-aug-${aug.name}`,
-            category: "SLEEVE_AUG",
+            category: "SLEEVE_AUG" as PurchaseCategory,
             priority,
             score,
             cost: aug.cost,
