@@ -1,5 +1,3 @@
-// ui/finance-ui.ts
-
 import { NS } from "@ns";
 
 export interface PendingRequestSummary {
@@ -21,6 +19,9 @@ export interface FinanceDashboardData {
   purchasedServerLimit: number;
   largestPurchasedServerName: string;
   largestPurchasedServerRam: number;
+  hacknetCount: number;
+  hacknetLimit: number;
+  isHacknetServer: boolean;
   financeManagerActive: boolean;
   suiteManagerActive: boolean;
   activeEvaluators: string[];
@@ -90,6 +91,20 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   ns.print(
     `Pserv Pool:  ${pservStr.padEnd(8)} [${pservBar}] (Max: ${maxRamStr})`,
   );
+
+  if (data.hacknetLimit > 0) {
+    const hnetStr = `${data.hacknetCount} / ${data.hacknetLimit}`;
+    const hnetBar = makeProgressBar(
+      data.hacknetCount,
+      data.hacknetLimit,
+      12,
+    );
+    const modeLabel = data.isHacknetServer ? "Servers" : "Nodes";
+    ns.print(
+      `Hacknet Pool:${hnetStr.padEnd(8)} [${hnetBar}] (${modeLabel})`,
+    );
+  }
+
   ns.print(
     `Home Cores:  ${data.homeCores} Core${data.homeCores > 1 ? "s" : ""}`,
   );

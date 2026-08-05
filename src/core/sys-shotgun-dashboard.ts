@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { drawShotgunDashboard, ShotgunDashboardData } from "ui/shotgun-ui.js";
+import { drawShotgunDashboard, ShotgunDashboardData } from "/ui/shotgun-ui.js";
 import { HOME_RAM_RESERVE } from "/lib/constants.js";
 import { getAllServers } from "/lib/network.js";
 import { loadBatcherState } from "/lib/state.js";
@@ -8,7 +8,8 @@ import { PATHS } from "/lib/paths.js";
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
-  ns.ui.resizeTail(580, 520);
+  ns.ui.setTailTitle("Shotgun Dashboard");
+  ns.ui.resizeTail(580, 530);
 
   const eventLog: string[] = [];
   let lastProgressStr = "";
@@ -58,8 +59,15 @@ export async function main(ns: NS): Promise<void> {
     const target = state?.batcherTarget ?? "Keines";
 
     // 2. Zielserver Status
-    let curSec = 0, minSec = 0, curMoney = 0, maxMoney = 0;
-    if (target !== "Keines" && target !== "Suche..." && ns.serverExists(target)) {
+    let curSec = 0,
+      minSec = 0,
+      curMoney = 0,
+      maxMoney = 0;
+    if (
+      target !== "Keines" &&
+      target !== "Suche..." &&
+      ns.serverExists(target)
+    ) {
       curSec = ns.getServerSecurityLevel(target);
       minSec = ns.getServerMinSecurityLevel(target);
       curMoney = ns.getServerMoneyAvailable(target);
@@ -68,7 +76,11 @@ export async function main(ns: NS): Promise<void> {
 
     // 3. Event Logging aktualisieren
     const progressStr = state?.batcherProgress ?? "";
-    if (progressStr && progressStr !== lastProgressStr && !progressStr.includes("Executing")) {
+    if (
+      progressStr &&
+      progressStr !== lastProgressStr &&
+      !progressStr.includes("Executing")
+    ) {
       eventLog.push(`[${new Date().toLocaleTimeString()}] ${progressStr}`);
       lastProgressStr = progressStr;
       if (eventLog.length > 4) eventLog.shift();
@@ -80,7 +92,8 @@ export async function main(ns: NS): Promise<void> {
       status: state?.batcherActive ? "🌊 SHOTGUN AKTIV" : "💤 STANDBY",
       ramUsed: totalUsedRam,
       ramTotal: totalMaxRam,
-      activeWaves: state?.batcherActiveBatches ?? Math.ceil(activeProcessesCount / 3),
+      activeWaves:
+        state?.batcherActiveBatches ?? Math.ceil(activeProcessesCount / 3),
       activeThreads: {
         hack: hackThreads,
         grow: growThreads,

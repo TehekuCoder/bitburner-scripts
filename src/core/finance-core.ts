@@ -1,5 +1,3 @@
-// core/finance-core.ts
-
 import { NS } from "@ns";
 import {
   PurchaseRequest,
@@ -36,8 +34,7 @@ export async function main(ns: NS): Promise<void> {
   ns.ui.openTail();
 
   ns.ui.setTailTitle("Finance-Core");
-
-  ns.ui.resizeTail(618, 515);
+  ns.ui.resizeTail(618, 535);
 
   const lastPurchases: string[] = [];
   const lastWarnings: string[] = [];
@@ -116,6 +113,11 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    // Hacknet-Daten ermitteln
+    const hacknetCount = ns.hacknet.numNodes();
+    const hacknetLimit = ns.hacknet.maxNumNodes();
+    const isHacknetServer = typeof (ns.hacknet as any).hashCapacity === "function";
+
     const financeManagerActive = ns.isRunning(
       PATHS.daemons.financeManager,
       "home",
@@ -139,7 +141,6 @@ export async function main(ns: NS): Promise<void> {
 
     for (const name of evaluators) {
       const lastSeen = evaluatorLastSeen[name] ?? 0;
-      // Wenn in den letzten 10s Daten kamen ODER das Script gerade exakt läuft:
       if (
         now - lastSeen < 10000 ||
         ns.isRunning(`lib/evaluators/${name}.js`, "home")
@@ -177,16 +178,12 @@ export async function main(ns: NS): Promise<void> {
         const requiredBudget = req.cost * margin;
 
         const canAffordEasily = availableMoney >= requiredBudget;
-        // 💡 Neu: Ist es spottbillig im Vergleich zu unserem Vermögen?
         const isPocketChange = req.cost <= rawMoney * POCKET_CHANGE_RATIO;
 
-        // 1. Wenn die Kategorie bereits gesperrt ist und es teuer ist -> Überspringen
         if (blockedCategories.has(req.category) && !canAffordEasily) {
           continue;
         }
 
-        // 2. SPARRULE: Wenn wir auf ein Ziel sparen...
-        // Blockieren wir nachfolgende Items NUR DANN, wenn es KEIN Kleingeld ist!
         if (req.priority > highestUnsatisfiedPriority && !isPocketChange) {
           continue;
         }
@@ -209,7 +206,6 @@ export async function main(ns: NS): Promise<void> {
             if (lastWarnings.length > 6) lastWarnings.shift();
           }
         } else {
-          // Geld reicht nicht -> Sparziel setzen und Kategorie blockieren
           const savingMsg = `⏳ SPARZIEL: ${req.description} ($${ns.format.number(availableMoney)} / $${ns.format.number(req.cost)})`;
           lastWarnings.push(savingMsg);
           if (lastWarnings.length > 6) lastWarnings.shift();
@@ -243,6 +239,9 @@ export async function main(ns: NS): Promise<void> {
       purchasedServerLimit,
       largestPurchasedServerName,
       largestPurchasedServerRam,
+      hacknetCount,
+      hacknetLimit,
+      isHacknetServer,
       financeManagerActive,
       suiteManagerActive,
       activeEvaluators,

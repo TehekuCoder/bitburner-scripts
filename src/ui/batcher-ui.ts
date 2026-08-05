@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { DashboardData } from "/lib/types/common";
+import { DashboardData } from "/lib/types/common.js";
 
 function makeProgressBar(progress: number, width = 20): string {
   const filledLength = Math.round(Math.max(0, Math.min(1, progress)) * width);
@@ -32,11 +32,10 @@ export function drawBatcherDashboard(ns: NS, data: DashboardData): void {
   );
   ns.print(`------------------------------------------------------------`);
 
-  // Dynamischer Umschalter: Einzel-Target Detail VS Multi-Target Übersicht
   if (data.targetsSummary && data.targetsSummary.length > 1) {
     ns.print(`AKTIVE ZIELE (${data.targetsSummary.length}):`);
-    ns.print(`ZIEL             MODE   BATCHES     MONEY      SEC`);
-    
+    ns.print(`ZIEL             MODE   BATCHES    MONEY      SEC`);
+
     for (const t of data.targetsSummary.slice(0, 8)) {
       const hasTarget = ns.serverExists(t.target);
       const curSec = hasTarget ? ns.getServerSecurityLevel(t.target) : 0;
@@ -46,20 +45,27 @@ export function drawBatcherDashboard(ns: NS, data: DashboardData): void {
 
       const secDiff = curSec - minSec;
       const secStr = secDiff <= 0.05 ? "MIN" : `+${secDiff.toFixed(1)}`;
-      const moneyPct = maxMoney > 0 ? ((curMoney / maxMoney) * 100).toFixed(0) + "%" : "0%";
+      const moneyPct =
+        maxMoney > 0 ? ((curMoney / maxMoney) * 100).toFixed(0) + "%" : "0%";
 
       const namePadded = t.target.padEnd(16, " ").slice(0, 16);
       const modePadded = t.mode.padEnd(6, " ");
       const batchPadded = `${t.activeBatches}/${t.maxBatches}`.padEnd(11, " ");
       const moneyPadded = moneyPct.padEnd(10, " ");
 
-      ns.print(`${namePadded} ${modePadded} ${batchPadded} ${moneyPadded} ${secStr}`);
+      ns.print(
+        `${namePadded} ${modePadded} ${batchPadded} ${moneyPadded} ${secStr}`,
+      );
     }
   } else {
     let statsTarget = "";
     if (ns.serverExists(data.target)) {
       statsTarget = data.target;
-    } else if (data.targetsSummary && data.targetsSummary.length > 0 && ns.serverExists(data.targetsSummary[0].target)) {
+    } else if (
+      data.targetsSummary &&
+      data.targetsSummary.length > 0 &&
+      ns.serverExists(data.targetsSummary[0].target)
+    ) {
       statsTarget = data.targetsSummary[0].target;
     }
 

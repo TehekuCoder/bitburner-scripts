@@ -1,4 +1,3 @@
-// lib/evaluators/hacknet.ts
 import { NS } from "@ns";
 import {
   PurchaseEvaluator,
@@ -13,8 +12,27 @@ interface HacknetRequest extends PurchaseRequest {
 }
 
 const HASH_TO_MONEY_VALUE = 250_000;
-const MAX_PAYBACK_TIME_SECONDS = 7200; // 2 Stunden
+const MAX_PAYBACK_TIME_SECONDS = 7200; // 2 Stunden (Hard Cutoff)
 const MIN_ROI = 1 / MAX_PAYBACK_TIME_SECONDS;
+
+/**
+ * Ermittelt die Priorität dynamisch anhand der Amortisationszeit (Payback Time in Sekunden).
+ */
+function getPriorityFromRoi(roi: number, isServerMode: boolean): PurchasePriority {
+  if (roi <= 0) return PurchasePriority.IDLE;
+
+  const paybackSeconds = 1 / roi;
+
+  // In BN9 (Server-Mode) sind Hashes extrem wertvoll -> aggressivere Schwellenwerte
+  const highThreshold = isServerMode ? 600 : 300;     // < 10 Min (Server) / < 5 Min (Node)
+  const mediumThreshold = isServerMode ? 3600 : 1800; // < 60 Min (Server) / < 30 Min (Node)
+
+  if (paybackSeconds < 120) return PurchasePriority.CRITICAL; // < 2 Min Payback
+  if (paybackSeconds < highThreshold) return PurchasePriority.HIGH;
+  if (paybackSeconds < mediumThreshold) return PurchasePriority.MEDIUM;
+
+  return PurchasePriority.LOW;
+}
 
 function getEstimatedMoneyGain(
   ns: NS,
@@ -88,11 +106,10 @@ export const HacknetEvaluator: PurchaseEvaluator = {
 
     const normalizeRoiToScore = (roi: number) => {
       if (roi < MIN_ROI) return 0;
-      // Berücksichtigt den BitNode-Multiplikator direkt im Score
       return Math.min(100, Math.max(1, Math.floor(roi * 10000 * hacknetMoneyMult)));
     };
 
-    // 🟢 2. NEUEN NODE KAUFEN (Priorität wird über bnMults angepasst)
+    // 🟢 2. NEUEN NODE / SERVER KAUFEN
     if (numNodes < maxNodes) {
       const newNodeCost = ns.hacknet.getPurchaseNodeCost();
       if (newNodeCost > 0 && Number.isFinite(newNodeCost)) {
@@ -107,12 +124,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         );
         const roi = calculateRoi(newNodeCost, 0, newNodeGain);
 
-        // Basis-Priorität festlegen
-        let basePriority = PurchasePriority.LOW;
-        if (numNodes === 0) basePriority = PurchasePriority.HIGH;
-        else if (numNodes < 4) basePriority = PurchasePriority.MEDIUM;
-
-        // Dynamische Dämpfung durch BitNode Multiplikator
+        const basePriority = getPriorityFromRoi(roi, isServerMode);
         const priority = adjustPriorityByMult(basePriority, hacknetMoneyMult);
 
         requests.push({
@@ -137,9 +149,6 @@ export const HacknetEvaluator: PurchaseEvaluator = {
       const currentGain = isServerMode
         ? stats.production * HASH_TO_MONEY_VALUE
         : stats.production;
-
-      let baseUpgradePriority = numNodes < 4 ? PurchasePriority.MEDIUM : PurchasePriority.LOW;
-      const upgradePriority = adjustPriorityByMult(baseUpgradePriority, hacknetMoneyMult);
 
       const upgradeCandidates = [
         {
@@ -199,10 +208,13 @@ export const HacknetEvaluator: PurchaseEvaluator = {
               ? (currentGain * 0.15) / cacheCost
               : (currentGain * 0.02) / cacheCost;
 
+          const baseCachePriority = getPriorityFromRoi(cacheRoi, isServerMode);
+          const cachePriority = adjustPriorityByMult(baseCachePriority, hacknetMoneyMult);
+
           requests.push({
             id: `hacknet-node-${i}-cache`,
             category: "HACKNET",
-            priority: upgradePriority,
+            priority: cachePriority,
             score: normalizeRoiToScore(cacheRoi),
             cost: cacheCost,
             roi: cacheRoi,
@@ -218,11 +230,13 @@ export const HacknetEvaluator: PurchaseEvaluator = {
       for (const upg of upgradeCandidates) {
         if (upg.cost > 0 && Number.isFinite(upg.cost)) {
           const roi = calculateRoi(upg.cost, currentGain, upg.nextGain);
+          const basePriority = getPriorityFromRoi(roi, isServerMode);
+          const priority = adjustPriorityByMult(basePriority, hacknetMoneyMult);
 
           requests.push({
             id: `hacknet-node-${i}-${upg.type}`,
             category: "HACKNET",
-            priority: upgradePriority,
+            priority,
             score: normalizeRoiToScore(roi),
             cost: upg.cost,
             roi,

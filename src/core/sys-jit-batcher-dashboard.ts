@@ -1,9 +1,9 @@
 import { NS } from "@ns";
-import { drawBatcherDashboard } from "ui/batcher-ui.js";
-import { HOME_RAM_RESERVE } from "/lib/constants.js";
-import { getAllServers } from "/lib/network.js";
-import { loadBatcherState } from "/lib/state.js";
-import { DashboardData } from "/lib/types/common";
+import { drawBatcherDashboard } from "../ui/batcher-ui.js";
+import { HOME_RAM_RESERVE } from "../lib/constants.js";
+import { getAllServers } from "../lib/network.js";
+import { loadBatcherState } from "../lib/state.js";
+import { DashboardData } from "../lib/types/common.js";
 
 function cleanProgressString(str: string): string {
   return str.replace(/\s*\([^)]*?\d+s[^)]*?\)/g, "").trim();
@@ -20,7 +20,8 @@ function getPrimaryTarget(rawTarget: string): string {
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
-  ns.ui.resizeTail(610, 520);
+  ns.ui.setTailTitle("JIT-Batcher Monitor");
+  ns.ui.resizeTail(620, 540);
 
   const eventLog: string[] = [];
   let lastTarget = "";
@@ -47,7 +48,6 @@ export async function main(ns: NS): Promise<void> {
     const progressStr = state.batcherProgress ?? "";
     const targetsSummary = state.batcherTargetsSummary ?? [];
 
-    // 1. Event-Logging
     if (
       rawTarget !== lastTarget &&
       rawTarget !== "Suche..." &&
@@ -78,7 +78,6 @@ export async function main(ns: NS): Promise<void> {
 
     if (eventLog.length > 3) eventLog.shift();
 
-    // 2. RAM-Metriken
     let totalMaxRam = 0;
     let totalUsedRam = 0;
     const servers = getAllServers(ns);
@@ -92,7 +91,6 @@ export async function main(ns: NS): Promise<void> {
     }
     const ramFree = Math.max(0, totalMaxRam - totalUsedRam);
 
-    // 3. Multi-Target Metriken
     let totalActiveBatches = 0;
     let totalMaxBatches = 0;
     let averageGreed = 0;
@@ -115,7 +113,6 @@ export async function main(ns: NS): Promise<void> {
     const totalProgressPercent =
       totalMaxBatches > 0 ? totalActiveBatches / totalMaxBatches : 0;
 
-    // 4. Gewinn-Schätzung pro Welle
     let totalWaveProfit = 0;
     if (ns.formulas && ns.formulas.hacking) {
       for (const t of targetsSummary) {
