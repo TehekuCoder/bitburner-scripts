@@ -3,8 +3,7 @@ import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { getAllServers, getNetworkMaxRam } from "/lib/network.js";
 import { patchState } from "/lib/state.js";
 import { BatchStrategy } from "/lib/types/batcher.js";
-import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "/lib/constants.js";
-import { PATHS } from "/lib/paths";
+import { PATHS } from "/lib/paths.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -17,10 +16,8 @@ export async function main(ns: NS): Promise<void> {
   let activeTarget: string | null = null;
   let activeProcessId = 0;
 
-  // 🧹 0. Beim Start des Orchestrators ALLE alten Engines auf home Killen
   stopAllEngines(ns);
 
-  // Multiplikatoren einmalig laden
   let bnMults: Record<string, number> = {};
   try {
     const fileContent = ns.read("/bn-multipliers.txt");
@@ -41,28 +38,29 @@ export async function main(ns: NS): Promise<void> {
       bnMults,
     );
 
-    // 2. Prüfen, ob ein Wechsel erforderlich ist
+    // 2. Wechsel-Bedingungen prüfen
     const strategyChanged = desiredStrategy !== activeStrategy;
+    
+    // Bei JIT_HWGW steuert der Daemon die Ziele selbst -> Zielwechsel ignoriere
     const targetChanged =
       desiredStrategy !== "JIT_HWGW" && target !== activeTarget;
+      
     const processDied = activeProcessId > 0 && !ns.isRunning(activeProcessId);
 
     if (strategyChanged || targetChanged || processDied) {
       logger.info(
-        `🔄 Statuswechsel: Strategie [${activeStrategy ?? "NONE"} ➡️ ${desiredStrategy}] | Ziel [${activeTarget ?? "NONE"} ➡️ ${target ?? "NONE"}]`,
+        `🔄 Statuswechsel: Strategie [${activeStrategy ?? "NONE"} ➡️ ${desiredStrategy}] | Ziel [${activeTarget ?? "MULTI"} ➡️ ${target ?? "MULTI"}]`,
       );
 
-      // Alt-Engines & Payloads im gesamten Netzwerk radikal säubern
       stopAllEngines(ns);
       killAllWorkerPayloads(ns, servers);
 
-      // Neue Execution Engine starten
       const newPid = switchExecutionEngine(ns, desiredStrategy, target);
 
       if (newPid > 0) {
         activeProcessId = newPid;
         activeStrategy = desiredStrategy;
-        activeTarget = target;
+        activeTarget = desiredStrategy === "JIT_HWGW" ? null : target;
       } else {
         logger.error(
           `❌ Konnte Engine für [${desiredStrategy}] nicht starten! (Zu wenig RAM auf home?)`,
@@ -72,14 +70,13 @@ export async function main(ns: NS): Promise<void> {
         activeProcessId = 0;
       }
 
-      // State für Dashboard und Dispatcher aktualisieren
       patchState(ns, {
         batchStrategy: desiredStrategy,
-        kernelTarget: target ?? "n00dles",
+        kernelTarget: target ?? "Multi-Target",
       });
     }
 
-    // 3. DASHBOARD LIFECYCLE MANAGEMENT (Dynamic Toggle)
+    // 3. DASHBOARD LIFECYCLE
     const activeDashboardScript =
       activeStrategy === "JIT_HWGW"
         ? JIT_DASHBOARD
@@ -91,7 +88,6 @@ export async function main(ns: NS): Promise<void> {
 
     for (const dashScript of knownDashboards) {
       if (dashScript === activeDashboardScript) {
-        // Dashboard soll laufen -> Starten falls noch inaktiv
         if (
           ns.fileExists(dashScript, "home") &&
           !ns.isRunning(dashScript, "home")
@@ -106,7 +102,6 @@ export async function main(ns: NS): Promise<void> {
           }
         }
       } else {
-        // Nicht passendes Dashboard beenden
         if (ns.isRunning(dashScript, "home")) {
           ns.scriptKill(dashScript, "home");
           logger.info(`⏹️ Dashboard beendet: ${dashScript}`);
@@ -118,19 +113,15 @@ export async function main(ns: NS): Promise<void> {
   }
 }
 
-/**
- * Stoppt rigoros alle bekannten Engine-Skripte auf home.
- */
 function stopAllEngines(ns: NS): void {
   const enginePaths = Object.values(PATHS.core.engines);
   const runningProcs = ns.ps("home");
 
   for (const proc of runningProcs) {
-    if (proc.pid === ns.pid) continue; // Orchestrator nicht selbst beenden
+    if (proc.pid === ns.pid) continue;
 
-    const isEngine = enginePaths.some(
-      (engineScript) =>
-        proc.filename === engineScript || proc.filename.includes(engineScript),
+    const isEngine = enginePaths.some((engineScript) =>
+      proc.filename.endsWith(engineScript.replace(/^.*[\\/]/, "")),
     );
 
     if (isEngine) {
@@ -139,9 +130,6 @@ function stopAllEngines(ns: NS): void {
   }
 }
 
-/**
- * Kernlogik: Wählt die richtige Strategie UND das passendste Ziel aus.
- */
 function evaluateStrategyAndTarget(
   ns: NS,
   servers: string[],
@@ -161,23 +149,20 @@ function evaluateStrategyAndTarget(
   const homeRam = ns.getServerMaxRam("home");
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  // 2️⃣ BOOTSTRAP / PROTO: Solange home < 256 GB RAM hat
-  if (homeRam < 256) {
-    const target = selectBestTarget(ns, servers, currentTarget) ?? "joesguns";
-    return { strategy: "BOOTSTRAP", target };
-  }
-
-  // 3️⃣ JIT_HWGW: Ab 512 GB home-RAM + Formulas
+  // 2️⃣ JIT_HWGW: Ab 512 GB home-RAM + Formulas (Autonomes Multi-Targeting)
   if (homeRam >= 512 && hasFormulas) {
-    return { strategy: "JIT_HWGW", target: currentTarget ?? "n00dles" };
+    return { strategy: "JIT_HWGW", target: null };
   }
 
-  // 4️⃣ SHOTGUN / PREP: Für den Übergang
-  const target = selectBestTarget(ns, servers, currentTarget);
-  if (!target) {
-    return { strategy: "PREP", target: "n00dles" };
+  const bestTarget = selectBestTarget(ns, servers, currentTarget) ?? "n00dles";
+
+  // 3️⃣ BOOTSTRAP / PROTO: home < 256 GB RAM
+  if (homeRam < 256) {
+    return { strategy: "BOOTSTRAP", target: bestTarget };
   }
 
+  // 4️⃣ SHOTGUN / PREP (Single-Target Fallbacks)
+  const target = bestTarget;
   const sObj = ns.getServer(target);
   const currentDiff = sObj.hackDifficulty ?? 99;
   const minDiff = sObj.minDifficulty ?? 1;
@@ -205,9 +190,6 @@ function evaluateStrategyAndTarget(
   return { strategy: "SHOTGUN_HWGW", target };
 }
 
-/**
- * Wählt das lukrativste Ziel aus.
- */
 function selectBestTarget(
   ns: NS,
   servers: string[],
@@ -218,29 +200,30 @@ function selectBestTarget(
   const candidates = servers
     .filter(
       (s) =>
-        !s.startsWith("hacknet-") && // 👈 FIX: Hacknet-Server als Target ignorieren
-        !s.startsWith("pserv-") && // (Optional: Pservs sind auch keine Targets)
-        s !== "home" && // (Optional: Home ist kein Target)
+        !s.startsWith("hacknet-") &&
+        !s.startsWith("pserv-") &&
+        s !== "home" &&
         ns.hasRootAccess(s) &&
         ns.getServerMaxMoney(s) > 0 &&
         (ns.getServerRequiredHackingLevel(s) ?? 0) <= playerSkill,
     )
-    .sort(
-      (a, b) => (ns.getServerMaxMoney(b) ?? 0) - (ns.getServerMaxMoney(a) ?? 0),
-    );
+    .sort((a, b) => {
+      const scoreA = ns.getServerMaxMoney(a) / Math.max(1, ns.getWeakenTime(a));
+      const scoreB = ns.getServerMaxMoney(b) / Math.max(1, ns.getWeakenTime(b));
+      return scoreB - scoreA;
+    });
 
   const bestCandidate = candidates[0] ?? "n00dles";
 
   if (currentTarget && ns.serverExists(currentTarget)) {
-    const currentMaxMoney = ns.getServerMaxMoney(currentTarget);
-    const bestMaxMoney = ns.getServerMaxMoney(bestCandidate);
+    const currentScore =
+      ns.getServerMaxMoney(currentTarget) / Math.max(1, ns.getWeakenTime(currentTarget));
+    const bestScore =
+      ns.getServerMaxMoney(bestCandidate) / Math.max(1, ns.getWeakenTime(bestCandidate));
 
     const threshold = playerSkill < 300 ? 1.3 : 1.8;
 
-    const isBestSignificantlyBetter =
-      bestMaxMoney > currentMaxMoney * threshold;
-
-    if (!isBestSignificantlyBetter) {
+    if (bestScore <= currentScore * threshold) {
       return currentTarget;
     }
   }
@@ -248,56 +231,42 @@ function selectBestTarget(
   return bestCandidate;
 }
 
-/**
- * Startet das jeweilige Sub-System als isolierten Prozess.
- */
 function switchExecutionEngine(
   ns: NS,
   strategy: BatchStrategy,
   target: string | null,
 ): number {
-  const targetArg = target ?? "n00dles";
-
   switch (strategy) {
     case "BOOTSTRAP":
-      return ns.run(PATHS.core.engines.proto, 1, targetArg);
+      return ns.run(PATHS.core.engines.proto, 1, target ?? "n00dles");
 
     case "XP_GRIND":
       return ns.run(PATHS.core.engines.xpGrind, 1, "joesguns");
 
     case "PREP":
-      return ns.run(PATHS.core.engines.prep, 1, targetArg);
+      return ns.run(PATHS.core.engines.prep, 1, target ?? "n00dles");
 
     case "SHOTGUN_HWGW":
-      return ns.run(PATHS.core.engines.shotgun, 1, targetArg);
+      return ns.run(PATHS.core.engines.shotgun, 1, target ?? "n00dles");
 
     case "JIT_HWGW":
-      return ns.run(PATHS.core.engines.jitBatcher, 1, targetArg);
+      // Der JIT-Batcher wird ohne Ziel-Argument gestartet
+      return ns.run(PATHS.core.engines.jitBatcher, 1);
 
     default:
       return 0;
   }
 }
 
-/**
- * Beendet gezielt alle H/G/W & Early-Fleet Payload-Prozesse im Netzwerk inklusive home.
- */
 function killAllWorkerPayloads(ns: NS, servers: string[]): void {
-  const payloadScripts = [
-    PATH_HACK,
-    PATH_GROW,
-    PATH_WEAKEN,
-    "payloads/weaken.js",
-    "payloads/grow.js",
-    "payloads/hack.js",
-    PATHS.payloads.work,
-    "payloads/work.js",
-  ];
+  const payloadNames = Object.values(PATHS.payloads).map((p) =>
+    p.replace(/^.*[\\/]/, ""),
+  );
 
   for (const server of servers) {
     if (!ns.hasRootAccess(server)) continue;
     for (const proc of ns.ps(server)) {
-      if (payloadScripts.some((script) => proc.filename.includes(script))) {
+      if (payloadNames.some((name) => proc.filename.endsWith(name))) {
         ns.kill(proc.pid);
       }
     }

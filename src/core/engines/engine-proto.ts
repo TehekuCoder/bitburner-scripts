@@ -2,7 +2,8 @@ import { NS } from "@ns";
 import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { patchBatcherState } from "/lib/state.js";
-import { PATHS } from "/lib/paths";
+import { PATHS } from "/lib/paths.js";
+import { HOME_RAM_RESERVE } from "/lib/constants.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -16,12 +17,14 @@ export async function main(ns: NS): Promise<void> {
 
   logger.info(`⚡ Proto-Engine (Early Cashflow) gestartet für: [${target}]`);
 
+  let execCounter = 0;
+
   while (true) {
     if (!ns.serverExists(target)) return;
 
-    breakAndInfectNetwork(ns);
+    await breakAndInfectNetwork(ns);
     const workerNodes = getAllServers(ns).filter(
-      (s) => ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0
+      (s) => ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0,
     );
 
     const curSec = ns.getServerSecurityLevel(target);
@@ -32,13 +35,13 @@ export async function main(ns: NS): Promise<void> {
     const secDelta = curSec - minSec;
     const moneyRatio = maxMoney > 0 ? curMoney / maxMoney : 1;
 
-    // Dashboard-Status Update
     patchBatcherState(ns, {
       batcherTarget: target,
       batcherProgress: `PROTO-CASH (Money: ${(moneyRatio * 100).toFixed(0)}% | Sec: +${secDelta.toFixed(1)})`,
     });
 
-    // Worker verteilen
+    execCounter = (execCounter + 1) % 10000;
+
     deployProtoWorkers(
       ns,
       workerNodes,
@@ -47,7 +50,8 @@ export async function main(ns: NS): Promise<void> {
       moneyRatio,
       hackScript,
       growScript,
-      weakenScript
+      weakenScript,
+      execCounter,
     );
 
     await ns.sleep(2000);
@@ -62,11 +66,16 @@ function deployProtoWorkers(
   moneyRatio: number,
   hackScript: string,
   growScript: string,
-  weakenScript: string
+  weakenScript: string,
+  execCounter: number,
 ): void {
   const hCost = ns.getScriptRam(hackScript, "home");
   const gCost = ns.getScriptRam(growScript, "home");
   const wCost = ns.getScriptRam(weakenScript, "home");
+
+  // Berechne maximale Hack-Threads, um das Ziel nicht sofort leeren
+  const hackAnalyzeResult = ns.hackAnalyze(target);
+  const maxHackThreads = hackAnalyzeResult > 0 ? Math.floor(0.3 / hackAnalyzeResult) : 10;
 
   for (const node of workerNodes) {
     if (node !== "home") {
@@ -77,33 +86,38 @@ function deployProtoWorkers(
 
     const maxRam = ns.getServerMaxRam(node);
     const usedRam = ns.getServerUsedRam(node);
-    const reservedRam = node === "home" ? Math.min(16, maxRam * 0.2) : 0;
+    const reservedRam = node === "home" ? HOME_RAM_RESERVE : 0;
     const freeRam = Math.max(0, maxRam - usedRam - reservedRam);
 
     if (freeRam < wCost) continue;
 
-    // STUFE 1: Sicherheit ist zu hoch -> Fokus auf Weaken
-    if (secDelta > 3.0) {
+    const runId = `${execCounter}_${Math.random()}`;
+
+    // STUFE 1: Sicherheit zu hoch
+    if (secDelta > 2.0) {
       const threads = Math.floor(freeRam / wCost);
-      if (threads > 0) ns.exec(weakenScript, node, threads, target, 0, Math.random());
+      if (threads > 0) ns.exec(weakenScript, node, threads, target, 0, runId);
     } 
-    // STUFE 2: Geld ist niedrig -> Grow + Weaken
-    else if (moneyRatio < 0.6) {
+    // STUFE 2: Geld niedrig -> Grow + Weaken (80/20)
+    else if (moneyRatio < 0.7) {
       const gThreads = Math.floor((freeRam * 0.8) / gCost);
       const wThreads = Math.floor((freeRam * 0.2) / wCost);
 
-      if (gThreads > 0) ns.exec(growScript, node, gThreads, target, 0, Math.random());
-      if (wThreads > 0) ns.exec(weakenScript, node, wThreads, target, 0, Math.random());
+      if (gThreads > 0) ns.exec(growScript, node, gThreads, target, 0, runId);
+      if (wThreads > 0) ns.exec(weakenScript, node, wThreads, target, 0, runId);
     } 
-    // STUFE 3: Cashflow-Modus -> Hack + Grow + Weaken gleichzeitig!
+    // STUFE 3: Balancierter Cashflow
     else {
-      const hThreads = Math.floor((freeRam * 0.25) / hCost);
-      const gThreads = Math.floor((freeRam * 0.55) / gCost);
-      const wThreads = Math.floor((freeRam * 0.20) / wCost);
+      let hThreads = Math.floor((freeRam * 0.15) / hCost);
+      hThreads = Math.min(hThreads, Math.max(1, maxHackThreads));
 
-      if (hThreads > 0) ns.exec(hackScript, node, hThreads, target, 0, Math.random());
-      if (gThreads > 0) ns.exec(growScript, node, gThreads, target, 0, Math.random());
-      if (wThreads > 0) ns.exec(weakenScript, node, wThreads, target, 0, Math.random());
+      const ramForHG = freeRam - hThreads * hCost;
+      const gThreads = Math.floor((ramForHG * 0.7) / gCost);
+      const wThreads = Math.floor((ramForHG * 0.3) / wCost);
+
+      if (hThreads > 0) ns.exec(hackScript, node, hThreads, target, 0, runId);
+      if (gThreads > 0) ns.exec(growScript, node, gThreads, target, 0, runId);
+      if (wThreads > 0) ns.exec(weakenScript, node, wThreads, target, 0, runId);
     }
   }
 }

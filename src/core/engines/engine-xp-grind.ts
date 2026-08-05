@@ -2,21 +2,23 @@ import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
 import { patchBatcherState } from "/lib/state.js";
+import { PATHS } from "/lib/paths.js";
+import { HOME_RAM_RESERVE } from "/lib/constants.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new Logger(ns, "XPGrindEngine");
 
-  // Standard-Ziel für maximalen XP-Gain im Early/Mid-Game
   let target = (ns.args[0] as string) || "joesguns";
-  const weakenScript = "payloads/weaken.js";
+  const weakenScript = PATHS.payloads.weaken;
 
   logger.info(`⚡ XP-Grind Engine gestartet auf Ziel: [${target}]`);
 
-  while (true) {
-    breakAndInfectNetwork(ns);
+  let execCounter = 0;
 
-    // Fallback auf foodnstuff, falls joesguns noch nicht geknackt werden kann
+  while (true) {
+    await breakAndInfectNetwork(ns);
+
     if (!ns.serverExists(target) || !ns.hasRootAccess(target)) {
       target = "foodnstuff";
     }
@@ -27,15 +29,14 @@ export async function main(ns: NS): Promise<void> {
     );
 
     const weakenCost = ns.getScriptRam(weakenScript, "home");
-    let totalThreadsDeployed = 0;
+    execCounter = (execCounter + 1) % 10000;
 
     for (const node of workerNodes) {
       if (node !== "home" && !ns.fileExists(weakenScript, node)) {
         ns.scp(weakenScript, node, "home");
       }
 
-      // Reservierter RAM auf Home für Basissysteme
-      const reservedRam = node === "home" ? 20 : 0;
+      const reservedRam = node === "home" ? HOME_RAM_RESERVE : 0;
       const maxRam = ns.getServerMaxRam(node);
       const usedRam = ns.getServerUsedRam(node);
       const freeRam = Math.max(0, maxRam - usedRam - reservedRam);
@@ -43,16 +44,35 @@ export async function main(ns: NS): Promise<void> {
       const threads = Math.floor(freeRam / weakenCost);
 
       if (threads > 0) {
-        // Weaken mit zufälliger ID starten, um PID-Kollisionen zu vermeiden
-        ns.exec(weakenScript, node, threads, target, 0, Math.random());
-        totalThreadsDeployed += threads;
+        ns.exec(
+          weakenScript,
+          node,
+          threads,
+          target,
+          0,
+          `${execCounter}_${Math.random()}`,
+        );
+      }
+    }
+
+    // Präzise Erfassung aller tatsächlich laufenden XP-Threads im Netz
+    let totalActiveThreads = 0;
+    const scriptBaseName = weakenScript.replace(/^.*[\\/]/, "");
+    for (const node of workerNodes) {
+      for (const proc of ns.ps(node)) {
+        if (
+          proc.filename.endsWith(scriptBaseName) &&
+          proc.args[0] === target
+        ) {
+          totalActiveThreads += proc.threads;
+        }
       }
     }
 
     const currentLevel = ns.getPlayer().skills.hacking;
     patchBatcherState(ns, {
       batcherTarget: target,
-      batcherProgress: `XP-GRIND (Lvl ${currentLevel} | Threads: ${totalThreadsDeployed})`,
+      batcherProgress: `XP-GRIND (Lvl ${currentLevel} | Active Threads: ${totalActiveThreads})`,
     });
 
     await ns.sleep(2000);
