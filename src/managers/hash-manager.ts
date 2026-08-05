@@ -1,13 +1,15 @@
 import { NS } from "@ns";
+import { loadBatcherState } from "/lib/state.js";
+import { TargetSummary } from "/lib/types/batcher.js";
 
 const CONFIG = {
-  capacityThreshold: 0.8,
-  maxMoneyCap: 1e13,
+  capacityThreshold: 0.85,
+  maxMoneyCap: 1e13, // $10T
 };
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  ns.print("[Hash-Manager] Dynamischer Manager gestartet...");
+  ns.print("[Hash-Manager] Manager gestartet...");
 
   while (true) {
     const currentHashes = ns.hacknet.numHashes();
@@ -15,109 +17,117 @@ export async function main(ns: NS): Promise<void> {
 
     if (
       currentHashes >= capacity * CONFIG.capacityThreshold ||
-      currentHashes >= capacity - 15
+      currentHashes >= capacity - 20
     ) {
-      processHashSpends(ns);
+      processHashSpendsLoop(ns);
     }
 
-    await ns.sleep(1000);
+    await ns.sleep(500);
   }
 }
 
-function processHashSpends(ns: NS): void {
-  const target = getBestTarget(ns);
+function processHashSpendsLoop(ns: NS): void {
+  while (ns.hacknet.numHashes() >= 4) {
+    const spent = spendSingleHashPriority(ns);
+    if (!spent) break;
+  }
+}
 
-  // 1. Min Security auf 1 drücken (50 Hashes pro Stufe)
-  if (target) {
+function spendSingleHashPriority(ns: NS): boolean {
+  const hashes = ns.hacknet.numHashes();
+
+  // 1. CORPORATION RESEARCH ("Corporation" ausschreiben)
+  if (ns.corporation?.hasCorporation() && hashes >= 200) {
+    if (ns.hacknet.spendHashes("Exchange for Corporation Research")) {
+      ns.print("🧪 Hashes in Corp Research investiert.");
+      return true;
+    }
+  }
+
+  // 2. BLADEBURNER
+  if (ns.bladeburner?.inBladeburner() && hashes >= 250) {
+    if (ns.hacknet.spendHashes("Exchange for Bladeburner SP")) {
+      ns.print("⚔️ Hashes in Bladeburner SP investiert.");
+      return true;
+    }
+    if (ns.hacknet.spendHashes("Exchange for Bladeburner Rank")) {
+      ns.print("🎖️ Hashes in Bladeburner Rank investiert.");
+      return true;
+    }
+  }
+
+  // 3. AKTIVE BATCHER-ZIELE BUFFEN
+  const activeTargets = getActiveBatcherTargets(ns);
+
+  for (const target of activeTargets) {
     const minSec = ns.getServerMinSecurityLevel(target);
-    if (minSec > 1 && ns.hacknet.numHashes() >= 50) {
+    if (minSec > 1 && hashes >= 50) {
       if (ns.hacknet.spendHashes("Reduce Minimum Security", target)) {
-        ns.print(
-          `[Hash-Manager] Min-Security für ${target} gesenkt (neu: ${minSec - 2})`,
-        );
-        return;
+        ns.print(`📉 Min-Sec für ${target} gesenkt.`);
+        return true;
       }
     }
-  }
 
-  // 2. Bladeburner Rank / SP pushen (falls aktiv)
-  try {
-    if (ns.bladeburner?.inBladeburner() && ns.hacknet.numHashes() >= 250) {
-      if (ns.hacknet.spendHashes("Exchange for Bladeburner Rank")) {
-        ns.print("[Hash-Manager] Hashes in Bladeburner Rank investiert.");
-        return;
-      }
-    }
-  } catch (_) {}
-
-  // 3. Max Money auf dem besten Ziel-Server erhöhen (50 Hashes pro Stufe)
-  if (target && ns.hacknet.numHashes() >= 50) {
-    const currentMaxMoney = ns.getServerMaxMoney(target);
-    if (currentMaxMoney < CONFIG.maxMoneyCap) {
+    const maxMoney = ns.getServerMaxMoney(target);
+    if (maxMoney < CONFIG.maxMoneyCap && hashes >= 50) {
       if (ns.hacknet.spendHashes("Increase Maximum Money", target)) {
-        ns.print(
-          `[Hash-Manager] Max-Money für ${target} erhöht ($${ns.format.number(currentMaxMoney)})`,
-        );
-        return;
+        ns.print(`💰 Max-Money für ${target} erhöht.`);
+        return true;
       }
     }
   }
 
-  // 4. Fallback: Verbleibende Hashes komplett in Bargeld umwandeln
-  const currentHashes = ns.hacknet.numHashes();
-  if (currentHashes >= 4) {
-    const amountToSpend = Math.floor(currentHashes / 4);
+  // 4. FALLBACK: Bargeld
+  if (hashes >= 4) {
+    const amountToSpend = Math.floor(hashes / 4);
     if (ns.hacknet.spendHashes("Sell for Money", "", amountToSpend)) {
-      ns.print(
-        `[Hash-Manager] ${amountToSpend * 4} Hashes für $${ns.format.number(
-          amountToSpend * 250000,
-        )} verkauft.`,
-      );
+      return true;
     }
   }
+
+  return false;
 }
 
-function getBestTarget(ns: NS): string | null {
-  const playerHackLevel = ns.getHackingLevel();
-  const visited = new Set<string>();
-  const queue: string[] = ["home"];
-  visited.add("home");
+function getActiveBatcherTargets(ns: NS): string[] {
+  // loadBatcherState nutzen & Parameter 't' explizit typisieren
+  const batcherState = loadBatcherState(ns);
+  
+  if (batcherState?.batcherTargetsSummary && batcherState.batcherTargetsSummary.length > 0) {
+    return batcherState.batcherTargetsSummary.map((t: TargetSummary) => t.target);
+  }
 
-  const purchasedServers = new Set(
-    ns.cloud?.getServerNames() ?? ns.cloud.getServerNames(),
-  );
-  let bestTarget: string | null = null;
+  const fallback = getHighestValueServer(ns);
+  return fallback ? [fallback] : [];
+}
+
+function getHighestValueServer(ns: NS): string | null {
+  const playerHack = ns.getHackingLevel();
+  let bestServer: string | null = null;
   let maxMoney = 0;
 
-  while (queue.length > 0) {
-    const host = queue.shift()!;
-    const neighbors = ns.scan(host);
-
-    for (const neighbor of neighbors) {
+  const scanList = (host = "home", visited = new Set<string>()): void => {
+    visited.add(host);
+    for (const neighbor of ns.scan(host)) {
       if (visited.has(neighbor)) continue;
-
-      visited.add(neighbor);
-      queue.push(neighbor);
-
-      // Ausschluss-Filter: Darkweb, Hacknet-Server/Nodes, eigene Server & un-gehackte Server
+      
       if (
-        neighbor === "darkweb" ||
-        neighbor.startsWith("hacknet-") ||
-        purchasedServers.has(neighbor) ||
-        !ns.hasRootAccess(neighbor)
+        ns.hasRootAccess(neighbor) &&
+        !neighbor.startsWith("hacknet-") &&
+        neighbor !== "darkweb" &&
+        !neighbor.startsWith("pserv-")
       ) {
-        continue;
+        const reqLevel = ns.getServerRequiredHackingLevel(neighbor);
+        const serverMoney = ns.getServerMaxMoney(neighbor);
+        
+        if (reqLevel <= playerHack && serverMoney > maxMoney) {
+          maxMoney = serverMoney;
+          bestServer = neighbor;
+        }
       }
-
-      const reqHack = ns.getServerRequiredHackingLevel(neighbor);
-      const serverMaxMoney = ns.getServerMaxMoney(neighbor);
-
-      if (reqHack <= playerHackLevel && serverMaxMoney > maxMoney) {
-        maxMoney = serverMaxMoney;
-        bestTarget = neighbor;
-      }
+      scanList(neighbor, visited);
     }
-  }
+  };
 
-  return bestTarget;
+  scanList();
+  return bestServer;
 }

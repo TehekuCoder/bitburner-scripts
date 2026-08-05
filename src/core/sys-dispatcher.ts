@@ -2,7 +2,6 @@ import { NS, FactionName, CompanyName } from "@ns";
 
 import { generateProgressBar } from "../ui/ui-helper.js";
 import {
-  DEFAULT_MULTIPLIERS,
   REFRESH_INTERVALS,
   COMBAT_STATS,
   CITY_FACTIONS,
@@ -363,7 +362,7 @@ function manageMicroservices(
   let overrideArgs: (string | number)[] | undefined = undefined;
 
   if (currentMode === "MONEY") {
-    const isGangUnlocked = hasGang || currentKarma <= -5400;
+    const isGangUnlocked = hasGang || currentKarma <= -54000;
 
     if (!isGangUnlocked) {
       targetScript = PATHS.tasks.crime;

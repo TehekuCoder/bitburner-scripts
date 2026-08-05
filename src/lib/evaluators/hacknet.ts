@@ -12,22 +12,33 @@ interface HacknetRequest extends PurchaseRequest {
 }
 
 const HASH_TO_MONEY_VALUE = 250_000;
-const MAX_PAYBACK_TIME_SECONDS = 7200; // 2 Stunden (Hard Cutoff)
+const MAX_PAYBACK_TIME_SECONDS = 7200; // 2 Stunden (Hard Cutoff für Cash-ROI)
 const MIN_ROI = 1 / MAX_PAYBACK_TIME_SECONDS;
 
 /**
- * Ermittelt die Priorität dynamisch anhand der Amortisationszeit (Payback Time in Sekunden).
+ * Ermittelt die Priorität dynamisch anhand der Amortisationszeit und des RAM-Bedarfs.
  */
-function getPriorityFromRoi(roi: number, isServerMode: boolean): PurchasePriority {
-  if (roi <= 0) return PurchasePriority.IDLE;
+function getPriorityFromRoi(
+  roi: number,
+  isServerMode: boolean,
+  ramGainGb = 0,
+  totalRamGb = 0,
+): PurchasePriority {
+  // 🚀 RAM-NOTSTAND: Wenn wir im Server-Modus sind und wenig RAM haben (< 1TB),
+  // push RAM-Upgrades und neue Server massiv nach oben!
+  if (isServerMode && ramGainGb > 0 && totalRamGb < 1024) {
+    if (totalRamGb < 256) return PurchasePriority.CRITICAL;
+    return PurchasePriority.HIGH;
+  }
 
-  const paybackSeconds = 1 / roi;
+  if (roi <= 0 && ramGainGb === 0) return PurchasePriority.IDLE;
 
-  // In BN9 (Server-Mode) sind Hashes extrem wertvoll -> aggressivere Schwellenwerte
-  const highThreshold = isServerMode ? 600 : 300;     // < 10 Min (Server) / < 5 Min (Node)
-  const mediumThreshold = isServerMode ? 3600 : 1800; // < 60 Min (Server) / < 30 Min (Node)
+  const paybackSeconds = roi > 0 ? 1 / roi : Infinity;
 
-  if (paybackSeconds < 120) return PurchasePriority.CRITICAL; // < 2 Min Payback
+  const highThreshold = isServerMode ? 900 : 300; // 15 Min (Server) / 5 Min (Node)
+  const mediumThreshold = isServerMode ? 3600 : 1800; // 60 Min (Server) / 30 Min (Node)
+
+  if (paybackSeconds < 120) return PurchasePriority.CRITICAL;
   if (paybackSeconds < highThreshold) return PurchasePriority.HIGH;
   if (paybackSeconds < mediumThreshold) return PurchasePriority.MEDIUM;
 
@@ -83,7 +94,6 @@ export const HacknetEvaluator: PurchaseEvaluator = {
     const isServerMode = typeof (ns.hacknet as any).hashCapacity === "function";
     const bnMults = loadBnMults(ns);
 
-    // 🔴 1. HARD CHECK: Falls Hacknet-Ertrag in dieser BitNode 0 ist, abbrechen
     const hacknetMoneyMult = bnMults.HacknetNodeMoney ?? 1.0;
     if (hacknetMoneyMult <= 0) return [];
 
@@ -93,6 +103,12 @@ export const HacknetEvaluator: PurchaseEvaluator = {
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
     const hNetMults = ns.getHacknetMultipliers();
     const prodMult = hNetMults?.production ?? 1;
+
+    // Gesamt-RAM des Hacknet-Netzwerks berechnen
+    let totalHacknetRam = 0;
+    for (let i = 0; i < numNodes; i++) {
+      totalHacknetRam += ns.hacknet.getNodeStats(i).ram;
+    }
 
     const calculateRoi = (
       cost: number,
@@ -104,12 +120,18 @@ export const HacknetEvaluator: PurchaseEvaluator = {
       return deltaGain > 0 ? deltaGain / cost : 0;
     };
 
-    const normalizeRoiToScore = (roi: number) => {
-      if (roi < MIN_ROI) return 0;
-      return Math.min(100, Math.max(1, Math.floor(roi * 10000 * hacknetMoneyMult)));
+    const normalizeRoiToScore = (roi: number, ramGainGb = 0) => {
+      let baseScore = Math.floor(roi * 10000 * hacknetMoneyMult);
+
+      // Im Server-Modus belohnen wir RAM-Zuwachs zusätzlich im Score
+      if (isServerMode && ramGainGb > 0) {
+        baseScore += ramGainGb * 5;
+      }
+
+      return Math.min(100, Math.max(1, baseScore));
     };
 
-    // 🟢 2. NEUEN NODE / SERVER KAUFEN
+    // 🟢 1. NEUEN SERVER / NODE KAUFEN (Priorisiert im Server-Modus)
     if (numNodes < maxNodes) {
       const newNodeCost = ns.hacknet.getPurchaseNodeCost();
       if (newNodeCost > 0 && Number.isFinite(newNodeCost)) {
@@ -124,14 +146,20 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         );
         const roi = calculateRoi(newNodeCost, 0, newNodeGain);
 
-        const basePriority = getPriorityFromRoi(roi, isServerMode);
+        // Neue Server geben 1GB Basis-RAM + neuen Ausbau-Slot
+        const basePriority = getPriorityFromRoi(
+          roi,
+          isServerMode,
+          1,
+          totalHacknetRam,
+        );
         const priority = adjustPriorityByMult(basePriority, hacknetMoneyMult);
 
         requests.push({
           id: `hacknet-new-node-${numNodes}`,
           category: "HACKNET",
           priority,
-          score: normalizeRoiToScore(roi),
+          score: normalizeRoiToScore(roi, 1),
           cost: newNodeCost,
           roi,
           description: `Hacknet ${isServerMode ? "Server" : "Node"} #${numNodes + 1} kaufen`,
@@ -143,7 +171,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
       }
     }
 
-    // 🟢 3. EXISTIERENDE NODES UPGRADEN
+    // 🟢 2. EXISTIERENDE NODES UPGRADEN
     for (let i = 0; i < numNodes; i++) {
       const stats = ns.hacknet.getNodeStats(i);
       const currentGain = isServerMode
@@ -154,6 +182,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         {
           type: "level",
           cost: ns.hacknet.getLevelUpgradeCost(i, 1),
+          ramGain: 0,
           nextGain: getEstimatedMoneyGain(
             ns,
             stats.level + 1,
@@ -169,6 +198,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         {
           type: "ram",
           cost: ns.hacknet.getRamUpgradeCost(i, 1),
+          ramGain: stats.ram, // Verdopplung des RAMs = Zuwachs um den aktuellen Wert
           nextGain: getEstimatedMoneyGain(
             ns,
             stats.level,
@@ -184,6 +214,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         {
           type: "core",
           cost: ns.hacknet.getCoreUpgradeCost(i, 1),
+          ramGain: 0,
           nextGain: getEstimatedMoneyGain(
             ns,
             stats.level,
@@ -198,7 +229,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         },
       ];
 
-      // Cache Upgrades (Server-Modus)
+      // Cache Upgrades (nur im Server-Modus relevant)
       if (isServerMode && "cache" in stats) {
         const cacheCost = ns.hacknet.getCacheUpgradeCost(i, 1);
         if (cacheCost > 0 && Number.isFinite(cacheCost)) {
@@ -208,8 +239,16 @@ export const HacknetEvaluator: PurchaseEvaluator = {
               ? (currentGain * 0.15) / cacheCost
               : (currentGain * 0.02) / cacheCost;
 
-          const baseCachePriority = getPriorityFromRoi(cacheRoi, isServerMode);
-          const cachePriority = adjustPriorityByMult(baseCachePriority, hacknetMoneyMult);
+          const baseCachePriority = getPriorityFromRoi(
+            cacheRoi,
+            isServerMode,
+            0,
+            totalHacknetRam,
+          );
+          const cachePriority = adjustPriorityByMult(
+            baseCachePriority,
+            hacknetMoneyMult,
+          );
 
           requests.push({
             id: `hacknet-node-${i}-cache`,
@@ -230,14 +269,21 @@ export const HacknetEvaluator: PurchaseEvaluator = {
       for (const upg of upgradeCandidates) {
         if (upg.cost > 0 && Number.isFinite(upg.cost)) {
           const roi = calculateRoi(upg.cost, currentGain, upg.nextGain);
-          const basePriority = getPriorityFromRoi(roi, isServerMode);
+
+          // RAM-Gewinn fließt direkt in die Prioritätsbewertung ein
+          const basePriority = getPriorityFromRoi(
+            roi,
+            isServerMode,
+            upg.ramGain,
+            totalHacknetRam,
+          );
           const priority = adjustPriorityByMult(basePriority, hacknetMoneyMult);
 
           requests.push({
             id: `hacknet-node-${i}-${upg.type}`,
             category: "HACKNET",
             priority,
-            score: normalizeRoiToScore(roi),
+            score: normalizeRoiToScore(roi, upg.ramGain),
             cost: upg.cost,
             roi,
             description: `Hacknet ${isServerMode ? "Server" : "Node"} #${i + 1} ${upg.desc}`,
@@ -251,10 +297,21 @@ export const HacknetEvaluator: PurchaseEvaluator = {
     }
 
     return requests
-      .filter(
-        (req) => req.roi >= MIN_ROI && req.score !== undefined && req.score > 0,
-      )
-      .sort((a, b) => b.roi - a.roi);
+      .filter((req) => {
+        // Im Server-Modus lassen wir RAM-Upgrades & neue Server auch zu, wenn deren Cash-ROI unter MIN_ROI liegt
+        if (isServerMode && req.id.includes("-ram")) return true;
+        if (isServerMode && req.id.startsWith("hacknet-new-node")) return true;
+        return req.roi >= MIN_ROI && req.score !== undefined && req.score > 0;
+      })
+      .sort((a, b) => {
+        // 1. Sortierung nach Priorität (CRITICAL = 1 ist dringender als LOW = 4)
+        if (a.priority !== b.priority) {
+          return a.priority - b.priority;
+        }
+
+        // 2. Tie-Breaker: Höherer Score gewinnt (Fall-Back auf 0 für TS-Safety)
+        return (b.score ?? 0) - (a.score ?? 0);
+      });
   },
 };
 

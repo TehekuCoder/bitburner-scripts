@@ -116,22 +116,12 @@ export function determineStrategy(
   factionToWorkFor: TargetFactionResult | null,
   isReadyForFactionGrind: boolean,
 ): StrategyResult {
-  // 1. Slum Snakes / Gang-Voraussetzung (Karma Grind)
-  // 💡 Gang-Freischaltung erfordert Karma <= -54000
-  if (currentKarma > -54000 && !ns.gang.inGang()) {
-    const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
-    if (minCombat < 30) {
-      return { mode: "TRAIN", targetStat: 30 };
-    }
-    return { mode: "CRIME" };
-  }
-
-  // 2. Early-Game Hacking-Leveling via Uni (falls Hacking noch zu niedrig für Basisskripte ist)
+  // 1. Early-Game Hacking-Leveling via Uni
   if (player.skills.hacking < 30) {
     return { mode: "UNI", targetStat: 30 };
   }
 
-  // 3. Fraktions-Reputation Grind
+  // 2. Fraktions-Reputation Grind (Vorrang für den Spieler!)
   if (factionToWorkFor && isReadyForFactionGrind) {
     const isMember = player.factions.includes(
       factionToWorkFor.name as FactionName,
@@ -144,10 +134,22 @@ export function determineStrategy(
     }
   }
 
+  // 3. Fallback Karma-Grind durch den Spieler NUR WENN:
+  // - Keine Gang existiert
+  // - Karma noch nicht erreicht ist
+  // - Keine Sleeves vorhanden sind (oder SF10 nicht gekauft/aktiv ist)
+  const hasSleeves = ns.sleeve?.getNumSleeves() > 0;
+  if (currentKarma > -54000 && !ns.gang.inGang() && !hasSleeves) {
+    const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
+    if (minCombat < 30) {
+      return { mode: "TRAIN", targetStat: 30 };
+    }
+    return { mode: "CRIME" };
+  }
+
   // 4. Standard-Geldbeschaffung (Money Mode)
   return { mode: "MONEY" };
 }
-
 /**
  * Prüft, ob die Gang ALLE Augmentationen des Spiels anbietet.
  * In BitNode 2 ist dies der Fall (inkl. "The Red Pill").

@@ -4,8 +4,7 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
   while (true) {
-    // Erhöht temporär den globalen Fraktions-Reputations-Multiplikator des Spielers
+    // ns.share() dauert exakt 10 Sekunden und yields automatisch
     await ns.share();
-    await ns.sleep(1000);
   }
 }
