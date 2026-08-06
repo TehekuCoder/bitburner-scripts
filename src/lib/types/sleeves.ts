@@ -23,6 +23,13 @@ export interface SleeveOptions {
   strategy?: BotStrategy;
 }
 
+export interface SleeveGangUnlockStatus {
+  hasSleeves: boolean;
+  hasGangApi: boolean;
+  inGang: boolean;
+  shouldGrindKarma: boolean;
+}
+
 export interface SleeveState {
   sleeveGlobalMode?: string;
   targetFaction?: string | FactionName | null;

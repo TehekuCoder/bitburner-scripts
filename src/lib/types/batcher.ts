@@ -42,6 +42,7 @@ export interface TargetContext {
   nextAvailableLandTime: number;
   prepEndTime: number;
   activeBatchIds: Set<number>;
+  lastRamBlockedTime?: number;
 }
 
 export interface InFlightBatch {

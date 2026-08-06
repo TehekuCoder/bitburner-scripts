@@ -57,21 +57,25 @@ function spendSingleHashPriority(ns: NS): boolean {
   }
 
   // 3. AKTIVE BATCHER-ZIELE BUFFEN
-  const activeTargets = getActiveBatcherTargets(ns);
+  // Nur Targets buffen, die im State explizit als "PREP" markiert sind
+  const activeTargets = loadBatcherState(ns)?.batcherTargetsSummary || [];
 
-  for (const target of activeTargets) {
-    const minSec = ns.getServerMinSecurityLevel(target);
-    if (minSec > 1 && hashes >= 50) {
+  for (const targetInfo of activeTargets) {
+    // Wenn der Batcher gerade HWGW fährt: Fingerchen weg!
+    if (targetInfo.mode !== "PREP") continue;
+
+    const target = targetInfo.target;
+
+    if (ns.getServerMinSecurityLevel(target) > 1 && hashes >= 50) {
       if (ns.hacknet.spendHashes("Reduce Minimum Security", target)) {
-        ns.print(`📉 Min-Sec für ${target} gesenkt.`);
+        ns.print(`📉 Min-Sec für ${target} im Prep-Modus gesenkt.`);
         return true;
       }
     }
 
-    const maxMoney = ns.getServerMaxMoney(target);
-    if (maxMoney < CONFIG.maxMoneyCap && hashes >= 50) {
+    if (ns.getServerMaxMoney(target) < CONFIG.maxMoneyCap && hashes >= 50) {
       if (ns.hacknet.spendHashes("Increase Maximum Money", target)) {
-        ns.print(`💰 Max-Money für ${target} erhöht.`);
+        ns.print(`💰 Max-Money für ${target} im Prep-Modus erhöht.`);
         return true;
       }
     }
@@ -91,9 +95,14 @@ function spendSingleHashPriority(ns: NS): boolean {
 function getActiveBatcherTargets(ns: NS): string[] {
   // loadBatcherState nutzen & Parameter 't' explizit typisieren
   const batcherState = loadBatcherState(ns);
-  
-  if (batcherState?.batcherTargetsSummary && batcherState.batcherTargetsSummary.length > 0) {
-    return batcherState.batcherTargetsSummary.map((t: TargetSummary) => t.target);
+
+  if (
+    batcherState?.batcherTargetsSummary &&
+    batcherState.batcherTargetsSummary.length > 0
+  ) {
+    return batcherState.batcherTargetsSummary.map(
+      (t: TargetSummary) => t.target,
+    );
   }
 
   const fallback = getHighestValueServer(ns);
@@ -109,7 +118,7 @@ function getHighestValueServer(ns: NS): string | null {
     visited.add(host);
     for (const neighbor of ns.scan(host)) {
       if (visited.has(neighbor)) continue;
-      
+
       if (
         ns.hasRootAccess(neighbor) &&
         !neighbor.startsWith("hacknet-") &&
@@ -118,7 +127,7 @@ function getHighestValueServer(ns: NS): string | null {
       ) {
         const reqLevel = ns.getServerRequiredHackingLevel(neighbor);
         const serverMoney = ns.getServerMaxMoney(neighbor);
-        
+
         if (reqLevel <= playerHack && serverMoney > maxMoney) {
           maxMoney = serverMoney;
           bestServer = neighbor;

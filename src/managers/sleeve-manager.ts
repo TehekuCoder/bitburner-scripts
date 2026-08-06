@@ -1,5 +1,9 @@
 import { NS, FactionName } from "@ns";
-import { getFactionsNeedingRep, manageAllSleeves } from "/lib/sleeve-utils.js";
+import {
+  getFactionsNeedingRep,
+  manageAllSleeves,
+  checkSleeveGangStatus,
+} from "/lib/sleeve-utils.js";
 import { printSleeveDashboard } from "ui/sleeve-ui.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { loadSleeveState, patchSleeveState } from "/lib/state.js";
@@ -18,6 +22,7 @@ export async function main(ns: NS): Promise<void> {
   let factionsNeedingRep: FactionName[] = [];
   let lastFactionScan = 0;
   let lastStateProgress = "";
+  let lastStatusMsg = "";
   const SCAN_INTERVAL = 30000;
 
   const localLogBuffer: string[] = [];
@@ -39,6 +44,24 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
+    const unlockStatus = checkSleeveGangStatus(ns);
+    let statusMsg = "";
+    if (unlockStatus.inGang) {
+      statusMsg = "🟢 Sleeves + Gang aktiv (Gang-Faction wird ignoriert)";
+    } else if (unlockStatus.shouldGrindKarma) {
+      statusMsg = `🟡 Sleeves aktiv, Gang ausstehend (Karma: ${ns.heart.break().toFixed(0)} / -54000)`;
+    } else if (unlockStatus.hasGangApi) {
+      statusMsg = "🟢 Sleeves + Gang-API bereit (Karma-Ziel erreicht)";
+    } else {
+      statusMsg = "🔵 Sleeves-only Modus (Keine Gang-API im Node)";
+    }
+
+    if (statusMsg !== lastStatusMsg) {
+      logger.info(statusMsg);
+      addLocalLog(statusMsg);
+      lastStatusMsg = statusMsg;
+    }
+
     const p = ns.getPlayer();
 
     const botState = loadSleeveState(ns);
@@ -54,7 +77,6 @@ export async function main(ns: NS): Promise<void> {
       ownedAugs = ns.singularity.getOwnedAugmentations(true);
     }
 
-    // Fix: Scan-Intervall greift jetzt verlässlich alle 30s (auch wenn das Array leer ist)
     if (
       lastFactionScan === 0 ||
       Date.now() - lastFactionScan > SCAN_INTERVAL

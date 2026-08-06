@@ -14,6 +14,7 @@ import {
   checkTargetEviction,
   getDynamicMaxTargets,
   getAdaptiveBatchGap,
+  pruneBatchFromQueue,
 } from "/lib/batcher-helpers.js";
 import { SPACER } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
@@ -55,9 +56,8 @@ export async function main(ns: NS): Promise<void> {
   let batchIdCounter = 0;
   let lastHackingLevel = ns.getHackingLevel();
   let lastHeartbeatTime = 0;
-  let lastRamThrottleLogTime = 0;
   let lastEvictionCheck = 0;
-  let lastPlannerRunTime = 0; // ⏱️ Intervall für Planner
+  let lastPlannerRunTime = 0;
   let rollingLag = 0;
 
   function removeTarget(targetName: string, reason: string): void {
@@ -119,7 +119,6 @@ export async function main(ns: NS): Promise<void> {
         logger,
       );
 
-      // Direkte Set-Bereinigung ohne Array.from Allokation
       for (const bId of ctx.activeBatchIds) {
         if (!activeBatchIdsSet.has(bId)) {
           ctx.activeBatchIds.delete(bId);
@@ -143,7 +142,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // Sicheres Entfernen nach der Loop-Iteration
     for (const item of completedPrepTargets) {
       removeTarget(item.target, item.reason);
     }
@@ -236,19 +234,21 @@ export async function main(ns: NS): Promise<void> {
         bnMults,
         logger,
         removeTarget,
+        totalNetworkMaxRam,
       );
       lastEvictionCheck = now;
     }
 
     // ⚖️ 5. DYNAMISCHE RAM-VERTEILUNG
+    const currentAdaptiveGap = getAdaptiveBatchGap(rollingLag);
     updateDynamicBatchCaps(
       activeTargets,
       virtualFreeRam,
       MAX_SAFE_CONCURRENT_SCRIPTS,
+      currentAdaptiveGap,
     );
 
-    // 🔍 6. MULTI-TARGET PLANNER EVALUIERUNG (Getrottelt auf max. 1x pro Sekunde)
-    // Dynamische Sicherheitsreserve: Max. 16 GB oder 5% des Netzwerks reservieren
+    // 🔍 6. MULTI-TARGET PLANNER EVALUIERUNG
     const safetyBuffer = Math.min(16, totalNetworkMaxRam * 0.05);
     const safePlannerRam = Math.max(0, virtualFreeRam - safetyBuffer);
 
@@ -266,7 +266,7 @@ export async function main(ns: NS): Promise<void> {
         ns,
         candidateServers,
         totalNetworkMaxRam,
-        safePlannerRam, // 👈 Nutzt das reale/sichere Limit für exaktes Greed-Scaling
+        safePlannerRam,
         bnMults,
         ns.getPlayer(),
         logger,
@@ -292,8 +292,6 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // 📥 7. EVENT-QUEUE BEFÜLLEN
-    const currentAdaptiveGap = getAdaptiveBatchGap(rollingLag);
-
     for (const ctx of activeTargets.values()) {
       const plan = ctx.plan;
       const isPrep = plan.hackThreads === 0;
@@ -304,20 +302,22 @@ export async function main(ns: NS): Promise<void> {
         const currentQueueRam = getQueueRam(ns, eventQueue);
         const unreservedFreeRam = realFreeRam - currentQueueRam;
 
-        // Reserviere festen Puffer (z.B. 16GB). Falls 0 Batches aktiv sind, erlaube vollen Zugriff.
         const safeVirtualRam = Math.max(0, unreservedFreeRam - safetyBuffer);
         const effectiveRamLimit =
           ctx.activeBatchIds.size === 0 ? unreservedFreeRam : safeVirtualRam;
 
         if (effectiveRamLimit < planRam) {
-          if (now - lastRamThrottleLogTime > 5000) {
-            lastRamThrottleLogTime = now;
-            logger.debug(
-              `⏸️ RAM-Engpass für ${ctx.target}. Benötigt: ${planRam.toFixed(1)}GB | Verfügbar: ${effectiveRamLimit.toFixed(1)}GB`,
+          ctx.lastRamBlockedTime = ctx.lastRamBlockedTime ?? now;
+
+          if (now - ctx.lastRamBlockedTime > 10000) {
+            removeTarget(
               ctx.target,
+              "RAM-Deadlock (Plan zu groß für freie Kapazität)",
             );
           }
           break;
+        } else {
+          ctx.lastRamBlockedTime = undefined;
         }
 
         if (ctx.nextAvailableLandTime < now + plan.weakenTime + 500) {
@@ -350,13 +350,11 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // RAM-Bedarf über alle aktiven Wellen berechnen
     const totalRamNeeded = Array.from(activeTargets.values()).reduce(
       (sum, ctx) => sum + ctx.plan.batchRam,
       0,
     );
 
-    // Dashboard State Update
     patchBatcherState(ns, {
       batcherTarget: Array.from(activeTargets.keys()).join(", ") || "Suche...",
       batcherProgress: `Multi-Target (${activeTargets.size} aktiv)`,
@@ -389,7 +387,7 @@ export async function main(ns: NS): Promise<void> {
             event.target,
           );
           if (batchState && batchState.executedEventsCount > 0) {
-            targetBlacklist.set(event.target, now + 5000);
+            targetBlacklist.set(event.target, Date.now() + 5000);
             removeTarget(event.target, "Event verworfen wegen Lag");
             break;
           } else {
@@ -397,6 +395,7 @@ export async function main(ns: NS): Promise<void> {
             activeBatchIdsSet.delete(event.batchId);
             const ctx = activeTargets.get(event.target);
             if (ctx) ctx.activeBatchIds.delete(event.batchId);
+            pruneBatchFromQueue(eventQueue, event.batchId);
             continue;
           }
         }
@@ -410,7 +409,7 @@ export async function main(ns: NS): Promise<void> {
             `🛑 Ausführungsfehler auf Workers für ${event.target}. Target isoliert pausiert.`,
             event.target,
           );
-          targetBlacklist.set(event.target, now + 45000);
+          targetBlacklist.set(event.target, Date.now() + 45000);
           removeTarget(event.target, "Worker Exec Error");
           break;
         }

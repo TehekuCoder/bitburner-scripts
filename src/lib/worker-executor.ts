@@ -9,20 +9,35 @@ import { JitEvent } from "/lib/types/batcher.js";
 import { WorkerNode } from "/lib/types/network.js";
 import { getUsableThreads } from "./batcher-helpers.js";
 
-// Statisches RAM Lookup zur Vermeidung träger File-System API Calls
 const SCRIPT_RAM_MAP: Record<string, number> = {
   [PATH_HACK]: 1.7,
   [PATH_GROW]: 1.75,
   [PATH_WEAKEN]: 1.75,
 };
 
+// Statischer Max-RAM Cache vermeidet Hunderte ns.getServerMaxRam Calls pro Sekunde
+const MAX_RAM_CACHE = new Map<string, number>();
+
+/** Resettet den Cache bei gekauften/geupgradeten Servern */
+export function invalidateMaxRamCache(): void {
+  MAX_RAM_CACHE.clear();
+}
+
 /** Scanned das Netzwerk nach gerooteten Servern mit freiem RAM */
 export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   const nodes: WorkerNode[] = [];
+
   for (const s of servers) {
     if (!ns.hasRootAccess(s)) continue;
 
-    const maxRam = Math.max(0, ns.getServerMaxRam(s));
+    let maxRam = MAX_RAM_CACHE.get(s);
+    if (maxRam === undefined) {
+      maxRam = Math.max(0, ns.getServerMaxRam(s));
+      MAX_RAM_CACHE.set(s, maxRam);
+    }
+
+    if (maxRam <= 0) continue;
+
     const usedRam = Math.max(0, ns.getServerUsedRam(s));
     let free = maxRam - usedRam;
     if (s === "home") free -= HOME_RAM_RESERVE;
@@ -35,6 +50,7 @@ export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
       });
     }
   }
+
   return nodes.sort((a, b) => b.freeRam - a.freeRam);
 }
 
@@ -43,7 +59,7 @@ export function killWorkerPayloads(ns: NS, servers: string[]): void {
   const payloadScripts = [PATH_HACK, PATH_GROW, PATH_WEAKEN];
   for (const server of servers) {
     if (!ns.hasRootAccess(server)) continue;
-    if (ns.getServerMaxRam(server) === 0) continue;
+    if ((MAX_RAM_CACHE.get(server) ?? ns.getServerMaxRam(server)) === 0) continue;
 
     for (const proc of ns.ps(server)) {
       if (payloadScripts.some((path) => proc.filename.includes(path))) {

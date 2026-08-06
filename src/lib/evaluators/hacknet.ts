@@ -24,8 +24,6 @@ function getPriorityFromRoi(
   ramGainGb = 0,
   totalRamGb = 0,
 ): PurchasePriority {
-  // 🚀 RAM-NOTSTAND: Wenn wir im Server-Modus sind und wenig RAM haben (< 1TB),
-  // push RAM-Upgrades und neue Server massiv nach oben!
   if (isServerMode && ramGainGb > 0 && totalRamGb < 1024) {
     if (totalRamGb < 256) return PurchasePriority.CRITICAL;
     return PurchasePriority.HIGH;
@@ -35,8 +33,8 @@ function getPriorityFromRoi(
 
   const paybackSeconds = roi > 0 ? 1 / roi : Infinity;
 
-  const highThreshold = isServerMode ? 900 : 300; // 15 Min (Server) / 5 Min (Node)
-  const mediumThreshold = isServerMode ? 3600 : 1800; // 60 Min (Server) / 30 Min (Node)
+  const highThreshold = isServerMode ? 900 : 300;
+  const mediumThreshold = isServerMode ? 3600 : 1800;
 
   if (paybackSeconds < 120) return PurchasePriority.CRITICAL;
   if (paybackSeconds < highThreshold) return PurchasePriority.HIGH;
@@ -104,11 +102,25 @@ export const HacknetEvaluator: PurchaseEvaluator = {
     const hNetMults = ns.getHacknetMultipliers();
     const prodMult = hNetMults?.production ?? 1;
 
-    // Gesamt-RAM des Hacknet-Netzwerks berechnen
+    // 📊 Status-Erfassung für Netburners-Freischaltung
     let totalHacknetRam = 0;
+    let totalHacknetLevels = 0;
+    let totalHacknetCores = 0;
+
     for (let i = 0; i < numNodes; i++) {
-      totalHacknetRam += ns.hacknet.getNodeStats(i).ram;
+      const stats = ns.hacknet.getNodeStats(i);
+      totalHacknetRam += stats.ram;
+      totalHacknetLevels += stats.level;
+      totalHacknetCores += stats.cores;
     }
+
+    const player = ns.getPlayer();
+    const inNetburners = player.factions.includes("Netburners");
+
+    // Netburners benötigt: 100 Level, 8GB RAM, 4 Cores
+    const needsNetburnersLevel = !inNetburners && totalHacknetLevels < 100;
+    const needsNetburnersRam = !inNetburners && totalHacknetRam < 8;
+    const needsNetburnersCores = !inNetburners && totalHacknetCores < 4;
 
     const calculateRoi = (
       cost: number,
@@ -123,7 +135,6 @@ export const HacknetEvaluator: PurchaseEvaluator = {
     const normalizeRoiToScore = (roi: number, ramGainGb = 0) => {
       let baseScore = Math.floor(roi * 10000 * hacknetMoneyMult);
 
-      // Im Server-Modus belohnen wir RAM-Zuwachs zusätzlich im Score
       if (isServerMode && ramGainGb > 0) {
         baseScore += ramGainGb * 5;
       }
@@ -131,7 +142,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
       return Math.min(100, Math.max(1, baseScore));
     };
 
-    // 🟢 1. NEUEN SERVER / NODE KAUFEN (Priorisiert im Server-Modus)
+    // 🟢 1. NEUEN SERVER / NODE KAUFEN
     if (numNodes < maxNodes) {
       const newNodeCost = ns.hacknet.getPurchaseNodeCost();
       if (newNodeCost > 0 && Number.isFinite(newNodeCost)) {
@@ -146,20 +157,25 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         );
         const roi = calculateRoi(newNodeCost, 0, newNodeGain);
 
-        // Neue Server geben 1GB Basis-RAM + neuen Ausbau-Slot
-        const basePriority = getPriorityFromRoi(
+        let basePriority = getPriorityFromRoi(
           roi,
           isServerMode,
           1,
           totalHacknetRam,
         );
+
+        // 🚀 Push neue Nodes, wenn Netburners noch Level braucht und wenig Nodes da sind
+        if (needsNetburnersLevel && numNodes < 10) {
+          basePriority = PurchasePriority.HIGH;
+        }
+
         const priority = adjustPriorityByMult(basePriority, hacknetMoneyMult);
 
         requests.push({
           id: `hacknet-new-node-${numNodes}`,
           category: "HACKNET",
           priority,
-          score: normalizeRoiToScore(roi, 1),
+          score: needsNetburnersLevel ? 90 : normalizeRoiToScore(roi, 1),
           cost: newNodeCost,
           roi,
           description: `Hacknet ${isServerMode ? "Server" : "Node"} #${numNodes + 1} kaufen`,
@@ -198,7 +214,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         {
           type: "ram",
           cost: ns.hacknet.getRamUpgradeCost(i, 1),
-          ramGain: stats.ram, // Verdopplung des RAMs = Zuwachs um den aktuellen Wert
+          ramGain: stats.ram,
           nextGain: getEstimatedMoneyGain(
             ns,
             stats.level,
@@ -229,7 +245,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         },
       ];
 
-      // Cache Upgrades (nur im Server-Modus relevant)
+      // Cache Upgrades
       if (isServerMode && "cache" in stats) {
         const cacheCost = ns.hacknet.getCacheUpgradeCost(i, 1);
         if (cacheCost > 0 && Number.isFinite(cacheCost)) {
@@ -270,20 +286,30 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         if (upg.cost > 0 && Number.isFinite(upg.cost)) {
           const roi = calculateRoi(upg.cost, currentGain, upg.nextGain);
 
-          // RAM-Gewinn fließt direkt in die Prioritätsbewertung ein
-          const basePriority = getPriorityFromRoi(
+          let basePriority = getPriorityFromRoi(
             roi,
             isServerMode,
             upg.ramGain,
             totalHacknetRam,
           );
+          let score = normalizeRoiToScore(roi, upg.ramGain);
+
+          // 🚀 Netburners Level-Overriding
+          if (needsNetburnersLevel && upg.type === "level") {
+            basePriority = player.skills.hacking >= 80 
+              ? PurchasePriority.CRITICAL 
+              : PurchasePriority.HIGH;
+            // Günstige Upgrades (niedrigere Node-Level) erhalten höheren Score
+            score = Math.max(score, 100 - stats.level);
+          }
+
           const priority = adjustPriorityByMult(basePriority, hacknetMoneyMult);
 
           requests.push({
             id: `hacknet-node-${i}-${upg.type}`,
             category: "HACKNET",
             priority,
-            score: normalizeRoiToScore(roi, upg.ramGain),
+            score,
             cost: upg.cost,
             roi,
             description: `Hacknet ${isServerMode ? "Server" : "Node"} #${i + 1} ${upg.desc}`,
@@ -298,18 +324,21 @@ export const HacknetEvaluator: PurchaseEvaluator = {
 
     return requests
       .filter((req) => {
-        // Im Server-Modus lassen wir RAM-Upgrades & neue Server auch zu, wenn deren Cash-ROI unter MIN_ROI liegt
+        // 🚀 Netburners Bypass-Regeln
+        if (needsNetburnersLevel && req.id.includes("-level")) return true;
+        if (needsNetburnersLevel && req.id.startsWith("hacknet-new-node")) return true;
+        if (needsNetburnersRam && req.id.includes("-ram")) return true;
+        if (needsNetburnersCores && req.id.includes("-core")) return true;
+
         if (isServerMode && req.id.includes("-ram")) return true;
         if (isServerMode && req.id.startsWith("hacknet-new-node")) return true;
+
         return req.roi >= MIN_ROI && req.score !== undefined && req.score > 0;
       })
       .sort((a, b) => {
-        // 1. Sortierung nach Priorität (CRITICAL = 1 ist dringender als LOW = 4)
         if (a.priority !== b.priority) {
           return a.priority - b.priority;
         }
-
-        // 2. Tie-Breaker: Höherer Score gewinnt (Fall-Back auf 0 für TS-Safety)
         return (b.score ?? 0) - (a.score ?? 0);
       });
   },

@@ -29,6 +29,15 @@ function getMinimumWeakenTime(player: Player): number {
   return 1200;
 }
 
+/** Erstellt ein isoliertes Server-Objekt ohne State-Leaks */
+function makeServerState(base: Server, overrideSec?: number, overrideMoney?: number): Server {
+  return {
+    ...base,
+    hackDifficulty: overrideSec ?? base.hackDifficulty,
+    moneyAvailable: overrideMoney ?? base.moneyAvailable,
+  };
+}
+
 export function internalPlanner(
   ns: NS,
   servers: string[],
@@ -40,16 +49,12 @@ export function internalPlanner(
 ): BatchPlan | null {
   const logger = customLogger ?? new Logger(ns, "PLANNER");
 
-  // Early Exit: Wenn absolut gar kein RAM da ist für den kleinstmöglichen Thread (1x Weaken)
   if (virtualFreeRam < RAM_WEAKEN) {
     return null;
   }
 
   let bestPlan: BatchPlan | null = null;
   let highestScore = -1;
-
-  // Wiederverwendbares Mutables Objekt zur Vermeidung von GC-Spikes
-  const tempServer: Server = ns.getServer("home");
 
   for (const target of servers) {
     if (!ns.hasRootAccess(target)) continue;
@@ -64,33 +69,29 @@ export function internalPlanner(
     const minSec = serverObj.minDifficulty ?? 1;
     const currentSec = serverObj.hackDifficulty ?? minSec;
 
-    // Prepped Server Standardzustand
-    Object.assign(tempServer, serverObj, {
-      hackDifficulty: minSec,
-      moneyAvailable: moneyMax,
-    });
-
-    const weakenTime = ns.formulas?.hacking
-      ? ns.formulas.hacking.weakenTime(tempServer, player)
-      : ns.getWeakenTime(target);
-
-    if (weakenTime < getMinimumWeakenTime(player)) continue;
-
-    const growTime = ns.formulas?.hacking
-      ? ns.formulas.hacking.growTime(tempServer, player)
-      : ns.getGrowTime(target);
-
-    const hackTime = ns.formulas?.hacking
-      ? ns.formulas.hacking.hackTime(tempServer, player)
-      : ns.getHackTime(target);
-
     const isPrepped =
       currentSec <= minSec + 0.5 && moneyAvailable >= moneyMax * 0.99;
 
     // -----------------------------------------------------------------------
-    // PHASE 1: PREP Mode
+    // PHASE 1: PREP Mode (Zeiten basieren auf JETZIGER Security)
     // -----------------------------------------------------------------------
     if (!isPrepped) {
+      const currentServerState = makeServerState(serverObj, currentSec, moneyAvailable);
+
+      const weakenTime = ns.formulas?.hacking
+        ? ns.formulas.hacking.weakenTime(currentServerState, player)
+        : ns.getWeakenTime(target);
+
+      if (weakenTime < getMinimumWeakenTime(player)) continue;
+
+      const growTime = ns.formulas?.hacking
+        ? ns.formulas.hacking.growTime(currentServerState, player)
+        : ns.getGrowTime(target);
+
+      const hackTime = ns.formulas?.hacking
+        ? ns.formulas.hacking.hackTime(currentServerState, player)
+        : ns.getHackTime(target);
+
       let weakenPrepThreads = 0;
       let growPrepThreads = 0;
       let prepWeaken2Threads = 0;
@@ -104,10 +105,10 @@ export function internalPlanner(
 
       if (moneyAvailable < moneyMax * 0.99) {
         const growthFactor = moneyMax / Math.max(1, moneyAvailable);
-        tempServer.moneyAvailable = Math.max(1, moneyAvailable);
+        const growCalcServer = makeServerState(serverObj, currentSec, Math.max(1, moneyAvailable));
 
         const rawGrowThreads = ns.formulas?.hacking
-          ? ns.formulas.hacking.growThreads(tempServer, player, moneyMax)
+          ? ns.formulas.hacking.growThreads(growCalcServer, player, moneyMax)
           : ns.growthAnalyze(target, growthFactor);
 
         growPrepThreads = Math.max(
@@ -120,7 +121,7 @@ export function internalPlanner(
       let prepRam =
         (weakenPrepThreads + prepWeaken2Threads) * RAM_WEAKEN +
         growPrepThreads * RAM_GROW;
-      const maxUsablePrepRam = Math.max(RAM_WEAKEN, virtualFreeRam * 0.98);
+      const maxUsablePrepRam = Math.max(RAM_WEAKEN, virtualFreeRam * 0.50);
 
       if (prepRam > maxUsablePrepRam) {
         const scale = maxUsablePrepRam / prepRam;
@@ -171,10 +172,26 @@ export function internalPlanner(
     }
 
     // -----------------------------------------------------------------------
-    // PHASE 2: HWGW Mode (Ternary Search für Greed)
+    // PHASE 2: HWGW Mode (Integer-Thread Grid-Search)
     // -----------------------------------------------------------------------
+    const preppedServerState = makeServerState(serverObj, minSec, moneyMax);
+
+    const weakenTime = ns.formulas?.hacking
+      ? ns.formulas.hacking.weakenTime(preppedServerState, player)
+      : ns.getWeakenTime(target);
+
+    if (weakenTime < getMinimumWeakenTime(player)) continue;
+
+    const growTime = ns.formulas?.hacking
+      ? ns.formulas.hacking.growTime(preppedServerState, player)
+      : ns.getGrowTime(target);
+
+    const hackTime = ns.formulas?.hacking
+      ? ns.formulas.hacking.hackTime(preppedServerState, player)
+      : ns.getHackTime(target);
+
     const hackChance = ns.formulas?.hacking
-      ? ns.formulas.hacking.hackPercent(tempServer, player)
+      ? ns.formulas.hacking.hackPercent(preppedServerState, player)
       : ns.hackAnalyze(target);
 
     if (hackChance <= 0) continue;
@@ -182,20 +199,21 @@ export function internalPlanner(
     const maxPipeBatches = Math.max(1, Math.floor(weakenTime / BATCH_GAP));
     const safeScriptBatches = Math.floor(MAX_SAFE_CONCURRENT_SCRIPTS / 4);
 
-    const evaluateGreed = (greed: number): BatchPlan | null => {
-      const hackThreads = Math.max(1, Math.floor(greed / hackChance));
+    const maxHackThreads = Math.floor(0.90 / hackChance);
+    if (maxHackThreads < 1) continue;
+
+    const evaluateThreadCount = (hackThreads: number): BatchPlan | null => {
       const actualGreed = hackThreads * hackChance;
-      if (actualGreed >= 0.95) return null;
+      if (actualGreed >= 0.95 || actualGreed <= 0) return null;
 
       const weaken1Threads = Math.ceil((hackThreads * 0.002) / 0.05);
       const postHackMoney = Math.max(1, moneyMax * (1 - actualGreed));
 
-      // Nutze tempServer ohne Neuallokation
-      tempServer.moneyAvailable = postHackMoney;
+      const postHackServerState = makeServerState(serverObj, minSec, postHackMoney);
 
       const growThreads = ns.formulas?.hacking
         ? Math.ceil(
-            ns.formulas.hacking.growThreads(tempServer, player, moneyMax),
+            ns.formulas.hacking.growThreads(postHackServerState, player, moneyMax),
           ) + 1
         : Math.ceil(ns.growthAnalyze(target, moneyMax / postHackMoney)) + 1;
 
@@ -207,7 +225,6 @@ export function internalPlanner(
         growThreads * RAM_GROW +
         weaken2Threads * RAM_WEAKEN;
 
-      // Wenn EIN einziger Batch nicht einmal auf die größte Machine ODER ins freie RAM passt
       if (
         !Number.isFinite(batchRam) ||
         batchRam > maxRam ||
@@ -218,7 +235,7 @@ export function internalPlanner(
 
       const maxRamBatches = Math.floor(virtualFreeRam / batchRam);
       const activeConcurrentBatches = Math.max(
-        1, // Mindestens 1 Batch erlauben, wenn RAM reicht!
+        1,
         Math.min(maxPipeBatches, maxRamBatches, safeScriptBatches),
       );
 
@@ -243,29 +260,21 @@ export function internalPlanner(
       };
     };
 
-    // Ternary Search über Greed [0.01 ... 0.90] in nur ~8 Schritten
-    let low = 0.01;
-    let high = 0.9;
+    // Grid-Search auf Ganzzahl-Threads (max. 40 Iterationen pro Target)
+    const stepSize = Math.max(1, Math.floor(maxHackThreads / 40));
     let bestTargetPlan: BatchPlan | null = null;
 
-    for (let i = 0; i < 8; i++) {
-      const m1 = low + (high - low) / 3;
-      const m2 = high - (high - low) / 3;
+    for (let hThreads = 1; hThreads <= maxHackThreads; hThreads += stepSize) {
+      const plan = evaluateThreadCount(hThreads);
+      if (plan && plan.greedScore > (bestTargetPlan?.greedScore ?? -1)) {
+        bestTargetPlan = plan;
+      }
+    }
 
-      const p1 = evaluateGreed(m1);
-      const p2 = evaluateGreed(m2);
-
-      const score1 = p1?.greedScore ?? -1;
-      const score2 = p2?.greedScore ?? -1;
-
-      if (score1 > score2) {
-        if (p1 && score1 > (bestTargetPlan?.greedScore ?? -1))
-          bestTargetPlan = p1;
-        high = m2;
-      } else {
-        if (p2 && score2 > (bestTargetPlan?.greedScore ?? -1))
-          bestTargetPlan = p2;
-        low = m1;
+    if (stepSize > 1) {
+      const minPlan = evaluateThreadCount(1);
+      if (minPlan && minPlan.greedScore > (bestTargetPlan?.greedScore ?? -1)) {
+        bestTargetPlan = minPlan;
       }
     }
 

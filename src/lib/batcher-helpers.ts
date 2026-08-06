@@ -9,7 +9,6 @@ import {
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { JitEvent, ActiveBatch, TargetContext, BatchPlan } from "/lib/types/batcher.js";
 import { internalPlanner } from "/lib/utils/internal-planner.js";
-import { getNetworkMaxRam } from "/lib/network.js";
 
 /** Berechnet die nutzbaren Threads für eine freie RAM-Menge (mit Epsilon-Toleranz) */
 export function getUsableThreads(freeRam: number, scriptRam: number): number {
@@ -76,6 +75,7 @@ export function updateDynamicBatchCaps(
   activeTargets: Map<string, TargetContext>,
   totalFreeRam: number,
   maxConcurrentScripts: number,
+  adaptiveGap: number = BATCH_GAP,
 ): void {
   if (activeTargets.size === 0) return;
 
@@ -88,6 +88,8 @@ export function updateDynamicBatchCaps(
     maxConcurrentScripts / Math.max(1, activeTargets.size),
   );
 
+  const effectiveGap = Math.max(BATCH_GAP, adaptiveGap);
+
   for (const ctx of activeTargets.values()) {
     const score = ctx.plan.greedScore ?? ctx.plan.greed ?? 1;
     const scoreShare = score / totalScore;
@@ -97,7 +99,7 @@ export function updateDynamicBatchCaps(
       const maxRamBatches = Math.floor(targetRamBudget / ctx.plan.batchRam);
       const maxPipeBatches = Math.max(
         1,
-        Math.floor(ctx.plan.weakenTime / BATCH_GAP),
+        Math.floor(ctx.plan.weakenTime / effectiveGap),
       );
       const safeScriptBatches = Math.floor(scriptBudgetPerTarget / 4);
 
@@ -168,6 +170,7 @@ export function checkTargetEviction(
   bnMults: BitNodeMultipliers,
   logger: Logger,
   removeTargetFn: (target: string, reason: string) => void,
+  totalNetworkMaxRam: number,
 ): void {
   if (activeTargets.size === 0) return;
 
@@ -187,7 +190,7 @@ export function checkTargetEviction(
   const bestCandidatePlan = internalPlanner(
     ns,
     candidateServers,
-    getNetworkMaxRam(ns, candidateServers),
+    totalNetworkMaxRam,
     virtualFreeRam,
     bnMults,
     ns.getPlayer(),

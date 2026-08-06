@@ -15,12 +15,16 @@ import {
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { MEGACORPS, COMBAT_STATS, GYM_STAT_MAP } from "lib/constants.js";
 import { loadGangState } from "/lib/state.js";
-import { SleeveOptions, SleeveMode, SleeveData } from "./types/sleeves.js";
+import {
+  SleeveOptions,
+  SleeveMode,
+  SleeveData,
+  SleeveGangUnlockStatus,
+} from "./types/sleeves.js";
 import { hasSingularity } from "./utils.js";
 
 const TRAVEL_COST = 200_000;
 
-// Zuordnung von Städten zu Muckibuden und Unis mit exakten Typen
 const CITY_GYMS: Record<string, GymLocationName> = {
   Volhaven: "Powerhouse Gym",
   "Sector-12": "Iron Gym",
@@ -32,6 +36,43 @@ const CITY_UNIS: Record<string, UniversityLocationName> = {
   "Sector-12": "Rothman University",
   Aevum: "Summit University",
 };
+
+/**
+  Prüft den Freischaltstatus von Sleeves und Gang-API.
+ */
+export function checkSleeveGangStatus(ns: NS): SleeveGangUnlockStatus {
+  const hasSleeves = ns.sleeve !== undefined && ns.sleeve.getNumSleeves() > 0;
+
+  let hasGangApi = false;
+  let inGang = false;
+
+  try {
+    if (ns.gang !== undefined) {
+      hasGangApi = true;
+      inGang = ns.gang.inGang();
+    }
+  } catch {
+    /* Gang API nicht vorhanden */
+  }
+
+  if (!inGang) {
+    const gangState = loadGangState(ns);
+    if (gangState?.hasGang) {
+      inGang = true;
+    }
+  }
+
+  // Karma-Grind wird NUR ausgeführt, wenn Gang-API vorhanden ist, wir NOCH NICHT in einer Gang sind und Karma > -54.000 ist
+  const currentKarma = ns.heart.break();
+  const shouldGrindKarma = hasGangApi && !inGang && currentKarma > -54000;
+
+  return {
+    hasSleeves,
+    hasGangApi,
+    inGang,
+    shouldGrindKarma,
+  };
+}
 
 function ensureVolhaven(
   ns: NS,
@@ -92,6 +133,7 @@ export function getFactionsNeedingRep(
   const gangFaction = getGangFactionName(ns);
 
   for (const faction of playerFactions) {
+    // Ignoriere die Gang-Fraktion, da die Gang den Ruf dort automatisch generiert
     if (gangFaction && faction === gangFaction) continue;
 
     try {
@@ -122,6 +164,7 @@ export function determineSleeveMode(
   stats: SleevePerson,
   options?: SleeveOptions,
   factionsNeedingRep: FactionName[] = [],
+  unlockStatus?: SleeveGangUnlockStatus,
 ): SleeveMode {
   if (stats.shock > 0) return "RECOVERY";
   if (stats.sync < 100) return "SYNCHRO";
@@ -131,6 +174,11 @@ export function determineSleeveMode(
     return "CRIME";
   if (options?.strategy === "TRAIN") return "TRAIN";
   if (options?.strategy === "UNI") return "UNI";
+
+  // Gang-Freischaltung ausstehend -> Karma-Grind priorisieren
+  if (unlockStatus?.shouldGrindKarma) {
+    return "CRIME";
+  }
 
   if (factionsNeedingRep.length > 0) return "FACTION";
 
@@ -148,6 +196,8 @@ export function manageAllSleeves(
 ): string {
   const numSleeves = ns.sleeve.getNumSleeves();
   if (numSleeves === 0) return "Keine";
+
+  const unlockStatus = checkSleeveGangStatus(ns);
 
   const sleeves: SleeveData[] = Array.from({ length: numSleeves }, (_, i) => ({
     index: i,
@@ -170,7 +220,12 @@ export function manageAllSleeves(
   }
 
   for (const sleeve of sleeves) {
-    const mode = determineSleeveMode(sleeve.stats, options, factionsNeedingRep);
+    const mode = determineSleeveMode(
+      sleeve.stats,
+      options,
+      factionsNeedingRep,
+      unlockStatus,
+    );
 
     currentMoney = manageSingleSleeve(
       ns,
@@ -194,6 +249,9 @@ export function manageAllSleeves(
 
   if (avgShock > 0) return `Shock: ${avgShock.toFixed(1)}%`;
   if (avgSync < 100) return `Sync: ${avgSync.toFixed(1)}%`;
+  if (unlockStatus.shouldGrindKarma) {
+    return `Karma: ${ns.heart.break().toFixed(0)}/-54k`;
+  }
   return `${activeWorkers}/${numSleeves} Aktiv`;
 }
 
@@ -617,14 +675,13 @@ function executeFallbackCrime(
   logger: Logger,
   addLocalLog: (msg: string) => void,
 ): number {
-  const gangState = loadGangState(ns);
-  const hasGang = gangState?.hasGang || (ns.gang && ns.gang.inGang());
+  const status = checkSleeveGangStatus(ns);
   let targetCrime: CrimeType = "Mug";
 
-  if (!hasGang && ns.heart.break() > -54000) {
+  if (status.shouldGrindKarma) {
     targetCrime = getBestKarmaCrime(ns, stats);
   } else {
-    targetCrime = "Homicide";
+    targetCrime = getBestProfitOrStatCrime(ns, stats);
   }
 
   const chance = calculateSleeveCrimeChance(ns, stats, targetCrime);
@@ -744,6 +801,48 @@ export function getBestKarmaCrime(ns: NS, stats: SleevePerson): CrimeType {
 
     if (karmaPerSecond > maxKarmaPerSecond) {
       maxKarmaPerSecond = karmaPerSecond;
+      bestCrime = crime;
+    }
+  }
+
+  return bestCrime;
+}
+
+export function getBestProfitOrStatCrime(ns: NS, stats: SleevePerson): CrimeType {
+  const avgCombat =
+    (stats.skills.strength +
+      stats.skills.defense +
+      stats.skills.dexterity +
+      stats.skills.agility) / 4;
+
+  if (!hasSingularity(ns)) {
+    if (avgCombat >= 50) return "Homicide";
+    if (avgCombat >= 20) return "Larceny";
+    return "Mug";
+  }
+
+  const crimesToEvaluate: CrimeType[] = [
+    "Mug",
+    "Larceny",
+    "Deal Drugs",
+    "Homicide",
+    "Grand Theft Auto",
+  ];
+
+  let bestCrime: CrimeType = "Mug";
+  let maxMoneyPerSec = -1;
+
+  for (const crime of crimesToEvaluate) {
+    const statsObj = ns.singularity.getCrimeStats(crime);
+    const chance = calculateSleeveCrimeChance(ns, stats, crime);
+
+    if (chance < 0.25) continue;
+
+    const timeInSeconds = statsObj.time / 1000;
+    const moneyPerSec = (statsObj.money * chance) / timeInSeconds;
+
+    if (moneyPerSec > maxMoneyPerSec) {
+      maxMoneyPerSec = moneyPerSec;
       bestCrime = crime;
     }
   }
