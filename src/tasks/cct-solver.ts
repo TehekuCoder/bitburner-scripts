@@ -49,7 +49,10 @@ export async function main(ns: NS): Promise<void> {
   const isLoop = flags.loop as boolean;
   const interval = flags.interval as number;
 
-  const logger = new Logger(ns, "CCT-SOLVER", undefined, "DEBUG", 1, {}, ["cct", "solver"]);
+  const logger = new Logger(ns, "CCT-SOLVER", undefined, "DEBUG", 1, {}, [
+    "cct",
+    "solver",
+  ]);
 
   do {
     logger.time("cct-scan");
@@ -77,14 +80,14 @@ export async function main(ns: NS): Promise<void> {
               targetLogger.success(
                 `[${type}] Contract '${file}' erfolgreich gelöst! Belohnung: ${reward}`,
                 server,
-                { context: { contract: file, type, reward } }
+                { context: { contract: file, type, reward } },
               );
               solvedCount++;
             } else {
               targetLogger.error(
                 `[${type}] Falsche Lösung für '${file}' übergeben!`,
                 server,
-                { context: { contract: file, type } }
+                { context: { contract: file, type } },
               );
               failedCount++;
             }
@@ -92,7 +95,7 @@ export async function main(ns: NS): Promise<void> {
             targetLogger.error(
               `[${type}] Laufzeitfehler beim Lösen von '${file}': ${err?.message || err}`,
               server,
-              { context: { contract: file, type } }
+              { context: { contract: file, type } },
             );
             failedCount++;
           }
@@ -100,7 +103,7 @@ export async function main(ns: NS): Promise<void> {
           targetLogger.warn(
             `Kein Solver implementiert für Typ: "${type}" (${file}).`,
             server,
-            { context: { contract: file, type } }
+            { context: { contract: file, type } },
           );
         }
       }
@@ -112,7 +115,7 @@ export async function main(ns: NS): Promise<void> {
       logger.info(
         `Durchlauf beendet (${durationMs}ms). Gefunden: ${foundCount} | Gelöst: ${solvedCount} | Fehlgeschlagen: ${failedCount}`,
         undefined,
-        { context: { foundCount, solvedCount, failedCount, durationMs } }
+        { context: { foundCount, solvedCount, failedCount, durationMs } },
       );
     }
 
@@ -127,17 +130,25 @@ export async function main(ns: NS): Promise<void> {
 // ============================================================================
 
 /**
- * Versucht die Lösung in allen gängigen Formaten (Zahl, Array, String, JSON) 
- * an Bitburner zu übergeben, um Format-Fehler automatisch zu umgehen.
+ * Versucht die Lösung in allen gängigen Formaten an Bitburner zu übergeben.
+ * Da ns.codingcontract.attempt() bei Misserfolg einen leeren String ("") zurückgibt,
+ * prüfen wir stattdessen direkt den Rückgabewert.
  */
-function smartAttempt(ns: NS, answer: any, file: string, server: string): string {
-  if (answer === undefined || answer === null || (typeof answer === "number" && isNaN(answer))) {
+function smartAttempt(
+  ns: NS,
+  answer: any,
+  file: string,
+  server: string,
+): string {
+  if (
+    answer === undefined ||
+    answer === null ||
+    (typeof answer === "number" && isNaN(answer))
+  ) {
     throw new Error(`Solver lieferte ein ungültiges Ergebnis (${answer})`);
   }
 
   const candidates: any[] = [];
-  
-  // Originalen Wert als ersten Kandidaten hinzufügen
   candidates.push(answer);
 
   if (Array.isArray(answer)) {
@@ -156,23 +167,25 @@ function smartAttempt(ns: NS, answer: any, file: string, server: string): string
     candidates.push(JSON.stringify(answer));
   }
 
-  // Duplikate in den Kandidaten eliminieren
   const uniqueCandidates = Array.from(
-    new Map(candidates.map(c => [typeof c === "object" ? JSON.stringify(c) : c, c])).values()
+    new Map(
+      candidates.map((c) => [typeof c === "object" ? JSON.stringify(c) : c, c]),
+    ).values(),
   );
 
   let lastError: any = null;
 
   for (const candidate of uniqueCandidates) {
     try {
+      // KORREKTE REIHENFOLGE: (solution, filename, hostname)
       return ns.codingcontract.attempt(candidate, file, server);
     } catch (err: any) {
       const msg = String(err?.message || err);
       if (msg.includes("not in the right format")) {
         lastError = err;
-        continue; // Nächstes Format testen
+        continue;
       }
-      throw err; // Echten Systemfehler sofort werfen
+      throw err;
     }
   }
 
@@ -925,33 +938,48 @@ function solveSanitizeParentheses(data: string): string[] {
 }
 
 /**
- * 7. Largest Rectangle in a Matrix
- * Ermittelt die größte Rechteckfläche aus 1en in einer binären Matrix.
+ * 7. Largest Rectangle in a Matrix (Maximales Rechteck aus Nullen)
+ * Gibt die Eckpunkte [[r1, c1], [r2, c2]] des größten Rechtecks zurück, das keine 1en enthält.
  */
-function solveLargestRectangleInMatrix(data: any): number {
+export function solveLargestRectangleInMatrix(data: any): number[][] {
   let matrix: number[][] = data;
-
   if (typeof data === "string") {
     try {
       matrix = JSON.parse(data);
     } catch {
-      return 0;
+      return [
+        [0, 0],
+        [0, 0],
+      ];
     }
   }
 
-  if (!Array.isArray(matrix) || matrix.length === 0 || !Array.isArray(matrix[0])) {
-    return 0;
+  if (
+    !Array.isArray(matrix) ||
+    matrix.length === 0 ||
+    !Array.isArray(matrix[0])
+  ) {
+    return [
+      [0, 0],
+      [0, 0],
+    ];
   }
 
   const rows = matrix.length;
   const cols = matrix[0].length;
   const heights: number[] = new Array(cols).fill(0);
+
   let maxArea = 0;
+  let bestCoords: number[][] = [
+    [0, 0],
+    [0, 0],
+  ];
 
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      const val = Number(matrix[r]?.[c]);
-      heights[c] = val === 1 ? heights[c] + 1 : 0;
+      const rawVal = matrix[r]?.[c];
+      const val = parseInt(String(rawVal), 10);
+      heights[c] = val === 0 ? heights[c] + 1 : 0;
     }
 
     const stack: number[] = [];
@@ -962,16 +990,24 @@ function solveLargestRectangleInMatrix(data: any): number {
         if (topIdx === undefined) break;
 
         const height = heights[topIdx];
-        const width = stack.length === 0 ? i : i - stack[stack.length - 1] - 1;
+        const leftCol = stack.length === 0 ? 0 : stack[stack.length - 1] + 1;
+        const rightCol = i - 1;
+        const width = rightCol - leftCol + 1;
         const area = height * width;
 
-        if (!isNaN(area) && isFinite(area)) {
-          maxArea = Math.max(maxArea, area);
+        if (area > maxArea) {
+          maxArea = area;
+          const topRow = r - height + 1;
+          const bottomRow = r;
+          bestCoords = [
+            [topRow, leftCol],
+            [bottomRow, rightCol],
+          ];
         }
       }
       stack.push(i);
     }
   }
 
-  return maxArea;
+  return bestCoords;
 }
