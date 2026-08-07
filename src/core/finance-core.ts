@@ -122,7 +122,7 @@ export async function main(ns: NS): Promise<void> {
       PATHS.daemons.financeDispatcher,
       "home",
     );
-    const suiteManagerActive = ns.isRunning("core/sys-suites.js", "home");
+    const sysOrchestratorActive = ns.isRunning("core/sys-orchestrator.js", "home");
 
     // Evaluatoren-Status: Aktiv wenn innerhalb der letzten 10 Sekunden Anfragen gesendet wurden
     const evaluators = [
@@ -243,7 +243,7 @@ export async function main(ns: NS): Promise<void> {
       hacknetLimit,
       isHacknetServer,
       financeManagerActive,
-      suiteManagerActive,
+      sysOrchestratorActive: sysOrchestratorActive,
       activeEvaluators,
       inactiveEvaluators,
       nextPurchaseRequest: structuredRequests[0] ?? undefined,

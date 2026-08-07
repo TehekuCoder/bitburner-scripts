@@ -23,7 +23,7 @@ export interface FinanceDashboardData {
   hacknetLimit: number;
   isHacknetServer: boolean;
   financeManagerActive: boolean;
-  suiteManagerActive: boolean;
+  sysOrchestratorActive: boolean;
   activeEvaluators: string[];
   inactiveEvaluators: string[];
   nextPurchaseRequest?: PendingRequestSummary;
@@ -115,9 +115,9 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   // 2. SUPERVISOR & EVALUATOREN STATUS
   // ------------------------------------------------------------
   const fMgrStatus = data.financeManagerActive ? "[ONLINE]" : "[OFFLINE]";
-  const sMgrStatus = data.suiteManagerActive ? "[ONLINE]" : "[OFFLINE]";
+  const sMgrStatus = data.sysOrchestratorActive ? "[ONLINE]" : "[OFFLINE]";
   ns.print(`SUPERVISOR & EVALUATOREN STATUS:`);
-  ns.print(`Manager:     ${fMgrStatus.padEnd(10)} |  Suite: ${sMgrStatus}`);
+  ns.print(`Manager:     ${fMgrStatus.padEnd(10)} |  Orchestrator: ${sMgrStatus}`);
 
   const allEvaluators = [
     "home",

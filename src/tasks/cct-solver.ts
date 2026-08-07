@@ -72,6 +72,27 @@ export async function main(ns: NS): Promise<void> {
         const targetLogger = logger.forTarget(server);
 
         if (solver) {
+          // Sicherheitsabfrage: Wie viele Versuche verbleiben?
+          const triesRemaining = ns.codingcontract.getNumTriesRemaining(
+            file,
+            server,
+          );
+
+          // Wenn nur noch 1 Versuch übrig ist, stoppen, um Zerstörung zu verhindern
+          if (triesRemaining <= 1) {
+            targetLogger.warn(
+              `[${type}] '${file}' übersprungen! Nur noch ${triesRemaining} Versuch(e) übrig. Bitte manuell lösen oder Solver prüfen.`,
+              server,
+              { context: { contract: file, type, triesRemaining } },
+            );
+            ns.toast(
+              `CCT Warnung: '${file}' auf ${server} hat nur noch ${triesRemaining} Versuch!`,
+              "warning",
+              8000,
+            );
+            continue;
+          }
+
           try {
             const answer = solver(data);
             const reward = smartAttempt(ns, answer, file, server);
@@ -90,6 +111,13 @@ export async function main(ns: NS): Promise<void> {
                 { context: { contract: file, type } },
               );
               failedCount++;
+
+              // Benachrichtigung bei Fehlschlag
+              ns.toast(
+                `CCT Fehler: Falsche Lösung für '${file}' (${type}) auf ${server}`,
+                "error",
+                6000,
+              );
             }
           } catch (err: any) {
             targetLogger.error(
@@ -128,9 +156,6 @@ export async function main(ns: NS): Promise<void> {
 // ============================================================================
 // SOLVER ALGORITHMEN
 // ============================================================================
-
-
-
 
 /**
  * Versucht die Lösung in allen gängigen Formaten an Bitburner zu übergeben.
@@ -179,9 +204,15 @@ function smartAttempt(
   let lastError: any = null;
 
   for (const candidate of uniqueCandidates) {
+    // Vor jedem Versuch prüfen, ob noch mindestens 2 Versuche übrig sind
+    const triesLeft = ns.codingcontract.getNumTriesRemaining(file, server);
+    if (triesLeft <= 1) {
+      break; // Abbrechen, um den letzten Versuch für den Spieler aufzubewahren
+    }
+
     try {
-      // KORREKTE REIHENFOLGE: (solution, filename, hostname)
-      return ns.codingcontract.attempt(candidate, file, server);
+      const reward = ns.codingcontract.attempt(candidate, file, server);
+      if (reward) return reward; // Erfolg!
     } catch (err: any) {
       const msg = String(err?.message || err);
       if (msg.includes("not in the right format")) {
