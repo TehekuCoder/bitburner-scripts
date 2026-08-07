@@ -64,7 +64,7 @@ export async function main(ns: NS): Promise<void> {
   });
 
   // ====================================================================
-  // SCHRITT 3: WORKER-VERTEILUNG NACH RAM-LEISTUNG
+  // SCHRITT 3: WORKER-VERTEILUNG NACH RAM-LEISTUNG (INKL. HACKNET-SERVER)
   // ====================================================================
   const pServers = ns.cloud.getServerNames();
   const workerScript = "payloads/work.js";
@@ -77,14 +77,30 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  // Alle verfügbaren Ausführungs-Hosts ermitteln (ohne Hacknet-Server) und nach RAM sortieren
-  const hostServers = allServers
+  // Hacknet-Server ermitteln (da sie nicht im regulären ns.scan()-Netzwerk auftauchen)
+  const hacknetServers: string[] = [];
+  try {
+    const numHacknet = ns.hacknet.numNodes();
+    for (let i = 0; i < numHacknet; i++) {
+      const nodeName = ns.hacknet.getNodeStats(i).name;
+      if (ns.getServerMaxRam(nodeName) > 0) {
+        hacknetServers.push(nodeName);
+      }
+    }
+  } catch {
+    // Falls Hacknet API nicht freigeschaltet oder nicht vorhanden ist
+  }
+
+  // Alle verfügbaren Ausführungs-Hosts ermitteln (Inkl. Hacknet-Server mit RAM > 0)
+  const hostServers = [...allServers, ...hacknetServers]
     .filter(
       (s) =>
-        !s.startsWith("hacknet") &&
+        !s.startsWith("hacknet-node") && // Nur reine Hacknet-Nodes ohne RAM ausschließen
         (s === "home" ||
           pServers.includes(s) ||
-          (ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0)),
+          s.startsWith("hacknet-server") ||
+          (ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0)) &&
+        ns.getServerMaxRam(s) > 0,
     )
     .sort((a, b) => ns.getServerMaxRam(b) - ns.getServerMaxRam(a));
 
