@@ -11,7 +11,7 @@ import { runEvaluator } from "/lib/evaluator-runner.js";
 import { loadBnMults, adjustPriorityByMult } from "../utils.js";
 
 export const StockEvaluator: PurchaseEvaluator = {
-  category: "STOCK_LICENSE",
+  category: "STOCK_LICENSE" as PurchaseCategory,
 
   getRequests(ns: NS): PurchaseRequest[] {
     const requests: PurchaseRequest[] = [];
@@ -19,7 +19,6 @@ export const StockEvaluator: PurchaseEvaluator = {
 
     const bnMults = loadBnMults(ns);
 
-    // 🔴 Dynamische Exakte Lizenzkosten basierend auf BitNode Multiplikatoren
     const fourSigmaCostMult = bnMults.FourSigmaMarketDataCost ?? 1.0;
     const fourSigmaApiCostMult = bnMults.FourSigmaMarketDataApiCost ?? 1.0;
 
@@ -34,8 +33,9 @@ export const StockEvaluator: PurchaseEvaluator = {
       requests.push({
         id: "stock-wse-account",
         category: "STOCK_LICENSE" as PurchaseCategory,
-        priority: PurchasePriority.LOW,
-        cost: 200_000_000, // 200 Mio.
+        priority: PurchasePriority.HIGH,
+        score: 80,
+        cost: 200_000_000,
         description: "Börsenzugang (WSE)",
         action: {
           script: "core/actions/act-stock.js",
@@ -47,8 +47,9 @@ export const StockEvaluator: PurchaseEvaluator = {
       requests.push({
         id: "stock-tix-api",
         category: "STOCK_LICENSE" as PurchaseCategory,
-        priority: PurchasePriority.LOW,
-        cost: 5_000_000_000, // 5 Mrd.
+        priority: PurchasePriority.HIGH,
+        score: 85,
+        cost: 5_000_000_000,
         description: "TIX API (Börsen-Automatisierung)",
         action: {
           script: "core/actions/act-stock.js",
@@ -57,16 +58,15 @@ export const StockEvaluator: PurchaseEvaluator = {
       });
     } else if (!ns.stock.has4SData()) {
       fullyUnlocked = false;
-      // Priorität weiter absenken, falls der Multiplikator extrem hoch ausfällt
-      const priority = adjustPriorityByMult(
-        PurchasePriority.IDLE,
-        fourSigmaCostMult > 0 ? 1 / fourSigmaCostMult : 1.0
-      );
+      const efficiencyMult = fourSigmaCostMult > 0 ? 1 / fourSigmaCostMult : 1.0;
+      const priority = adjustPriorityByMult(PurchasePriority.MEDIUM, efficiencyMult);
+      const score = Math.max(1, Math.floor(70 * efficiencyMult));
 
       requests.push({
         id: "stock-4s-data",
         category: "STOCK_LICENSE" as PurchaseCategory,
         priority,
+        score,
         cost: fourSigmaDataCost,
         description: `4S Marktdaten (Forecast) [Mult: ${fourSigmaCostMult.toFixed(2)}x]`,
         action: {
@@ -76,15 +76,15 @@ export const StockEvaluator: PurchaseEvaluator = {
       });
     } else if (!ns.stock.has4SDataTixApi()) {
       fullyUnlocked = false;
-      const priority = adjustPriorityByMult(
-        PurchasePriority.IDLE,
-        fourSigmaApiCostMult > 0 ? 1 / fourSigmaApiCostMult : 1.0
-      );
+      const efficiencyMult = fourSigmaApiCostMult > 0 ? 1 / fourSigmaApiCostMult : 1.0;
+      const priority = adjustPriorityByMult(PurchasePriority.MEDIUM, efficiencyMult);
+      const score = Math.max(1, Math.floor(75 * efficiencyMult));
 
       requests.push({
         id: "stock-4s-tix-api",
         category: "STOCK_LICENSE" as PurchaseCategory,
         priority,
+        score,
         cost: fourSigmaTixCost,
         description: `4S TIX API (Forecast Automatisierung) [Mult: ${fourSigmaApiCostMult.toFixed(2)}x]`,
         action: {
@@ -94,12 +94,11 @@ export const StockEvaluator: PurchaseEvaluator = {
       });
     }
 
-    // Solange Lizenzen fehlen, keine Kauf-Anträge stellen
+    // Ohne Lizenzen keine Trading-Kaufanträge stellen
     if (!fullyUnlocked) return requests;
 
-    // --- 2. TRADING LOGIK (Verkauf) ---
+    // --- 2. TRADING FEATURE CHECK ---
     const symbols = ns.stock.getSymbols();
-
     let canShort = true;
     try {
       ns.stock.buyShort(symbols[0], 0);
@@ -107,20 +106,7 @@ export const StockEvaluator: PurchaseEvaluator = {
       canShort = false;
     }
 
-    for (const sym of symbols) {
-      const forecast = ns.stock.getForecast(sym);
-      const [shares, , sharesShort] = ns.stock.getPosition(sym);
-
-      if (shares > 0 && forecast < 0.5) {
-        ns.stock.sellStock(sym, shares);
-      }
-
-      if (canShort && sharesShort > 0 && forecast > 0.5) {
-        ns.stock.sellShort(sym, sharesShort);
-      }
-    }
-
-    // --- 3. TRADING LOGIK (Kauf-Anfragen) ---
+    // --- 3. TRADING KAUF-ANFRAGEN ---
     const buyCandidates: {
       sym: string;
       forecast: number;
@@ -172,13 +158,15 @@ export const StockEvaluator: PurchaseEvaluator = {
 
         if (affordableShares > 0) {
           const targetCost = affordableShares * sharePrice + TRANSACTION_FEE;
+          const score = Math.floor(candidate.strength * 100);
 
           requests.push({
             id: `stock-invest-${sym}-${candidate.type}`,
             category: "STOCK_TRADE" as PurchaseCategory,
             priority: PurchasePriority.IDLE,
+            score,
             cost: targetCost,
-            description: `Aktien-Kauf: ${sym} (${candidate.type})`,
+            description: `Aktien-Kauf: ${sym} (${candidate.type}) [Forecast: ${(candidate.forecast * 100).toFixed(1)}%]`,
             action: {
               script: "core/actions/act-stock.js",
               args: ["stock-buy", sym, candidate.type, affordableShares],

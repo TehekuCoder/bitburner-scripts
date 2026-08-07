@@ -16,7 +16,7 @@ export const HomeEvaluator: PurchaseEvaluator = {
 
     const bnMults = loadBnMults(ns);
     const ramCostMult = bnMults.HomeComputerRamCost ?? 1.0;
-    const efficiencyMult = ramCostMult > 0 ? 1 / ramCostMult : 1.0;
+    const ramEfficiency = ramCostMult > 0 ? 1 / ramCostMult : 1.0;
 
     const requests: PurchaseRequest[] = [];
     const playerMoney = ns.getServerMoneyAvailable("home");
@@ -43,11 +43,10 @@ export const HomeEvaluator: PurchaseEvaluator = {
         baseScore = 40;
       }
 
-      // Dynamische Skalierung durch BitNode-Multiplikator
-      let priority = adjustPriorityByMult(basePriority, efficiencyMult);
-      let score = Math.max(1, Math.floor(baseScore * efficiencyMult));
+      let priority = adjustPriorityByMult(basePriority, ramEfficiency);
+      const score = Math.max(1, Math.floor(baseScore * ramEfficiency));
 
-      // Bremse bei extreme Missverhältnis zum Kontostand
+      // Bremse bei extremem Missverhältnis zum Kontostand
       if (ramCost > playerMoney * 50 && priority < PurchasePriority.LOW) {
         priority = (priority + 1) as PurchasePriority;
       }
@@ -74,22 +73,22 @@ export const HomeEvaluator: PurchaseEvaluator = {
       let basePriority = PurchasePriority.LOW;
       let baseScore = 20;
 
+      const isRamMaxed = ramCost <= 0 || !Number.isFinite(ramCost);
+      const isCoreVeryCheap = isRamMaxed || ramCost > coresCost * 10;
+
       if (currentCores < 2) {
         basePriority = PurchasePriority.MEDIUM;
         baseScore = 60;
-      } else if (currentCores < 8 && ramCost > coresCost * 10) {
+      } else if (currentCores < 8 && isCoreVeryCheap) {
         basePriority = PurchasePriority.MEDIUM;
         baseScore = 50;
       }
 
-      const priority = adjustPriorityByMult(basePriority, efficiencyMult);
-      const score = Math.max(1, Math.floor(baseScore * efficiencyMult));
-
       requests.push({
         id: `home-cores-${currentCores + 1}`,
         category: "HOME_SERVER" as PurchaseCategory,
-        priority,
-        score,
+        priority: basePriority,
+        score: baseScore,
         cost: coresCost,
         description: `Home Cores (${currentCores} ➔ ${currentCores + 1})`,
         action: {

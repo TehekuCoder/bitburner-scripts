@@ -1,8 +1,6 @@
-// daemons/finance-manager.ts
-
 import { NS } from "@ns";
 import { PATHS } from "/lib/paths.js";
-import { hasGang, hasSleeve, hasSingularity } from "/lib/utils.js";
+import { hasGang, hasSleeve, hasSingularity, loadBnMults } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -25,15 +23,24 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const homeMaxRam = ns.getServerMaxRam("home");
+    const bnMults = loadBnMults(ns);
 
     // 0. Zentrale Finance-Core starten
     tryLaunch(PATHS.core.financeCore);
 
-    // 1. Basis-Evaluatoren starten (brauchen keine speziellen APIs)
-    tryLaunch(PATHS.lib.evaluators.pserv);
-    tryLaunch(PATHS.lib.evaluators.hacknet);
+    // 1. PServ nur starten, wenn das Server-Limit > 0 ist (z. B. deaktiviert in BN9)
+    const pservLimit = ns.cloud?.getServerLimit() ?? 0;
+    const pservMult = bnMults.CloudServerLimit ?? 1.0;
+    if (pservLimit > 0 && pservMult > 0) {
+      tryLaunch(PATHS.lib.evaluators.pserv);
+    }
 
-    // 2. Bedingte Evaluatoren starten (Singularity / RAM-Thresholds)
+    // 2. Hacknet Evaluator (sofern nicht durch BN-Mult totgeschaltet)
+    if ((bnMults.HacknetNodeMoney ?? 1.0) > 0) {
+      tryLaunch(PATHS.lib.evaluators.hacknet);
+    }
+
+    // 3. Bedingte Evaluatoren starten (Singularity / RAM-Thresholds)
     if (hasSingularity(ns)) {
       tryLaunch(PATHS.lib.evaluators.home);
       tryLaunch(PATHS.lib.evaluators.programs);
@@ -42,7 +49,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    if (hasGang(ns) && ns.isRunning(PATHS.managers.gang)) {
+    if (hasGang(ns) && (bnMults.GangUniqueAugs ?? 1.0) > 0 && ns.isRunning(PATHS.managers.gang)) {
       tryLaunch(PATHS.lib.evaluators.gang);
     }
 
@@ -50,13 +57,11 @@ export async function main(ns: NS): Promise<void> {
       tryLaunch(PATHS.lib.evaluators.sleeve);
     }
 
-    // 3. Stock-Evaluator starten, sobald ns.stock technisch verfügbar ist
-    // (Der Evaluator selbst entscheidet dann, ob er Lizenzen kauft oder Aktien handelt)
+    // 4. Stock-Evaluator
     if (Boolean(ns.stock)) {
       tryLaunch(PATHS.lib.evaluators.stock);
     }
 
-    // Warte 2 Sekunden bis zum nächsten Check
     await ns.sleep(2000);
   }
 }

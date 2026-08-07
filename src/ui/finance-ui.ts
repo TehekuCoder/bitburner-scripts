@@ -1,3 +1,4 @@
+// ui/finance-ui.ts
 import { NS } from "@ns";
 
 export interface PendingRequestSummary {
@@ -32,6 +33,17 @@ export interface FinanceDashboardData {
   lastWarnings: string[];
 }
 
+// ANSI-Farbcodes für Bitburner Tail-Fenster
+const CLR = {
+  RESET: "\u001b[0m",
+  CYAN: "\u001b[36m",
+  GREEN: "\u001b[32m",
+  YELLOW: "\u001b[33m",
+  RED: "\u001b[31m",
+  GRAY: "\u001b[90m",
+  WHITE_BOLD: "\u001b[1;37m",
+};
+
 function makeProgressBar(value: number, max: number, width = 20): string {
   if (max <= 0) return "░".repeat(width);
   const ratio = Math.max(0, Math.min(value, max)) / max;
@@ -49,15 +61,15 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   ns.clearLog();
 
   const W = 64;
-  const H_LINE = "=".repeat(W);
-  const D_LINE = "-".repeat(W);
+  const H_LINE = `${CLR.GRAY}${"=".repeat(W)}${CLR.RESET}`;
+  const D_LINE = `${CLR.GRAY}${"-".repeat(W)}${CLR.RESET}`;
 
   // ------------------------------------------------------------
   // HEADER (BIT-OS DESIGN)
   // ------------------------------------------------------------
   const queueStr = `Queue: ${data.pendingCount} Anfragen`;
   const headerTitle = `⚡ BIT-OS FINANCE CORE v1.0`;
-  const headerContent = `${headerTitle.padEnd(34)}|  ${queueStr}`;
+  const headerContent = `${CLR.WHITE_BOLD}${headerTitle.padEnd(34)}${CLR.RESET}|  ${CLR.CYAN}${queueStr}${CLR.RESET}`;
 
   ns.print(H_LINE);
   ns.print(headerContent);
@@ -66,9 +78,9 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   // ------------------------------------------------------------
   // 1. FINANZ- & SYSTEM-ÜBERSICHT
   // ------------------------------------------------------------
-  const cashStr = `$${ns.format.number(data.currentMoney)}`;
-  const budgetStr = `$${ns.format.number(data.availableMoney)}`;
-  ns.print(`FINANZ- & SYSTEM-ÜBERSICHT:`);
+  const cashStr = `${CLR.GREEN}$${ns.format.number(data.currentMoney)}${CLR.RESET}`;
+  const budgetStr = `${CLR.CYAN}$${ns.format.number(data.availableMoney)}${CLR.RESET}`;
+  ns.print(`${CLR.WHITE_BOLD}FINANZ- & SYSTEM-ÜBERSICHT:${CLR.RESET}`);
   ns.print(`Cash:        ${cashStr}  |  Budget: ${budgetStr}`);
 
   const ramUsedStr = ns.format.ram(data.homeRamUsed);
@@ -76,20 +88,20 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   const ramPct = formatPercent(data.homeRamUsed, data.homeRamTotal);
   const ramBar = makeProgressBar(data.homeRamUsed, data.homeRamTotal, 20);
   ns.print(`Home RAM:    ${ramUsedStr} / ${ramTotStr} (${ramPct})`);
-  ns.print(`             [${ramBar}]`);
+  ns.print(`             [${CLR.CYAN}${ramBar}${CLR.RESET}]`);
 
   const pservStr = `${data.purchasedServerCount} / ${data.purchasedServerLimit}`;
   const pservBar = makeProgressBar(
     data.purchasedServerCount,
     data.purchasedServerLimit,
-    12,
+    12
   );
   const maxRamStr =
     data.largestPurchasedServerRam > 0
       ? ns.format.ram(data.largestPurchasedServerRam)
       : "–";
   ns.print(
-    `Pserv Pool:  ${pservStr.padEnd(8)} [${pservBar}] (Max: ${maxRamStr})`,
+    `Pserv Pool:  ${pservStr.padEnd(8)} [${CLR.CYAN}${pservBar}${CLR.RESET}] (Max: ${maxRamStr})`
   );
 
   if (data.hacknetLimit > 0) {
@@ -97,16 +109,16 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     const hnetBar = makeProgressBar(
       data.hacknetCount,
       data.hacknetLimit,
-      12,
+      12
     );
     const modeLabel = data.isHacknetServer ? "Servers" : "Nodes";
     ns.print(
-      `Hacknet Pool:${hnetStr.padEnd(8)} [${hnetBar}] (${modeLabel})`,
+      `Hacknet Pool:${hnetStr.padEnd(8)} [${CLR.CYAN}${hnetBar}${CLR.RESET}] (${modeLabel})`
     );
   }
 
   ns.print(
-    `Home Cores:  ${data.homeCores} Core${data.homeCores > 1 ? "s" : ""}`,
+    `Home Cores:  ${data.homeCores} Core${data.homeCores > 1 ? "s" : ""}`
   );
 
   ns.print(D_LINE);
@@ -114,10 +126,15 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   // ------------------------------------------------------------
   // 2. SUPERVISOR & EVALUATOREN STATUS
   // ------------------------------------------------------------
-  const fMgrStatus = data.financeManagerActive ? "[ONLINE]" : "[OFFLINE]";
-  const sMgrStatus = data.sysOrchestratorActive ? "[ONLINE]" : "[OFFLINE]";
-  ns.print(`SUPERVISOR & EVALUATOREN STATUS:`);
-  ns.print(`Manager:     ${fMgrStatus.padEnd(10)} |  Orchestrator: ${sMgrStatus}`);
+  const fMgrStatus = data.financeManagerActive
+    ? `${CLR.GREEN}[ONLINE]${CLR.RESET}`
+    : `${CLR.RED}[OFFLINE]${CLR.RESET}`;
+  const sMgrStatus = data.sysOrchestratorActive
+    ? `${CLR.GREEN}[ONLINE]${CLR.RESET}`
+    : `${CLR.RED}[OFFLINE]${CLR.RESET}`;
+
+  ns.print(`${CLR.WHITE_BOLD}SUPERVISOR & EVALUATOREN STATUS:${CLR.RESET}`);
+  ns.print(`Manager:     ${fMgrStatus.padEnd(19)} |  Orchestrator: ${sMgrStatus}`);
 
   const allEvaluators = [
     "home",
@@ -132,11 +149,13 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   const activeSet = new Set(data.activeEvaluators);
 
   const badges = allEvaluators.map((name) => {
-    const icon = activeSet.has(name) ? "[✓]" : "[✗]";
-    return `${icon} ${name}`.padEnd(13);
+    const isActive = activeSet.has(name);
+    const icon = isActive ? `${CLR.GREEN}[✓]${CLR.RESET}` : `${CLR.RED}[✗]${CLR.RESET}`;
+    const label = `${icon} ${name}`;
+    // Breite exakt 12 sichtbare Zeichen für perfektes 4er-Grid bei W=64
+    return isActive ? label.padEnd(20) : label.padEnd(19);
   });
 
-  // Grid ausgeben (4 Stück pro Zeile)
   ns.print(`Evaluatoren: ${badges.slice(0, 4).join("")}`);
   ns.print(`             ${badges.slice(4, 8).join("")}`);
 
@@ -145,25 +164,29 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   // ------------------------------------------------------------
   // 3. NÄCHSTER GEPLANTER KAUF
   // ------------------------------------------------------------
-  ns.print(`NÄCHSTER GEPLANTER KAUF:`);
+  ns.print(`${CLR.WHITE_BOLD}NÄCHSTER GEPLANTER KAUF:${CLR.RESET}`);
   if (data.nextPurchaseRequest) {
     const req = data.nextPurchaseRequest;
     const reqCostStr = `$${ns.format.number(req.cost)}`;
-    const progressPct = Math.min(100, (data.currentMoney / req.cost) * 100);
+    const progressPct =
+      req.cost > 0 ? Math.min(100, (data.currentMoney / req.cost) * 100) : 100;
     const progressBar = makeProgressBar(data.currentMoney, req.cost, 20);
     const shortDesc =
       req.description.length > 44
         ? req.description.substring(0, 41) + "..."
         : req.description;
 
+    const statusStr =
+      progressPct >= 100
+        ? `${CLR.GREEN}Bereit!${CLR.RESET}`
+        : `${CLR.YELLOW}Sparen...${CLR.RESET}`;
+
     ns.print(`Ziel:        ${shortDesc}`);
     ns.print(`Kosten:      ${reqCostStr} (${progressPct.toFixed(1)}%)`);
-    ns.print(
-      `Status:      [${progressBar}] ${progressPct >= 100 ? "Bereit!" : "Sparen..."}`,
-    );
+    ns.print(`Status:      [${CLR.CYAN}${progressBar}${CLR.RESET}] ${statusStr}`);
   } else {
     ns.print(`Ziel:        Keine offenen Anfragen im Port`);
-    ns.print(`Status:      [${makeProgressBar(1, 1, 20)}] Bereit`);
+    ns.print(`Status:      [${CLR.GREEN}${makeProgressBar(1, 1, 20)}${CLR.RESET}] Bereit`);
   }
 
   ns.print(D_LINE);
@@ -171,9 +194,9 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   // ------------------------------------------------------------
   // 4. TOP ANFRAGEN IN WARTESCHLANGE
   // ------------------------------------------------------------
-  ns.print(`TOP ANFRAGEN IN WARTESCHLANGE:`);
+  ns.print(`${CLR.WHITE_BOLD}TOP ANFRAGEN IN WARTESCHLANGE:${CLR.RESET}`);
   if (data.topPendingRequests.length === 0) {
-    ns.print(`> Keine wartenden Anfragen.`);
+    ns.print(`> ${CLR.GRAY}Keine wartenden Anfragen.${CLR.RESET}`);
   } else {
     for (const req of data.topPendingRequests) {
       const prio = req.priorityLabel.substring(0, 4).padEnd(4);
@@ -183,7 +206,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
         req.description.length > 22
           ? req.description.substring(0, 19) + "..."
           : req.description;
-      ns.print(`> [${prio}] ${cat} | ${desc.padEnd(22)} ${cost.padStart(9)}`);
+      ns.print(`> [${CLR.CYAN}${prio}${CLR.RESET}] ${cat} | ${desc.padEnd(22)} ${cost.padStart(9)}`);
     }
   }
 
@@ -192,7 +215,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   // ------------------------------------------------------------
   // 5. EREIGNIS-PROTOKOLL
   // ------------------------------------------------------------
-  ns.print(`EREIGNIS-PROTOKOLL:`);
+  ns.print(`${CLR.WHITE_BOLD}EREIGNIS-PROTOKOLL:${CLR.RESET}`);
   const recentLogs: string[] = [];
 
   for (const p of data.lastPurchases.slice(-3)) {
@@ -203,7 +226,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   }
 
   if (recentLogs.length === 0) {
-    ns.print(`> Keine aktuellen Ereignisse.`);
+    ns.print(`> ${CLR.GRAY}Keine aktuellen Ereignisse.${CLR.RESET}`);
   } else {
     for (const logLine of recentLogs.slice(-4)) {
       const truncated =

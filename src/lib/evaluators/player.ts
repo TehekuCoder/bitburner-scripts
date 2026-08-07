@@ -19,76 +19,39 @@ interface AugCandidate {
   etaSeconds: number;
 }
 
-let lastGangRep = 0;
-let lastGangTime = 0;
-let gangRepPerSec = 0;
+// Persistenter Speicherbereich über Skript-Neustarts hinweg
+interface GangStateCache {
+  lastRep: number;
+  lastTime: number;
+  repPerSec: number;
+}
 
-function updateGangVelocity(ns: NS): void {
+const g = globalThis as unknown as { __gangStateCache?: GangStateCache };
+g.__gangStateCache ??= { lastRep: 0, lastTime: 0, repPerSec: 0 };
+
+function updateGangVelocity(ns: NS): number {
   try {
-    if (!ns.gang?.inGang()) return;
+    if (!ns.gang?.inGang()) return 0;
+    const cache = g.__gangStateCache!;
     const currentRep = ns.gang.getGangInformation().respect;
     const now = Date.now();
 
-    if (lastGangTime > 0 && now > lastGangTime) {
-      const dt = (now - lastGangTime) / 1000;
-      const dRep = currentRep - lastGangRep;
+    if (cache.lastTime > 0 && now > cache.lastTime) {
+      const dt = (now - cache.lastTime) / 1000;
+      const dRep = currentRep - cache.lastRep;
       if (dt > 0 && dRep >= 0) {
         const instantRate = dRep / dt;
-        gangRepPerSec =
-          gangRepPerSec === 0 ? instantRate : gangRepPerSec * 0.7 + instantRate * 0.3;
+        cache.repPerSec =
+          cache.repPerSec === 0 ? instantRate : cache.repPerSec * 0.7 + instantRate * 0.3;
       }
     }
 
-    lastGangRep = currentRep;
-    lastGangTime = now;
+    cache.lastRep = currentRep;
+    cache.lastTime = now;
+    return cache.repPerSec;
   } catch {
-    gangRepPerSec = 0;
+    return 0;
   }
-}
-
-function isPrereqChainSatisfied(
-  augName: string,
-  sing: NS["singularity"],
-  ownedAugs: string[],
-  availableNames: Set<string>
-): boolean {
-  const prereqs = sing.getAugmentationPrereq(augName);
-  for (const p of prereqs) {
-    if (!ownedAugs.includes(p)) {
-      if (!availableNames.has(p)) return false;
-      if (!isPrereqChainSatisfied(p, sing, ownedAugs, availableNames)) return false;
-    }
-  }
-  return true;
-}
-
-function sortAugsWithPrereqs(
-  augs: AugCandidate[],
-  sing: NS["singularity"],
-  ownedAugs: string[]
-): AugCandidate[] {
-  const result: AugCandidate[] = [];
-  const remaining = [...augs];
-
-  while (remaining.length > 0) {
-    const validNext = remaining.filter((aug) => {
-      const prereqs = sing.getAugmentationPrereq(aug.name);
-      return prereqs.every(
-        (p) => ownedAugs.includes(p) || result.some((r) => r.name === p)
-      );
-    });
-
-    if (validNext.length === 0) break;
-
-    validNext.sort((a, b) => b.price - a.price);
-    const chosen = validNext[0];
-
-    result.push(chosen);
-    const idx = remaining.findIndex((r) => r.name === chosen.name);
-    if (idx !== -1) remaining.splice(idx, 1);
-  }
-
-  return result;
 }
 
 export const PlayerEvaluator: PurchaseEvaluator = {
@@ -98,13 +61,20 @@ export const PlayerEvaluator: PurchaseEvaluator = {
     const requests: PurchaseRequest[] = [];
     if (!hasSingularity(ns)) return requests;
 
+    const sing = ns.singularity;
     const bnMults = loadBnMults(ns);
     const costMult = bnMults.AugmentationMoneyCost ?? 1.0;
     const efficiencyMult = costMult > 0 ? 1 / costMult : 1.0;
 
-    updateGangVelocity(ns);
+    const gangRepPerSec = updateGangVelocity(ns);
 
-    const sing = ns.singularity;
+    // Singularity Call Caching für diesen Durchlauf
+    const prereqCache = new Map<string, string[]>();
+    const getPrereqs = (name: string) => {
+      if (!prereqCache.has(name)) prereqCache.set(name, sing.getAugmentationPrereq(name));
+      return prereqCache.get(name)!;
+    };
+
     const ownedAugs = sing.getOwnedAugmentations(true);
     const uninstalled = getPurchasedUninstalledAugs(ns);
     const hasStartedBuying = uninstalled.length > 0;
@@ -169,21 +139,30 @@ export const PlayerEvaluator: PurchaseEvaluator = {
     const readyMap = new Map<string, AugCandidate>(readyCandidates.map((c) => [c.name, c]));
     const readyNames = new Set<string>(readyMap.keys());
 
+    const isPrereqChainSatisfied = (augName: string): boolean => {
+      const prereqs = getPrereqs(augName);
+      for (const p of prereqs) {
+        if (!ownedAugs.includes(p)) {
+          if (!readyNames.has(p)) return false;
+          if (!isPrereqChainSatisfied(p)) return false;
+        }
+      }
+      return true;
+    };
+
     const fulfillableCandidates = readyCandidates.filter((aug) =>
-      isPrereqChainSatisfied(aug.name, sing, ownedAugs, readyNames)
+      isPrereqChainSatisfied(aug.name)
     );
 
     if (fulfillableCandidates.length === 0) return requests;
 
     const currentMoney = ns.getServerMoneyAvailable("home");
 
-    // -------------------------------------------------------------
     // FALL 1: BEREITS IM KAUFMODUS
-    // -------------------------------------------------------------
     if (hasStartedBuying) {
       const immediateBuyable = fulfillableCandidates.filter(
         (aug) =>
-          sing.getAugmentationPrereq(aug.name).every((p) => ownedAugs.includes(p)) &&
+          getPrereqs(aug.name).every((p) => ownedAugs.includes(p)) &&
           aug.price <= currentMoney
       );
 
@@ -192,14 +171,11 @@ export const PlayerEvaluator: PurchaseEvaluator = {
       immediateBuyable.sort((a, b) => b.price - a.price);
       const nextTarget = immediateBuyable[0];
 
-      const priority = adjustPriorityByMult(PurchasePriority.CRITICAL, efficiencyMult);
-      const score = Math.max(1, Math.floor(100 * efficiencyMult));
-
       requests.push({
         id: `player-aug-dump-${nextTarget.name}`,
         category: "PLAYER_AUG" as PurchaseCategory,
-        priority,
-        score,
+        priority: adjustPriorityByMult(PurchasePriority.CRITICAL, efficiencyMult),
+        score: Math.max(1, Math.floor(100 * efficiencyMult)),
         cost: nextTarget.price,
         description: `Batch Dump: ${nextTarget.name}`,
         action: {
@@ -210,12 +186,9 @@ export const PlayerEvaluator: PurchaseEvaluator = {
       return requests;
     }
 
-    // -------------------------------------------------------------
     // FALL 2: BATCH-PLANUNG
-    // -------------------------------------------------------------
     const batchCandidates: AugCandidate[] = [];
     const batchNames = new Set<string>();
-
     const sortedFulfillable = [...fulfillableCandidates].sort((a, b) => a.price - b.price);
 
     for (const cand of sortedFulfillable) {
@@ -223,7 +196,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
       if (batchNames.has(cand.name)) continue;
 
       const addWithPrereqs = (name: string) => {
-        const prereqs = sing.getAugmentationPrereq(name);
+        const prereqs = getPrereqs(name);
         for (const p of prereqs) {
           if (!ownedAugs.includes(p) && !batchNames.has(p)) {
             addWithPrereqs(p);
@@ -240,7 +213,25 @@ export const PlayerEvaluator: PurchaseEvaluator = {
 
     if (batchCandidates.length === 0) return requests;
 
-    const orderedBatch = sortAugsWithPrereqs(batchCandidates, sing, ownedAugs);
+    // Topologische Sortierung der Augmentations
+    const orderedBatch: AugCandidate[] = [];
+    const remaining = [...batchCandidates];
+
+    while (remaining.length > 0) {
+      const validNext = remaining.filter((aug) =>
+        getPrereqs(aug.name).every(
+          (p) => ownedAugs.includes(p) || orderedBatch.some((r) => r.name === p)
+        )
+      );
+
+      if (validNext.length === 0) break;
+      validNext.sort((a, b) => b.price - a.price);
+
+      const chosen = validNext[0];
+      orderedBatch.push(chosen);
+      const idx = remaining.findIndex((r) => r.name === chosen.name);
+      if (idx !== -1) remaining.splice(idx, 1);
+    }
 
     let totalBatchCost = 0;
     let currentMult = 1.0;
@@ -252,20 +243,19 @@ export const PlayerEvaluator: PurchaseEvaluator = {
     const hasRedPill = orderedBatch.some((a) => a.name === "The Red Pill");
     const canAffordFullBatch = currentMoney >= totalBatchCost;
 
+    // Nur Anfragen erstellen, wenn der Batch komplett bezahlbar ist oder Red Pill gekauft werden kann
     if (canAffordFullBatch || hasRedPill) {
-      const priority = adjustPriorityByMult(PurchasePriority.CRITICAL, efficiencyMult);
-      const score = Math.max(1, Math.floor(100 * efficiencyMult));
-
       requests.push({
         id: "player-aug-batch",
         category: "PLAYER_AUG" as PurchaseCategory,
-        priority,
-        score,
-        cost: canAffordFullBatch ? totalBatchCost : currentMoney,
+        priority: adjustPriorityByMult(PurchasePriority.CRITICAL, efficiencyMult),
+        score: Math.max(1, Math.floor(100 * efficiencyMult)),
+        // Verhindert das Blockieren des gesamten Finance-Budgets, wenn Red Pill noch unbezahlbar ist
+        cost: canAffordFullBatch ? totalBatchCost : Math.min(currentMoney, totalBatchCost),
         description: `Augmentation Batch (${orderedBatch.length} Items)`,
         action: {
           script: "core/actions/act-singularity.js",
-          args: ["player-purchase-aug-batch", JSON.stringify(orderedBatch)],
+          args: ["player-purchase-aug-batch", JSON.stringify(orderedBatch.map(a => ({ faction: a.faction, name: a.name })))],
         },
       });
     }

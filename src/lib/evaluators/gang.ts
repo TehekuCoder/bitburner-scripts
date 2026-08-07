@@ -14,6 +14,9 @@ export const GangEvaluator: PurchaseEvaluator = {
   getRequests(ns: NS): PurchaseRequest[] {
     if (!ns.gang || !ns.gang.inGang()) return [];
 
+    const currentMoney = ns.getServerMoneyAvailable("home");
+    if (currentMoney <= 0) return [];
+
     const bnMults = loadBnMults(ns);
     const gangAugMult = bnMults.GangUniqueAugs ?? 1.0;
     const gangAugEfficiency = gangAugMult > 0 ? 1 / gangAugMult : 1.0;
@@ -25,13 +28,16 @@ export const GangEvaluator: PurchaseEvaluator = {
     const memberNames = ns.gang.getMemberNames();
     const equipmentNames = ns.gang.getEquipmentNames();
 
-    // Cache Equipment-Daten für bessere Performance
+    // Cache Equipment-Daten & filtere direkt unbezahlbare Gegenstände heraus
     const equipCache = equipmentNames
       .map((equip) => {
         try {
+          const cost = ns.gang.getEquipmentCost(equip);
+          if (cost > currentMoney) return null; // Direkt ignorieren wenn unbezahlbar
+
           return {
             name: equip,
-            cost: ns.gang.getEquipmentCost(equip),
+            cost,
             type: ns.gang.getEquipmentType(equip),
           };
         } catch {
@@ -39,6 +45,8 @@ export const GangEvaluator: PurchaseEvaluator = {
         }
       })
       .filter(Boolean) as { name: string; cost: number; type: string }[];
+
+    if (equipCache.length === 0) return [];
 
     for (const equip of equipCache) {
       const isAugmentation = equip.type === "Augmentation";
@@ -69,9 +77,8 @@ export const GangEvaluator: PurchaseEvaluator = {
               baseScore = 60;
               reason = "Gang Augmentation (Permanent)";
             } else {
-              basePriority = PurchasePriority.LOW;
-              baseScore = 15;
-              reason = "Combat-Equipment für Hacking-Gang";
+              // Irrelevante Upgrades überspringen, um Trash-Requests zu vermeiden
+              return;
             }
           } else {
             if (
@@ -87,16 +94,14 @@ export const GangEvaluator: PurchaseEvaluator = {
               baseScore = 65;
               reason = "Combat Augmentation (Permanent)";
             } else if (equip.type === "Rootkit") {
-              basePriority = PurchasePriority.LOW;
-              baseScore = 10;
-              reason = "Rootkit für Combat-Gang";
+              // Irrelevante Rootkits für Combat Gang überspringen
+              return;
             }
           }
 
-          // Staffelung nach Member-Index
+          // Staffelung nach Member-Index (höhere Ränge bevorzugen)
           const memberScore = Math.max(1, baseScore - idx * 1.5);
 
-          // BitNode-Multiplikator berücksichtigen
           const priority = adjustPriorityByMult(basePriority, effMult);
           const score = Math.max(1, Math.floor(memberScore * effMult));
 
@@ -118,12 +123,15 @@ export const GangEvaluator: PurchaseEvaluator = {
       });
     }
 
-    return requests.sort((a, b) => {
-      const scoreA = a.score ?? 0;
-      const scoreB = b.score ?? 0;
-      if (scoreA !== scoreB) return scoreB - scoreA;
-      return a.cost - b.cost;
-    });
+    // Nach Score & Preis sortieren und auf MAX 12 Anfragen begrenzen
+    return requests
+      .sort((a, b) => {
+        const scoreA = a.score ?? 0;
+        const scoreB = b.score ?? 0;
+        if (scoreA !== scoreB) return scoreB - scoreA;
+        return a.cost - b.cost;
+      })
+      .slice(0, 12);
   },
 };
 

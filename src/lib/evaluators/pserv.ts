@@ -20,12 +20,12 @@ export const PservEvaluator: PurchaseEvaluator = {
   getRequests(ns: NS): PurchaseRequest[] {
     const bnMults = loadBnMults(ns);
 
-    // 🔴 Hard Check: Falls Server-Limit 0 ist
+    // 🔴 Hard Check: Cloud Server Limit aus BN Multipliers (v3.01+)
     const limitMult = bnMults.CloudServerLimit ?? 1.0;
     const limit = ns.cloud.getServerLimit();
     if (limit === 0 || limitMult <= 0) return [];
 
-    // Kosten-Multiplikator berechnen: Höhere Kosten verringern die relativen Erträge
+    // Kosten-Multiplikator berechnen
     const costMult = bnMults.CloudServerCost ?? 1.0;
     const efficiencyMult = costMult > 0 ? 1 / costMult : 1.0;
 
@@ -47,7 +47,6 @@ export const PservEvaluator: PurchaseEvaluator = {
           ? PurchasePriority.LOW
           : PurchasePriority.HIGH;
 
-        // Priorität & Score dämpfen, falls Cloud-Server teurer ge-nerft wurden
         const priority = adjustPriorityByMult(basePriority, efficiencyMult);
         const baseScore = isHomeUnderpowered ? 10 : 95;
         const score = Math.max(1, Math.floor(baseScore * efficiencyMult));

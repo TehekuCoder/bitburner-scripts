@@ -5,7 +5,12 @@ import {
   PurchasePriority,
 } from "/lib/types/finance.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
-import { loadBnMults, adjustPriorityByMult } from "../utils.js";
+import {
+  loadBnMults,
+  adjustPriorityByMult,
+  hasCorporation,
+  hasbladeburner,
+} from "../utils.js";
 
 interface HacknetRequest extends PurchaseRequest {
   roi: number;
@@ -85,6 +90,31 @@ function getEstimatedMoneyGain(
   }
 }
 
+function evaluateServerRamUpgrade(
+  req: HacknetRequest,
+  ns: NS,
+  isCapacityBlocked: boolean,
+): boolean {
+  // 1. Ausnahmegenehmigung: Wir HÄNGEN an einem Hash-Kapazitäts-Engpass
+  if (isCapacityBlocked) {
+    return true;
+  }
+
+  // 2. Wallet-Protection: Maximal 5% des aktuellen Guthabens für reine ROI-Käufe opfern
+  const playerMoney = ns.getServerMoneyAvailable("home");
+  if (req.cost > playerMoney * 0.05) {
+    return false;
+  }
+
+  // 3. Payback Horizon Check
+  if (req.roi <= 0) return false;
+
+  const paybackTimeSeconds = 1 / req.roi;
+  const MAX_PAYBACK_SECONDS = 3600; // Amortisation darf max. 60 Minuten dauern
+
+  return paybackTimeSeconds <= MAX_PAYBACK_SECONDS;
+}
+
 export const HacknetEvaluator: PurchaseEvaluator = {
   category: "HACKNET",
 
@@ -101,6 +131,31 @@ export const HacknetEvaluator: PurchaseEvaluator = {
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
     const hNetMults = ns.getHacknetMultipliers();
     const prodMult = hNetMults?.production ?? 1;
+
+    // 🎯 Dynamische Hash-Kapazitäts-Anforderung ermitteln
+    let isCapacityBlocked = false;
+    let targetCapNeeded = 0;
+
+    if (isServerMode) {
+      const currentCapacity = ns.hacknet.hashCapacity();
+
+      if (hasCorporation(ns)) {
+        try {
+          if (ns.corporation.hasCorporation())
+            targetCapNeeded = Math.max(targetCapNeeded, 200);
+        } catch {}
+      }
+      if (hasbladeburner(ns)) {
+        try {
+          if (ns.bladeburner.inBladeburner())
+            targetCapNeeded = Math.max(targetCapNeeded, 250);
+        } catch {}
+      }
+
+      // Mindestens 200 für Coding Contracts berücksichtigen
+      targetCapNeeded = Math.max(targetCapNeeded, 200);
+      isCapacityBlocked = targetCapNeeded > 0 && currentCapacity < targetCapNeeded;
+    }
 
     // 📊 Status-Erfassung für Netburners-Freischaltung
     let totalHacknetRam = 0;
@@ -252,17 +307,6 @@ export const HacknetEvaluator: PurchaseEvaluator = {
           const currentCache = (stats as any).cache ?? 1;
           const currentCapacity = ns.hacknet.hashCapacity();
 
-          // Ziel-Kapazität ermitteln (z. B. 250 für Bladeburner / Corp Research)
-          let targetCapNeeded = 0;
-          if (ns.corporation?.hasCorporation())
-            targetCapNeeded = Math.max(targetCapNeeded, 200);
-          if (ns.bladeburner?.inBladeburner())
-            targetCapNeeded = Math.max(targetCapNeeded, 250);
-
-          // Hard Blocker: Wenn die Hash-Kapazität nicht einmal für ein einziges Upgrade reicht
-          const isCapacityBlocked =
-            targetCapNeeded > 0 && currentCapacity < targetCapNeeded;
-
           const cacheRoi =
             currentCache < 10
               ? (currentGain * 0.15) / cacheCost
@@ -302,6 +346,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
           });
         }
       }
+
       for (const upg of upgradeCandidates) {
         if (upg.cost > 0 && Number.isFinite(upg.cost)) {
           const roi = calculateRoi(upg.cost, currentGain, upg.nextGain);
@@ -320,7 +365,6 @@ export const HacknetEvaluator: PurchaseEvaluator = {
               player.skills.hacking >= 80
                 ? PurchasePriority.CRITICAL
                 : PurchasePriority.HIGH;
-            // Günstige Upgrades (niedrigere Node-Level) erhalten höheren Score
             score = Math.max(score, 100 - stats.level);
           }
 
@@ -352,7 +396,9 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         if (needsNetburnersRam && req.id.includes("-ram")) return true;
         if (needsNetburnersCores && req.id.includes("-core")) return true;
 
-        if (isServerMode && req.id.includes("-ram")) return true;
+        if (isServerMode && req.id.includes("-ram")) {
+          return evaluateServerRamUpgrade(req, ns, isCapacityBlocked);
+        }
         if (isServerMode && req.id.startsWith("hacknet-new-node")) return true;
 
         return req.roi >= MIN_ROI && req.score !== undefined && req.score > 0;

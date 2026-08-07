@@ -1,3 +1,4 @@
+// lib/evaluators/sleeve.ts
 import { NS } from "@ns";
 import {
   PurchaseEvaluator,
@@ -70,6 +71,13 @@ export const SleeveEvaluator: PurchaseEvaluator = {
 
     for (let sleeveId = 0; sleeveId < numSleeves; sleeveId++) {
       try {
+        const sleeveStats = ns.sleeve.getSleeve(sleeveId);
+
+        // Bei extrem hohem Shock (> 90%) Aug-Käufe zurückstellen
+        if (sleeveStats.shock > 90) continue;
+
+        // Shock-Faktor: Effizienz von Augs steigt mit sinkendem Shock
+        const shockFactor = (100 - sleeveStats.shock) / 100;
         const purchasableAugs = ns.sleeve.getSleevePurchasableAugs(sleeveId);
 
         for (const aug of purchasableAugs) {
@@ -82,17 +90,23 @@ export const SleeveEvaluator: PurchaseEvaluator = {
             basePriority = PurchasePriority.HIGH;
             baseScore = 90;
             reason = "Essentielles Memory/Sync Upgrade";
-          } else if (aug.name.includes("NeuroLink") || aug.name.includes("BitWire")) {
+          } else if (
+            aug.name.includes("NeuroLink") ||
+            aug.name.includes("BitWire")
+          ) {
             basePriority = PurchasePriority.MEDIUM;
             baseScore = 60;
             reason = "Hacking Efficiency Upgrade";
           }
 
           const priority = adjustPriorityByMult(basePriority, efficiencyMult);
-          const score = Math.max(1, Math.floor(baseScore * efficiencyMult));
+          const score = Math.max(
+            1,
+            Math.floor(baseScore * efficiencyMult * shockFactor),
+          );
 
           requests.push({
-            id: `sleeve-${sleeveId}-aug-${aug.name}`,
+            id: `sleeve-${sleeveId}-aug-${aug.name.replace(/\s+/g, "-")}`,
             category: "SLEEVE_AUG" as PurchaseCategory,
             priority,
             score,
@@ -109,7 +123,7 @@ export const SleeveEvaluator: PurchaseEvaluator = {
       }
     }
 
-    return requests;
+    return requests.sort((a, b) => a.cost - b.cost);
   },
 };
 

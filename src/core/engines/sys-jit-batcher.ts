@@ -53,6 +53,9 @@ export async function main(ns: NS): Promise<void> {
   const targetBlacklist = new Map<string, number>();
   const activeTargets = new Map<string, TargetContext>();
 
+  // 🟢 Tracker für Ziele, die gerade erst PREP abgeschlossen haben (Zeitstempel für Ablauf)
+  const recentlyPreppedTargets = new Map<string, number>();
+
   let batchIdCounter = 0;
   let lastHackingLevel = ns.getHackingLevel();
   let lastHeartbeatTime = 0;
@@ -92,6 +95,7 @@ export async function main(ns: NS): Promise<void> {
     eventQueue.length = 0;
     activeBatches.clear();
     activeBatchIdsSet.clear();
+    recentlyPreppedTargets.clear();
 
     patchBatcherState(ns, {
       batcherTarget: "Reset...",
@@ -132,9 +136,12 @@ export async function main(ns: NS): Promise<void> {
         !eventQueue.some((ev) => ev.target === ctx.target)
       ) {
         logger.success(
-          `✨ Prep-Phase beendet! Target ${ctx.target} ist vollständig präpariert.`,
+          `✨ Prep-Phase beendet! Target [${ctx.target}] ist vollständig präpariert.`,
           ctx.target,
         );
+        // 🟢 Ziel im Tracker hinterlegen (60 Sekunden Fenster für HWGW-Start)
+        recentlyPreppedTargets.set(ctx.target, now + 60000);
+
         completedPrepTargets.push({
           target: ctx.target,
           reason: "Prep abgeschlossen – Re-Evaluation für HWGW",
@@ -144,6 +151,11 @@ export async function main(ns: NS): Promise<void> {
 
     for (const item of completedPrepTargets) {
       removeTarget(item.target, item.reason);
+    }
+
+    // Tracker-Cleanup für abgelaufene Einträge
+    for (const [t, exp] of recentlyPreppedTargets.entries()) {
+      if (now > exp) recentlyPreppedTargets.delete(t);
     }
 
     if (now - lastServerScan > 10000) {
@@ -203,7 +215,6 @@ export async function main(ns: NS): Promise<void> {
     const queueRam = getQueueRam(ns, eventQueue);
     const virtualFreeRam = realFreeRam - queueRam;
 
-    // 🟢 FIX: Globaler Scope für Safety-Puffer & Planner-RAM innerhalb des Loop-Cycles
     const safetyBuffer = Math.min(16, totalNetworkMaxRam * 0.05);
     const safePlannerRam = Math.max(0, virtualFreeRam - safetyBuffer);
 
@@ -281,14 +292,21 @@ export async function main(ns: NS): Promise<void> {
           ns.getServerSecurityLevel(planning.target) <=
             ns.getServerMinSecurityLevel(planning.target) + 0.01;
 
-        // FIX BUG 1: Verhindert, dass bereits präparierte Ziele ohne Rentabilität (Greed 0) erneut als PREP laufen
         if (isPrep && isAlreadyPrepped) {
-          targetBlacklist.set(planning.target, now + 60000); // 60s Abklingzeit
+          targetBlacklist.set(planning.target, now + 60000);
           logger.debug(
             `⚠️ [${planning.target}] Bereits präpariert, aber HWGW nicht rentabel (Score=0). Auf Blacklist gesetzt.`,
             planning.target,
           );
         } else {
+          // 🟢 Prp-Wechsel Erkennung
+          const wasRecentlyPrepped = recentlyPreppedTargets.has(
+            planning.target,
+          );
+          if (wasRecentlyPrepped) {
+            recentlyPreppedTargets.delete(planning.target);
+          }
+
           activeTargets.set(planning.target, {
             target: planning.target,
             plan: planning,
@@ -299,18 +317,29 @@ export async function main(ns: NS): Promise<void> {
             activeBatchIds: new Set(),
           });
 
-          const mode = isPrep ? "PREP" : "HWGW";
-          logger.info(
-            `🎯 Ziel hinzugenommen: [${planning.target}] Mode: ${mode} | Max Batches: ${planning.maxBatches}`,
-            planning.target,
-          );
+          // 🟢 Spezifische Logging-Events für das Dashboard Event-Protokoll
+          if (isPrep) {
+            logger.info(
+              `🛠️ PREP gestartet: [${planning.target}] | Max Batches: ${planning.maxBatches}`,
+              planning.target,
+            );
+          } else if (wasRecentlyPrepped) {
+            logger.success(
+              `🔥 PHASENWECHSEL [${planning.target}]: PREP ➔ HWGW! Greed: ${((planning.greed ?? 0) * 100).toFixed(1)}% | Batches: ${planning.maxBatches}`,
+              planning.target,
+            );
+          } else {
+            logger.info(
+              `🚀 HWGW gestartet: [${planning.target}] | Greed: ${((planning.greed ?? 0) * 100).toFixed(1)}% | Batches: ${planning.maxBatches}`,
+              planning.target,
+            );
+          }
         }
       }
     }
 
     // 📥 7. EVENT-QUEUE BEFÜLLEN
     for (const ctx of activeTargets.values()) {
-      // FIX BUG 2: Pausiere Batch-Generierung für dieses Target bei RAM-Mangel
       if (ctx.ramCooldown && now < ctx.ramCooldown) continue;
 
       const plan = ctx.plan;
@@ -425,7 +454,6 @@ export async function main(ns: NS): Promise<void> {
         if (result === "SUCCESS") {
           if (batchState) batchState.executedEventsCount++;
         } else if (result === "NO_RAM") {
-          // FIX BUG 2: Setze 2.5 Sekunden Pause für neues Spawning bei diesem Target
           const ctx = activeTargets.get(event.target);
           if (ctx) {
             ctx.activeBatchIds.delete(event.batchId);
@@ -441,7 +469,6 @@ export async function main(ns: NS): Promise<void> {
           pruneBatchFromQueue(eventQueue, event.batchId);
           break;
         } else {
-          // Echter ns.exec-Fehler (z.B. Skriptdefekt): Erst JETZT isolieren
           logger.error(
             `🛑 Critical Worker Exec Error für ${event.target}. Target isoliert pausiert.`,
             event.target,

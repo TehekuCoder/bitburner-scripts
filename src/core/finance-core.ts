@@ -1,3 +1,4 @@
+// core/finance-core.ts
 import { NS } from "@ns";
 import {
   PurchaseRequest,
@@ -38,14 +39,12 @@ export async function main(ns: NS): Promise<void> {
 
   const lastPurchases: string[] = [];
   const lastWarnings: string[] = [];
-
-  // Tracking wann welcher Evaluator zuletzt eine Anfrage geschickt hat (Timestamp in ms)
   const evaluatorLastSeen: Record<string, number> = {};
 
   while (true) {
     const rawMoney = ns.getServerMoneyAvailable("home");
     let availableMoney = rawMoney;
-    const allRequests: PurchaseRequest[] = [];
+    const requestsMap = new Map<string, PurchaseRequest>();
 
     // 1. Anfragen aus dem Port einsammeln
     const port = ns.getPortHandle(FINANCE_PORT);
@@ -55,44 +54,34 @@ export async function main(ns: NS): Promise<void> {
         try {
           const parsed = JSON.parse(reqData);
 
-          // Bündel-Format aus evaluator-runner: { category: "...", requests: [...] }
-          if (
-            parsed &&
-            typeof parsed === "object" &&
-            Array.isArray(parsed.requests)
-          ) {
-            const cat = parsed.category as PurchaseCategory;
+          const registerRequests = (reqs: PurchaseRequest[], cat?: PurchaseCategory) => {
             const evalName = cat ? CATEGORY_TO_EVALUATOR[cat] : undefined;
             if (evalName) evaluatorLastSeen[evalName] = Date.now();
 
-            for (const req of parsed.requests as PurchaseRequest[]) {
-              allRequests.push(req);
+            for (const req of reqs) {
+              if (req?.id) {
+                requestsMap.set(req.id, req);
+              }
             }
-          }
-          // Abwärtskompatibilität: Array von Anfragen
-          else if (Array.isArray(parsed)) {
+          };
+
+          if (parsed && typeof parsed === "object" && Array.isArray(parsed.requests)) {
+            registerRequests(parsed.requests, parsed.category);
+          } else if (Array.isArray(parsed)) {
             for (const req of parsed as PurchaseRequest[]) {
-              allRequests.push(req);
-              const evalName = req.category
-                ? CATEGORY_TO_EVALUATOR[req.category]
-                : undefined;
-              if (evalName) evaluatorLastSeen[evalName] = Date.now();
+              registerRequests([req], req.category);
             }
-          }
-          // Abwärtskompatibilität: Einzelne Anfrage
-          else if (parsed && typeof parsed === "object") {
+          } else if (parsed && typeof parsed === "object") {
             const req = parsed as PurchaseRequest;
-            allRequests.push(req);
-            const evalName = req.category
-              ? CATEGORY_TO_EVALUATOR[req.category]
-              : undefined;
-            if (evalName) evaluatorLastSeen[evalName] = Date.now();
+            registerRequests([req], req.category);
           }
         } catch (e) {
           ns.print(`[ERROR] Ungültiges JSON im Finance-Port: ${e}`);
         }
       }
     }
+
+    const allRequests = Array.from(requestsMap.values());
 
     const homeServer = ns.getServer("home");
     const homeRamTotal = ns.getServerMaxRam("home");
@@ -113,18 +102,13 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // Hacknet-Daten ermitteln
     const hacknetCount = ns.hacknet.numNodes();
     const hacknetLimit = ns.hacknet.maxNumNodes();
     const isHacknetServer = typeof (ns.hacknet as any).hashCapacity === "function";
 
-    const financeManagerActive = ns.isRunning(
-      PATHS.daemons.financeDispatcher,
-      "home",
-    );
+    const financeManagerActive = ns.isRunning(PATHS.daemons.financeDispatcher, "home");
     const sysOrchestratorActive = ns.isRunning("core/sys-orchestrator.js", "home");
 
-    // Evaluatoren-Status: Aktiv wenn innerhalb der letzten 10 Sekunden Anfragen gesendet wurden
     const evaluators = [
       "home",
       "hacknet",
@@ -141,10 +125,7 @@ export async function main(ns: NS): Promise<void> {
 
     for (const name of evaluators) {
       const lastSeen = evaluatorLastSeen[name] ?? 0;
-      if (
-        now - lastSeen < 10000 ||
-        ns.isRunning(`lib/evaluators/${name}.js`, "home")
-      ) {
+      if (now - lastSeen < 10000 || ns.isRunning(`lib/evaluators/${name}.js`, "home")) {
         activeEvaluators.push(name);
       } else {
         inactiveEvaluators.push(name);
@@ -167,11 +148,11 @@ export async function main(ns: NS): Promise<void> {
         return a.cost - b.cost;
       });
 
-      // 3. Käufe verarbeiten mit intelligentem Blocking
+      // 3. Käufe verarbeiten
       const blockedCategories = new Set<PurchaseCategory>();
-      let highestUnsatisfiedPriority = PurchasePriority.IDLE;
+      let highestUnsatisfiedPriority = Number.MAX_SAFE_INTEGER;
 
-      const POCKET_CHANGE_RATIO = 0.01; // 1% des aktuellen Vermögens gilt als "Kleingeld"
+      const POCKET_CHANGE_RATIO = 0.01; // 1% als Kleingeld
 
       for (const req of allRequests) {
         const margin = CATEGORY_MARGINS[req.category] ?? 1.0;
@@ -243,7 +224,7 @@ export async function main(ns: NS): Promise<void> {
       hacknetLimit,
       isHacknetServer,
       financeManagerActive,
-      sysOrchestratorActive: sysOrchestratorActive,
+      sysOrchestratorActive,
       activeEvaluators,
       inactiveEvaluators,
       nextPurchaseRequest: structuredRequests[0] ?? undefined,
@@ -254,7 +235,6 @@ export async function main(ns: NS): Promise<void> {
 
     drawFinanceDashboard(ns, dashboardData);
 
-    ns.clearPort(FINANCE_PORT);
     await ns.sleep(2000);
   }
 }
