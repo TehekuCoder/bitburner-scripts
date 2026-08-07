@@ -43,6 +43,8 @@ export interface TargetContext {
   prepEndTime: number;
   activeBatchIds: Set<number>;
   lastRamBlockedTime?: number;
+
+  ramCooldown?: number;
 }
 
 export interface InFlightBatch {

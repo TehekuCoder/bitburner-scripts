@@ -203,6 +203,10 @@ export async function main(ns: NS): Promise<void> {
     const queueRam = getQueueRam(ns, eventQueue);
     const virtualFreeRam = realFreeRam - queueRam;
 
+    // 🟢 FIX: Globaler Scope für Safety-Puffer & Planner-RAM innerhalb des Loop-Cycles
+    const safetyBuffer = Math.min(16, totalNetworkMaxRam * 0.05);
+    const safePlannerRam = Math.max(0, virtualFreeRam - safetyBuffer);
+
     // 💓 HEARTBEAT-LOG
     if (now - lastHeartbeatTime > 10000) {
       lastHeartbeatTime = now;
@@ -249,9 +253,6 @@ export async function main(ns: NS): Promise<void> {
     );
 
     // 🔍 6. MULTI-TARGET PLANNER EVALUIERUNG
-    const safetyBuffer = Math.min(16, totalNetworkMaxRam * 0.05);
-    const safePlannerRam = Math.max(0, virtualFreeRam - safetyBuffer);
-
     if (
       now - lastPlannerRunTime > 1000 &&
       activeTargets.size < dynamicMaxTargets &&
@@ -273,26 +274,45 @@ export async function main(ns: NS): Promise<void> {
       );
 
       if (planning && !activeTargets.has(planning.target)) {
-        activeTargets.set(planning.target, {
-          target: planning.target,
-          plan: planning,
-          dynamicMaxBatches: planning.maxBatches,
-          batchesSent: 0,
-          nextAvailableLandTime: 0,
-          prepEndTime: 0,
-          activeBatchIds: new Set(),
-        });
+        const isPrep = planning.hackThreads === 0;
+        const isAlreadyPrepped =
+          ns.getServerMoneyAvailable(planning.target) >=
+            ns.getServerMaxMoney(planning.target) * 0.99 &&
+          ns.getServerSecurityLevel(planning.target) <=
+            ns.getServerMinSecurityLevel(planning.target) + 0.01;
 
-        const mode = planning.hackThreads === 0 ? "PREP" : "HWGW";
-        logger.info(
-          `🎯 Ziel hinzugenommen: [${planning.target}] Mode: ${mode} | Max Batches: ${planning.maxBatches}`,
-          planning.target,
-        );
+        // FIX BUG 1: Verhindert, dass bereits präparierte Ziele ohne Rentabilität (Greed 0) erneut als PREP laufen
+        if (isPrep && isAlreadyPrepped) {
+          targetBlacklist.set(planning.target, now + 60000); // 60s Abklingzeit
+          logger.debug(
+            `⚠️ [${planning.target}] Bereits präpariert, aber HWGW nicht rentabel (Score=0). Auf Blacklist gesetzt.`,
+            planning.target,
+          );
+        } else {
+          activeTargets.set(planning.target, {
+            target: planning.target,
+            plan: planning,
+            dynamicMaxBatches: planning.maxBatches,
+            batchesSent: 0,
+            nextAvailableLandTime: 0,
+            prepEndTime: 0,
+            activeBatchIds: new Set(),
+          });
+
+          const mode = isPrep ? "PREP" : "HWGW";
+          logger.info(
+            `🎯 Ziel hinzugenommen: [${planning.target}] Mode: ${mode} | Max Batches: ${planning.maxBatches}`,
+            planning.target,
+          );
+        }
       }
     }
 
     // 📥 7. EVENT-QUEUE BEFÜLLEN
     for (const ctx of activeTargets.values()) {
+      // FIX BUG 2: Pausiere Batch-Generierung für dieses Target bei RAM-Mangel
+      if (ctx.ramCooldown && now < ctx.ramCooldown) continue;
+
       const plan = ctx.plan;
       const isPrep = plan.hackThreads === 0;
       const batchGap = Math.max(currentAdaptiveGap, SPACER * 4);
@@ -405,15 +425,19 @@ export async function main(ns: NS): Promise<void> {
         if (result === "SUCCESS") {
           if (batchState) batchState.executedEventsCount++;
         } else if (result === "NO_RAM") {
-          // RAM reicht im Moment nicht: Verwackelte Pipeline verhindern, Batch verwerfen, ABER Target NICHT isolieren!
+          // FIX BUG 2: Setze 2.5 Sekunden Pause für neues Spawning bei diesem Target
+          const ctx = activeTargets.get(event.target);
+          if (ctx) {
+            ctx.activeBatchIds.delete(event.batchId);
+            ctx.ramCooldown = Date.now() + 2500;
+          }
+
           logger.warn(
-            `⚠️ Temporärer RAM-Engpass bei Batch b${event.batchId} [${event.target}]. Batch verworfen.`,
+            `⚠️ Temporärer RAM-Engpass bei Batch b${event.batchId} [${event.target}]. Target pausiert für 2.5s.`,
             event.target,
           );
           activeBatches.delete(event.batchId);
           activeBatchIdsSet.delete(event.batchId);
-          const ctx = activeTargets.get(event.target);
-          if (ctx) ctx.activeBatchIds.delete(event.batchId);
           pruneBatchFromQueue(eventQueue, event.batchId);
           break;
         } else {
