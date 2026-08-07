@@ -4,6 +4,7 @@ import {
   PATH_HACK,
   PATH_GROW,
   PATH_WEAKEN,
+  DispatchResult,
 } from "/lib/constants.js";
 import { JitEvent } from "/lib/types/batcher.js";
 import { WorkerNode } from "/lib/types/network.js";
@@ -80,18 +81,18 @@ export function syncPayloads(ns: NS, serverList: string[]): void {
 
 /**
  * Führt ein Event atomar auf den verfügbaren Workers aus (Thread-Splitting).
- * Transaktionssicher: Entweder werden ALLE Threads gestartet oder GAR KEINE (Rollback).
+ * Gibt den exakten Grund zurück, falls die Ausführung scheitert.
  */
 export function executeOnWorkers(
   ns: NS,
   event: JitEvent,
   workers: WorkerNode[],
-): boolean {
-  if (!Number.isFinite(event.threads) || event.threads <= 0) return false;
+): DispatchResult {
+  if (!Number.isFinite(event.threads) || event.threads <= 0) return "EXEC_FAIL";
 
   const scriptRam =
     SCRIPT_RAM_MAP[event.script] ?? ns.getScriptRam(event.script);
-  if (scriptRam <= 0) return false;
+  if (scriptRam <= 0) return "EXEC_FAIL";
 
   // 1. Capacity Check
   let totalAvailableThreads = 0;
@@ -100,7 +101,8 @@ export function executeOnWorkers(
     if (totalAvailableThreads >= event.threads) break;
   }
 
-  if (totalAvailableThreads < event.threads) return false;
+  // RAM reicht aktuell nicht – KEIN Absturz, nur temporär voll!
+  if (totalAvailableThreads < event.threads) return "NO_RAM";
 
   // 2. Transactional Dispatch
   let remainingThreads = event.threads;
@@ -117,6 +119,11 @@ export function executeOnWorkers(
 
     const toRun = Math.min(remainingThreads, possible);
 
+    // Auto-Sync Fallback: Stellt sicher, dass das Skript auf dem Worker existiert
+    if (w.hostname !== "home" && !ns.fileExists(event.script, w.hostname)) {
+      ns.scp(event.script, w.hostname, "home");
+    }
+
     const pid = ns.exec(
       event.script,
       w.hostname,
@@ -132,19 +139,19 @@ export function executeOnWorkers(
       launchedPids.push({ pid, worker: w, allocatedRam: ramUsed });
       remainingThreads -= toRun;
     } else {
-      // Rollback bei Fehlschlag
+      // Rollback bei echtem ns.exec-Fehlversuch
       for (const item of launchedPids) {
         ns.kill(item.pid);
         item.worker.freeRam += item.allocatedRam;
       }
       ns.print(
-        `[ERROR] ns.exec fehlgeschlagen auf ${w.hostname} für ${event.script} - Rollback ausgeführt.`,
+        `[ERROR] ns.exec fehlgeschlagen auf ${w.hostname} für ${event.script} (Target: ${event.target}). Rollback ausgeführt.`,
       );
-      return false;
+      return "EXEC_FAIL";
     }
 
-    if (remainingThreads <= 0) return true;
+    if (remainingThreads <= 0) return "SUCCESS";
   }
 
-  return remainingThreads === 0;
+  return remainingThreads === 0 ? "SUCCESS" : "NO_RAM";
 }

@@ -4,6 +4,7 @@ import { getAllServers, getNetworkMaxRam } from "/lib/network.js";
 import { patchState } from "/lib/state.js";
 import { BatchStrategy } from "/lib/types/batcher.js";
 import { PATHS } from "/lib/paths.js";
+import { loadBnMults } from "/lib/utils";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -18,12 +19,7 @@ export async function main(ns: NS): Promise<void> {
 
   stopAllEngines(ns);
 
-  let bnMults: Record<string, number> = {};
-  try {
-    const fileContent = ns.read("/bn-multipliers.txt");
-    if (fileContent) bnMults = JSON.parse(fileContent);
-  } catch (_) {}
-
+  let bnMults = loadBnMults(ns);
   while (true) {
     const servers = getAllServers(ns);
     const totalMaxRam = getNetworkMaxRam(ns, servers);

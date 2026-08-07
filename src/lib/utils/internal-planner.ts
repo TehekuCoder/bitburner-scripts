@@ -29,8 +29,11 @@ function getMinimumWeakenTime(player: Player): number {
   return 1200;
 }
 
-/** Erstellt ein isoliertes Server-Objekt ohne State-Leaks */
-function makeServerState(base: Server, overrideSec?: number, overrideMoney?: number): Server {
+function makeServerState(
+  base: Server,
+  overrideSec?: number,
+  overrideMoney?: number,
+): Server {
   return {
     ...base,
     hackDifficulty: overrideSec ?? base.hackDifficulty,
@@ -53,6 +56,9 @@ export function internalPlanner(
     return null;
   }
 
+  // Dynamischer Weaken-Effekt pro Thread (Basis: 0.05)
+  const weakenRate = 0.05 * (bnMults?.ServerWeakenRate ?? 1.0);
+
   let bestPlan: BatchPlan | null = null;
   let highestScore = -1;
 
@@ -73,10 +79,14 @@ export function internalPlanner(
       currentSec <= minSec + 0.5 && moneyAvailable >= moneyMax * 0.99;
 
     // -----------------------------------------------------------------------
-    // PHASE 1: PREP Mode (Zeiten basieren auf JETZIGER Security)
+    // PHASE 1: PREP Mode
     // -----------------------------------------------------------------------
     if (!isPrepped) {
-      const currentServerState = makeServerState(serverObj, currentSec, moneyAvailable);
+      const currentServerState = makeServerState(
+        serverObj,
+        currentSec,
+        moneyAvailable,
+      );
 
       const weakenTime = ns.formulas?.hacking
         ? ns.formulas.hacking.weakenTime(currentServerState, player)
@@ -99,29 +109,37 @@ export function internalPlanner(
       if (currentSec > minSec + 0.5) {
         weakenPrepThreads = Math.max(
           1,
-          Math.ceil((currentSec - minSec) / 0.05),
+          Math.ceil((currentSec - minSec) / weakenRate),
         );
       }
 
       if (moneyAvailable < moneyMax * 0.99) {
         const growthFactor = moneyMax / Math.max(1, moneyAvailable);
-        const growCalcServer = makeServerState(serverObj, currentSec, Math.max(1, moneyAvailable));
+        const growCalcServer = makeServerState(
+          serverObj,
+          currentSec,
+          Math.max(1, moneyAvailable),
+        );
 
         const rawGrowThreads = ns.formulas?.hacking
-          ? ns.formulas.hacking.growThreads(growCalcServer, player, moneyMax)
+          ? ns.formulas.hacking.growThreads(
+              growCalcServer,
+              player,
+              moneyMax,
+            )
           : ns.growthAnalyze(target, growthFactor);
 
         growPrepThreads = Math.max(
           1,
           Math.ceil(rawGrowThreads || growthFactor),
         );
-        prepWeaken2Threads = Math.ceil((growPrepThreads * 0.004) / 0.05);
+        prepWeaken2Threads = Math.ceil((growPrepThreads * 0.004) / weakenRate);
       }
 
       let prepRam =
         (weakenPrepThreads + prepWeaken2Threads) * RAM_WEAKEN +
         growPrepThreads * RAM_GROW;
-      const maxUsablePrepRam = Math.max(RAM_WEAKEN, virtualFreeRam * 0.50);
+      const maxUsablePrepRam = Math.max(RAM_WEAKEN, virtualFreeRam * 0.5);
 
       if (prepRam > maxUsablePrepRam) {
         const scale = maxUsablePrepRam / prepRam;
@@ -134,7 +152,7 @@ export function internalPlanner(
           growPrepThreads = Math.floor(growPrepThreads * scale);
           prepWeaken2Threads =
             growPrepThreads > 0
-              ? Math.ceil((growPrepThreads * 0.004) / 0.05)
+              ? Math.ceil((growPrepThreads * 0.004) / weakenRate)
               : 0;
         }
         prepRam =
@@ -172,7 +190,7 @@ export function internalPlanner(
     }
 
     // -----------------------------------------------------------------------
-    // PHASE 2: HWGW Mode (Integer-Thread Grid-Search)
+    // PHASE 2: HWGW Mode
     // -----------------------------------------------------------------------
     const preppedServerState = makeServerState(serverObj, minSec, moneyMax);
 
@@ -199,25 +217,35 @@ export function internalPlanner(
     const maxPipeBatches = Math.max(1, Math.floor(weakenTime / BATCH_GAP));
     const safeScriptBatches = Math.floor(MAX_SAFE_CONCURRENT_SCRIPTS / 4);
 
-    const maxHackThreads = Math.floor(0.90 / hackChance);
+    const maxHackThreads = Math.floor(0.9 / hackChance);
     if (maxHackThreads < 1) continue;
 
     const evaluateThreadCount = (hackThreads: number): BatchPlan | null => {
       const actualGreed = hackThreads * hackChance;
       if (actualGreed >= 0.95 || actualGreed <= 0) return null;
 
-      const weaken1Threads = Math.ceil((hackThreads * 0.002) / 0.05);
+      // Weaken1 gleicht Hack aus (0.002 Sec per Hack-Thread)
+      const weaken1Threads = Math.ceil((hackThreads * 0.002) / weakenRate);
       const postHackMoney = Math.max(1, moneyMax * (1 - actualGreed));
 
-      const postHackServerState = makeServerState(serverObj, minSec, postHackMoney);
+      const postHackServerState = makeServerState(
+        serverObj,
+        minSec,
+        postHackMoney,
+      );
 
       const growThreads = ns.formulas?.hacking
         ? Math.ceil(
-            ns.formulas.hacking.growThreads(postHackServerState, player, moneyMax),
+            ns.formulas.hacking.growThreads(
+              postHackServerState,
+              player,
+              moneyMax,
+            ),
           ) + 1
         : Math.ceil(ns.growthAnalyze(target, moneyMax / postHackMoney)) + 1;
 
-      const weaken2Threads = Math.ceil((growThreads * 0.004) / 0.05);
+      // Weaken2 gleicht Grow aus (0.004 Sec per Grow-Thread)
+      const weaken2Threads = Math.ceil((growThreads * 0.004) / weakenRate);
 
       const batchRam =
         hackThreads * RAM_HACK +
@@ -260,7 +288,6 @@ export function internalPlanner(
       };
     };
 
-    // Grid-Search auf Ganzzahl-Threads (max. 40 Iterationen pro Target)
     const stepSize = Math.max(1, Math.floor(maxHackThreads / 40));
     let bestTargetPlan: BatchPlan | null = null;
 

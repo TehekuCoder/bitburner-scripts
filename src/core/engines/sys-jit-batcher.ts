@@ -400,13 +400,26 @@ export async function main(ns: NS): Promise<void> {
           }
         }
 
-        const dispatched = executeOnWorkers(ns, event, workers);
+        const result = executeOnWorkers(ns, event, workers);
 
-        if (dispatched) {
+        if (result === "SUCCESS") {
           if (batchState) batchState.executedEventsCount++;
+        } else if (result === "NO_RAM") {
+          // RAM reicht im Moment nicht: Verwackelte Pipeline verhindern, Batch verwerfen, ABER Target NICHT isolieren!
+          logger.warn(
+            `⚠️ Temporärer RAM-Engpass bei Batch b${event.batchId} [${event.target}]. Batch verworfen.`,
+            event.target,
+          );
+          activeBatches.delete(event.batchId);
+          activeBatchIdsSet.delete(event.batchId);
+          const ctx = activeTargets.get(event.target);
+          if (ctx) ctx.activeBatchIds.delete(event.batchId);
+          pruneBatchFromQueue(eventQueue, event.batchId);
+          break;
         } else {
+          // Echter ns.exec-Fehler (z.B. Skriptdefekt): Erst JETZT isolieren
           logger.error(
-            `🛑 Ausführungsfehler auf Workers für ${event.target}. Target isoliert pausiert.`,
+            `🛑 Critical Worker Exec Error für ${event.target}. Target isoliert pausiert.`,
             event.target,
           );
           targetBlacklist.set(event.target, Date.now() + 45000);

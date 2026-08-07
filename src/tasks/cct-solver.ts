@@ -129,6 +129,9 @@ export async function main(ns: NS): Promise<void> {
 // SOLVER ALGORITHMEN
 // ============================================================================
 
+
+
+
 /**
  * Versucht die Lösung in allen gängigen Formaten an Bitburner zu übergeben.
  * Da ns.codingcontract.attempt() bei Misserfolg einen leeren String ("") zurückgibt,

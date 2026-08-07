@@ -247,3 +247,5 @@ export const LEVEL_RANK: Record<LogLevel, number> = {
   WARN: 2,
   ERROR: 3,
 };
+
+export type DispatchResult = "SUCCESS" | "NO_RAM" | "EXEC_FAIL";
