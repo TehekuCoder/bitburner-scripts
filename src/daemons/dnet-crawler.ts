@@ -174,7 +174,7 @@ export async function main(ns: NS): Promise<void> {
     const now = Date.now();
     const lootScript = PATHS.tasks.loot;
     const phishScript = PATHS.tasks.phish;
-    const solverScript = PATHS.tasks.solver;
+    const solverScript = PATHS.tasks.dnetSolver;
 
     const nearbyServers: string[] = ns.dnet.probe();
     const currentTopology = nearbyServers.slice().sort().join(",");

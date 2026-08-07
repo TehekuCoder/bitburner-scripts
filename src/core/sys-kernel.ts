@@ -62,7 +62,7 @@ export async function main(ns: NS): Promise<void> {
     const homeFree = homeMax - homeUsed;
     const currentState = loadState(ns);
 
-    // A. NETWORK BREACH & INFECT (Zentrale Infiltration & Root-Rechte)
+    // A. NETWORK BREACH & INFECT
     if (
       now - lastNetworkScan > (REFRESH_INTERVALS?.NETWORK_SCAN ?? 10_000) ||
       !currentState?.allServers?.length
@@ -73,21 +73,21 @@ export async function main(ns: NS): Promise<void> {
       lastNetworkScan = now;
     }
 
-    // B. SUITE MANAGER (Steuert alle Feature-Daemons: Backdoor, Gang, Infra, Dispatcher, etc.)
+    // B. SYSTEM ORCHESTRATOR (Zentraler Service Manager)
     if (
       homeMax >= 16 &&
-      ns.fileExists(PATHS.core.suites, "home") &&
-      !ns.isRunning(PATHS.core.suites, "home")
+      ns.fileExists(PATHS.core.sysOrchestrator, "home") &&
+      !ns.isRunning(PATHS.core.sysOrchestrator, "home")
     ) {
-      const reqRam = ns.getScriptRam(PATHS.core.suites, "home");
+      const reqRam = ns.getScriptRam(PATHS.core.sysOrchestrator, "home");
       if (homeFree >= reqRam) {
-        logger.info("Starte Service Orchestrator (sys-suites)...");
-        ns.run(PATHS.core.suites, 1);
+        logger.info("Starte System Orchestrator...");
+        ns.run(PATHS.core.sysOrchestrator, 1);
       }
     }
 
-    // C. FALLBACK WORKER (Nutzt freien RAM auf home mit work.ts, solange der Orchestrator nicht läuft)
-    const isOrchestratorRunning = ns.isRunning(PATHS.core.orchestrator, "home");
+    // C. FALLBACK WORKER (Home-RAM ausnutzen, wenn Orchestrator nicht läuft)
+    const isOrchestratorRunning = ns.isRunning(PATHS.core.sysOrchestrator, "home");
 
     if (isOrchestratorRunning) {
       if (ns.isRunning(PATHS.payloads.work, "home")) {

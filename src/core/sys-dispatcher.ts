@@ -48,24 +48,36 @@ export async function main(ns: NS): Promise<void> {
   let lastNetworkScan = 0;
 
   const scripts: ScriptList = {
-    financeManager: PATHS.daemons.financeManager,
-    financeCore: PATHS.core.financeCore,
-    logger: PATHS.core.logger,
     perfMonitor: PATHS.daemons.perfMonitor,
+    logger: PATHS.core.logger,
+
+    financeDispatcher: PATHS.daemons.financeDispatcher,
+    financeCore: PATHS.core.financeCore,
+
     worker: PATHS.payloads.work,
-    dispatcher: PATHS.core.dispatcher,
-    backdoor: PATHS.daemons.backdoor,
-    dnet: PATHS.managers.dnet,
-    crawler: PATHS.daemons.crawler,
     hack: PATHS.payloads.hack,
     grow: PATHS.payloads.grow,
     weaken: PATHS.payloads.weaken,
-    sleeve: PATHS.managers.sleeve,
+
+    sysOrchestrator: PATHS.core.sysOrchestrator,
+
+    batchOrchestrator: PATHS.daemons.batchOrchestrator,
+
     fillShare: PATHS.daemons.fillShare,
+
+    cctSolver: PATHS.tasks.cctSolver,
+
+    dnet: PATHS.managers.dnet,
+    crawler: PATHS.daemons.crawler,
+
+    sysDispatcher: PATHS.core.dispatcher,
+    backdoor: PATHS.daemons.backdoor,
     augAnalyze: PATHS.tasks.analyzeAug,
-    orchestrator: PATHS.core.orchestrator,
-    suites: PATHS.core.suites,
+
+    sleeve: PATHS.managers.sleeve,
+
     gang: PATHS.managers.gang,
+
     hashManager: PATHS.managers.hash,
   };
 
@@ -176,7 +188,10 @@ export async function main(ns: NS): Promise<void> {
     const hasSavingTarget =
       factionToWorkFor !== null && !isReadyForFactionGrind;
 
-    const isOrchestratorRunning = ns.isRunning(scripts.orchestrator, "home");
+    const isOrchestratorRunning = ns.isRunning(
+      scripts.batchOrchestrator,
+      "home",
+    );
 
     // 5. Strategie ermitteln
     let strategy = determineStrategy(
@@ -327,7 +342,7 @@ export async function main(ns: NS): Promise<void> {
       mode,
       hasSavingTarget,
       logger,
-      scripts.orchestrator,
+      scripts.batchOrchestrator,
       targetStat,
       isBatcherActive,
       currentKarma,

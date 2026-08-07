@@ -1,99 +1,94 @@
-import { NS } from "@ns";
-import { loadBatcherState } from "/lib/state.js";
-import { TargetSummary } from "/lib/types/batcher.js";
+import { NS } from '@ns';
 
-const CONFIG = {
-  capacityThreshold: 0.85,
-  maxMoneyCap: 1e13, // $10T
-};
+// Typ-Definitionen für State & Hash-Upgrades
+interface TargetSummary {
+  target: string;
+  moneyMax: number;
+  moneyAvailable: number;
+  minDifficulty: number;
+  hackDifficulty: number;
+}
 
-export async function main(ns: NS): Promise<void> {
-  ns.disableLog("ALL");
-  ns.print("[Hash-Manager] Manager gestartet...");
+interface BatcherState {
+  batcherTargetsSummary?: TargetSummary[];
+}
 
-  while (true) {
-    const currentHashes = ns.hacknet.numHashes();
-    const capacity = ns.hacknet.hashCapacity();
+// Gültige Hacknet Server Hash-Upgrades in Bitburner
+type HashUpgradeName =
+  | 'Sell for Money'
+  | 'Sell for Corporation Funds'
+  | 'Reduce Minimum Security'
+  | 'Increase Maximum Money'
+  | 'Improve Studying'
+  | 'Improve Gym Training'
+  | 'Exchange for Corporation Research'
+  | 'Exchange for Bladeburner Rank'
+  | 'Exchange for Bladeburner SP'
+  | 'Generate Coding Contract';
 
-    if (
-      currentHashes >= capacity * CONFIG.capacityThreshold ||
-      currentHashes >= capacity - 20
-    ) {
-      processHashSpendsLoop(ns);
-    }
+interface UpgradePriority {
+  name: HashUpgradeName;
+  /** Legt fest, ob dieses Upgrade einen Zielserver (Hostnamestring) benötigt */
+  requiresTarget?: boolean;
+  /** Max. Level, bis zu dem gekauft werden soll (optional, undefined = unbegrenzt) */
+  maxLevel?: number;
+  /** Mindest-Hashes, die auf Reserve bleiben müssen (optional) */
+  minReserveHashes?: number;
+}
 
-    await ns.sleep(500);
+const STATE_FILE = 'batcher_state.json';
+
+/**
+ * Liest den aktuellen Zustand des Batchers ein.
+ */
+function loadBatcherState(ns: NS): BatcherState | null {
+  if (!ns.fileExists(STATE_FILE)) return null;
+  try {
+    return JSON.parse(ns.read(STATE_FILE)) as BatcherState;
+  } catch {
+    return null;
   }
 }
 
-function processHashSpendsLoop(ns: NS): void {
-  while (ns.hacknet.numHashes() >= 4) {
-    const spent = spendSingleHashPriority(ns);
-    if (!spent) break;
-  }
-}
+/**
+ * Ermittelt den wertvollsten Zielserver im gesamten Netzwerk als Fallback.
+ * Ignoriert Hacknet-Server, um Runtime-Errors zu vermeiden.
+ */
+function getHighestValueServer(ns: NS): string | null {
+  const visited = new Set<string>(['home']);
+  const queue: string[] = ['home'];
+  let maxMoney = 0;
+  let bestServer: string | null = null;
 
-function spendSingleHashPriority(ns: NS): boolean {
-  const hashes = ns.hacknet.numHashes();
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const neighbors = ns.scan(current);
 
-  // 1. CORPORATION RESEARCH ("Corporation" ausschreiben)
-  if (ns.corporation?.hasCorporation() && hashes >= 200) {
-    if (ns.hacknet.spendHashes("Exchange for Corporation Research")) {
-      ns.print("🧪 Hashes in Corp Research investiert.");
-      return true;
-    }
-  }
+    for (const neighbor of neighbors) {
+      if (visited.has(neighbor)) continue;
+      visited.add(neighbor);
+      queue.push(neighbor);
 
-  // 2. BLADEBURNER
-  if (ns.bladeburner?.inBladeburner() && hashes >= 250) {
-    if (ns.hacknet.spendHashes("Exchange for Bladeburner SP")) {
-      ns.print("⚔️ Hashes in Bladeburner SP investiert.");
-      return true;
-    }
-    if (ns.hacknet.spendHashes("Exchange for Bladeburner Rank")) {
-      ns.print("🎖️ Hashes in Bladeburner Rank investiert.");
-      return true;
-    }
-  }
+      // 🛑 Hacknet-Server filtern (keine Geld-/Hacking-Operationen erlaubt)
+      if (neighbor.startsWith('hacknet-server') || neighbor.startsWith('hacknet-node')) {
+        continue;
+      }
 
-  // 3. AKTIVE BATCHER-ZIELE BUFFEN
-  // Nur Targets buffen, die im State explizit als "PREP" markiert sind
-  const activeTargets = loadBatcherState(ns)?.batcherTargetsSummary || [];
-
-  for (const targetInfo of activeTargets) {
-    // Wenn der Batcher gerade HWGW fährt: Fingerchen weg!
-    if (targetInfo.mode !== "PREP") continue;
-
-    const target = targetInfo.target;
-
-    if (ns.getServerMinSecurityLevel(target) > 1 && hashes >= 50) {
-      if (ns.hacknet.spendHashes("Reduce Minimum Security", target)) {
-        ns.print(`📉 Min-Sec für ${target} im Prep-Modus gesenkt.`);
-        return true;
+      if (ns.hasRootAccess(neighbor)) {
+        const money = ns.getServerMaxMoney(neighbor);
+        if (money > maxMoney) {
+          maxMoney = money;
+          bestServer = neighbor;
+        }
       }
     }
-
-    if (ns.getServerMaxMoney(target) < CONFIG.maxMoneyCap && hashes >= 50) {
-      if (ns.hacknet.spendHashes("Increase Maximum Money", target)) {
-        ns.print(`💰 Max-Money für ${target} im Prep-Modus erhöht.`);
-        return true;
-      }
-    }
   }
-
-  // 4. FALLBACK: Bargeld
-  if (hashes >= 4) {
-    const amountToSpend = Math.floor(hashes / 4);
-    if (ns.hacknet.spendHashes("Sell for Money", "", amountToSpend)) {
-      return true;
-    }
-  }
-
-  return false;
+  return bestServer;
 }
-
+/**
+ * Holt alle aktiven Targets des Batchers oder liefert einen Fallback-Server.
+ */
 function getActiveBatcherTargets(ns: NS): string[] {
-  // loadBatcherState nutzen & Parameter 't' explizit typisieren
   const batcherState = loadBatcherState(ns);
 
   if (
@@ -109,34 +104,92 @@ function getActiveBatcherTargets(ns: NS): string[] {
   return fallback ? [fallback] : [];
 }
 
-function getHighestValueServer(ns: NS): string | null {
-  const playerHack = ns.getHackingLevel();
-  let bestServer: string | null = null;
-  let maxMoney = 0;
+/**
+ * Versucht ein bestimmtes Upgrade auszuführen.
+ * Verwertet getActiveBatcherTargets für target-basierte Upgrades.
+ */
+function trySpendHashes(
+  ns: NS,
+  upgrade: UpgradePriority,
+  targets: string[],
+): boolean {
+  const currentHashes = ns.hacknet.numHashes();
+  const reserve = upgrade.minReserveHashes ?? 0;
 
-  const scanList = (host = "home", visited = new Set<string>()): void => {
-    visited.add(host);
-    for (const neighbor of ns.scan(host)) {
-      if (visited.has(neighbor)) continue;
+  if (currentHashes <= reserve) return false;
 
-      if (
-        ns.hasRootAccess(neighbor) &&
-        !neighbor.startsWith("hacknet-") &&
-        neighbor !== "darkweb" &&
-        !neighbor.startsWith("pserv-")
-      ) {
-        const reqLevel = ns.getServerRequiredHackingLevel(neighbor);
-        const serverMoney = ns.getServerMaxMoney(neighbor);
+  // Prüfen, ob maxLevel erreicht ist
+  if (upgrade.maxLevel !== undefined) {
+    const currentLevel = ns.hacknet.getHashUpgradeLevel(upgrade.name);
+    if (currentLevel >= upgrade.maxLevel) return false;
+  }
 
-        if (reqLevel <= playerHack && serverMoney > maxMoney) {
-          maxMoney = serverMoney;
-          bestServer = neighbor;
+  const cost = ns.hacknet.hashCost(upgrade.name);
+  if (currentHashes < cost) return false;
+
+  // Target-basierte Upgrades (Reduce Min Sec / Increase Max Money)
+  if (upgrade.requiresTarget) {
+    for (const target of targets) {
+      if (ns.hacknet.spendHashes(upgrade.name, target)) {
+        ns.print(`[HashManager] Upgrade gekauft: ${upgrade.name} -> ${target}`);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Globale Upgrades ohne Target (Studying, Gym, Corp, Bladeburner, Contracts, Money)
+  if (ns.hacknet.spendHashes(upgrade.name)) {
+    ns.print(`[HashManager] Upgrade gekauft: ${upgrade.name}`);
+    return true;
+  }
+
+  return false;
+}
+
+export async function main(ns: NS): Promise<void> {
+  ns.disableLog('ALL');
+  ns.ui.openTail();
+
+  // Konfiguration der Prioritäten (obenstehende Einträge werden zuerst gekauft)
+  const priorityList: UpgradePriority[] = [
+    // 1. Coding Contracts generieren, falls möglich
+    { name: 'Generate Coding Contract' },
+
+    // 2. Zielserver des Batchers buffen (Geld vergrößern & Sec senken)
+    { name: 'Increase Maximum Money', requiresTarget: true },
+    { name: 'Reduce Minimum Security', requiresTarget: true },
+
+    // 3. Faction/Char-Booster (z. B. für Infiltration, Singularity, Stats)
+    { name: 'Improve Studying' },
+    { name: 'Improve Gym Training' },
+
+    // 4. Endgame / Faction Mechanics (auskommentieren/anpassen je nach BitNode)
+    // { name: 'Exchange for Corporation Research' },
+    // { name: 'Exchange for Bladeburner Rank' },
+    // { name: 'Exchange for Bladeburner SP' },
+
+    // 5. Overflow / Liquiditäts-Fallback
+    { name: 'Sell for Money' },
+  ];
+
+  ns.print('[HashManager] Gestartet.');
+
+  while (true) {
+    const capacity = ns.hacknet.hashCapacity();
+    const currentHashes = ns.hacknet.numHashes();
+    const activeTargets = getActiveBatcherTargets(ns);
+
+    // Hashes ausgeben, wenn wir uns dem Maximum (z. B. >= 80%) nähern
+    if (currentHashes >= capacity * 0.8) {
+      for (const upgrade of priorityList) {
+        // Solange kaufen, wie wir Hashes für diese Prioritätsstufe haben
+        while (trySpendHashes(ns, upgrade, activeTargets)) {
+          await ns.sleep(20);
         }
       }
-      scanList(neighbor, visited);
     }
-  };
 
-  scanList();
-  return bestServer;
+    await ns.sleep(2000);
+  }
 }

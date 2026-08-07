@@ -184,7 +184,7 @@ export const PATH_WEAKEN = "payloads/weaken.js";
 export const PAYLOADS: string[] = [
   // 1. Ausführbare Skripte für Remote-Knoten
   PATHS.daemons.crawler,
-  PATHS.tasks.solver,
+  PATHS.tasks.dnetSolver,
   PATHS.tasks.loot,
   PATHS.tasks.phish,
   PATHS.payloads.work,

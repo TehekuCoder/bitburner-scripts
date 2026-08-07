@@ -245,22 +245,43 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         },
       ];
 
-      // Cache Upgrades
+      // 🟢 CACHE UPGRADES IN HACKNETEVALUATOR
       if (isServerMode && "cache" in stats) {
         const cacheCost = ns.hacknet.getCacheUpgradeCost(i, 1);
         if (cacheCost > 0 && Number.isFinite(cacheCost)) {
           const currentCache = (stats as any).cache ?? 1;
+          const currentCapacity = ns.hacknet.hashCapacity();
+
+          // Ziel-Kapazität ermitteln (z. B. 250 für Bladeburner / Corp Research)
+          let targetCapNeeded = 0;
+          if (ns.corporation?.hasCorporation())
+            targetCapNeeded = Math.max(targetCapNeeded, 200);
+          if (ns.bladeburner?.inBladeburner())
+            targetCapNeeded = Math.max(targetCapNeeded, 250);
+
+          // Hard Blocker: Wenn die Hash-Kapazität nicht einmal für ein einziges Upgrade reicht
+          const isCapacityBlocked =
+            targetCapNeeded > 0 && currentCapacity < targetCapNeeded;
+
           const cacheRoi =
             currentCache < 10
               ? (currentGain * 0.15) / cacheCost
               : (currentGain * 0.02) / cacheCost;
 
-          const baseCachePriority = getPriorityFromRoi(
+          let baseCachePriority = getPriorityFromRoi(
             cacheRoi,
             isServerMode,
             0,
             totalHacknetRam,
           );
+          let score = normalizeRoiToScore(cacheRoi);
+
+          // 🚨 Overrule: Wenn Kapazität der Engpass für Late-Game Upgrades ist
+          if (isCapacityBlocked) {
+            baseCachePriority = PurchasePriority.CRITICAL;
+            score = 99;
+          }
+
           const cachePriority = adjustPriorityByMult(
             baseCachePriority,
             hacknetMoneyMult,
@@ -270,10 +291,10 @@ export const HacknetEvaluator: PurchaseEvaluator = {
             id: `hacknet-node-${i}-cache`,
             category: "HACKNET",
             priority: cachePriority,
-            score: normalizeRoiToScore(cacheRoi),
+            score,
             cost: cacheCost,
             roi: cacheRoi,
-            description: `Hacknet Server #${i + 1} Cache (${currentCache} ➔ ${currentCache + 1})`,
+            description: `Hacknet Server #${i + 1} Cache (${currentCache} ➔ ${currentCache + 1}) [Cap: ${currentCapacity}/${targetCapNeeded}]`,
             action: {
               script: "core/actions/act-hacknet.js",
               args: ["hacknet-upgrade-cache", i, 1],
@@ -281,7 +302,6 @@ export const HacknetEvaluator: PurchaseEvaluator = {
           });
         }
       }
-
       for (const upg of upgradeCandidates) {
         if (upg.cost > 0 && Number.isFinite(upg.cost)) {
           const roi = calculateRoi(upg.cost, currentGain, upg.nextGain);
@@ -296,9 +316,10 @@ export const HacknetEvaluator: PurchaseEvaluator = {
 
           // 🚀 Netburners Level-Overriding
           if (needsNetburnersLevel && upg.type === "level") {
-            basePriority = player.skills.hacking >= 80 
-              ? PurchasePriority.CRITICAL 
-              : PurchasePriority.HIGH;
+            basePriority =
+              player.skills.hacking >= 80
+                ? PurchasePriority.CRITICAL
+                : PurchasePriority.HIGH;
             // Günstige Upgrades (niedrigere Node-Level) erhalten höheren Score
             score = Math.max(score, 100 - stats.level);
           }
@@ -326,7 +347,8 @@ export const HacknetEvaluator: PurchaseEvaluator = {
       .filter((req) => {
         // 🚀 Netburners Bypass-Regeln
         if (needsNetburnersLevel && req.id.includes("-level")) return true;
-        if (needsNetburnersLevel && req.id.startsWith("hacknet-new-node")) return true;
+        if (needsNetburnersLevel && req.id.startsWith("hacknet-new-node"))
+          return true;
         if (needsNetburnersRam && req.id.includes("-ram")) return true;
         if (needsNetburnersCores && req.id.includes("-core")) return true;
 

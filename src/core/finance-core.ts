@@ -119,7 +119,7 @@ export async function main(ns: NS): Promise<void> {
     const isHacknetServer = typeof (ns.hacknet as any).hashCapacity === "function";
 
     const financeManagerActive = ns.isRunning(
-      PATHS.daemons.financeManager,
+      PATHS.daemons.financeDispatcher,
       "home",
     );
     const suiteManagerActive = ns.isRunning("core/sys-suites.js", "home");

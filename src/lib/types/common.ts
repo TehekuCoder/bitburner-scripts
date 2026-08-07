@@ -4,27 +4,59 @@ import { BotStrategy } from "./strategy";
 import { TargetSummary } from "./batcher";
 
 export interface ScriptList {
-  financeManager?: string;
-  financeCore: string;
-  logger: string;
+  // Observability
   perfMonitor: string;
+  logger: string;
+  //-------------------------
+
+  // Finanz-Verwaltung
+  financeDispatcher?: string;
+  financeCore: string;
+  //-------------------------
+
+  // Hacking-Payloads
   worker: string;
-  dispatcher: string;
-  backdoor: string;
-  dnet: string;
-  crawler: string;
   hack: string;
   grow: string;
   weaken: string;
-  sleeve: string;
+  //-------------------------
+
+  // Orchestrator
+  sysOrchestrator: string;
+
+  // Batcher
+  batchOrchestrator: string;
+  //-------------------------
+
+  // Share
   fillShare: string;
+  //-------------------------
+
+  // Kontrakte
+  cctSolver: string;
+
+  // Darknet
+  dnet: string;
+  crawler: string;
+  //-------------------------
+
+  // Singularity
+  sysDispatcher: string;
+  backdoor: string;
   augAnalyze: string;
-  orchestrator: string;
-  suites: string;
+  //-------------------------
+
+  // Sleeve
+  sleeve: string;
+  //-------------------------
+
+  // Gang
   gang: string;
-  hacknet?: string;
-  hacknetEarly?: string;
-  hashManager?:string;
+  //-------------------------
+
+  // Hacknet
+  hashManager: string;
+  //-------------------------
 }
 
 export interface SourceFileProgress {
@@ -85,5 +117,5 @@ export type SolverFunction = (
   ns: NS,
   host: string,
   details: any,
-  logger?: LoggerClient
+  logger?: LoggerClient,
 ) => Promise<string | null> | string | null;

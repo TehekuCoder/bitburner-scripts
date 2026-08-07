@@ -3,7 +3,7 @@ import { NS } from "@ns";
 import { loadState, patchState } from "lib/state.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { DEFAULT_MULTIPLIERS } from "lib/constants.js";
-import { PATHS } from "/lib/paths";
+import { PATHS } from "/lib/paths.js";
 
 export async function main(ns: NS): Promise<void> {
   // 🟢 DUMMY-REFERENZ: Zwingt den AST-Parser von Bitburner, 
