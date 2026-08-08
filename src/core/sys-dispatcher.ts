@@ -28,7 +28,9 @@ export async function main(ns: NS): Promise<void> {
 
   if (ns.singularity === undefined) {
     logger.error("Kritischer Systemfehler: Singularity-API (SF4) fehlt!");
-    ns.tprint("🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!");
+    ns.tprint(
+      "🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!",
+    );
     return;
   }
 
@@ -73,15 +75,29 @@ export async function main(ns: NS): Promise<void> {
     const now = Date.now();
     const currentState = loadState(ns);
 
+    // --- 1. Netzwerk & Background-Tasks Logging ---
     if (
       now - lastNetworkScan > REFRESH_INTERVALS.NETWORK_SCAN ||
       allNetworkServers.length === 0
     ) {
-      allNetworkServers =
-        currentState?.allServers && currentState.allServers.length > 0
-          ? currentState.allServers
-          : getAllServers(ns);
+      const stateServers = currentState?.allServers;
+
+      if (stateServers && stateServers.length > 0) {
+        allNetworkServers = stateServers;
+      } else {
+        allNetworkServers = getAllServers(ns);
+      }
+
       lastNetworkScan = now;
+      logger.debug(
+        `Netzwerk-Scan aktualisiert (${allNetworkServers.length} Server).`,
+        undefined,
+        {
+          context: {
+            source: stateServers && stateServers.length > 0 ? "state" : "scan",
+          },
+        },
+      );
     }
 
     const p = ns.getPlayer();
@@ -97,6 +113,11 @@ export async function main(ns: NS): Promise<void> {
 
     if (now - lastAugAnalysis > 300_000 || !currentState?.augRoadMap) {
       if (ns.fileExists(scripts.augAnalyze, "home")) {
+        logger.info("Starte Augmentation-Analyse (augAnalyze)...", undefined, {
+          context: {
+            reason: !currentState?.augRoadMap ? "missing_roadmap" : "interval",
+          },
+        });
         ns.run(scripts.augAnalyze, 1);
         lastAugAnalysis = now;
       }
@@ -105,9 +126,12 @@ export async function main(ns: NS): Promise<void> {
     const currentCity = CITY_FACTIONS.find((c) => p.factions.includes(c));
 
     const augRoadmap = currentState?.augRoadMap ?? [];
-    const nextRoadmapFaction = isBN2GangMode
-      ? null
-      : findNextRoadmapFaction(ns, augRoadmap, gangFaction, currentCity);
+    const nextRoadmapFaction = findNextRoadmapFaction(
+      ns,
+      augRoadmap,
+      gangFaction,
+      currentCity,
+    );
 
     handleFactionInvitations(ns, logger);
     const currentFactionReps: Record<string, number> = {};
@@ -123,6 +147,9 @@ export async function main(ns: NS): Promise<void> {
       p.skills.hacking >= 250 &&
       now - lastCorpApplication > REFRESH_INTERVALS.MEGACORP_APPLY
     ) {
+      logger.info("Sende automatische Megacorp-Bewerbungen.", undefined, {
+        context: { hackLevel: p.skills.hacking },
+      });
       applyToAllMegacorps(ns, p, logger);
       lastCorpApplication = now;
     }
@@ -153,11 +180,25 @@ export async function main(ns: NS): Promise<void> {
         ? BASE_MONEY_THRESHOLD * 0.7
         : BASE_MONEY_THRESHOLD;
 
+    // --- 2. Thresholds loggen, bevor die Strategie bestimmt wird ---
     const isReadyForFactionGrind =
       isBatcherActive || playerMoney > effectiveThreshold;
+    logger.debug("Ressourcen-Check für Strategiewahl:", undefined, {
+      context: {
+        money: playerMoney,
+        threshold: effectiveThreshold,
+        isReady: isReadyForFactionGrind,
+        batcherActive: isBatcherActive,
+        nextFaction: nextRoadmapFaction?.name || "none",
+      },
+    });
 
+    // 💡 Korrektur: Daedalus erlaubt, auch wenn isBN2GangMode aktiv ist
+    const isDaedalus = nextRoadmapFaction?.name === "Daedalus";
     const factionToWorkFor =
-      !isBN2GangMode && factionRepMult > 0.1 ? nextRoadmapFaction : null;
+      (!isBN2GangMode || isDaedalus) && factionRepMult > 0.1
+        ? nextRoadmapFaction
+        : null;
     const hasSavingTarget =
       factionToWorkFor !== null && !isReadyForFactionGrind;
 
@@ -179,7 +220,12 @@ export async function main(ns: NS): Promise<void> {
       isReadyForFactionGrind,
     );
 
-    if (isBN2GangMode && strategy.mode === "REP") {
+    // 💡 Korrektur: Blockiere REP-Modus im BN2/Gang-Mode NUR dann, wenn es NICHT Daedalus ist
+    if (
+      isBN2GangMode &&
+      strategy.mode === "REP" &&
+      strategy.targetFaction !== "Daedalus"
+    ) {
       strategy = { mode: "MONEY" };
     }
 
@@ -199,8 +245,8 @@ export async function main(ns: NS): Promise<void> {
       lastFallbackUpdate = now;
     }
 
+    // --- 3. Oszillations-Schutz (Flattern) loggen ---
     const previousStrategy = currentState?.strategy || "MONEY";
-
     if (mode !== previousStrategy) {
       const isOscillating =
         ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(mode) &&
@@ -210,13 +256,20 @@ export async function main(ns: NS): Promise<void> {
         isOscillating &&
         now - modeLockTime < REFRESH_INTERVALS.STRATEGY_COOLDOWN
       ) {
+        logger.warn(
+          `🔄 Oszillations-Schutz! Blockiere Wechsel zu [${mode}]. Bleibe bei [${previousStrategy}].`,
+        );
         mode = previousStrategy as BotStrategy;
+
         if (mode === "REP")
           targetFaction = (currentState?.targetFaction as FactionName) || null;
         if (mode === "CORP")
           targetCompany = currentState?.targetCompany as CompanyName;
         if (mode === "TRAIN") targetStat = currentState?.targetStat || 0;
       } else {
+        logger.info(
+          `✅ Strategie-Wechsel freigegeben: ${previousStrategy} ➔ ${mode}`,
+        );
         modeLockTime = now;
       }
     }
@@ -273,7 +326,8 @@ export async function main(ns: NS): Promise<void> {
     });
 
     let sharePercent = mode === "REP" ? 0.4 : mode === "MONEY" ? 0.1 : 0.0;
-    let dynamicMaxXp = mode === "CRIME" ? 100 : p.skills.hacking > 800 ? 1500 : 1000;
+    let dynamicMaxXp =
+      mode === "CRIME" ? 100 : p.skills.hacking > 800 ? 1500 : 1000;
 
     patchState(ns, {
       strategy: mode,
@@ -331,37 +385,30 @@ function manageMicroservices(
     KILLS: PATHS.tasks.crime,
   };
 
-  let targetScript = modeToScript[currentMode];
+  let targetScript: string | undefined = modeToScript[currentMode];
   let overrideArgs: (string | number)[] | undefined = undefined;
 
+  // --- Loggen, warum im Money-Modus was passiert ---
   if (currentMode === "MONEY") {
     const isGangUnlocked = hasGang || currentKarma <= -54000;
-
     if (!isGangUnlocked) {
+      logger.debug(
+        `[MONEY] Keine Gang (Karma: ${Math.round(currentKarma)}). Nutze Crime-Task.`,
+      );
       targetScript = PATHS.tasks.crime;
     } else {
-      // Dynamischer Check: Uni vs. Gym
-      const hackExpMult = bnMults?.HackExpGain ?? 1;
-      const player = ns.getPlayer();
-      const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
-
-      // Gehe ins Gym (train), wenn Hacking-XP extrem schlecht ist oder Combat für Daedalus fehlt
-      if (hackExpMult < 0.25 || (minCombat < 1500 && hackExpMult < 0.5)) {
-        targetScript = PATHS.tasks.train;
-        overrideArgs = [1500];
-      } else {
-        targetScript = PATHS.tasks.uni;
-        if (targetStat !== undefined) {
-          overrideArgs = [targetStat];
-        }
-      }
+      logger.debug(`[MONEY] Gang/Batcher verfügbar. Pausiere manuelle Tasks.`);
+      targetScript = undefined;
     }
   }
 
-  for (const [_, script] of Object.entries(modeToScript)) {
+  // --- Kills mit Begründung loggen ---
+  for (const [modeName, script] of Object.entries(modeToScript)) {
     if (script && script !== targetScript && ns.isRunning(script, "home")) {
       ns.scriptKill(script, "home");
-      logger.info(`⏹️ Veralteten Microservice beendet: ${script}`);
+      logger.info(`⏹️ Microservice beendet: ${script}`, undefined, {
+        context: { reason: "ModeMismatch", currentMode, oldMode: modeName },
+      });
     }
   }
 
@@ -374,19 +421,21 @@ function manageMicroservices(
       overrideArgs ??
       (currentMode === "TRAIN" && targetStat !== undefined ? [targetStat] : []);
 
+    // --- Neustart mit Argumenten loggen ---
     if (isRunning && effectiveArgs.length > 0) {
       const currentRunningTarget = runningProc?.args[0];
       const expectedTarget = effectiveArgs[0];
 
       if (currentRunningTarget !== expectedTarget) {
+        logger.info(
+          `🔄 Neustart erforderlich: Parameter geändert (${currentRunningTarget} ➔ ${expectedTarget}).`,
+        );
         ns.scriptKill(targetScript, "home");
         shouldStart = true;
-        logger.info(
-          `🔄 Ziel-Parameter geändert (${currentRunningTarget} ➔ ${expectedTarget}). Starte Worker neu.`,
-        );
       }
     }
 
+    // --- RAM-Probleme präziser loggen ---
     if (shouldStart) {
       const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
       const requiredRam = ns.getScriptRam(targetScript, "home");
@@ -395,22 +444,23 @@ function manageMicroservices(
         const pid = ns.run(targetScript, 1, ...effectiveArgs);
         if (pid > 0) {
           logger.success(
-            `▶️ Microservice gestartet: ${targetScript} für [${currentMode}] mit Args: ${effectiveArgs.join(", ")}`,
+            `▶️ Microservice gestartet: ${targetScript}`,
+            undefined,
+            {
+              context: { mode: currentMode, args: effectiveArgs.join(",") },
+            },
           );
         } else {
-          logger.error(
-            `❌ Fehler beim Starten von ${targetScript} (PID war 0).`,
-          );
+          logger.error(`❌ Fehler beim Starten von ${targetScript} (PID 0).`);
         }
       } else {
-        logger.warn(
-          `RAM-MANGEL! ${targetScript} benötigt ${requiredRam.toFixed(2)} GB.`,
-        );
+        logger.warn(`RAM-MANGEL! ${targetScript} pausiert.`, undefined, {
+          context: { required: requiredRam, free: freeRam },
+        });
       }
     }
   }
 }
-
 function handleFactionInvitations(ns: NS, logger: Logger): void {
   const sing = ns.singularity;
   const player = ns.getPlayer();
@@ -424,7 +474,9 @@ function handleFactionInvitations(ns: NS, logger: Logger): void {
     if (isCity && currentCity && currentCity !== invite) continue;
 
     if (sing.joinFaction(invite)) {
-      logger.success(`🎉 Einladung zu Fraktion [${invite}] automatisch angenommen!`);
+      logger.success(
+        `🎉 Einladung zu Fraktion [${invite}] automatisch angenommen!`,
+      );
       ns.toast(`Beigetreten: ${invite}`, "success");
     }
   }

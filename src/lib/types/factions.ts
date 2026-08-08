@@ -62,13 +62,13 @@ export interface FactionState {
 }
 
 export const NFG_WHITELIST_CONFIG: NFGFactionWhitelist = {
-  hackingGangDefault: "Slum Snakes" as FactionName,
-  combatGangDefault: "CyberSec" as FactionName,
+  hackingGangDefault: "NiteSec" as FactionName,      // Oder CyberSec
+  combatGangDefault: "Slum Snakes" as FactionName,
   fallbackWhitelist: [
-    "CyberSec" as FactionName,
-    "Slum Snakes" as FactionName,
-    "Tian Di Hui" as FactionName,
-    "NiteSec" as FactionName,
-    "Netburners" as FactionName,
-  ],
+    "CyberSec",
+    "Slum Snakes",
+    "Tian Di Hui",
+    "NiteSec",
+    "Netburners",
+  ] as FactionName[],
 };

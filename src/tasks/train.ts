@@ -1,96 +1,87 @@
-import { NS, GymLocationName, GymType, CityName } from "@ns";
-import { COMBAT_STATS, GYM_STAT_MAP, DISPLAY_MAP } from "/lib/constants";
-import { loadStrategyState, patchProgressState } from "/lib/state.js";
-import { LoggerClient } from "/lib/logger-client.js";
+import { NS, CityName, GymType } from "@ns";
+import { COMBAT_STATS } from "/lib/constants.js";
+import { LoggerClient as Logger } from "/lib/logger-client.js";
 
-const TRAVEL_COST = 200_000;
-const SLEEP_INTERVAL_MS = 2_000;
-const DEFAULT_COMBAT_TARGET = 15;
+interface GymOption {
+  name: string;
+  city: CityName;
+  minMoney: number;
+}
+
+// Besser strukturierte Gym-Auswahl inkl. Heimatstadt
+const GYM_OPTIONS: GymOption[] = [
+  { name: "Powerhouse Gym", city: "Sector-12", minMoney: 1_000_000 },
+  { name: "Millennium Fitness Gym", city: "Volhaven", minMoney: 1_000_000 },
+  { name: "Iron Gym", city: "Sector-12", minMoney: 0 },
+];
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
+  const logger = new Logger(ns, "Train");
 
-  const logger = new LoggerClient(ns, "TRAIN");
-  logger.info("🏋️ Gym-Training-Worker gestartet...");
+  if (!ns.singularity) {
+    logger.error("Singularity-API (SF4) fehlt!");
+    return;
+  }
 
-  const sing = ns.singularity;
-  const useFocus = !sing
-    .getOwnedAugmentations(false)
-    .includes("Neuroreceptor Management Implant");
+  const targetStat = typeof ns.args[0] === "number" ? ns.args[0] : 1500;
+  logger.info(`🏋️ Starte Combat-Training bis Target-Stat: ${targetStat}`);
 
-  let lastProgressBar = "";
-  let lastActiveStat: string | null = null;
+  // Zuordnung der Stat-Namen zu den Bitburner GymType-Kürzeln
+  const statToGymType: Record<string, GymType> = {
+    strength: "str" as GymType,
+    defense: "def" as GymType,
+    dexterity: "dex" as GymType,
+    agility: "agi" as GymType,
+  };
 
   while (true) {
-    const state = loadStrategyState(ns);
-    const mode = state?.strategy || "IDLE";
-
-    const argTarget = typeof ns.args[0] === "number" ? ns.args[0] : 0;
-    const targetStat = argTarget > 0 ? argTarget : (state?.targetStat ?? DEFAULT_COMBAT_TARGET);
-
-    if (mode !== "TRAIN") {
-      logger.info(`Modus ist nun '${mode}'. Beende Gym-Worker.`);
-      return;
-    }
-
     const player = ns.getPlayer();
 
-    // Stadt-Wahl: Volhaven (Powerhouse Gym) > Sector-12 (Powerhouse Gym)
-    // 💡 Typisierung explizit als CityName
-    let targetCity: CityName = ns.enums.CityName.Sector12;
-    if (player.money >= TRAVEL_COST || player.city === ns.enums.CityName.Volhaven) {
-      targetCity = ns.enums.CityName.Volhaven;
+    // 1. Niedrigsten Combat-Stat ermitteln
+    const stats = COMBAT_STATS.map((s) => ({
+      name: s,
+      value: player.skills[s],
+    })).sort((a, b) => a.value - b.value);
+
+    const lowest = stats[0];
+
+    if (lowest.value >= targetStat) {
+      logger.success(`🎉 Alle Combat-Stats haben ${targetStat} erreicht! Beende Training.`);
+      ns.singularity.stopAction();
+      break;
     }
 
-    if (player.city !== targetCity) {
-      logger.info(`Reise nach ${targetCity} für Gym-Training...`);
-      if (!sing.travelToCity(targetCity)) {
-        logger.error(`Reise nach ${targetCity} fehlgeschlagen.`);
-        await ns.sleep(SLEEP_INTERVAL_MS);
+    // 2. Bestes bezahlbares Gym wählen
+    const selectedGym =
+      GYM_OPTIONS.find((g) => player.money >= g.minMoney) ?? GYM_OPTIONS[2];
+
+    // 3. In die richtige Stadt reisen (falls nötig & bezahlbar)
+    if (player.city !== selectedGym.city) {
+      if (player.money >= 200_000) {
+        const traveled = ns.singularity.travelToCity(selectedGym.city);
+        if (traveled) {
+          logger.info(`✈️ Gereist nach ${selectedGym.city} für [${selectedGym.name}]`);
+        }
+      } else {
+        logger.warn(`Zu wenig Geld für Städtereise nach ${selectedGym.city}. Warte auf Budget...`);
+        await ns.sleep(5000);
         continue;
       }
     }
 
-    const gymName: GymLocationName = "Powerhouse Gym";
-    const lowStat = COMBAT_STATS.find((stat) => player.skills[stat] < targetStat);
+    // 4. Workout starten (mit 'as any' Typecast für Bitburner API-Kompatibilität)
+    const gymStat = statToGymType[lowest.name] ?? (lowest.name as GymType);
+    const isWorkingOut = ns.singularity.gymWorkout(
+      selectedGym.name as any,
+      gymStat,
+      false,
+    );
 
-    if (lowStat) {
-      const shortStat = GYM_STAT_MAP[lowStat];
-      const currentWork = sing.getCurrentWork();
-      const isAlreadyTraining =
-        currentWork?.type === "CLASS" &&
-        currentWork.classType === (shortStat as unknown as GymType) &&
-        currentWork.location === gymName;
-
-      if (!isAlreadyTraining) {
-        if (lastActiveStat !== shortStat) {
-          logger.info(`Wechsele Workout auf [${DISPLAY_MAP[lowStat]}] (Ziel: ${targetStat})`);
-          lastActiveStat = shortStat;
-        }
-
-        const success = sing.gymWorkout(gymName, shortStat, useFocus);
-        if (!success) {
-          logger.error(`Konnte gymWorkout("${gymName}", "${shortStat}") nicht ausführen.`);
-        }
-      }
-
-      const currentLevel = Math.floor(player.skills[lowStat]);
-      const nextProgressBar = `🏋️ ${DISPLAY_MAP[lowStat]}: ${currentLevel}/${targetStat}`;
-
-      if (nextProgressBar !== lastProgressBar) {
-        patchProgressState(ns, { progressBar: nextProgressBar });
-        lastProgressBar = nextProgressBar;
-      }
-    } else {
-      if (lastProgressBar !== "🏋️ Combat Stats [DONE]") {
-        logger.success(`Alle Combat-Stats auf Ziel-Level ${targetStat} trainiert!`);
-        patchProgressState(ns, { progressBar: "🏋️ Combat Stats [DONE]" });
-        lastProgressBar = "🏋️ Combat Stats [DONE]";
-        sing.stopAction();
-      }
-      return;
+    if (!isWorkingOut) {
+      logger.warn(`Konnte Training für ${lowest.name} im ${selectedGym.name} nicht starten.`);
     }
 
-    await ns.sleep(SLEEP_INTERVAL_MS);
+    await ns.sleep(3000);
   }
 }

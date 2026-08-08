@@ -17,14 +17,31 @@ export interface AugmentTarget {
 
 // 🌐 Vollständiges Register aller Bitburner-Fraktionen
 const ALL_KNOWN_FACTIONS: FactionName[] = [
-  "CyberSec", "Tian Di Hui", "Netburners",
-  "NiteSec", "The Black Hand", "BitRunners",
-  "Daedalus", "Illuminati", "The Covenant",
-  "ECorp", "MegaCorp", "Bachman & Associates", "Blade Industries",
-  "NXP Logistics", "Volhaven Corp", "Clarke Incorporated",
-  "Omnia Cyberspace", "Four Sigma", "KuaiGong International",
+  "CyberSec",
+  "Tian Di Hui",
+  "Netburners",
+  "NiteSec",
+  "The Black Hand",
+  "BitRunners",
+  "Daedalus",
+  "Illuminati",
+  "The Covenant",
+  "ECorp",
+  "MegaCorp",
+  "Bachman & Associates",
+  "Blade Industries",
+  "NXP Logistics",
+  "Volhaven Corp",
+  "Clarke Incorporated",
+  "Omnia Cyberspace",
+  "Four Sigma",
+  "KuaiGong International",
   "Fulcrum Secret Technologies",
-  "Slum Snakes", "Tetrads", "Syndicate", "Dark Army", "Speakers for the Dead",
+  "Slum Snakes",
+  "Tetrads",
+  "Syndicate",
+  "Dark Army",
+  "Speakers for the Dead",
   ...CITY_FACTIONS,
 ] as FactionName[];
 
@@ -91,14 +108,19 @@ export async function main(ns: NS): Promise<void> {
         if (!existing.factions.includes(faction)) {
           existing.factions.push(faction);
         }
-        
-        // Bei der Auswahl von bestFaction ignorieren wir die Gang außerhalb von BN2 für den Spieler-Rep-Grind
-        const isGang = faction === gangFaction;
+
+        const isGang = gangFaction !== null && faction === gangFaction;
+
+        // Außerhalb von BN2 bevorzugen wir normale Fraktionen für bestFaction (Spieler-Work),
+        // es sei denn, NUR die Gang bietet dieses Augment an.
         if (!isGang || isBN2Gang) {
           const bestRep = sing.getFactionRep(existing.bestFaction);
           if (currentRep > bestRep || existing.bestFaction === gangFaction) {
             existing.bestFaction = faction;
           }
+        } else if (existing.factions.length === 1 && isGang) {
+          // Verwende 'faction' statt 'gangFaction', da 'faction' garantiert FactionName ist
+          existing.bestFaction = faction;
         }
       }
     }
@@ -108,9 +130,9 @@ export async function main(ns: NS): Promise<void> {
     (a, b) => a.repReq - b.repReq,
   );
 
-  patchAugmentState(ns, { 
+  patchAugmentState(ns, {
     augRoadMap: augRoadmap,
-    isBN2GangMode: isBN2Gang 
+    isBN2GangMode: isBN2Gang,
   });
 
   ns.print(
