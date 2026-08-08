@@ -14,7 +14,7 @@ export async function main(ns: NS): Promise<void> {
 
   ns.ui.openTail();
   ns.ui.setTailTitle("Zentrale Sleeve-Verwaltung");
-  ns.ui.resizeTail(767, 298);
+  ns.ui.resizeTail(800, 320);
 
   const logger = new Logger(ns, "SLEEVE");
   logger.info("🦾 Sleeve-Subsystem aktiv. Kontrolliere Klone...");

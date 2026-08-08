@@ -1,4 +1,4 @@
-import { NS, FactionName, CompanyName } from "@ns";
+import { NS, FactionName, CompanyName, BitNodeMultipliers } from "@ns";
 
 import { generateProgressBar } from "../ui/ui-helper.js";
 import {
@@ -28,15 +28,12 @@ export async function main(ns: NS): Promise<void> {
 
   if (ns.singularity === undefined) {
     logger.error("Kritischer Systemfehler: Singularity-API (SF4) fehlt!");
-    ns.tprint(
-      "🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!",
-    );
+    ns.tprint("🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!");
     return;
   }
 
   logger.info("Initialisiere Dispatcher & Lade Multiplikatoren...");
   const bnMults = loadBnMults(ns);
-
   const metricTracker = new MetricTracker();
 
   let cachedFallbackTarget = "n00dles";
@@ -50,34 +47,23 @@ export async function main(ns: NS): Promise<void> {
   const scripts: ScriptList = {
     perfMonitor: PATHS.daemons.perfMonitor,
     logger: PATHS.core.logger,
-
     financeDispatcher: PATHS.daemons.financeDispatcher,
     financeCore: PATHS.core.financeCore,
-
     worker: PATHS.payloads.work,
     hack: PATHS.payloads.hack,
     grow: PATHS.payloads.grow,
     weaken: PATHS.payloads.weaken,
-
     sysOrchestrator: PATHS.core.sysOrchestrator,
-
     batchOrchestrator: PATHS.daemons.batchOrchestrator,
-
     fillShare: PATHS.daemons.fillShare,
-
     cctSolver: PATHS.tasks.cctSolver,
-
     dnet: PATHS.managers.dnet,
     crawler: PATHS.daemons.crawler,
-
     sysDispatcher: PATHS.core.dispatcher,
     backdoor: PATHS.daemons.backdoor,
     augAnalyze: PATHS.tasks.analyzeAug,
-
     sleeve: PATHS.managers.sleeve,
-
     gang: PATHS.managers.gang,
-
     hashManager: PATHS.managers.hash,
   };
 
@@ -87,7 +73,6 @@ export async function main(ns: NS): Promise<void> {
     const now = Date.now();
     const currentState = loadState(ns);
 
-    // 1. Aktualisierung der Serverliste aus dem Kernel-State (oder Fallback-Scan)
     if (
       now - lastNetworkScan > REFRESH_INTERVALS.NETWORK_SCAN ||
       allNetworkServers.length === 0
@@ -103,7 +88,6 @@ export async function main(ns: NS): Promise<void> {
     const gangState = loadGangState(ns);
     const gangFaction = gangState?.hasGang ? gangState.gangFaction : null;
 
-    // ⚡ BN2-Gang Check: Bietet die Gang ALLE Augmentationen an?
     const isBN2GangMode =
       currentState?.isBN2GangMode ?? isGangOfferingAllAugs(ns);
 
@@ -111,7 +95,6 @@ export async function main(ns: NS): Promise<void> {
       Record<FactionName, number>
     >;
 
-    // Periodische Augment-Analyse (alle 5 Minuten oder bei Neustart)
     if (now - lastAugAnalysis > 300_000 || !currentState?.augRoadMap) {
       if (ns.fileExists(scripts.augAnalyze, "home")) {
         ns.run(scripts.augAnalyze, 1);
@@ -121,13 +104,11 @@ export async function main(ns: NS): Promise<void> {
 
     const currentCity = CITY_FACTIONS.find((c) => p.factions.includes(c));
 
-    // Fraktions-Ziel über Roadmap ermitteln
     const augRoadmap = currentState?.augRoadMap ?? [];
     const nextRoadmapFaction = isBN2GangMode
       ? null
       : findNextRoadmapFaction(ns, augRoadmap, gangFaction, currentCity);
 
-    // 2. Fraktions-Einladungen verarbeiten & Reps erfassen
     handleFactionInvitations(ns, logger);
     const currentFactionReps: Record<string, number> = {};
     for (const f of p.factions) {
@@ -138,12 +119,6 @@ export async function main(ns: NS): Promise<void> {
         nextRoadmapFaction.targetRep;
     }
 
-    const homeMaxRam = ns.getServerMaxRam("home");
-    const getFreeRam = () =>
-      ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
-    const currentKarma = (ns as any).heart?.break() ?? 0;
-
-    // 3. Megacorp-Bewerbungen prüfen
     if (
       p.skills.hacking >= 250 &&
       now - lastCorpApplication > REFRESH_INTERVALS.MEGACORP_APPLY
@@ -153,8 +128,6 @@ export async function main(ns: NS): Promise<void> {
     }
 
     const hasFormulas = ns.fileExists("Formulas.exe", "home");
-
-    // 4. Finanz- & Strategie-Schwellenwerte berechnen
     const playerMoney = p.money;
     const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
     const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
@@ -193,13 +166,12 @@ export async function main(ns: NS): Promise<void> {
       "home",
     );
 
-    // 5. Strategie ermitteln
     let strategy = determineStrategy(
       ns,
       p,
       currentState,
       bnMults,
-      currentKarma,
+      (ns as any).heart?.break() ?? 0,
       isOrchestratorRunning,
       factionTargets as Record<FactionName, number>,
       nextRoadmapFaction,
@@ -213,7 +185,6 @@ export async function main(ns: NS): Promise<void> {
 
     let { mode, targetFaction = null, targetCompany, targetStat } = strategy;
 
-    // 6. Fallback-Target ermitteln
     if (
       now - lastFallbackUpdate > REFRESH_INTERVALS.FALLBACK_TARGET ||
       cachedFallbackTarget === "n00dles"
@@ -228,7 +199,6 @@ export async function main(ns: NS): Promise<void> {
       lastFallbackUpdate = now;
     }
 
-    // 7. Strategie-Oszillation verhindern (Cooldown)
     const previousStrategy = currentState?.strategy || "MONEY";
 
     if (mode !== previousStrategy) {
@@ -251,7 +221,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 8. Progress Metrics berechnen
     let currentVal = 0;
     let targetVal = 0;
     let label = "";
@@ -303,29 +272,16 @@ export async function main(ns: NS): Promise<void> {
       currentState,
     });
 
-    let sharePercent = 0.0;
-    if (mode === "REP") sharePercent = 0.4;
-    if (mode === "MONEY") sharePercent = 0.1;
+    let sharePercent = mode === "REP" ? 0.4 : mode === "MONEY" ? 0.1 : 0.0;
+    let dynamicMaxXp = mode === "CRIME" ? 100 : p.skills.hacking > 800 ? 1500 : 1000;
 
-    let dynamicMaxXp = 1000;
-    if (mode === "CRIME") {
-      dynamicMaxXp = 100;
-    } else if (p.skills.hacking > 800) {
-      dynamicMaxXp = 1500;
-    }
-
-    // NFG-Status aus der Roadmap ermitteln
-    const isGrindingNFG = nextRoadmapFaction?.isNFG ?? false;
-
-    // Zustand im State-Manager speichern
     patchState(ns, {
       strategy: mode,
       isBN2GangMode,
       hasGang: gangState?.hasGang ?? false,
       gangFaction: gangFaction ?? undefined,
-
       targetFaction: targetFaction || undefined,
-      isGrindingNFG: isGrindingNFG,
+      isGrindingNFG: nextRoadmapFaction?.isNFG ?? false,
       targetCompany: targetCompany,
       targetStat: mode === "TRAIN" ? targetStat : undefined,
       targetKills: mode === "KILLS" ? targetStat : undefined,
@@ -336,7 +292,7 @@ export async function main(ns: NS): Promise<void> {
       },
     });
 
-    // Microservices verwalten
+    //  Übergabe von bnMults an die Microservice-Steuerung
     manageMicroservices(
       ns,
       mode,
@@ -345,8 +301,9 @@ export async function main(ns: NS): Promise<void> {
       scripts.batchOrchestrator,
       targetStat,
       isBatcherActive,
-      currentKarma,
+      (ns as any).heart?.break() ?? 0,
       gangState?.hasGang ?? false,
+      bnMults,
     );
 
     await ns.sleep(2000);
@@ -363,6 +320,7 @@ function manageMicroservices(
   isBatcherActive?: boolean,
   currentKarma: number = 0,
   hasGang: boolean = false,
+  bnMults?: BitNodeMultipliers,
 ): void {
   const modeToScript: Record<string, string> = {
     REP: PATHS.tasks.faction,
@@ -382,9 +340,20 @@ function manageMicroservices(
     if (!isGangUnlocked) {
       targetScript = PATHS.tasks.crime;
     } else {
-      targetScript = PATHS.tasks.uni;
-      if (targetStat !== undefined) {
-        overrideArgs = [targetStat];
+      // Dynamischer Check: Uni vs. Gym
+      const hackExpMult = bnMults?.HackExpGain ?? 1;
+      const player = ns.getPlayer();
+      const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
+
+      // Gehe ins Gym (train), wenn Hacking-XP extrem schlecht ist oder Combat für Daedalus fehlt
+      if (hackExpMult < 0.25 || (minCombat < 1500 && hackExpMult < 0.5)) {
+        targetScript = PATHS.tasks.train;
+        overrideArgs = [1500];
+      } else {
+        targetScript = PATHS.tasks.uni;
+        if (targetStat !== undefined) {
+          overrideArgs = [targetStat];
+        }
       }
     }
   }
@@ -452,15 +421,10 @@ function handleFactionInvitations(ns: NS, logger: Logger): void {
 
   for (const invite of invites) {
     const isCity = CITY_FACTIONS.includes(invite as FactionName);
-
-    if (isCity && currentCity && currentCity !== invite) {
-      continue;
-    }
+    if (isCity && currentCity && currentCity !== invite) continue;
 
     if (sing.joinFaction(invite)) {
-      logger.success(
-        `🎉 Einladung zu Fraktion [${invite}] automatisch angenommen!`,
-      );
+      logger.success(`🎉 Einladung zu Fraktion [${invite}] automatisch angenommen!`);
       ns.toast(`Beigetreten: ${invite}`, "success");
     }
   }

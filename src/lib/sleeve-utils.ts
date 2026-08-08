@@ -21,7 +21,6 @@ import {
   SleeveData,
   SleeveGangUnlockStatus,
 } from "./types/sleeves.js";
-import { hasSingularity } from "./utils.js";
 
 const TRAVEL_COST = 200_000;
 
@@ -37,8 +36,96 @@ const CITY_UNIS: Record<string, UniversityLocationName> = {
   Aevum: "Summit University",
 };
 
+export const ALL_CRIMES: CrimeType[] = [
+  "Shoplift",
+  "Rob Store",
+  "Mug",
+  "Larceny",
+  "Deal Drugs",
+  "Bond Forgery",
+  "Traffick Arms",
+  "Homicide",
+  "Grand Theft Auto",
+  "Kidnap",
+  "Assassination",
+  "Heist",
+];
+
+const CRIME_KARMA_MAP: Record<CrimeType, number> = {
+  Shoplift: 0.1,
+  "Rob Store": 0.5,
+  Mug: 0.25,
+  Larceny: 1.5,
+  "Deal Drugs": 0.5,
+  "Bond Forgery": 0.1,
+  "Traffick Arms": 1.0,
+  Homicide: 3.0,
+  "Grand Theft Auto": 1.0,
+  Kidnap: 6.0,
+  Assassination: 10.0,
+  Heist: 15.0,
+};
+
 /**
-  Prüft den Freischaltstatus von Sleeves und Gang-API.
+ * Berechnet die Verbrechen-Erfolgschance für einen Sleeve über eine gewichtete Heuristik.
+ */
+export function getSleeveCrimeChance(
+  ns: NS,
+  crime: CrimeType,
+  stats: SleevePerson,
+): number {
+  const { hacking, strength, defense, dexterity, agility, charisma } = stats.skills;
+  let chance = 0;
+
+  switch (crime) {
+    case "Shoplift":
+      chance = (dexterity * 1.0 + agility * 1.0) / 30;
+      break;
+    case "Rob Store":
+      chance = (agility * 0.8 + dexterity * 0.8 + hacking * 0.4) / 80;
+      break;
+    case "Mug":
+      chance = (strength * 0.5 + defense * 0.5 + dexterity * 0.5 + agility * 0.5) / 100;
+      break;
+    case "Larceny":
+      chance = (agility * 0.8 + dexterity * 0.8 + hacking * 0.4) / 150;
+      break;
+    case "Deal Drugs":
+      chance = (charisma * 1.0 + agility * 0.5 + dexterity * 0.5) / 200;
+      break;
+    case "Bond Forgery":
+      chance = (hacking * 1.0 + dexterity * 0.5) / 250;
+      break;
+    case "Traffick Arms":
+      chance = (strength * 0.4 + defense * 0.4 + charisma * 0.4 + agility * 0.4) / 300;
+      break;
+    case "Homicide":
+      chance = (strength * 0.6 + defense * 0.6 + dexterity * 0.6 + agility * 0.6) / 350;
+      break;
+    case "Grand Theft Auto":
+      chance = (hacking * 0.4 + agility * 0.8 + dexterity * 0.8) / 400;
+      break;
+    case "Kidnap":
+      chance = (charisma * 0.6 + strength * 0.6 + dexterity * 0.6 + agility * 0.6) / 500;
+      break;
+    case "Assassination":
+      chance = (dexterity * 0.8 + agility * 0.8 + strength * 0.5) / 600;
+      break;
+    case "Heist":
+      chance = (hacking + strength + defense + dexterity + agility + charisma) / 800;
+      break;
+    default:
+      chance = (strength + defense + dexterity + agility) / 400;
+      break;
+  }
+
+  // Schock-Penalty einkalkulieren
+  const shockPenalty = (100 - stats.shock) / 100;
+  return Math.min(1.0, Math.max(0.01, chance * shockPenalty));
+}
+
+/**
+ * Prüft den Freischaltstatus von Sleeves und Gang.
  */
 export function checkSleeveGangStatus(ns: NS): SleeveGangUnlockStatus {
   const hasSleeves = ns.sleeve !== undefined && ns.sleeve.getNumSleeves() > 0;
@@ -62,9 +149,8 @@ export function checkSleeveGangStatus(ns: NS): SleeveGangUnlockStatus {
     }
   }
 
-  // Karma-Grind wird NUR ausgeführt, wenn Gang-API vorhanden ist, wir NOCH NICHT in einer Gang sind und Karma > -54.000 ist
   const currentKarma = ns.heart.break();
-  const shouldGrindKarma = hasGangApi && !inGang && currentKarma > -54000;
+  const shouldGrindKarma = !inGang && currentKarma > -54000;
 
   return {
     hasSleeves,
@@ -133,7 +219,6 @@ export function getFactionsNeedingRep(
   const gangFaction = getGangFactionName(ns);
 
   for (const faction of playerFactions) {
-    // Ignoriere die Gang-Fraktion, da die Gang den Ruf dort automatisch generiert
     if (gangFaction && faction === gangFaction) continue;
 
     try {
@@ -175,7 +260,6 @@ export function determineSleeveMode(
   if (options?.strategy === "TRAIN") return "TRAIN";
   if (options?.strategy === "UNI") return "UNI";
 
-  // Gang-Freischaltung ausstehend -> Karma-Grind priorisieren
   if (unlockStatus?.shouldGrindKarma) {
     return "CRIME";
   }
@@ -473,7 +557,8 @@ function tryAssignFactionWork(
     const currentFaction = currentTask.factionName as FactionName;
     if (
       factionsNeedingRep.includes(currentFaction) &&
-      currentFaction !== gangFaction
+      currentFaction !== gangFaction &&
+      !occupiedFactions.includes(currentFaction)
     ) {
       targetFaction = currentFaction;
     }
@@ -679,12 +764,12 @@ function executeFallbackCrime(
   let targetCrime: CrimeType = "Mug";
 
   if (status.shouldGrindKarma) {
-    targetCrime = getBestKarmaCrime(ns, stats);
+    targetCrime = getBestKarmaCrime(ns, i, stats);
   } else {
-    targetCrime = getBestProfitOrStatCrime(ns, stats);
+    targetCrime = getBestProfitOrStatCrime(ns, i, stats);
   }
 
-  const chance = calculateSleeveCrimeChance(ns, stats, targetCrime);
+  const chance = getSleeveCrimeChance(ns, targetCrime, stats);
 
   if (chance < 0.4) {
     const lowestStatName = COMBAT_STATS.reduce((a, b) =>
@@ -722,7 +807,8 @@ function executeFallbackCrime(
   }
 
   if (ns.sleeve.setToCommitCrime(i, fallbackCrime)) {
-    const msg = `🔫 Klon #${i} begeht Verbrechen: ${fallbackCrime} (${(calculateSleeveCrimeChance(ns, stats, fallbackCrime) * 100).toFixed(1)}% Chance)`;
+    const actualChance = getSleeveCrimeChance(ns, fallbackCrime, stats);
+    const msg = `🔫 Klon #${i} begeht Verbrechen: ${fallbackCrime} (${(actualChance * 100).toFixed(1)}% Chance)`;
     logger.info(msg);
     addLocalLog(msg);
   }
@@ -730,75 +816,32 @@ function executeFallbackCrime(
   return currentMoney;
 }
 
-export function calculateSleeveCrimeChance(
+export function getBestKarmaCrime(
   ns: NS,
+  sleeveIndex: number,
   stats: SleevePerson,
-  crime: CrimeType,
-): number {
-  const avgCombat =
-    (stats.skills.strength +
-      stats.skills.defense +
-      stats.skills.dexterity +
-      stats.skills.agility) / 4;
-
-  if (!hasSingularity(ns)) {
-    switch (crime) {
-      case "Mug":
-        return Math.min(avgCombat / 20, 1.0);
-      case "Homicide":
-        return Math.min(avgCombat / 75, 1.0);
-      default:
-        return avgCombat >= 50 ? 0.75 : 0.25;
-    }
-  }
-
-  const crimeStats = ns.singularity.getCrimeStats(crime);
-  const s = stats.skills;
-
-  const weightedStatSum =
-    crimeStats.hacking_success_weight * s.hacking +
-    crimeStats.strength_success_weight * s.strength +
-    crimeStats.defense_success_weight * s.defense +
-    crimeStats.dexterity_success_weight * s.dexterity +
-    crimeStats.agility_success_weight * s.agility +
-    crimeStats.charisma_success_weight * s.charisma;
-
-  const chance = weightedStatSum / (975 * crimeStats.difficulty);
-  return Math.min(Math.max(chance, 0), 1);
-}
-
-export function getBestKarmaCrime(ns: NS, stats: SleevePerson): CrimeType {
-  const avgCombat =
-    (stats.skills.strength +
-      stats.skills.defense +
-      stats.skills.dexterity +
-      stats.skills.agility) / 4;
-
-  if (!hasSingularity(ns)) {
-    return avgCombat >= 35 ? "Homicide" : "Mug";
-  }
-
-  const crimesToEvaluate: CrimeType[] = [
-    "Mug",
-    "Homicide",
-    "Larceny",
-    "Assassination",
-    "Heist",
-  ];
-
+): CrimeType {
   let bestCrime: CrimeType = "Mug";
   let maxKarmaPerSecond = -1;
 
-  for (const crime of crimesToEvaluate) {
-    const statsObj = ns.singularity.getCrimeStats(crime);
-    const chance = calculateSleeveCrimeChance(ns, stats, crime);
-
+  for (const crime of ALL_CRIMES) {
+    const chance = getSleeveCrimeChance(ns, crime, stats);
     if (chance < 0.15) continue;
 
-    const karmaYield = Math.abs(statsObj.karma);
-    const timeInSeconds = statsObj.time / 1000;
-    const karmaPerSecond = (karmaYield * chance) / timeInSeconds;
+    let karmaYield = CRIME_KARMA_MAP[crime] ?? 0.5;
+    let timeInSeconds = 2;
 
+    if (ns.singularity) {
+      try {
+        const statsObj = ns.singularity.getCrimeStats(crime);
+        karmaYield = Math.abs(statsObj.karma);
+        timeInSeconds = statsObj.time / 1000;
+      } catch {
+        /* Fallback auf Map */
+      }
+    }
+
+    const karmaPerSecond = (karmaYield * chance) / timeInSeconds;
     if (karmaPerSecond > maxKarmaPerSecond) {
       maxKarmaPerSecond = karmaPerSecond;
       bestCrime = crime;
@@ -808,41 +851,34 @@ export function getBestKarmaCrime(ns: NS, stats: SleevePerson): CrimeType {
   return bestCrime;
 }
 
-export function getBestProfitOrStatCrime(ns: NS, stats: SleevePerson): CrimeType {
-  const avgCombat =
-    (stats.skills.strength +
-      stats.skills.defense +
-      stats.skills.dexterity +
-      stats.skills.agility) / 4;
-
-  if (!hasSingularity(ns)) {
-    if (avgCombat >= 50) return "Homicide";
-    if (avgCombat >= 20) return "Larceny";
-    return "Mug";
-  }
-
-  const crimesToEvaluate: CrimeType[] = [
-    "Mug",
-    "Larceny",
-    "Deal Drugs",
-    "Homicide",
-    "Grand Theft Auto",
-  ];
-
+export function getBestProfitOrStatCrime(
+  ns: NS,
+  sleeveIndex: number,
+  stats: SleevePerson,
+): CrimeType {
   let bestCrime: CrimeType = "Mug";
-  let maxMoneyPerSec = -1;
+  let maxScore = -1;
 
-  for (const crime of crimesToEvaluate) {
-    const statsObj = ns.singularity.getCrimeStats(crime);
-    const chance = calculateSleeveCrimeChance(ns, stats, crime);
-
+  for (const crime of ALL_CRIMES) {
+    const chance = getSleeveCrimeChance(ns, crime, stats);
     if (chance < 0.25) continue;
 
-    const timeInSeconds = statsObj.time / 1000;
-    const moneyPerSec = (statsObj.money * chance) / timeInSeconds;
+    let moneyYield = 10000;
+    let timeInSeconds = 2;
 
-    if (moneyPerSec > maxMoneyPerSec) {
-      maxMoneyPerSec = moneyPerSec;
+    if (ns.singularity) {
+      try {
+        const statsObj = ns.singularity.getCrimeStats(crime);
+        moneyYield = statsObj.money;
+        timeInSeconds = statsObj.time / 1000;
+      } catch {
+        moneyYield = 10000;
+      }
+    }
+
+    const moneyPerSec = (moneyYield * chance) / timeInSeconds;
+    if (moneyPerSec > maxScore) {
+      maxScore = moneyPerSec;
       bestCrime = crime;
     }
   }

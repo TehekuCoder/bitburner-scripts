@@ -3,22 +3,31 @@ import { NS } from "@ns";
 export function printSleeveDashboard(ns: NS, numSleeves: number, localLogBuffer: string[]): void {
   ns.clearLog();
 
-  const dividerHeader = "==============================================================================";
-  const dividerSub    = "------------------------------------------------------------------------------";
+  const dividerHeader = "==========================================================================================";
+  const dividerSub    = "------------------------------------------------------------------------------------------";
 
   ns.print(dividerHeader);
   ns.print(" 🧠 BitOS SLEEVE CONTROL SYSTEM");
   ns.print(dividerHeader);
-  ns.print(" ID     | SCHOCK   | SYNC     | AKTUELLE BESCHÄFTIGUNG");
+  ns.print(" ID    | SCHOCK   | SYNC     | AUGS | STADT      | AKTUELLE BESCHÄFTIGUNG");
   ns.print(dividerSub);
 
   for (let i = 0; i < numSleeves; i++) {
     const stats = ns.sleeve.getSleeve(i);
     const task = ns.sleeve.getTask(i);
 
-    const idStr = `#${i}`.padEnd(6);
+    let augCount = 0;
+    try {
+      augCount = ns.sleeve.getSleeveAugmentations(i).length;
+    } catch {
+      /* API eingeschränkt */
+    }
+
+    const idStr = `#${i}`.padEnd(5);
     const shockStr = `${stats.shock.toFixed(1)}%`.padEnd(8);
     const syncStr = `${stats.sync.toFixed(1)}%`.padEnd(8);
+    const augStr = `${augCount}`.padEnd(4);
+    const cityStr = stats.city.padEnd(10);
 
     let taskDesc = "IDLE";
     if (task) {
@@ -49,8 +58,8 @@ export function printSleeveDashboard(ns: NS, numSleeves: number, localLogBuffer:
       }
     }
 
-    const taskStr = taskDesc.padEnd(42);
-    ns.print(` ${idStr} | ${shockStr} | ${syncStr} | ${taskStr}`);
+    const taskStr = taskDesc.padEnd(38);
+    ns.print(` ${idStr} | ${shockStr} | ${syncStr} | ${augStr} | ${cityStr} | ${taskStr}`);
   }
 
   ns.print(dividerHeader);

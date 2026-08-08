@@ -106,7 +106,7 @@ export async function main(ns: NS): Promise<void> {
               solvedCount++;
             } else {
               targetLogger.error(
-                `[${type}] Falsche Lösung für '${file}' übergeben!`,
+                `[${type}] Falsche Lösung '${answer}' für '${file}' übergeben!`,
                 server,
                 { context: { contract: file, type } },
               );
@@ -229,16 +229,43 @@ function smartAttempt(
 
   return "";
 }
-function solveLargestPrimeFactor(n: number): number {
-  let divisor = 2;
-  while (n > 1) {
-    if (n % divisor === 0) {
-      n /= divisor;
-    } else {
-      divisor++;
+
+/**
+ * Contract: Total Number of Primes
+ * Input: [min, max] (z.B. [2439997, 3287816])
+ */
+export function solveTotalNumberOfPrimes(data: [number, number] | number[]): number {
+  if (!Array.isArray(data) || data.length < 2) return 0;
+
+  const min = Math.max(2, Number(data[0]));
+  const max = Number(data[1]);
+
+  if (isNaN(min) || isNaN(max) || min > max) return 0;
+
+  // Sieb des Eratosthenes bis max
+  const isPrime = new Uint8Array(max + 1);
+  isPrime.fill(1);
+  isPrime[0] = 0;
+  isPrime[1] = 0;
+
+  const limit = Math.floor(Math.sqrt(max));
+  for (let p = 2; p <= limit; p++) {
+    if (isPrime[p] === 1) {
+      for (let i = p * p; i <= max; i += p) {
+        isPrime[i] = 0;
+      }
     }
   }
-  return divisor;
+
+  // Zähle NUR im Intervall [min, max]
+  let primeCount = 0;
+  for (let i = min; i <= max; i++) {
+    if (isPrime[i] === 1) {
+      primeCount++;
+    }
+  }
+
+  return primeCount;
 }
 
 function solveMaxSubarraySum(arr: number[]): number {
@@ -870,21 +897,11 @@ function solveMinPathSumTriangle(triangle: number[][]): number {
 }
 
 // 4. Square Root
-function solveSquareRoot(data: number | string | bigint): string {
+export function solveSquareRoot(data: number | string | bigint): string {
   let n: bigint;
   try {
-    if (typeof data === "bigint") {
-      n = data;
-    } else if (typeof data === "number") {
-      n = BigInt(Math.floor(data));
-    } else {
-      const str = String(data).trim();
-      if (str.includes("e") || str.includes("E")) {
-        n = BigInt(Math.floor(Number(str)));
-      } else {
-        n = BigInt(str);
-      }
-    }
+    const str = String(data).trim();
+    n = BigInt(str);
   } catch {
     return "0";
   }
@@ -892,42 +909,52 @@ function solveSquareRoot(data: number | string | bigint): string {
   if (n <= 0n) return "0";
   if (n === 1n) return "1";
 
-  const bitLength = BigInt(n.toString(2).length);
-  let x0 = 1n << ((bitLength + 1n) >> 1n);
+  // Startwert oben ansetzen, damit x1 < x0 immer konvergiert
+  let x0 = n;
+  let x1 = (x0 + n / x0) >> 1n;
 
-  while (true) {
-    const x1 = (x0 + n / x0) >> 1n;
-    if (x1 >= x0) {
-      return x0.toString();
-    }
+  while (x1 < x0) {
     x0 = x1;
+    x1 = (x0 + n / x0) >> 1n;
   }
+
+  // x0 ist nun floor(sqrt(n)).
+  // Runden auf den nächsten Integer (entspricht >= 0.5 Rest):
+  if (n - x0 * x0 > x0) {
+    return (x0 + 1n).toString();
+  }
+
+  return x0.toString();
 }
 
 // 5. Total Number of Primes
-function solveTotalNumberOfPrimes(data: number | string): number {
-  const n = typeof data === "number" ? data : parseInt(data, 10);
-  if (n <= 2) return 0;
+/**
+ * Contract: Find Largest Prime Factor
+ * Input: Einzelne Zahl (z. B. 82930211) oder String/Array
+ */
+export function solveLargestPrimeFactor(data: number | string | number[]): number {
+  let n = typeof data === "number" ? data : Number(Array.isArray(data) ? data[0] : data);
+  if (isNaN(n) || n < 2) return 0;
 
-  const max = n - 1;
-  const isPrime = new Uint8Array(max + 1).fill(1);
-  isPrime[0] = 0;
-  isPrime[1] = 0;
+  let largest = 1;
+  let divisor = 2;
 
-  for (let p = 2; p * p <= max; p++) {
-    if (isPrime[p]) {
-      for (let i = p * p; i <= max; i += p) {
-        isPrime[i] = 0;
-      }
+  // Schleife läuft nur bis sqrt(n) - extrem schnell auch bei riesigen Zahlen
+  while (divisor * divisor <= n) {
+    if (n % divisor === 0) {
+      largest = divisor;
+      n /= divisor;
+    } else {
+      divisor = divisor === 2 ? 3 : divisor + 2;
     }
   }
 
-  let count = 0;
-  for (let i = 2; i <= max; i++) {
-    if (isPrime[i]) count++;
+  // Falls der verbleibende Rest selbst eine Primzahl ist
+  if (n > 1) {
+    largest = n;
   }
 
-  return count;
+  return largest;
 }
 
 // 6. Sanitize Parentheses in Expression

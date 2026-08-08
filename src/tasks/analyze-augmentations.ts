@@ -1,8 +1,6 @@
 import { NS, FactionName } from "@ns";
-// Direkte Imports statt Barrel-Export
 import { patchAugmentState } from "lib/state.js";
-import { FACTION_ROADMAP } from "lib/constants.js";
-// ➕ Import der Player-Helper
+import { FACTION_ROADMAP, CITY_FACTIONS, MEGACORPS } from "lib/constants.js";
 import {
   getPurchasedUninstalledAugs,
   isGangOfferingAllAugs,
@@ -17,23 +15,39 @@ export interface AugmentTarget {
   bestFaction: FactionName;
 }
 
+// 🌐 Vollständiges Register aller Bitburner-Fraktionen
+const ALL_KNOWN_FACTIONS: FactionName[] = [
+  "CyberSec", "Tian Di Hui", "Netburners",
+  "NiteSec", "The Black Hand", "BitRunners",
+  "Daedalus", "Illuminati", "The Covenant",
+  "ECorp", "MegaCorp", "Bachman & Associates", "Blade Industries",
+  "NXP Logistics", "Volhaven Corp", "Clarke Incorporated",
+  "Omnia Cyberspace", "Four Sigma", "KuaiGong International",
+  "Fulcrum Secret Technologies",
+  "Slum Snakes", "Tetrads", "Syndicate", "Dark Army", "Speakers for the Dead",
+  ...CITY_FACTIONS,
+] as FactionName[];
+
 export async function main(ns: NS): Promise<void> {
-  // 🟢 DUMMY-REFERENZ für den AST-Parser
   void ns.getHackingLevel;
 
   const sing = ns.singularity;
-  const ownedAugs = sing.getOwnedAugmentations(true); // inkl. gekaufter/wartender
-  const uninstalledCount = getPurchasedUninstalledAugs(ns).length; // ➕ Uninstalled Zähler
+  const ownedAugs = sing.getOwnedAugmentations(true);
+  const uninstalledCount = getPurchasedUninstalledAugs(ns).length;
 
   const augMap = new Map<string, AugmentTarget>();
 
-  // ➕ Gang-Fraktion ermitteln (falls vorhanden)
-  const factionsToScan = new Set<FactionName>(
-    FACTION_ROADMAP.map((f) => f.name as FactionName),
-  );
+  // 1. Alle bekannten Fraktionen erfassen
+  const factionsToScan = new Set<FactionName>([
+    ...FACTION_ROADMAP.map((f) => f.name as FactionName),
+    ...ALL_KNOWN_FACTIONS,
+  ]);
+
+  let gangFaction: FactionName | null = null;
   try {
     if (ns.gang && ns.gang.inGang()) {
-      factionsToScan.add(ns.gang.getGangInformation().faction as FactionName);
+      gangFaction = ns.gang.getGangInformation().faction as FactionName;
+      factionsToScan.add(gangFaction);
     }
   } catch {}
 
@@ -45,14 +59,13 @@ export async function main(ns: NS): Promise<void> {
     );
   }
 
-  // 1. Alle Fraktionen (inkl. Gang) durchsuchen und Augments konsolidieren
   for (const faction of factionsToScan) {
     let factionAugs: string[] = [];
 
     try {
       factionAugs = sing.getAugmentationsFromFaction(faction);
     } catch {
-      continue; // Noch keinen Zugriff / Fehler
+      continue;
     }
 
     const currentRep = sing.getFactionRep(faction);
@@ -78,25 +91,27 @@ export async function main(ns: NS): Promise<void> {
         if (!existing.factions.includes(faction)) {
           existing.factions.push(faction);
         }
-        // Wähle die Fraktion, bei der wir bereits mehr Ruf haben!
-        const bestRep = sing.getFactionRep(existing.bestFaction);
-        if (currentRep > bestRep) {
-          existing.bestFaction = faction;
+        
+        // Bei der Auswahl von bestFaction ignorieren wir die Gang außerhalb von BN2 für den Spieler-Rep-Grind
+        const isGang = faction === gangFaction;
+        if (!isGang || isBN2Gang) {
+          const bestRep = sing.getFactionRep(existing.bestFaction);
+          if (currentRep > bestRep || existing.bestFaction === gangFaction) {
+            existing.bestFaction = faction;
+          }
         }
       }
     }
   }
 
-  // 2. In eine Liste umwandeln und nach Rep-Anforderung sortieren (Aufsteigend)
   const augRoadmap = Array.from(augMap.values()).sort(
     (a, b) => a.repReq - b.repReq,
   );
 
-  // 3. Im State speichern & informativen Log ausgeben
-patchAugmentState(ns, { 
-  augRoadMap: augRoadmap,
-  isBN2GangMode: isBN2Gang 
-});
+  patchAugmentState(ns, { 
+    augRoadMap: augRoadmap,
+    isBN2GangMode: isBN2Gang 
+  });
 
   ns.print(
     `INFO: Augment-Analyse abgeschlossen. ${augRoadmap.length} ausstehende Augments in der Roadmap. (${uninstalledCount} gekaufte Augments bereit zum Installieren)`,
