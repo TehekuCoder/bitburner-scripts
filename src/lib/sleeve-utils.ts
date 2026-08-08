@@ -74,7 +74,8 @@ export function getSleeveCrimeChance(
   crime: CrimeType,
   stats: SleevePerson,
 ): number {
-  const { hacking, strength, defense, dexterity, agility, charisma } = stats.skills;
+  const { hacking, strength, defense, dexterity, agility, charisma } =
+    stats.skills;
   let chance = 0;
 
   switch (crime) {
@@ -85,7 +86,9 @@ export function getSleeveCrimeChance(
       chance = (agility * 0.8 + dexterity * 0.8 + hacking * 0.4) / 80;
       break;
     case "Mug":
-      chance = (strength * 0.5 + defense * 0.5 + dexterity * 0.5 + agility * 0.5) / 100;
+      chance =
+        (strength * 0.5 + defense * 0.5 + dexterity * 0.5 + agility * 0.5) /
+        100;
       break;
     case "Larceny":
       chance = (agility * 0.8 + dexterity * 0.8 + hacking * 0.4) / 150;
@@ -97,22 +100,28 @@ export function getSleeveCrimeChance(
       chance = (hacking * 1.0 + dexterity * 0.5) / 250;
       break;
     case "Traffick Arms":
-      chance = (strength * 0.4 + defense * 0.4 + charisma * 0.4 + agility * 0.4) / 300;
+      chance =
+        (strength * 0.4 + defense * 0.4 + charisma * 0.4 + agility * 0.4) / 300;
       break;
     case "Homicide":
-      chance = (strength * 0.6 + defense * 0.6 + dexterity * 0.6 + agility * 0.6) / 350;
+      chance =
+        (strength * 0.6 + defense * 0.6 + dexterity * 0.6 + agility * 0.6) /
+        350;
       break;
     case "Grand Theft Auto":
       chance = (hacking * 0.4 + agility * 0.8 + dexterity * 0.8) / 400;
       break;
     case "Kidnap":
-      chance = (charisma * 0.6 + strength * 0.6 + dexterity * 0.6 + agility * 0.6) / 500;
+      chance =
+        (charisma * 0.6 + strength * 0.6 + dexterity * 0.6 + agility * 0.6) /
+        500;
       break;
     case "Assassination":
       chance = (dexterity * 0.8 + agility * 0.8 + strength * 0.5) / 600;
       break;
     case "Heist":
-      chance = (hacking + strength + defense + dexterity + agility + charisma) / 800;
+      chance =
+        (hacking + strength + defense + dexterity + agility + charisma) / 800;
       break;
     default:
       chance = (strength + defense + dexterity + agility) / 400;
@@ -167,14 +176,26 @@ function ensureVolhaven(
   currentMoney: number,
 ): { success: boolean; updatedMoney: number; currentCity: string } {
   if (stats.city === "Volhaven") {
-    return { success: true, updatedMoney: currentMoney, currentCity: "Volhaven" };
+    return {
+      success: true,
+      updatedMoney: currentMoney,
+      currentCity: "Volhaven",
+    };
   }
   if (currentMoney >= TRAVEL_COST) {
     if (ns.sleeve.travel(i, "Volhaven")) {
-      return { success: true, updatedMoney: currentMoney - TRAVEL_COST, currentCity: "Volhaven" };
+      return {
+        success: true,
+        updatedMoney: currentMoney - TRAVEL_COST,
+        currentCity: "Volhaven",
+      };
     }
   }
-  return { success: false, updatedMoney: currentMoney, currentCity: stats.city };
+  return {
+    success: false,
+    updatedMoney: currentMoney,
+    currentCity: stats.city,
+  };
 }
 
 function getGymForCity(city: string): GymLocationName {
@@ -294,8 +315,8 @@ export function manageAllSleeves(
   let activeWorkers = 0;
   let currentMoney = p.money;
 
-  const occupiedFactions: FactionName[] = [];
-  const occupiedCompanies: CompanyName[] = [];
+  // 💡 Zustand aller Klon-Tasks nachhalten
+  const currentTasks: (SleeveTask | null)[] = sleeves.map((s) => s.task);
 
   for (const { stats, task } of sleeves) {
     totalShock += stats.shock;
@@ -311,12 +332,31 @@ export function manageAllSleeves(
       unlockStatus,
     );
 
+    // 💡 Dynamisch ermitteln, was von ALLEN ANDEREN Klons (j !== sleeve.index) belegt ist
+    const occupiedFactions: FactionName[] = [];
+    const occupiedCompanies: CompanyName[] = [];
+
+    for (let j = 0; j < numSleeves; j++) {
+      if (j === sleeve.index) continue; // Den eigenen Klon überspringen
+      const t = currentTasks[j];
+      if (t?.type === "FACTION" && t.factionName) {
+        if (!occupiedFactions.includes(t.factionName as FactionName)) {
+          occupiedFactions.push(t.factionName as FactionName);
+        }
+      }
+      if (t?.type === "COMPANY" && t.companyName) {
+        if (!occupiedCompanies.includes(t.companyName as CompanyName)) {
+          occupiedCompanies.push(t.companyName as CompanyName);
+        }
+      }
+    }
+
     currentMoney = manageSingleSleeve(
       ns,
       sleeve.index,
       mode,
       sleeve.stats,
-      sleeve.task,
+      currentTasks[sleeve.index],
       options,
       factionsNeedingRep,
       occupiedFactions,
@@ -326,6 +366,9 @@ export function manageAllSleeves(
       logger,
       addLocalLog,
     );
+
+    // 💡 Task nach der Zuweisung direkt aus dem Spielstand aktualisieren
+    currentTasks[sleeve.index] = ns.sleeve.getTask(sleeve.index);
   }
 
   const avgShock = totalShock / numSleeves;
@@ -666,7 +709,11 @@ function tryAssignCompanyWork(
 
   if (currentTask?.type === "COMPANY") {
     const currentCorp = currentTask.companyName as CompanyName;
-    if (employedCorps.includes(currentCorp)) {
+    // 💡 Prüfen, ob die Firma nicht inzwischen von einem anderen Klon besetzt wurde
+    if (
+      employedCorps.includes(currentCorp) &&
+      !occupiedCompanies.includes(currentCorp)
+    ) {
       const req = currentCorp === "Fulcrum Technologies" ? 400_000 : 200_000;
       if (ns.singularity.getCompanyRep(currentCorp) < req) {
         targetCorp = currentCorp;
@@ -802,7 +849,10 @@ function executeFallbackCrime(
 
   const fallbackCrime = chance >= 0.4 ? targetCrime : "Mug";
 
-  if (currentTask?.type === "CRIME" && currentTask.crimeType === fallbackCrime) {
+  if (
+    currentTask?.type === "CRIME" &&
+    currentTask.crimeType === fallbackCrime
+  ) {
     return currentMoney;
   }
 
