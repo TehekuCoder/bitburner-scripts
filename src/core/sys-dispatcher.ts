@@ -195,10 +195,16 @@ export async function main(ns: NS): Promise<void> {
 
     // 💡 Korrektur: Daedalus erlaubt, auch wenn isBN2GangMode aktiv ist
     const isDaedalus = nextRoadmapFaction?.name === "Daedalus";
+    // 💡 Daedalus oder allgemeine Roadmap-Fraktionen zulassen
     const factionToWorkFor =
-      (!isBN2GangMode || isDaedalus) && factionRepMult > 0.1
+      (!isBN2GangMode ||
+        isDaedalus ||
+        (nextRoadmapFaction !== null &&
+          nextRoadmapFaction.name !== "Daedalus")) &&
+      factionRepMult > 0.1
         ? nextRoadmapFaction
         : null;
+
     const hasSavingTarget =
       factionToWorkFor !== null && !isReadyForFactionGrind;
 
@@ -220,15 +226,10 @@ export async function main(ns: NS): Promise<void> {
       isReadyForFactionGrind,
     );
 
-    // 💡 Korrektur: Blockiere REP-Modus im BN2/Gang-Mode NUR dann, wenn es NICHT Daedalus ist
-    if (
-      isBN2GangMode &&
-      strategy.mode === "REP" &&
-      strategy.targetFaction !== "Daedalus"
-    ) {
+    // 💡 Korrektur: Blockiere REP-Modus im BN2/Gang-Mode NUR dann, wenn KEINE gültige Ziel-Fraktion ermittelt wurde
+    if (isBN2GangMode && strategy.mode === "REP" && !factionToWorkFor) {
       strategy = { mode: "MONEY" };
     }
-
     let { mode, targetFaction = null, targetCompany, targetStat } = strategy;
 
     if (
@@ -325,9 +326,22 @@ export async function main(ns: NS): Promise<void> {
       currentState,
     });
 
-    let sharePercent = mode === "REP" ? 0.4 : mode === "MONEY" ? 0.1 : 0.0;
+    let sharePercent =
+      mode === "REP"
+        ? 0.4
+        : mode === "UNI"
+          ? 0.5
+          : mode === "MONEY"
+            ? 0.1
+            : 0.0;
     let dynamicMaxXp =
-      mode === "CRIME" ? 100 : p.skills.hacking > 800 ? 1500 : 1000;
+      mode === "CRIME"
+        ? 100
+        : mode === "UNI"
+          ? 3000
+          : p.skills.hacking > 800
+            ? 1500
+            : 1000;
 
     patchState(ns, {
       strategy: mode,

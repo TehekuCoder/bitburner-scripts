@@ -279,6 +279,8 @@ function solveMaxSubarraySum(arr: number[]): number {
 }
 
 function solveArrayJumping(arr: number[]): number {
+  if (arr.length <= 1) return 1; // Bereits am Ziel
+  
   let maxReach = 0;
   for (let i = 0; i < arr.length; i++) {
     if (i > maxReach) return 0;
@@ -287,6 +289,7 @@ function solveArrayJumping(arr: number[]): number {
   }
   return 0;
 }
+
 
 function isValidParentheses(s: string): boolean {
   let count = 0;

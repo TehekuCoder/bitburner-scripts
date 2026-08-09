@@ -92,6 +92,7 @@ export interface MultiTargetState {
 }
 
 export interface BatcherState {
+  batchStrategy?: BatchStrategy;
   batcherTarget?: string | null;
   batcherProgress: string;
   batcherActive?: boolean;

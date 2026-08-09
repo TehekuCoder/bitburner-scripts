@@ -191,10 +191,12 @@ export function loadBatcherState(ns: NS): BatcherState | null {
   const state = loadState(ns);
   if (!state) return null;
   const {
+    batchStrategy, // 🟢 NEU: batchStrategy aus dem BotState entpacken
     batcherTarget, batcherProgress, batcherActive, batcherActiveBatches,
     batcherTargetsSummary, batcherPlan, batcherDynamicMaxBatches, batcherRamNeeded,
   } = state;
   return {
+    batchStrategy, // 🟢 NEU: im BatcherState mitliefern
     batcherTarget, batcherProgress, batcherActive, batcherActiveBatches,
     batcherTargetsSummary, batcherPlan, batcherDynamicMaxBatches, batcherRamNeeded,
   };

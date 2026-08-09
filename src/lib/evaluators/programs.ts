@@ -22,7 +22,7 @@ const PROGRAM_GATES: Partial<Record<ProgramName, ProgramMeta>> = {
     score: 95,
   },
   "FTPCrack.exe": {
-    reqHacking: 150,
+    reqHacking: 100,
     priority: PurchasePriority.CRITICAL,
     score: 90,
   },

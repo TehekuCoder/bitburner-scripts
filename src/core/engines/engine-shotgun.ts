@@ -1,6 +1,6 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
+import { getAllServers } from "/lib/network.js";
 import { patchBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths";
 
@@ -29,7 +29,6 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // 1. Netzwerk aktualisieren
-    breakAndInfectNetwork(ns);
     const allNetwork = getAllServers(ns);
     const workerNodes = allNetwork.filter(
       (s) => ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0,
@@ -74,6 +73,8 @@ export async function main(ns: NS): Promise<void> {
     }
 
     patchBatcherState(ns, {
+      batchStrategy: "SHOTGUN_HWGW",
+      batcherActive: true,
       batcherTarget: target,
       batcherProgress: `SHOTGUN (${moneyPct}% | Sec: +${secDelta})`,
     });

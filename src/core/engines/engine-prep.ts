@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
+import { getAllServers } from "/lib/network.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { patchBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
@@ -27,8 +27,6 @@ export async function main(ns: NS): Promise<void> {
       return;
     }
 
-    // 1. Netzwerk aktualisieren & Infizieren (Awaited!)
-    await breakAndInfectNetwork(ns);
     const allNetwork = getAllServers(ns);
 
     const workerNodes = allNetwork.filter(
@@ -50,6 +48,8 @@ export async function main(ns: NS): Promise<void> {
       logger.success(`✅ Ziel [${target}] ist vollständig PREPPED!`);
 
       patchBatcherState(ns, {
+        batchStrategy: "PREP",
+        batcherActive: true,
         batcherTarget: target,
         batcherProgress: "PREPPED 100%",
       });
@@ -82,7 +82,10 @@ export async function main(ns: NS): Promise<void> {
     );
 
     const secIncreaseFromGrows = remainingGrowNeeded * 0.004;
-    const totalSecToReduce = Math.max(0, curSec + secIncreaseFromGrows - minSec);
+    const totalSecToReduce = Math.max(
+      0,
+      curSec + secIncreaseFromGrows - minSec,
+    );
     const totalWeakenNeeded = Math.ceil(totalSecToReduce / 0.05);
     const remainingWeakenNeeded = Math.max(
       0,
@@ -94,6 +97,8 @@ export async function main(ns: NS): Promise<void> {
 
     if (isFullyInFlight) {
       patchBatcherState(ns, {
+        batchStrategy: "PREP",
+        batcherActive: true,
         batcherTarget: target,
         batcherProgress: `PREP IN-FLIGHT ✈️ (G:${inFlightGrowThreads} | W:${inFlightWeakenThreads})`,
       });
@@ -106,6 +111,8 @@ export async function main(ns: NS): Promise<void> {
       maxMoney > 0 ? ((curMoney / maxMoney) * 100).toFixed(1) : "100";
     const secStatus = `+${secDelta.toFixed(2)}`;
     patchBatcherState(ns, {
+      batchStrategy: "PREP",
+      batcherActive: true,
       batcherTarget: target,
       batcherProgress: `PREP ($: ${moneyPct}% | Sec: ${secStatus})`,
     });
@@ -176,7 +183,12 @@ function deployPrepWorkers(
 
   for (const node of workerNodes) {
     if (mode === "WEAKEN_ONLY" && remainingWeakenCap <= 0) break;
-    if (mode === "GROW_AND_WEAKEN" && remainingGrowCap <= 0 && remainingWeakenCap <= 0) break;
+    if (
+      mode === "GROW_AND_WEAKEN" &&
+      remainingGrowCap <= 0 &&
+      remainingWeakenCap <= 0
+    )
+      break;
 
     const maxRam = ns.getServerMaxRam(node);
     const usedRam = ns.getServerUsedRam(node);
@@ -190,7 +202,14 @@ function deployPrepWorkers(
       const threadsToRun = Math.min(threadsPossible, remainingWeakenCap);
 
       if (threadsToRun > 0) {
-        ns.exec(weakenScript, node, threadsToRun, target, 0, `${execCounter}_${Math.random()}`);
+        ns.exec(
+          weakenScript,
+          node,
+          threadsToRun,
+          target,
+          0,
+          `${execCounter}_${Math.random()}`,
+        );
         remainingWeakenCap -= threadsToRun;
       }
     } else {
@@ -207,7 +226,8 @@ function deployPrepWorkers(
 
       let gThreads = units * 25;
       let wThreads = units * 2;
-      let remainingRam = freeRam - (gThreads * growCost + wThreads * weakenCost);
+      let remainingRam =
+        freeRam - (gThreads * growCost + wThreads * weakenCost);
 
       // Rest-RAM feingranular mit Grow auffüllen
       while (remainingRam >= growCost && remainingGrowCap - gThreads > 0) {
@@ -226,11 +246,25 @@ function deployPrepWorkers(
       }
 
       if (gThreads > 0) {
-        ns.exec(growScript, node, gThreads, target, 0, `${execCounter}_${Math.random()}`);
+        ns.exec(
+          growScript,
+          node,
+          gThreads,
+          target,
+          0,
+          `${execCounter}_${Math.random()}`,
+        );
         remainingGrowCap -= gThreads;
       }
       if (wThreads > 0) {
-        ns.exec(weakenScript, node, wThreads, target, 0, `${execCounter}_${Math.random()}`);
+        ns.exec(
+          weakenScript,
+          node,
+          wThreads,
+          target,
+          0,
+          `${execCounter}_${Math.random()}`,
+        );
         remainingWeakenCap -= wThreads;
       }
     }

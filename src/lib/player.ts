@@ -16,6 +16,14 @@ export function hasPurchasedAugsThisRun(ns: NS): boolean {
   return getPurchasedUninstalledAugs(ns).length > 0;
 }
 
+export function hasRedPill(ns: NS): boolean {
+  try {
+    return ns.singularity.getOwnedAugmentations(true).includes("The Red Pill");
+  } catch {
+    return false;
+  }
+}
+
 export function applyToAllMegacorps(
   ns: NS,
   player: Player,
@@ -44,11 +52,12 @@ export function findNextRoadmapFaction(
   const playerFactions = player.factions;
   const invites = ns.singularity.checkFactionInvitations();
   const isBN2 = isGangOfferingAllAugs(ns);
+  const redPillOwned = hasRedPill(ns);
 
-  // 🎯 DAEDALUS PRIORITÄT: Sobald freigeschaltet oder eingeladen, direkt priorisieren
+  // 🎯 DAEDALUS PRIORITÄT: Falls Ruf < 2.5m und Red Pill noch nicht gekauft
   const hasDaedalus =
     playerFactions.includes("Daedalus") || invites.includes("Daedalus");
-  if (hasDaedalus) {
+  if (hasDaedalus && !redPillOwned) {
     const daedalusTarget = augRoadmap.find(
       (t) => t.factions.includes("Daedalus") || t.name === "The Red Pill",
     );
@@ -75,18 +84,21 @@ export function findNextRoadmapFaction(
     } catch {}
   }
 
+  // 🔍 Suche nach weiteren noch benötigten Fraktionen aus der Roadmap
   for (const target of augRoadmap) {
-    if (isBN2 && !hasDaedalus && target.name !== "The Red Pill") {
+    if (
+      isBN2 &&
+      !hasDaedalus &&
+      !redPillOwned &&
+      target.name !== "The Red Pill"
+    ) {
       continue;
     }
 
-    // 💡 STRATEGIE-REGEL: Bietet die Gang dieses Augment an, überspringen wir das manuelle
-    // Grind-Ziel für den Spieler VOLLSTÄNDIG (die Gang kauft/farmt es automatisch).
     if (gangFaction && gangAugs.includes(target.name)) {
       continue;
     }
 
-    // Filtere Gang-Fraktion für manuelles Spieler-Work aus
     const validFactions = target.factions.filter((f) => {
       if (f === gangFaction && !isBN2) return false;
       return playerFactions.includes(f) || invites.includes(f);
@@ -129,10 +141,15 @@ export function determineStrategy(
   nextRoadmapFaction: TargetFactionResult | null,
   factionToWorkFor: TargetFactionResult | null,
   isReadyForFactionGrind: boolean,
-  logger?: Logger, // 👈 Optionaler Logger für volle Transparenz
+  logger?: Logger,
 ): StrategyResult {
   const hackExpMult = bnMults.HackExpGain ?? 1;
   const hasGang = currentState?.hasGang || ns.gang?.inGang();
+  const redPillOwned = hasRedPill(ns);
+  const daedalusRep = player.factions.includes("Daedalus")
+    ? ns.singularity.getFactionRep("Daedalus")
+    : 0;
+  const daedalusDone = redPillOwned || daedalusRep >= 2_500_000;
 
   // 1. Basic Hacking Leveling
   const targetHackLevel = hackExpMult < 0.25 ? 15 : 30;
@@ -141,20 +158,18 @@ export function determineStrategy(
     return { mode: "UNI", targetStat: targetHackLevel };
   }
 
-  // 🎯 DAEDALUS SOFORT-REP
-  if (player.factions.includes("Daedalus")) {
+  // 2. DAEDALUS SOFORT-REP (falls Daedalus freigeschaltet und Ruf noch < 2.5M)
+  if (player.factions.includes("Daedalus") && !daedalusDone) {
     const daedalusTargetRep = factionTargets["Daedalus"] ?? 2_500_000;
-    const currentRep = ns.singularity.getFactionRep("Daedalus");
-
-    if (currentRep < daedalusTargetRep) {
+    if (daedalusRep < daedalusTargetRep) {
       logger?.debug(
-        `[Strategie] Daedalus Priorität active (${Math.round(currentRep)}/${daedalusTargetRep} Rep) ➔ REP`,
+        `[Strategie] Daedalus Priorität aktiv (${Math.round(daedalusRep)}/${daedalusTargetRep} Rep) ➔ REP`,
       );
       return { mode: "REP", targetFaction: "Daedalus" as FactionName };
     }
   }
 
-  // 2. PHASE 1: Early-Game Fraktionen
+  // 3. PHASE 1: Early-Game Fraktionen
   if (
     factionToWorkFor &&
     EARLY_FACTIONS.includes(factionToWorkFor.name as FactionName) &&
@@ -171,7 +186,7 @@ export function determineStrategy(
     }
   }
 
-  // 3. PHASE 2: Karma-Grind für Gang
+  // 4. PHASE 2: Karma-Grind für Gang
   const hasSleeves = ns.sleeve?.getNumSleeves() > 0;
   if (!hasGang && currentKarma > -54000 && !hasSleeves) {
     const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
@@ -187,7 +202,30 @@ export function determineStrategy(
     return { mode: "CRIME" };
   }
 
-  // 4. PHASE 3: Exklusive Fraktions-Augments
+  // 5. PHASE 3: Vor-Daedalus Stat-Grind (falls Daedalus noch gefarmt werden muss)
+  if (!player.factions.includes("Daedalus") && !daedalusDone) {
+    const installedAugs = ns.singularity.getOwnedAugmentations(false).length;
+    if (installedAugs >= 25) {
+      const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
+      const hasCombatReq = minCombat >= 1500;
+      const hasHackReq = player.skills.hacking >= 2500;
+
+      if (!hasCombatReq && !hasHackReq) {
+        const isCombatFaster =
+          hackExpMult < 0.3 ||
+          (minCombat >= 800 && player.skills.hacking < 1800);
+        const targetMode = isCombatFaster ? "TRAIN" : "UNI";
+        logger?.debug(
+          `[Strategie] Daedalus-Vorbereitung (Combat: ${minCombat}, Hack: ${player.skills.hacking}) ➔ ${targetMode}`,
+        );
+        return isCombatFaster
+          ? { mode: "TRAIN", targetStat: 1500 }
+          : { mode: "UNI", targetStat: 2500 };
+      }
+    }
+  }
+
+  // 6. PHASE 4: Fraktions-Grind für verbleibende Roadmap-Augmentationen
   if (factionToWorkFor && isReadyForFactionGrind) {
     if (player.factions.includes(factionToWorkFor.name as FactionName)) {
       logger?.debug(
@@ -200,29 +238,25 @@ export function determineStrategy(
     }
   }
 
-  // 5. PHASE 4: Daedalus Freischaltung & Stat-Evaluation
-  const installedAugs = ns.singularity.getOwnedAugmentations(false).length;
-  if (installedAugs >= 25 || player.factions.includes("Daedalus")) {
-    const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
-    const hasCombatReq = minCombat >= 1500;
-    const hasHackReq = player.skills.hacking >= 2500;
+  // 🌐 7. PHASE 5: WORLD DOMINATION (Daedalus Ruf voll / Red Pill vorhanden, keine Fraktionen mehr)
+  if (daedalusDone) {
+    let worldDaemonReq = 3000;
+    try {
+      worldDaemonReq = ns.getServerRequiredHackingLevel("w0r1d_d43m0n");
+    } catch {}
 
-    if (!hasCombatReq && !hasHackReq) {
-      const isCombatFaster =
-        hackExpMult < 0.3 || (minCombat >= 800 && player.skills.hacking < 1800);
-      const targetMode = isCombatFaster ? "TRAIN" : "UNI";
+    if (player.skills.hacking < worldDaemonReq) {
       logger?.debug(
-        `[Strategie] Daedalus-Vorbereitung (Combat: ${minCombat}, Hack: ${player.skills.hacking}) ➔ ${targetMode}`,
+        `[Strategie] 🌐 World Domination: Push Hacking für w0r1d_d43m0n (${player.skills.hacking}/${worldDaemonReq}) ➔ UNI`,
       );
-      return isCombatFaster
-        ? { mode: "TRAIN", targetStat: 1500 }
-        : { mode: "UNI", targetStat: 2500 };
+      return { mode: "UNI", targetStat: worldDaemonReq };
     }
   }
 
-  // 6. Standard Money Mode
+  // 8. Standard Money Mode
   return { mode: "MONEY" };
 }
+
 export function isGangOfferingAllAugs(ns: NS): boolean {
   try {
     if (!ns.gang || !ns.gang.inGang() || !ns.singularity) return false;

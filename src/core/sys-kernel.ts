@@ -5,6 +5,10 @@ import { loadState, patchState } from "/lib/state.js";
 import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
 import { REFRESH_INTERVALS } from "/lib/constants.js";
 
+// RAM-Puffer-Konfiguration für Home
+const HOME_RESERVED_RAM_DEFAULT = 16; // Standard-Puffer (GB) für Backdoor / System-Scripts
+const HOME_RESERVED_RAM_LOW = 8;      // Reduzierter Puffer bei <= 32GB Home-RAM
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
@@ -86,10 +90,10 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // C. FALLBACK WORKER (Home-RAM ausnutzen, wenn Orchestrator nicht läuft)
-    const isOrchestratorRunning = ns.isRunning(PATHS.core.sysOrchestrator, "home");
+    // C. FALLBACK WORKER (Exklusiv auf Home mit reserviertem Backdoor-Puffer)
+    const isBatchOrchestratorRunning = ns.isRunning(PATHS.daemons.batchOrchestrator, "home");
 
-    if (isOrchestratorRunning) {
+    if (isBatchOrchestratorRunning) {
       if (ns.isRunning(PATHS.payloads.work, "home")) {
         logger.info("Orchestrator aktiv. Stoppe Fallback-Worker...");
         ns.scriptKill(PATHS.payloads.work, "home");
@@ -99,15 +103,24 @@ export async function main(ns: NS): Promise<void> {
       const workerRam = ns.getScriptRam(PATHS.payloads.work, "home");
 
       if (workerRam > 0) {
-        const maxThreads = Math.floor(homeFree / workerRam);
+        // Puffer-Berechnung: Bei kleinen Home-RAMs (<= 32GB) genügen 8GB Puffer, sonst 16GB
+        const reservedRam = homeMax <= 32 ? HOME_RESERVED_RAM_LOW : HOME_RESERVED_RAM_DEFAULT;
+        const usableHomeFree = Math.max(0, homeFree - reservedRam);
+        const maxThreads = Math.floor(usableHomeFree / workerRam);
         const isWorkerRunning = ns.isRunning(PATHS.payloads.work, "home", target);
 
-        if (maxThreads > 0 && !isWorkerRunning) {
+        if (maxThreads > 0) {
+          if (!isWorkerRunning) {
+            ns.scriptKill(PATHS.payloads.work, "home");
+            logger.info(
+              `Starte Fallback-Worker auf ${target} mit ${maxThreads} Threads (Puffer: ${reservedRam}GB frei gehalten)...`
+            );
+            ns.run(PATHS.payloads.work, maxThreads, target);
+          }
+        } else if (isWorkerRunning) {
+          // Stoppt Worker, wenn der verbleibende RAM unter das Puffer-Limit fällt
+          logger.warn(`Zu wenig RAM für Puffer (${reservedRam}GB). Stoppe Fallback-Worker...`);
           ns.scriptKill(PATHS.payloads.work, "home");
-          logger.info(
-            `Starte Fallback-Worker auf ${target} mit ${maxThreads} Threads...`
-          );
-          ns.run(PATHS.payloads.work, maxThreads, target);
         }
       }
     }
