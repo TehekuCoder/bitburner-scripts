@@ -1,23 +1,12 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
+import { loadBatcherState } from "/lib/state.js"; // 🟢 Zentrales Port-State Handling
 import {
   hasSingularity,
   hasCorporation,
-  hasbladeburner,
+  hasbladeburner, // bzw. hasBladeburner
   formatMoney,
 } from "/lib/utils.js";
-
-interface TargetSummary {
-  target: string;
-  moneyMax: number;
-  moneyAvailable: number;
-  minDifficulty: number;
-  hackDifficulty: number;
-}
-
-interface BatcherState {
-  batcherTargetsSummary?: TargetSummary[];
-}
 
 type HashUpgradeName =
   | "Sell for Money"
@@ -37,17 +26,6 @@ interface UpgradePriority {
   maxLevel?: number;
   minReserveHashes?: number;
   condition?: (ns: NS) => boolean;
-}
-
-const STATE_FILE = "batcher_state.json";
-
-function loadBatcherState(ns: NS): BatcherState | null {
-  if (!ns.fileExists(STATE_FILE)) return null;
-  try {
-    return JSON.parse(ns.read(STATE_FILE)) as BatcherState;
-  } catch {
-    return null;
-  }
 }
 
 function getHighestValueServer(ns: NS): string | null {
@@ -90,13 +68,18 @@ function getActiveBatcherTargets(ns: NS): string[] {
     batcherState?.batcherTargetsSummary &&
     batcherState.batcherTargetsSummary.length > 0
   ) {
-    return batcherState.batcherTargetsSummary.map(
-      (t: TargetSummary) => t.target,
-    );
+    return batcherState.batcherTargetsSummary.map((t) => t.target);
   }
+  
+  // Fallback auf Einzelziel aus State
+  if (batcherState?.batcherTarget) {
+    return [batcherState.batcherTarget];
+  }
+
   const fallback = getHighestValueServer(ns);
   return fallback ? [fallback] : [];
 }
+
 
 /**
  * Ermittelt die Kosten für das günstigste Home-Hardware-Upgrade.

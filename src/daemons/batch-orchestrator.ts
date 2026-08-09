@@ -200,15 +200,14 @@ function evaluateStrategyAndTarget(
     };
   }
 
-  const homeRam = ns.getServerMaxRam("home");
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  // 2️⃣ JIT_HWGW: Ab 512 GB home-RAM + Formulas (Autonomes Multi-Targeting)
-  if (homeRam >= 512 && hasFormulas) {
+  // 2️⃣ JIT_HWGW: Ab 512 GB GESAMT-Netzwerk-RAM + Formulas (Autonomes Multi-Targeting)
+  if (totalRam >= 512 && hasFormulas) {
     return {
       strategy: "JIT_HWGW",
       target: null,
-      strategyReason: `High-End Setup erkannt (Home-RAM: ${homeRam} GB >= 512 GB & Formulas.exe vorhanden). Autonomes Multi-Targeting gestartet.`,
+      strategyReason: `High-End Setup erkannt (Netzwerk-RAM: ${ns.format.ram(totalRam)} >= 512 GB & Formulas.exe vorhanden). Autonomes Multi-Targeting gestartet.`,
       targetReason: "Multi-Targeting wird intern vom JIT-Batcher verwaltet.",
       topCandidatesStr: "JIT-Multi-Targeting",
     };
@@ -218,18 +217,18 @@ function evaluateStrategyAndTarget(
   const targetEval = selectBestTarget(ns, servers, currentTarget, logger);
   const bestTarget = targetEval.target;
 
-  // 3️⃣ BOOTSTRAP / PROTO: home < 256 GB RAM
-  if (homeRam < 256) {
+  // 3️⃣ BOOTSTRAP / PROTO: Gesamt-RAM < 256 GB
+  if (totalRam < 256) {
     return {
       strategy: "BOOTSTRAP",
       target: bestTarget,
-      strategyReason: `Geringer Home-RAM (${homeRam} GB < 256 GB). Bootstrap Proto-Engine aktiv für schnellen Cashflow.`,
+      strategyReason: `Geringer Netzwerk-RAM (${ns.format.ram(totalRam)} < 256 GB). Bootstrap Proto-Engine aktiv für schnellen Cashflow.`,
       targetReason: targetEval.reason,
       topCandidatesStr: targetEval.topCandidatesStr,
     };
   }
 
-  // 4️⃣ SHOTGUN / PREP (Single-Target Fallbacks)
+  // 4️⃣ SHOTGUN / PREP (Single-Target Fallbacks bei 256 GB - 511 GB Gesamt-RAM oder ohne Formulas)
   const target = bestTarget;
   const sObj = ns.getServer(target);
   const currentDiff = sObj.hackDifficulty ?? 99;
