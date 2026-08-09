@@ -7,7 +7,7 @@ import {
   PurchaseCategory,
 } from "/lib/types/finance.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
-import { loadBnMults, adjustPriorityByMult } from "../utils.js";
+import { loadBnMults, adjustPriorityByMult } from "lib/utils.js";
 
 const PSERV_PREFIX = "pserv-";
 const INITIAL_RAM = 8;

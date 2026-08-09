@@ -26,25 +26,32 @@ export const PATHS = {
     kernel: "core/sys-kernel.js",
     logger: "core/sys-logger.js",
     sysOrchestrator: "core/sys-orchestrator.js",
+    redpill: "core/sys-redpill.js",
   },
   daemons: {
     backdoor: "daemons/backdoor.js",
-    batchOrchestrator: "daemons/batch-orchestrator.ts",
     crawler: "daemons/dnet-crawler.js",
     fillShare: "daemons/fill-share.js",
     financeDispatcher: "daemons/finance-dispatcher.js",
+    hackingOrchestrator: "daemons/hacking-orchestrator.js",
     perfMonitor: "daemons/perf-monitor.js",
   },
   lib: {
     evaluators: {
-      gang: "lib/evaluators/gang.js",
-      hacknet: "lib/evaluators/hacknet.js",
-      home: "lib/evaluators/home.js",
-      player: "lib/evaluators/player.js",
-      programs: "lib/evaluators/programs.js",
-      pserv: "lib/evaluators/pserv.js",
-      sleeve: "lib/evaluators/sleeve.js",
-      stock: "lib/evaluators/stock.js",
+      purchase: {
+        gang: "lib/evaluators/purchase/gang.js",
+        hacknet: "lib/evaluators/purchase/hacknet.js",
+        home: "lib/evaluators/purchase/home.js",
+        player: "lib/evaluators/purchase/player.js",
+        programs: "lib/evaluators/purchase/programs.js",
+        pserv: "lib/evaluators/purchase/pserv.js",
+        sleeve: "lib/evaluators/purchase/sleeve.js",
+        stock: "lib/evaluators/purchase/stock.js",
+      },
+      strategy: {
+        hacking: "lib/evaluators/strategy/hacking-strategy.js",
+        target: "lib/evaluators/strategy/target-selection.js",
+      },
     },
     types: {
       batcher: "lib/types/batcher.js",
@@ -127,6 +134,7 @@ export const PATHS = {
   tools: {
     allocateDarkRam: "tools/allocate-darknet-ram.js",
     augScan: "tools/aug-scan.js",
+    bitnodeAnalyze: "tools/bitnode-analyze.js",
     cctFinder: "tools/cct-finder.js",
     findDarknetPath: "tools/find-darknet-path.js",
     findPath: "tools/find-path.js",
@@ -135,6 +143,7 @@ export const PATHS = {
     lootDarknetServer: "tools/loot-darknet-server.js",
     manDnetCrawler: "tools/manual-darknet-crawler.js",
     starter: "tools/starter.js",
+    targetAnalyzer: "tools/target-analyzer.js",
   },
   ui: {
     batcher: "ui/batcher-ui.js",

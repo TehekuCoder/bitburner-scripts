@@ -11,9 +11,7 @@ interface TargetScore {
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  ns.tprint(
-    "💤 [BitOS] Leite Schlafmodus ein. Initialisiere dynamisches Multi-Target-Balancing...",
-  );
+  ns.tprint("💤 [BitOS] Leite Schlafmodus-Analyse ein...");
 
   // ====================================================================
   // SCHRITT 1: CLEANUP AUF HOME
@@ -22,12 +20,13 @@ export async function main(ns: NS): Promise<void> {
   await ns.sleep(500);
 
   // ====================================================================
-  // SCHRITT 2: DYNAMISCHE EVALUIERUNG ALLER ZIELE (SCORE: MONEY / TIME)
+  // SCHRITT 2: HACKNET-INCOME VS. HACK-TARGETS EVALUIERUNG
   // ====================================================================
+  const hacknetIncome = calculateHacknetIncome(ns);
+
   const playerHacking = ns.getPlayer().skills.hacking;
   const allServers = getAllServers(ns);
 
-  // Filtern: Kein Hacknet-Server, Root-Zugriff, Geld vorhanden & Hack-Level erreichbar
   const validTargets: TargetScore[] = allServers
     .filter(
       (s) =>
@@ -39,20 +38,37 @@ export async function main(ns: NS): Promise<void> {
     .map((s) => {
       const maxMoney = ns.getServerMaxMoney(s);
       const weakenTime = ns.getWeakenTime(s);
-      // Score = Ertrag pro Sekunde Aufwand
-      const score = maxMoney / Math.max(1, weakenTime);
+      // Grobe Schätzung des maximalen theoretischen Ertrags/Sekunde
+      const score = maxMoney / Math.max(1, weakenTime / 1000);
       return { name: s, score, maxMoney, weakenTime };
     })
     .sort((a, b) => b.score - a.score);
+
+  const TARGET_COUNT = Math.min(validTargets.length, 8);
+  const topTargets = validTargets.slice(0, TARGET_COUNT);
+  const estimatedMaxScriptIncome = topTargets.reduce((sum, t) => sum + t.score, 0);
+
+  ns.tprint(`📊 [WIRTSCHAFTS-CHECK]:`);
+  ns.tprint(` ├─ ⚡ Hacknet-Ertrag:   $${ns.format.number(hacknetIncome)} / Sekunde`);
+  ns.tprint(` └─ 💻 Skript-Potenzial: $${ns.format.number(estimatedMaxScriptIncome)} / Sekunde`);
+
+  // ENTSCHEIDUNG: Lohnt sich Skript-Hacking überhaupt?
+  // Bricht ab, wenn Skripte weniger als 10% des Hacknet-Einkommens ausmachen würden
+  const MIN_WORTHWHILE_RATIO = 0.10;
+  if (hacknetIncome > 0 && estimatedMaxScriptIncome < (hacknetIncome * MIN_WORTHWHILE_RATIO)) {
+    ns.tprint(`\n🛑 [BitOS] SKRIPT-DEPLOYMENT ÜBERSPRUNGEN!`);
+    ns.tprint(`💡 Hacknet ist in BN9 deutlich lukrativer als Hacking-Skripte.`);
+    ns.tprint(`   Alle Worker gestoppt. Das Netzwerk läuft im reinen Hacknet-Passivmodus.`);
+    
+    // Säubere Worker auf allen Hosts, damit RAM/Prozesse frei bleiben
+    stopAllWorkers(ns, allServers);
+    return;
+  }
 
   if (validTargets.length === 0) {
     ns.tprint("❌ ERROR: Keine gültigen Hack-Ziele gefunden!");
     return;
   }
-
-  // Wähle dynamisch bis zu 8 der besten Ziele
-  const TARGET_COUNT = Math.min(validTargets.length, 8);
-  const topTargets = validTargets.slice(0, TARGET_COUNT);
 
   ns.tprint(
     `🎯 [BitOS] Dynamische Lastverteilung gestartet (${topTargets.length} Ziele aktiv):`,
@@ -64,20 +80,17 @@ export async function main(ns: NS): Promise<void> {
   });
 
   // ====================================================================
-  // SCHRITT 3: WORKER-VERTEILUNG NACH RAM-LEISTUNG (INKL. HACKNET-SERVER)
+  // SCHRITT 3: WORKER-VERTEILUNG NACH RAM-LEISTUNG
   // ====================================================================
   const pServers = ns.cloud.getServerNames();
   const workerScript = "payloads/work.js";
   const workerRam = ns.getScriptRam(workerScript);
 
   if (!Number.isFinite(workerRam) || workerRam <= 0) {
-    ns.tprint(
-      `❌ ERROR: Worker-Skript '${workerScript}' nicht gefunden oder benötigt 0 GB RAM!`,
-    );
+    ns.tprint(`❌ ERROR: Worker-Skript '${workerScript}' nicht gefunden!`);
     return;
   }
 
-  // Hacknet-Server ermitteln (da sie nicht im regulären ns.scan()-Netzwerk auftauchen)
   const hacknetServers: string[] = [];
   try {
     const numHacknet = ns.hacknet.numNodes();
@@ -88,14 +101,13 @@ export async function main(ns: NS): Promise<void> {
       }
     }
   } catch {
-    // Falls Hacknet API nicht freigeschaltet oder nicht vorhanden ist
+    // API nicht verfügbar
   }
 
-  // Alle verfügbaren Ausführungs-Hosts ermitteln (Inkl. Hacknet-Server mit RAM > 0)
   const hostServers = [...allServers, ...hacknetServers]
     .filter(
       (s) =>
-        !s.startsWith("hacknet-node") && // Nur reine Hacknet-Nodes ohne RAM ausschließen
+        !s.startsWith("hacknet-node") &&
         (s === "home" ||
           pServers.includes(s) ||
           s.startsWith("hacknet-server") ||
@@ -104,41 +116,25 @@ export async function main(ns: NS): Promise<void> {
     )
     .sort((a, b) => ns.getServerMaxRam(b) - ns.getServerMaxRam(a));
 
-  let totalShareThreads = 0;
   const activeTargets = new Set<string>();
 
   for (let i = 0; i < hostServers.length; i++) {
     const server = hostServers[i];
-    const activeProcesses = ns.ps(server);
 
     if (server !== "home") {
-      for (const proc of activeProcesses) {
-        if (proc.filename.includes("share")) {
-          totalShareThreads += proc.threads;
-        } else if (
-          proc.filename.includes("hack.js") ||
-          proc.filename.includes("grow.js") ||
-          proc.filename.includes("weaken.js") ||
-          proc.filename.includes("work.js")
-        ) {
-          ns.scriptKill(proc.filename, server);
-        }
-      }
+      killWorkerScriptsOnServer(ns, server);
       await ns.sleep(20);
     }
 
-    // Root / Root-Tools sicherstellen
     await provisionServer(ns, server);
 
     const reserve = server === "home" ? 32 : 0;
     const maxRam = Math.max(0, ns.getServerMaxRam(server) - reserve);
-    const usedRam = ns.getServerUsedRam(server);
-    const freeRam = Math.max(0, maxRam - usedRam);
+    const freeRam = Math.max(0, ns.getServerMaxRam(server) - ns.getServerUsedRam(server));
 
-    const threads = Math.floor(freeRam / workerRam);
+    const threads = Math.floor((server === "home" ? freeRam : maxRam) / workerRam);
 
     if (Number.isFinite(threads) && threads > 0) {
-      // Round-Robin Verteilung: Stärkste Hosts bedienen die Top-Ranked Targets!
       const targetIndex = i % topTargets.length;
       const assignedTarget = topTargets[targetIndex].name;
 
@@ -148,16 +144,11 @@ export async function main(ns: NS): Promise<void> {
 
       const pid = ns.exec(workerScript, server, threads, assignedTarget);
       if (pid === 0) {
-        ns.print(
-          `⚠️ Exec fehlgeschlagen auf ${server} mit ${threads} Threads für ${assignedTarget}`,
-        );
+        ns.print(`⚠️ Exec fehlgeschlagen auf ${server} für ${assignedTarget}`);
       }
     }
   }
 
-  // ====================================================================
-  // SCHRITT 4: MONITORING & KALIBRIERUNG
-  // ====================================================================
   if (activeTargets.size === 0) {
     ns.tprint("❌ ERROR: Keine Worker gestartet (unzureichender RAM im Netz).");
     return;
@@ -168,89 +159,93 @@ export async function main(ns: NS): Promise<void> {
   ns.ui.setTailTitle("Offline-Modus");
   ns.ui.resizeTail(600, 330);
 
+  // Status-Monitoring
   let stableTicks = 0;
   let lastTotalIncome = 0;
   const startTime = Date.now();
-
-  const longestWeakenTime = Math.max(
-    ...Array.from(activeTargets).map((t) => ns.getWeakenTime(t)),
-  );
-  const maxWaitTime = longestWeakenTime + 5000;
+  const maxWaitTime = Math.max(...Array.from(activeTargets).map((t) => ns.getWeakenTime(t))) + 5000;
 
   while (true) {
     let currentTotalIncome = 0;
-
     for (const server of hostServers) {
       for (const target of activeTargets) {
         const income = ns.getScriptIncome(workerScript, server, target);
-        if (!isNaN(income) && income > 0) {
-          currentTotalIncome += income;
-        }
+        if (!isNaN(income) && income > 0) currentTotalIncome += income;
       }
     }
-
-    const elapsedMs = Date.now() - startTime;
-    const elapsedSecs = Math.floor(elapsedMs / 1000);
-    const remainingMs = Math.max(0, maxWaitTime - elapsedMs);
-    const remainingSecs = Math.ceil(remainingMs / 1000);
 
     ns.clearLog();
     ns.print(`============================================================`);
     ns.print(`🔥 BIT-OS CLUSTER-KALIBRIERUNG (${activeTargets.size} TARGETS)`);
     ns.print(`============================================================`);
-    ns.print(`AKTIVE ZIELE: ${Array.from(activeTargets).join(", ")}`);
-    ns.print(
-      `LAUFZEIT:     ${elapsedSecs}s / Failsafe: ${Math.floor(maxWaitTime / 1000)}s`,
-    );
-
-    if (currentTotalIncome === 0) {
-      ns.print(
-        `⚠️ WARTEZEIT-SCHÄTZUNG: ca. ${remainingSecs}s bis zum ersten Profit...`,
-      );
-      ns.print(`                      (Server-Präparation läuft noch)`);
-    } else {
-      ns.print(`✅ STATUS:             Netzwerk produziert aktiv.`);
-    }
-    ns.print(`------------------------------------------------------------`);
-
-    if (currentTotalIncome < 0) {
-      ns.print(`NETZWERK-PROD:        🚀 Hyper-Produktion (> $10q/s)`);
-    } else {
-      ns.print(
-        `NETZWERK-PROD:        $${ns.format.number(currentTotalIncome)} / Sekunde`,
-      );
-      ns.print(
-        `Hochrechnung / Std:   $${ns.format.number(currentTotalIncome * 3600)} / Stunde`,
-      );
-    }
-
-    ns.print(`🛡️ UTILITY:            ${totalShareThreads} Share-Threads aktiv`);
-    const bar = "█".repeat(stableTicks) + "░".repeat(8 - stableTicks);
-    ns.print(`STABILITÄT:           [${bar}] (${stableTicks}/8 Ticks)`);
+    ns.print(`NETZWERK-PROD: $${ns.format.number(currentTotalIncome)} / Sekunde`);
+    ns.print(`HACKNET-PROD:  $${ns.format.number(hacknetIncome)} / Sekunde`);
     ns.print(`============================================================`);
 
-    if (currentTotalIncome < 0) {
-      stableTicks++;
-    } else if (
-      currentTotalIncome > 0 &&
-      Math.abs(currentTotalIncome - lastTotalIncome) < currentTotalIncome * 0.05
-    ) {
+    if (currentTotalIncome > 0 && Math.abs(currentTotalIncome - lastTotalIncome) < currentTotalIncome * 0.05) {
       stableTicks++;
     } else if (currentTotalIncome > 0) {
       stableTicks = Math.max(1, stableTicks);
-    } else {
-      if (lastTotalIncome > 0) {
-        stableTicks = 0;
-      }
     }
 
-    if (stableTicks >= 8 || elapsedMs > maxWaitTime) {
-      break;
-    }
+    if (stableTicks >= 8 || Date.now() - startTime > maxWaitTime) break;
 
     lastTotalIncome = currentTotalIncome;
     await ns.sleep(3000);
   }
 
   ns.tprint(`🚀 [BitOS] NETZWERK STABILISIERT. Bereit für Offline-Phase.`);
+}
+
+// ====================================================================
+// HILFSFUNKTIONEN
+// ====================================================================
+
+/**
+ * Berechnet das aktuelle Hacknet-Einkommen pro Sekunde.
+ * Berücksichtigt sowohl Hash-Produktion (Hacknet Servers) als auch direkte Money-Produktion (Hacknet Nodes).
+ */
+function calculateHacknetIncome(ns: NS): number {
+  try {
+    const numNodes = ns.hacknet.numNodes();
+    if (numNodes === 0) return 0;
+
+    // Prüfung auf Hacknet-Server (Hash-System)
+    // 1 Hash entspricht bei 'Sell for Money' ungefähr $250.000 ($1M pro 4 Hashes)
+    if ("getHashGainRate" in ns.hacknet) {
+      const hashRate = (ns.hacknet as unknown as { getHashGainRate: () => number }).getHashGainRate();
+      return hashRate * 250_000;
+    }
+
+    // Klassische Hacknet Nodes (direkter Geld-Ertrag)
+    let totalProd = 0;
+    for (let i = 0; i < numNodes; i++) {
+      totalProd += ns.hacknet.getNodeStats(i).production;
+    }
+    return totalProd;
+  } catch {
+    return 0;
+  }
+}
+
+function killWorkerScriptsOnServer(ns: NS, server: string): void {
+  const activeProcesses = ns.ps(server);
+  for (const proc of activeProcesses) {
+    if (
+      proc.filename.includes("hack.js") ||
+      proc.filename.includes("grow.js") ||
+      proc.filename.includes("weaken.js") ||
+      proc.filename.includes("work.js")
+    ) {
+      ns.scriptKill(proc.filename, server);
+    }
+  }
+}
+
+function stopAllWorkers(ns: NS, allServers: string[]): void {
+  for (const server of allServers) {
+    if (ns.hasRootAccess(server)) {
+      killWorkerScriptsOnServer(ns, server);
+    }
+  }
 }

@@ -32,34 +32,34 @@ export async function main(ns: NS): Promise<void> {
     const pservLimit = ns.cloud?.getServerLimit() ?? 0;
     const pservMult = bnMults.CloudServerLimit ?? 1.0;
     if (pservLimit > 0 && pservMult > 0) {
-      tryLaunch(PATHS.lib.evaluators.pserv);
+      tryLaunch(PATHS.lib.evaluators.purchase.pserv);
     }
 
     // 2. Hacknet Evaluator (sofern nicht durch BN-Mult totgeschaltet)
     if ((bnMults.HacknetNodeMoney ?? 1.0) > 0) {
-      tryLaunch(PATHS.lib.evaluators.hacknet);
+      tryLaunch(PATHS.lib.evaluators.purchase.hacknet);
     }
 
     // 3. Bedingte Evaluatoren starten (Singularity / RAM-Thresholds)
     if (hasSingularity(ns)) {
-      tryLaunch(PATHS.lib.evaluators.home);
-      tryLaunch(PATHS.lib.evaluators.programs);
+      tryLaunch(PATHS.lib.evaluators.purchase.home);
+      tryLaunch(PATHS.lib.evaluators.purchase.programs);
       if (homeMaxRam >= 512) {
-        tryLaunch(PATHS.lib.evaluators.player);
+        tryLaunch(PATHS.lib.evaluators.purchase.player);
       }
     }
 
     if (hasGang(ns) && (bnMults.GangUniqueAugs ?? 1.0) > 0 && ns.isRunning(PATHS.managers.gang)) {
-      tryLaunch(PATHS.lib.evaluators.gang);
+      tryLaunch(PATHS.lib.evaluators.purchase.gang);
     }
 
     if (hasSleeve(ns) && ns.isRunning(PATHS.managers.sleeve)) {
-      tryLaunch(PATHS.lib.evaluators.sleeve);
+      tryLaunch(PATHS.lib.evaluators.purchase.sleeve);
     }
 
     // 4. Stock-Evaluator
     if (Boolean(ns.stock)) {
-      tryLaunch(PATHS.lib.evaluators.stock);
+      tryLaunch(PATHS.lib.evaluators.purchase.stock);
     }
 
     await ns.sleep(2000);

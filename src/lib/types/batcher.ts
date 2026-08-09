@@ -1,4 +1,6 @@
+// Single Source of Truth für alle Hacking- & Execution-Strategien
 export type BatchStrategy =
+  | "WORKER"
   | "BOOTSTRAP"
   | "XP_GRIND"
   | "PREP"
@@ -43,7 +45,6 @@ export interface TargetContext {
   prepEndTime: number;
   activeBatchIds: Set<number>;
   lastRamBlockedTime?: number;
-
   ramCooldown?: number;
 }
 
@@ -72,7 +73,7 @@ export interface TargetSummary {
   maxBatches: number;
   prepEndTime: number;
   greed: number;
-  batchRam?: number; // 🟢 Neu für genaue RAM-Metriken im Dashboard
+  batchRam?: number;
 }
 
 export interface ActiveBatch {

@@ -10,7 +10,7 @@ import {
   adjustPriorityByMult,
   hasCorporation,
   hasbladeburner,
-} from "../utils.js";
+} from "lib/utils.js";
 
 interface HacknetRequest extends PurchaseRequest {
   roi: number;

@@ -60,7 +60,7 @@ export async function main(ns: NS): Promise<void> {
     // 3. Batch Orchestrator (Haupt-Geldquelle)
     {
       name: "Batch Orchestrator",
-      path: PATHS.daemons.batchOrchestrator,
+      path: PATHS.daemons.hackingOrchestrator,
       minHomeRam: 64,
     },
 

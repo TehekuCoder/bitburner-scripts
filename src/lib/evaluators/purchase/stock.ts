@@ -8,7 +8,7 @@ import {
 } from "/lib/types/finance.js";
 import { TRANSACTION_FEE } from "/lib/constants.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
-import { loadBnMults, adjustPriorityByMult } from "../utils.js";
+import { loadBnMults, adjustPriorityByMult } from "lib/utils.js";
 
 export const StockEvaluator: PurchaseEvaluator = {
   category: "STOCK_LICENSE" as PurchaseCategory,
@@ -58,8 +58,12 @@ export const StockEvaluator: PurchaseEvaluator = {
       });
     } else if (!ns.stock.has4SData()) {
       fullyUnlocked = false;
-      const efficiencyMult = fourSigmaCostMult > 0 ? 1 / fourSigmaCostMult : 1.0;
-      const priority = adjustPriorityByMult(PurchasePriority.MEDIUM, efficiencyMult);
+      const efficiencyMult =
+        fourSigmaCostMult > 0 ? 1 / fourSigmaCostMult : 1.0;
+      const priority = adjustPriorityByMult(
+        PurchasePriority.MEDIUM,
+        efficiencyMult,
+      );
       const score = Math.max(1, Math.floor(70 * efficiencyMult));
 
       requests.push({
@@ -76,8 +80,12 @@ export const StockEvaluator: PurchaseEvaluator = {
       });
     } else if (!ns.stock.has4SDataTixApi()) {
       fullyUnlocked = false;
-      const efficiencyMult = fourSigmaApiCostMult > 0 ? 1 / fourSigmaApiCostMult : 1.0;
-      const priority = adjustPriorityByMult(PurchasePriority.MEDIUM, efficiencyMult);
+      const efficiencyMult =
+        fourSigmaApiCostMult > 0 ? 1 / fourSigmaApiCostMult : 1.0;
+      const priority = adjustPriorityByMult(
+        PurchasePriority.MEDIUM,
+        efficiencyMult,
+      );
       const score = Math.max(1, Math.floor(75 * efficiencyMult));
 
       requests.push({
@@ -153,7 +161,7 @@ export const StockEvaluator: PurchaseEvaluator = {
 
         const affordableShares = Math.min(
           maxShares,
-          Math.floor((tradeBudget - TRANSACTION_FEE) / sharePrice)
+          Math.floor((tradeBudget - TRANSACTION_FEE) / sharePrice),
         );
 
         if (affordableShares > 0) {
