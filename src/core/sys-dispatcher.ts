@@ -56,7 +56,7 @@ export async function main(ns: NS): Promise<void> {
     grow: PATHS.payloads.grow,
     weaken: PATHS.payloads.weaken,
     sysOrchestrator: PATHS.core.sysOrchestrator,
-    batchOrchestrator: PATHS.daemons.batchOrchestrator,
+    hackingOrchestrator: PATHS.daemons.hackingOrchestrator,
     fillShare: PATHS.daemons.fillShare,
     cctSolver: PATHS.tasks.cctSolver,
     dnet: PATHS.managers.dnet,
@@ -209,7 +209,7 @@ export async function main(ns: NS): Promise<void> {
       factionToWorkFor !== null && !isReadyForFactionGrind;
 
     const isOrchestratorRunning = ns.isRunning(
-      scripts.batchOrchestrator,
+      scripts.hackingOrchestrator,
       "home",
     );
 
@@ -366,7 +366,7 @@ export async function main(ns: NS): Promise<void> {
       mode,
       hasSavingTarget,
       logger,
-      scripts.batchOrchestrator,
+      scripts.hackingOrchestrator,
       targetStat,
       isBatcherActive,
       (ns as any).heart?.break() ?? 0,

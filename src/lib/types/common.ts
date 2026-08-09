@@ -25,7 +25,7 @@ export interface ScriptList {
   sysOrchestrator: string;
 
   // Batcher
-  batchOrchestrator: string;
+  hackingOrchestrator: string;
   //-------------------------
 
   // Share

@@ -91,7 +91,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // C. FALLBACK WORKER (Exklusiv auf Home mit reserviertem Backdoor-Puffer)
-    const isBatchOrchestratorRunning = ns.isRunning(PATHS.daemons.batchOrchestrator, "home");
+    const isBatchOrchestratorRunning = ns.isRunning(PATHS.daemons.hackingOrchestrator, "home");
 
     if (isBatchOrchestratorRunning) {
       if (ns.isRunning(PATHS.payloads.work, "home")) {

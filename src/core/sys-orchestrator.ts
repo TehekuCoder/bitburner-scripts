@@ -133,7 +133,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Share Filler",
       path: PATHS.daemons.fillShare,
-      minHomeRam: 128,
+      minHomeRam: 512,
     },
   ];
 

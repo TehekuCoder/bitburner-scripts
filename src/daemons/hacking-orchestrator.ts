@@ -17,8 +17,8 @@ export async function main(ns: NS): Promise<void> {
       activeStrategy = "XP_GRIND";
     }
 
-    // 2️⃣ Target-Ermittlung für XP_GRIND
-    let activeTarget = evalRec.preferredTarget ?? "joesguns";
+    // 2️⃣ Target-Ermittlung mit Root-Prüfung & Dynamic Fallback
+    let activeTarget = evalRec.preferredTarget ?? resolveXpTarget(ns);
 
     if (activeStrategy === "XP_GRIND") {
       const daemon = "w0r1d_d43m0n";
@@ -31,8 +31,13 @@ export async function main(ns: NS): Promise<void> {
       if (hasDaemonRoot && playerSkill >= reqSkill) {
         activeTarget = daemon;
       } else {
-        activeTarget = "joesguns";
+        activeTarget = resolveXpTarget(ns);
       }
+    }
+
+    // 🛡️ Letzte Absicherung: Falls das Evaluator-Target noch kein Root hat
+    if (!ns.hasRootAccess(activeTarget)) {
+      activeTarget = resolveXpTarget(ns);
     }
 
     // 3️⃣ State aktualisieren
@@ -45,11 +50,24 @@ export async function main(ns: NS): Promise<void> {
           : `Laufende Strategie: ${activeStrategy}`,
     });
 
-    // 4️⃣ Engine starten / umschalten
-    ensureEngineRunning(ns, activeStrategy, activeTarget);
+    // 4️⃣ Engine starten / umschalten (nur wenn Root da ist)
+    if (ns.hasRootAccess(activeTarget)) {
+      ensureEngineRunning(ns, activeStrategy, activeTarget);
+    }
 
     await ns.sleep(5000);
   }
+}
+
+/**
+  Ermittelt das beste verfügbare XP-Ziel basierend auf vorhandenen Root-Rechten.
+ */
+function resolveXpTarget(ns: NS): string {
+  if (ns.serverExists("joesguns") && ns.hasRootAccess("joesguns")) return "joesguns";
+  if (ns.serverExists("n00dles") && ns.hasRootAccess("n00dles")) return "n00dles";
+  if (ns.serverExists("foodnstuff") && ns.hasRootAccess("foodnstuff")) return "foodnstuff";
+
+  return "n00dles";
 }
 
 function ensureEngineRunning(
@@ -57,7 +75,6 @@ function ensureEngineRunning(
   strategy: BatchStrategy,
   target: string,
 ): void {
-  // Partial<Record<...>> verhindert Type-Errors bei unvollständiger Map
   const engineMap: Partial<Record<BatchStrategy, string>> = {
     XP_GRIND: PATHS.core.engines.proto,
     WORKER: PATHS.core.engines.proto,
