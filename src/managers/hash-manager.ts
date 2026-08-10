@@ -6,6 +6,7 @@ import {
   hasCorporation,
   hasbladeburner, // bzw. hasBladeburner
   formatMoney,
+  loadBnMults,
 } from "/lib/utils.js";
 
 type HashUpgradeName =
@@ -70,7 +71,7 @@ function getActiveBatcherTargets(ns: NS): string[] {
   ) {
     return batcherState.batcherTargetsSummary.map((t) => t.target);
   }
-  
+
   // Fallback auf Einzelziel aus State
   if (batcherState?.batcherTarget) {
     return [batcherState.batcherTarget];
@@ -79,7 +80,6 @@ function getActiveBatcherTargets(ns: NS): string[] {
   const fallback = getHighestValueServer(ns);
   return fallback ? [fallback] : [];
 }
-
 
 /**
  * Ermittelt die Kosten für das günstigste Home-Hardware-Upgrade.
@@ -180,43 +180,48 @@ function trySpendHashes(
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new Logger(ns, "Hash-Manager");
+  const bnMults = loadBnMults(ns);
 
-  // Harte Notfall-Untergrenze für Geld auf 'home' (z. B. $50M oder via CLI ns.args[0])
+  // 1. Notfall-Untergrenze & Log-Timer (wichtig für Liquidation)
   const criticalMoneyFloor =
     typeof ns.args[0] === "number" ? ns.args[0] : 50_000_000;
 
   let lastLoggedHardwareGoal = 0;
   let lastLiquidationLogTime = 0;
 
+  // 2. Dynamische BitNode-Checks
+  const isAugmentationExpensive = bnMults.AugmentationMoneyCost > 2.0;
+  const isBladeburnerViable =
+    bnMults.BladeburnerSkillCost < 5.0 && hasbladeburner(ns);
+  const canContractMoney = (bnMults.CodingContractMoney ?? 1) > 0;
+
   const priorityList: UpgradePriority[] = [
-    { name: "Generate Coding Contract" },
+    ...(canContractMoney
+      ? [{ name: "Generate Coding Contract" as HashUpgradeName }]
+      : []),
     {
       name: "Sell for Corporation Funds",
-      condition: (ns) => {
-        if (!hasCorporation(ns)) return false;
-        try {
-          return ns.corporation.hasCorporation();
-        } catch {
-          return false;
-        }
-      },
+      condition: (ns) =>
+        hasCorporation(ns) &&
+        ns.corporation.hasCorporation() &&
+        bnMults.CorporationValuation > 0.1,
     },
     {
       name: "Exchange for Bladeburner SP",
-      condition: (ns) => {
-        if (!hasbladeburner(ns)) return false;
-        try {
-          return ns.bladeburner.inBladeburner();
-        } catch {
-          return false;
-        }
-      },
+      condition: (ns) =>
+        isBladeburnerViable &&
+        hasbladeburner(ns) &&
+        ns.bladeburner.inBladeburner(),
     },
+    // Bei teuren Augmentations Geldverkauf nach oben ziehen
+    ...(isAugmentationExpensive
+      ? [{ name: "Sell for Money" as HashUpgradeName }]
+      : []),
+    { name: "Sell for Money" },
     { name: "Increase Maximum Money", requiresTarget: true },
     { name: "Reduce Minimum Security", requiresTarget: true },
     { name: "Improve Studying" },
     { name: "Improve Gym Training" },
-    { name: "Sell for Money" },
   ];
 
   logger.info(
@@ -281,8 +286,8 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 3. REGULÄRE PRIORITÄTEN (bei >= 80% Speicher)
-    if (currentHashes >= capacity * 0.8) {
+    // 3. REGULÄRE PRIORITÄTEN (bei >= 50% Speicher)
+    if (currentHashes >= capacity * 0.5) {
       const activeTargets = getActiveBatcherTargets(ns);
       for (const upgrade of priorityList) {
         while (trySpendHashes(ns, upgrade, activeTargets, logger)) {

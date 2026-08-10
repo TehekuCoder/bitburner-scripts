@@ -8,7 +8,7 @@ import {
 } from "/lib/types/finance.js";
 import { TRANSACTION_FEE } from "/lib/constants.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
-import { loadBnMults, adjustPriorityByMult } from "lib/utils.js";
+import { loadBnMults, adjustPriorityByMult } from "/lib/utils.js";
 
 export const StockEvaluator: PurchaseEvaluator = {
   category: "STOCK_LICENSE" as PurchaseCategory,

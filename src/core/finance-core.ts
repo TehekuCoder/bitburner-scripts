@@ -1,4 +1,3 @@
-// core/finance-core.ts
 import { NS } from "@ns";
 import {
   PurchaseRequest,
@@ -9,10 +8,10 @@ import {
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { drawFinanceDashboard, FinanceDashboardData } from "/ui/finance-ui.js";
 import { PATHS } from "/lib/paths.js";
+import { loadBnMults } from "/lib/utils.js";
+import { FINANCE_PORT } from "/lib/evaluator-runner.js";
 
-const FINANCE_PORT = 10;
-
-const CATEGORY_MARGINS: Partial<Record<PurchaseCategory, number>> = {
+const BASE_CATEGORY_MARGINS: Partial<Record<PurchaseCategory, number>> = {
   STOCK_LICENSE: 1.0,
   STOCK_TRADE: 1.5,
 };
@@ -45,8 +44,25 @@ export async function main(ns: NS): Promise<void> {
     const rawMoney = ns.getServerMoneyAvailable("home");
     let availableMoney = rawMoney;
     const requestsMap = new Map<string, PurchaseRequest>();
+    const bnMults = loadBnMults(ns);
 
-    // 1. Anfragen aus dem Port einsammeln
+    // 1. BitNode-Multiplikatoren auswerten
+    const augCostMult = bnMults.AugmentationMoneyCost ?? 1.0;
+    const pservCostMult = bnMults.CloudServerCost ?? 1.0;
+
+    // Dynamische Margen basierend auf BN-Multiplikatoren
+    const dynamicMargins: Partial<Record<PurchaseCategory, number>> = {
+      ...BASE_CATEGORY_MARGINS,
+      // Bei extrem teuren Augmentations 20% Puffer erzwingen
+      PLAYER_AUG: augCostMult > 2.0 ? 1.20 : 1.0,
+      SLEEVE_AUG: augCostMult > 2.0 ? 1.20 : 1.0,
+      PURCHASED_SERVER: pservCostMult > 3.0 ? 1.15 : 1.0,
+    };
+
+    // Bei teuren BitNodes das "Kleingeld" von 1% auf 0.2% senken
+    const pocketChangeRatio = augCostMult > 3.0 ? 0.002 : 0.01;
+
+    // 2. Anfragen aus dem Port einsammeln
     const port = ns.getPortHandle(FINANCE_PORT);
     while (!port.empty()) {
       const reqData = port.read() as string;
@@ -132,7 +148,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 2. Sortierung der Anfragen
+    // 3. Sortierung der Anfragen
     if (allRequests.length > 0) {
       allRequests.sort((a, b) => {
         if (a.priority !== b.priority) return a.priority - b.priority;
@@ -148,18 +164,16 @@ export async function main(ns: NS): Promise<void> {
         return a.cost - b.cost;
       });
 
-      // 3. Käufe verarbeiten
+      // 4. Käufe verarbeiten
       const blockedCategories = new Set<PurchaseCategory>();
       let highestUnsatisfiedPriority = Number.MAX_SAFE_INTEGER;
 
-      const POCKET_CHANGE_RATIO = 0.01; // 1% als Kleingeld
-
       for (const req of allRequests) {
-        const margin = CATEGORY_MARGINS[req.category] ?? 1.0;
+        const margin = dynamicMargins[req.category] ?? 1.0;
         const requiredBudget = req.cost * margin;
 
         const canAffordEasily = availableMoney >= requiredBudget;
-        const isPocketChange = req.cost <= rawMoney * POCKET_CHANGE_RATIO;
+        const isPocketChange = req.cost <= rawMoney * pocketChangeRatio;
 
         if (blockedCategories.has(req.category) && !canAffordEasily) {
           continue;

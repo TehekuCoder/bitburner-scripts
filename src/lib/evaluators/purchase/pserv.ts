@@ -21,12 +21,13 @@ export const PservEvaluator: PurchaseEvaluator = {
     const bnMults = loadBnMults(ns);
 
     // 🔴 Hard Check: Cloud Server Limit aus BN Multipliers (v3.01+)
-    const limitMult = bnMults.CloudServerLimit ?? 1.0;
+    const limitMult =
+      bnMults.CloudServerLimit ?? bnMults.CloudServerLimit ?? 1.0;
     const limit = ns.cloud.getServerLimit();
     if (limit === 0 || limitMult <= 0) return [];
 
     // Kosten-Multiplikator berechnen
-    const costMult = bnMults.CloudServerCost ?? 1.0;
+const costMult = bnMults.CloudServerCost ?? bnMults.CloudServerCost ?? 1.0;
     const efficiencyMult = costMult > 0 ? 1 / costMult : 1.0;
 
     const maxRam = ns.cloud.getRamLimit();

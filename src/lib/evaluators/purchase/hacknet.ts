@@ -132,29 +132,30 @@ export const HacknetEvaluator: PurchaseEvaluator = {
     const hNetMults = ns.getHacknetMultipliers();
     const prodMult = hNetMults?.production ?? 1;
 
-    // 🎯 Dynamische Hash-Kapazitäts-Anforderung ermitteln
+    // 🎯 Global deklarierte Kapazitäts- und Timing-Variablen
     let isCapacityBlocked = false;
     let targetCapNeeded = 0;
+    let currentCapacity = 0;
+    let fillTimeSeconds = Infinity;
 
     if (isServerMode) {
-      const currentCapacity = ns.hacknet.hashCapacity();
-
-      if (hasCorporation(ns)) {
-        try {
-          if (ns.corporation.hasCorporation())
-            targetCapNeeded = Math.max(targetCapNeeded, 200);
-        } catch {}
-      }
-      if (hasbladeburner(ns)) {
-        try {
-          if (ns.bladeburner.inBladeburner())
-            targetCapNeeded = Math.max(targetCapNeeded, 250);
-        } catch {}
+      // 1. Gesamte Hash-Produktionsrate aller Server ermitteln
+      let totalHashRate = 0;
+      for (let i = 0; i < numNodes; i++) {
+        totalHashRate += ns.hacknet.getNodeStats(i).production;
       }
 
-      // Mindestens 200 für Coding Contracts berücksichtigen
-      targetCapNeeded = Math.max(targetCapNeeded, 200);
-      isCapacityBlocked = targetCapNeeded > 0 && currentCapacity < targetCapNeeded;
+      // 2. Zeit berechnen, bis der Cache komplett voll ist (in Sekunden)
+      currentCapacity = ns.hacknet.hashCapacity();
+      fillTimeSeconds = totalHashRate > 0 ? currentCapacity / totalHashRate : Infinity;
+
+      // 3. Dynamischen Ziel-Wert ermitteln
+      targetCapNeeded = 200; // Basis z.B. für Coding Contracts
+      if (hasCorporation(ns)) targetCapNeeded = Math.max(targetCapNeeded, 300);
+      if (hasbladeburner(ns)) targetCapNeeded = Math.max(targetCapNeeded, 500);
+
+      // Capacity Blocked: Zu wenig Speicher für Mindestanforderung ODER Speicher läuft in < 45s voll
+      isCapacityBlocked = currentCapacity < targetCapNeeded || fillTimeSeconds < 45;
     }
 
     // 📊 Status-Erfassung für Netburners-Freischaltung
@@ -219,7 +220,6 @@ export const HacknetEvaluator: PurchaseEvaluator = {
           totalHacknetRam,
         );
 
-        // 🚀 Push neue Nodes, wenn Netburners noch Level braucht und wenig Nodes da sind
         if (needsNetburnersLevel && numNodes < 10) {
           basePriority = PurchasePriority.HIGH;
         }
@@ -305,40 +305,29 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         const cacheCost = ns.hacknet.getCacheUpgradeCost(i, 1);
         if (cacheCost > 0 && Number.isFinite(cacheCost)) {
           const currentCache = (stats as any).cache ?? 1;
-          const currentCapacity = ns.hacknet.hashCapacity();
 
-          const cacheRoi =
-            currentCache < 10
-              ? (currentGain * 0.15) / cacheCost
-              : (currentGain * 0.02) / cacheCost;
+          let priority = PurchasePriority.LOW;
+          let score = 10;
 
-          let baseCachePriority = getPriorityFromRoi(
-            cacheRoi,
-            isServerMode,
-            0,
-            totalHacknetRam,
-          );
-          let score = normalizeRoiToScore(cacheRoi);
-
-          // 🚨 Overrule: Wenn Kapazität der Engpass für Late-Game Upgrades ist
-          if (isCapacityBlocked) {
-            baseCachePriority = PurchasePriority.CRITICAL;
+          if (currentCapacity < targetCapNeeded) {
+            priority = PurchasePriority.CRITICAL;
             score = 99;
+          } else if (fillTimeSeconds < 45) {
+            priority = PurchasePriority.HIGH;
+            score = 85;
+          } else if (fillTimeSeconds < 120) {
+            priority = PurchasePriority.MEDIUM;
+            score = 50;
           }
-
-          const cachePriority = adjustPriorityByMult(
-            baseCachePriority,
-            hacknetMoneyMult,
-          );
 
           requests.push({
             id: `hacknet-node-${i}-cache`,
             category: "HACKNET",
-            priority: cachePriority,
+            priority: adjustPriorityByMult(priority, hacknetMoneyMult),
             score,
             cost: cacheCost,
-            roi: cacheRoi,
-            description: `Hacknet Server #${i + 1} Cache (${currentCache} ➔ ${currentCache + 1}) [Cap: ${currentCapacity}/${targetCapNeeded}]`,
+            roi: fillTimeSeconds < 45 ? 1 / 300 : 0,
+            description: `Hacknet Server #${i + 1} Cache (${currentCache} ➔ ${currentCache + 1}) [Fill-Time: ${Math.round(fillTimeSeconds)}s]`,
             action: {
               script: "core/actions/act-hacknet.js",
               args: ["hacknet-upgrade-cache", i, 1],
@@ -359,7 +348,6 @@ export const HacknetEvaluator: PurchaseEvaluator = {
           );
           let score = normalizeRoiToScore(roi, upg.ramGain);
 
-          // 🚀 Netburners Level-Overriding
           if (needsNetburnersLevel && upg.type === "level") {
             basePriority =
               player.skills.hacking >= 80
@@ -396,6 +384,8 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         if (needsNetburnersRam && req.id.includes("-ram")) return true;
         if (needsNetburnersCores && req.id.includes("-core")) return true;
 
+        // 🚀 Server-Mode Ausnahmen
+        if (isServerMode && req.id.includes("-cache")) return true; // Cache-Bypass hinzugefügt
         if (isServerMode && req.id.includes("-ram")) {
           return evaluateServerRamUpgrade(req, ns, isCapacityBlocked);
         }
