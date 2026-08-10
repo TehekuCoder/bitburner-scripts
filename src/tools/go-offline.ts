@@ -1,6 +1,7 @@
 import { NS } from "@ns";
 import { getAllServers } from "/lib/network.js";
 import { provisionServer } from "/lib/utils/provision";
+import { formatTime } from "/lib/utils";
 
 interface TargetScore {
   name: string;
@@ -75,7 +76,7 @@ export async function main(ns: NS): Promise<void> {
   );
   topTargets.forEach((t, i) => {
     ns.tprint(
-      `   [Rank ${i + 1}] ${t.name.padEnd(18)} -> Max: $${ns.format.number(t.maxMoney)} | Weaken: ${Math.round(t.weakenTime / 1000)}s`,
+      `   [Rank ${i + 1}] ${t.name.padEnd(18)} -> Max: $${ns.format.number(t.maxMoney)} | Weaken: ${formatTime(Math.round(t.weakenTime / 1000))}`,
     );
   });
 
