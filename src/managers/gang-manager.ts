@@ -1,8 +1,8 @@
 import { FactionName, NS } from "@ns";
-import { manageGang } from "/lib/gang-utils.js";
+import { manageGang } from "../lib/utils/gang-utils.js";
 import { printGangDashboard } from "ui/gang-ui.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { patchGangState, loadBatcherState } from "/lib/state.js"; // 👈 loadBatcherState importiert
+import { patchGangState, loadBatcherState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

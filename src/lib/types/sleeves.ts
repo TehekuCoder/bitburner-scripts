@@ -21,6 +21,7 @@ export interface SleeveOptions {
   targetFaction?: FactionName | string | null;
   targetStat?: number;
   strategy?: BotStrategy;
+  autoBuyAugs?: boolean;
 }
 
 export interface SleeveGangUnlockStatus {
@@ -36,4 +37,5 @@ export interface SleeveState {
   targetStat?: number;
   strategy: BotStrategy;
   sleeveProgress?: string;
+  autoBuyAugs?: boolean;
 }

@@ -10,7 +10,10 @@ export type BotStrategy =
   | "TRAIN"
   | "KILLS"
   | "CRIME"
-  | "UNI";
+  | "UNI"
+  | "KARMA" // 👈 Neu: Explizites Karma-Farmen für Gang-Unlock
+  | "BLADEBURNER" // 👈 Neu: Bladeburner-Aktivitäten
+  | "CHURCH"; // 👈 Neu: Church of the Machine God / Stanek's Gift
 
 export interface BotStateStrategy {
   strategy: BotStrategy;
@@ -79,7 +82,8 @@ export interface BotStateMeta {
 }
 
 export interface BotState
-  extends BotStateStrategy,
+  extends
+    BotStateStrategy,
     BotStateProgress,
     BotStateNetwork,
     BotStateMeta,

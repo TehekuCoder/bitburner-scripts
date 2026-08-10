@@ -1,26 +1,10 @@
-import { NS, FactionName, CompanyName, BitNodeMultipliers } from "@ns";
-
-import { generateProgressBar } from "../ui/ui-helper.js";
-import {
-  REFRESH_INTERVALS,
-  COMBAT_STATS,
-  CITY_FACTIONS,
-} from "/lib/constants.js";
+import { NS, FactionName, CompanyName } from "@ns";
+import { CITY_FACTIONS, REFRESH_INTERVALS } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-
-import { MetricTracker } from "/lib/metrics.js";
-import { getAllServers, findBestTarget } from "/lib/network.js";
-import {
-  findNextRoadmapFaction,
-  applyToAllMegacorps,
-  determineStrategy,
-  isGangOfferingAllAugs,
-} from "/lib/player.js";
-import { loadGangState, loadState, patchState } from "/lib/state.js";
-import { loadBnMults } from "/lib/utils.js";
+import { loadState, patchState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
-import { ScriptList } from "/lib/types/common.js";
 import { BotStrategy } from "/lib/types/strategy.js";
+import { SystemStrategyEvaluator } from "/lib/evaluators/strategy/system-strategy.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -34,220 +18,24 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  logger.info("Initialisiere Dispatcher & Lade Multiplikatoren...");
-  const bnMults = loadBnMults(ns);
-  const metricTracker = new MetricTracker();
+  logger.info("🚀 Sys-Dispatcher gestartet.");
 
-  let cachedFallbackTarget = "n00dles";
-  let lastFallbackUpdate = 0;
+  const evaluator = new SystemStrategyEvaluator();
   let modeLockTime = 0;
-  let lastCorpApplication = 0;
-
-  let allNetworkServers: string[] = [];
-  let lastNetworkScan = 0;
-
-  const scripts: ScriptList = {
-    perfMonitor: PATHS.daemons.perfMonitor,
-    logger: PATHS.core.logger,
-    financeDispatcher: PATHS.daemons.financeDispatcher,
-    financeCore: PATHS.core.financeCore,
-    worker: PATHS.payloads.work,
-    hack: PATHS.payloads.hack,
-    grow: PATHS.payloads.grow,
-    weaken: PATHS.payloads.weaken,
-    sysOrchestrator: PATHS.core.sysOrchestrator,
-    hackingOrchestrator: PATHS.daemons.hackingOrchestrator,
-    fillShare: PATHS.daemons.fillShare,
-    cctSolver: PATHS.tasks.cctSolver,
-    dnet: PATHS.managers.dnet,
-    crawler: PATHS.daemons.crawler,
-    sysDispatcher: PATHS.core.dispatcher,
-    backdoor: PATHS.daemons.backdoor,
-    augAnalyze: PATHS.tasks.analyzeAug,
-    sleeve: PATHS.managers.sleeve,
-    gang: PATHS.managers.gang,
-    hashManager: PATHS.managers.hash,
-  };
-
-  let lastAugAnalysis = 0;
 
   while (true) {
-    const now = Date.now();
     const currentState = loadState(ns);
+    const evalRes = evaluator.evaluate(ns, logger);
 
-    // --- 1. Netzwerk & Background-Tasks Logging ---
-    if (
-      now - lastNetworkScan > REFRESH_INTERVALS.NETWORK_SCAN ||
-      allNetworkServers.length === 0
-    ) {
-      const stateServers = currentState?.allServers;
+    let mode = evalRes.mode;
+    let targetFaction = evalRes.targetFaction;
+    let targetCompany = evalRes.targetCompany;
+    let targetStat = evalRes.targetStat;
 
-      if (stateServers && stateServers.length > 0) {
-        allNetworkServers = stateServers;
-      } else {
-        allNetworkServers = getAllServers(ns);
-      }
-
-      lastNetworkScan = now;
-      logger.debug(
-        `Netzwerk-Scan aktualisiert (${allNetworkServers.length} Server).`,
-        undefined,
-        {
-          context: {
-            source: stateServers && stateServers.length > 0 ? "state" : "scan",
-          },
-        },
-      );
-    }
-
-    const p = ns.getPlayer();
-    const gangState = loadGangState(ns);
-    const gangFaction = gangState?.hasGang ? gangState.gangFaction : null;
-
-    const isBN2GangMode =
-      currentState?.isBN2GangMode ?? isGangOfferingAllAugs(ns);
-
-    const factionTargets = (currentState?.factionTargets ?? {}) as Partial<
-      Record<FactionName, number>
-    >;
-
-    if (now - lastAugAnalysis > 300_000 || !currentState?.augRoadMap) {
-      if (ns.fileExists(scripts.augAnalyze, "home")) {
-        logger.info("Starte Augmentation-Analyse (augAnalyze)...", undefined, {
-          context: {
-            reason: !currentState?.augRoadMap ? "missing_roadmap" : "interval",
-          },
-        });
-        ns.run(scripts.augAnalyze, 1);
-        lastAugAnalysis = now;
-      }
-    }
-
-    const currentCity = CITY_FACTIONS.find((c) => p.factions.includes(c));
-
-    const augRoadmap = currentState?.augRoadMap ?? [];
-    const nextRoadmapFaction = findNextRoadmapFaction(
-      ns,
-      augRoadmap,
-      gangFaction,
-      currentCity,
-    );
-
-    handleFactionInvitations(ns, logger);
-    const currentFactionReps: Record<string, number> = {};
-    for (const f of p.factions) {
-      currentFactionReps[f] = ns.singularity.getFactionRep(f);
-    }
-    if (nextRoadmapFaction) {
-      factionTargets[nextRoadmapFaction.name as FactionName] =
-        nextRoadmapFaction.targetRep;
-    }
-
-    if (
-      p.skills.hacking >= 250 &&
-      now - lastCorpApplication > REFRESH_INTERVALS.MEGACORP_APPLY
-    ) {
-      logger.info("Sende automatische Megacorp-Bewerbungen.", undefined, {
-        context: { hackLevel: p.skills.hacking },
-      });
-      applyToAllMegacorps(ns, p, logger);
-      lastCorpApplication = now;
-    }
-
-    const hasFormulas = ns.fileExists("Formulas.exe", "home");
-    const playerMoney = p.money;
-    const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
-    const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
-
-    const activeBatchStrategy = currentState?.batchStrategy;
-    const isBatcherActive =
-      activeBatchStrategy === "SHOTGUN_HWGW" ||
-      activeBatchStrategy === "JIT_HWGW";
-
-    let BASE_MONEY_THRESHOLD = factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
-
-    if (
-      nextRoadmapFaction?.name === "CyberSec" ||
-      nextRoadmapFaction?.name === "Tian Di Hui" ||
-      nextRoadmapFaction?.name === "Netburners"
-    ) {
-      BASE_MONEY_THRESHOLD = 1_000_000;
-    }
-
-    const lastStrategy = currentState?.strategy || "MONEY";
-    const effectiveThreshold =
-      lastStrategy === "REP"
-        ? BASE_MONEY_THRESHOLD * 0.7
-        : BASE_MONEY_THRESHOLD;
-
-    // --- 2. Thresholds loggen, bevor die Strategie bestimmt wird ---
-    const isReadyForFactionGrind =
-      isBatcherActive || playerMoney > effectiveThreshold;
-    logger.debug("Ressourcen-Check für Strategiewahl:", undefined, {
-      context: {
-        money: playerMoney,
-        threshold: effectiveThreshold,
-        isReady: isReadyForFactionGrind,
-        batcherActive: isBatcherActive,
-        nextFaction: nextRoadmapFaction?.name || "none",
-      },
-    });
-
-    // 💡 Korrektur: Daedalus erlaubt, auch wenn isBN2GangMode aktiv ist
-    const isDaedalus = nextRoadmapFaction?.name === "Daedalus";
-    // 💡 Daedalus oder allgemeine Roadmap-Fraktionen zulassen
-    const factionToWorkFor =
-      (!isBN2GangMode ||
-        isDaedalus ||
-        (nextRoadmapFaction !== null &&
-          nextRoadmapFaction.name !== "Daedalus")) &&
-      factionRepMult > 0.1
-        ? nextRoadmapFaction
-        : null;
-
-    const hasSavingTarget =
-      factionToWorkFor !== null && !isReadyForFactionGrind;
-
-    const isOrchestratorRunning = ns.isRunning(
-      scripts.hackingOrchestrator,
-      "home",
-    );
-
-    let strategy = determineStrategy(
-      ns,
-      p,
-      currentState,
-      bnMults,
-      (ns as any).heart?.break() ?? 0,
-      isOrchestratorRunning,
-      factionTargets as Record<FactionName, number>,
-      nextRoadmapFaction,
-      factionToWorkFor,
-      isReadyForFactionGrind,
-    );
-
-    // 💡 Korrektur: Blockiere REP-Modus im BN2/Gang-Mode NUR dann, wenn KEINE gültige Ziel-Fraktion ermittelt wurde
-    if (isBN2GangMode && strategy.mode === "REP" && !factionToWorkFor) {
-      strategy = { mode: "MONEY" };
-    }
-    let { mode, targetFaction = null, targetCompany, targetStat } = strategy;
-
-    if (
-      now - lastFallbackUpdate > REFRESH_INTERVALS.FALLBACK_TARGET ||
-      cachedFallbackTarget === "n00dles"
-    ) {
-      cachedFallbackTarget = findBestTarget(
-        ns,
-        allNetworkServers,
-        p.skills.hacking,
-        bnMults,
-        currentState?.batcherTarget ?? null,
-      );
-      lastFallbackUpdate = now;
-    }
-
-    // --- 3. Oszillations-Schutz (Flattern) loggen ---
+    // 🛡️ Oszillations-Schutz (Cooldown-Prüfung)
     const previousStrategy = currentState?.strategy || "MONEY";
+    const now = Date.now();
+
     if (mode !== previousStrategy) {
       const isOscillating =
         ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(mode) &&
@@ -261,12 +49,9 @@ export async function main(ns: NS): Promise<void> {
           `🔄 Oszillations-Schutz! Blockiere Wechsel zu [${mode}]. Bleibe bei [${previousStrategy}].`,
         );
         mode = previousStrategy as BotStrategy;
-
-        if (mode === "REP")
-          targetFaction = (currentState?.targetFaction as FactionName) || null;
-        if (mode === "CORP")
-          targetCompany = currentState?.targetCompany as CompanyName;
-        if (mode === "TRAIN") targetStat = currentState?.targetStat || 0;
+        targetFaction = (currentState?.targetFaction as FactionName) ?? null;
+        targetCompany = (currentState?.targetCompany as CompanyName) ?? null;
+        targetStat = currentState?.targetStat ?? null;
       } else {
         logger.info(
           `✅ Strategie-Wechsel freigegeben: ${previousStrategy} ➔ ${mode}`,
@@ -275,120 +60,54 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    let currentVal = 0;
-    let targetVal = 0;
-    let label = "";
+    // ✉️ Automatische Fraktionseinladungen verarbeiten
+    handleFactionInvitations(ns, logger);
 
-    if (mode === "REP" && targetFaction) {
-      const factionKey = targetFaction as FactionName;
-      currentVal =
-        currentFactionReps[factionKey] ??
-        ns.singularity.getFactionRep(factionKey);
-      targetVal = factionTargets[factionKey] ?? 0;
-      label = `Fraktion: ${targetFaction}`;
-    } else if (mode === "CORP" && targetCompany) {
-      currentVal = ns.singularity.getCompanyRep(targetCompany);
-      targetVal = 400_000;
-      label = `Corp: ${targetCompany}`;
-    } else if (mode === "TRAIN") {
-      currentVal = Math.min(...COMBAT_STATS.map((s) => p.skills[s]));
-      targetVal = targetStat ?? 0;
-      label = `🏋️ Training (Combat)`;
-    } else if (mode === "KILLS") {
-      currentVal = p.numPeopleKilled;
-      targetVal = targetStat ?? 0;
-      label = `💀 Mordaufträge`;
-    }
-
-    metricTracker.update(mode, currentVal, targetVal, (oldMode, newMode) => {
-      logger.info(
-        `🔄 Strategiewechsel: ${oldMode || "START"} ➔ ${newMode} ${label ? `(${label})` : ""}`,
-      );
-    });
-
-    const etaStr = metricTracker.getEtaString(mode, currentVal, targetVal);
-
-    const finalBar = generateProgressBar(ns, {
-      mode,
-      label,
-      currentVal,
-      targetVal,
-      etaStr,
-      targetFaction: targetFaction ?? null,
-      playerMoney,
-      effectiveThreshold,
-      cachedFallbackTarget,
-      hasFormulas,
-      canRunBatcher: isOrchestratorRunning,
-      factionToWorkFor,
-      isReadyForFactionGrind,
-      crimeMoneyMult,
-      currentState,
-    });
-
-    let sharePercent =
-      mode === "REP"
-        ? 0.4
-        : mode === "UNI"
-          ? 0.5
-          : mode === "MONEY"
-            ? 0.1
-            : 0.0;
-    let dynamicMaxXp =
-      mode === "CRIME"
-        ? 100
-        : mode === "UNI"
-          ? 3000
-          : p.skills.hacking > 800
-            ? 1500
-            : 1000;
-
+    // 📝 State-Patching
     patchState(ns, {
       strategy: mode,
-      isBN2GangMode,
-      hasGang: gangState?.hasGang ?? false,
-      gangFaction: gangFaction ?? undefined,
-      targetFaction: targetFaction || undefined,
-      isGrindingNFG: nextRoadmapFaction?.isNFG ?? false,
-      targetCompany: targetCompany,
-      targetStat: mode === "TRAIN" ? targetStat : undefined,
-      targetKills: mode === "KILLS" ? targetStat : undefined,
-      progressBar: finalBar,
-      fillerConfig: {
-        shareMaxRamPercent: sharePercent,
-        maxXpLevel: dynamicMaxXp,
-      },
+      isBN2GangMode: evalRes.isBN2GangMode,
+      hasGang: evalRes.hasGang,
+      gangFaction: evalRes.gangFaction ?? undefined,
+      targetFaction: targetFaction ?? undefined,
+      isGrindingNFG: evalRes.isGrindingNFG,
+      targetCompany: targetCompany ?? undefined,
+      targetStat: mode === "TRAIN" ? (targetStat ?? undefined) : undefined,
+      targetKills: mode === "KILLS" ? (targetStat ?? undefined) : undefined,
+      progressBar: evalRes.progressBar,
+      fillerConfig: evalRes.fillerConfig,
     });
 
-    //  Übergabe von bnMults an die Microservice-Steuerung
+    // ⚙️ Microservices steuern
+    const isBatcherActive =
+      currentState?.batchStrategy === "SHOTGUN_HWGW" ||
+      currentState?.batchStrategy === "JIT_HWGW";
+
     manageMicroservices(
       ns,
       mode,
-      hasSavingTarget,
       logger,
-      scripts.hackingOrchestrator,
-      targetStat,
+      targetStat ?? undefined,
       isBatcherActive,
       (ns as any).heart?.break() ?? 0,
-      gangState?.hasGang ?? false,
-      bnMults,
+      evalRes.hasGang,
     );
 
     await ns.sleep(2000);
   }
 }
 
+/**
+ * Steuert das Starten und Beenden der Hintergrund-Tasks (Microservices).
+ */
 function manageMicroservices(
   ns: NS,
   currentMode: string,
-  hasSavingTarget: boolean,
   logger: Logger,
-  sysOrchestratorScript: string,
   targetStat?: number,
   isBatcherActive?: boolean,
   currentKarma: number = 0,
   hasGang: boolean = false,
-  bnMults?: BitNodeMultipliers,
 ): void {
   const modeToScript: Record<string, string> = {
     REP: PATHS.tasks.faction,
@@ -397,12 +116,13 @@ function manageMicroservices(
     UNI: PATHS.tasks.uni,
     CRIME: PATHS.tasks.crime,
     KILLS: PATHS.tasks.crime,
+    KARMA: PATHS.tasks.crime, // Nutzt Crime-Task mit Fokus auf Homicide
+    // BLADEBURNER: PATHS.tasks.bladeburner, // Skript für Bladeburner-Orchestrierung
+    // CHURCH: PATHS.tasks.stanek, // Skript zum Laden des Stanek-Rasters
   };
 
   let targetScript: string | undefined = modeToScript[currentMode];
-  let overrideArgs: (string | number)[] | undefined = undefined;
 
-  // --- Loggen, warum im Money-Modus was passiert ---
   if (currentMode === "MONEY") {
     const isGangUnlocked = hasGang || currentKarma <= -54000;
     if (!isGangUnlocked) {
@@ -416,26 +136,30 @@ function manageMicroservices(
     }
   }
 
-  // --- Kills mit Begründung loggen ---
-  for (const [modeName, script] of Object.entries(modeToScript)) {
-    if (script && script !== targetScript && ns.isRunning(script, "home")) {
-      ns.scriptKill(script, "home");
-      logger.info(`⏹️ Microservice beendet: ${script}`, undefined, {
-        context: { reason: "ModeMismatch", currentMode, oldMode: modeName },
-      });
-    }
+  // 🧹 Bereinigen: Beende alle Skripte, die nicht der aktuelle Target-Script sind.
+  // Set verhindert doppeltes Killen (da CRIME und KILLS auf dieselbe Datei zeigen)
+  const activeScriptsToStop = new Set(
+    Object.values(modeToScript).filter(
+      (script) => script !== targetScript && ns.isRunning(script, "home"),
+    ),
+  );
+
+  for (const script of activeScriptsToStop) {
+    ns.scriptKill(script, "home");
+    logger.info(`⏹️ Microservice beendet: ${script}`, undefined, {
+      context: { reason: "ModeMismatch", currentMode },
+    });
   }
 
+  // 🚀 Ziel-Skript prüfen und ggf. starten
   if (targetScript && ns.fileExists(targetScript, "home")) {
     const runningProc = ns.ps("home").find((p) => p.filename === targetScript);
     const isRunning = runningProc !== undefined;
     let shouldStart = !isRunning;
 
     const effectiveArgs: (string | number)[] =
-      overrideArgs ??
-      (currentMode === "TRAIN" && targetStat !== undefined ? [targetStat] : []);
+      currentMode === "TRAIN" && targetStat !== undefined ? [targetStat] : [];
 
-    // --- Neustart mit Argumenten loggen ---
     if (isRunning && effectiveArgs.length > 0) {
       const currentRunningTarget = runningProc?.args[0];
       const expectedTarget = effectiveArgs[0];
@@ -449,7 +173,6 @@ function manageMicroservices(
       }
     }
 
-    // --- RAM-Probleme präziser loggen ---
     if (shouldStart) {
       const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
       const requiredRam = ns.getScriptRam(targetScript, "home");
@@ -475,6 +198,10 @@ function manageMicroservices(
     }
   }
 }
+
+/**
+ * Nimmt ausstehende Fraktionseinladungen automatisch an (unter Beachtung von Stadtfraktionen).
+ */
 function handleFactionInvitations(ns: NS, logger: Logger): void {
   const sing = ns.singularity;
   const player = ns.getPlayer();
