@@ -9,6 +9,10 @@ import { REFRESH_INTERVALS } from "/lib/constants.js";
 const HOME_RESERVED_RAM_DEFAULT = 16; // Standard-Puffer (GB) für Backdoor / System-Scripts
 const HOME_RESERVED_RAM_LOW = 8;      // Reduzierter Puffer bei <= 32GB Home-RAM
 
+/** Hilfsmethode zur Auflösung von .ts zu .js Dateipfaden für Bitburner Runtime Checks */
+const resolvePath = (path: string): string =>
+  path.endsWith(".ts") ? path.replace(/\.ts$/, ".js") : path;
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
@@ -90,37 +94,74 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // C. FALLBACK WORKER (Exklusiv auf Home mit reserviertem Backdoor-Puffer)
-    const isHackingOrchestratorRunning = ns.isRunning(PATHS.daemons.hackingOrchestrator, "home");
+    // C. FALLBACK WORKER (Netzwerkweite Verteilung & dynamische Home-Steuerung)
+    const orchestratorExecPath = resolvePath(PATHS.daemons.hackingOrchestrator);
+    const workExecPath = resolvePath(PATHS.payloads.work);
+    const isHackingOrchestratorRunning = ns.isRunning(orchestratorExecPath, "home");
+    const allServersList = currentState?.allServers?.length ? currentState.allServers : getAllServers(ns);
 
     if (isHackingOrchestratorRunning) {
-      if (ns.isRunning(PATHS.payloads.work, "home")) {
-        logger.info("Orchestrator aktiv. Stoppe Fallback-Worker...");
-        ns.scriptKill(PATHS.payloads.work, "home");
+      // Beende Fallback-Worker überall, wenn der Batch-Orchestrator übernimmt
+      for (const server of allServersList) {
+        if (ns.isRunning(workExecPath, server)) {
+          ns.scriptKill(workExecPath, server);
+        }
       }
-    } else if (ns.fileExists(PATHS.payloads.work, "home")) {
+    } else if (ns.fileExists(workExecPath, "home")) {
       const target = currentState?.kernelTarget || "n00dles";
-      const workerRam = ns.getScriptRam(PATHS.payloads.work, "home");
+      const workerRam = ns.getScriptRam(workExecPath, "home");
 
       if (workerRam > 0) {
-        // Puffer-Berechnung: Bei kleinen Home-RAMs (<= 32GB) genügen 8GB Puffer, sonst 16GB
-        const reservedRam = homeMax <= 32 ? HOME_RESERVED_RAM_LOW : HOME_RESERVED_RAM_DEFAULT;
-        const usableHomeFree = Math.max(0, homeFree - reservedRam);
-        const maxThreads = Math.floor(usableHomeFree / workerRam);
-        const isWorkerRunning = ns.isRunning(PATHS.payloads.work, "home", target);
+        // 1. VERTEILUNG AUF EXTERNE SERVER (Root-Zugriff & freier RAM)
+        for (const server of allServersList) {
+          if (server === "home") continue;
+          if (!ns.serverExists(server) || !ns.hasRootAccess(server)) continue;
 
-        if (maxThreads > 0) {
-          if (!isWorkerRunning) {
-            ns.scriptKill(PATHS.payloads.work, "home");
-            logger.info(
-              `Starte Fallback-Worker auf ${target} mit ${maxThreads} Threads (Puffer: ${reservedRam}GB frei gehalten)...`
-            );
-            ns.run(PATHS.payloads.work, maxThreads, target);
+          const srvMax = ns.getServerMaxRam(server);
+          const srvUsed = ns.getServerUsedRam(server);
+          const srvFree = srvMax - srvUsed;
+          const threads = Math.floor(srvFree / workerRam);
+
+          if (threads > 0) {
+            if (!ns.fileExists(workExecPath, server)) {
+              ns.scp(workExecPath, server, "home");
+            }
+            if (!ns.isRunning(workExecPath, server, target)) {
+              ns.exec(workExecPath, server, threads, target);
+            }
           }
-        } else if (isWorkerRunning) {
-          // Stoppt Worker, wenn der verbleibende RAM unter das Puffer-Limit fällt
-          logger.warn(`Zu wenig RAM für Puffer (${reservedRam}GB). Stoppe Fallback-Worker...`);
-          ns.scriptKill(PATHS.payloads.work, "home");
+        }
+
+        // 2. DYNAMISCHE STEUERUNG AUF HOME
+        const financeExecPath = resolvePath(PATHS.daemons.financeDispatcher);
+        const isFinanceWaiting = homeMax >= 128 &&
+          ns.fileExists(financeExecPath, "home") &&
+          !ns.isRunning(financeExecPath, "home");
+
+        // Wenn der Finance Dispatcher bereitsteht, aber noch nicht läuft -> Home RAM freigeben
+        if (isFinanceWaiting) {
+          if (ns.isRunning(workExecPath, "home")) {
+            logger.info("Finance Dispatcher wartet auf RAM. Gebe Home-RAM frei...");
+            ns.scriptKill(workExecPath, "home");
+          }
+        } else {
+          // Normaler Fallback mit reserviertem Puffer
+          const reservedRam = homeMax <= 32 ? HOME_RESERVED_RAM_LOW : HOME_RESERVED_RAM_DEFAULT;
+          const usableHomeFree = Math.max(0, homeFree - reservedRam);
+          const maxThreads = Math.floor(usableHomeFree / workerRam);
+          const isWorkerRunning = ns.isRunning(workExecPath, "home", target);
+
+          if (maxThreads > 0) {
+            if (!isWorkerRunning) {
+              logger.info(
+                `Starte Fallback-Worker auf home (${target}) mit ${maxThreads} Threads (Puffer: ${reservedRam}GB)...`
+              );
+              ns.run(workExecPath, maxThreads, target);
+            }
+          } else if (isWorkerRunning) {
+            logger.warn(`Zu wenig RAM für Puffer (${reservedRam}GB). Stoppe Fallback-Worker auf home...`);
+            ns.scriptKill(workExecPath, "home");
+          }
         }
       }
     }

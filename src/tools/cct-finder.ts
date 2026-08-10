@@ -1,20 +1,28 @@
 import { NS } from "@ns";
 
+interface QueueItem {
+  server: string;
+  path: string[];
+}
+
 interface ContractInfo {
   server: string;
   file: string;
   type: string;
   triesLeft: number;
+  path: string[];
+  connectCmd: string;
 }
 
 export async function main(ns: NS): Promise<void> {
   const visited = new Set<string>();
-  const queue: string[] = ["home"];
+  // Queue speichert Server zusammen mit dem Pfad ab 'home'
+  const queue: QueueItem[] = [{ server: "home", path: ["home"] }];
   const contracts: ContractInfo[] = [];
 
   // Breitensuche über alle erreichbaren Server im Netzwerk
   while (queue.length > 0) {
-    const current = queue.shift()!;
+    const { server: current, path } = queue.shift()!;
     if (visited.has(current)) continue;
     visited.add(current);
 
@@ -23,14 +31,29 @@ export async function main(ns: NS): Promise<void> {
     for (const file of files) {
       const type = ns.codingcontract.getContractType(file, current);
       const triesLeft = ns.codingcontract.getNumTriesRemaining(file, current);
-      contracts.push({ server: current, file, type, triesLeft });
+
+      // Connect-Befehl zusammenbauen (analog zu find-path.ts)
+      const connectChain = path.slice(1).map((s) => `connect ${s}`).join("; ");
+      const connectCmd = path.length > 1 ? `home; ${connectChain}` : "home";
+
+      contracts.push({
+        server: current,
+        file,
+        type,
+        triesLeft,
+        path,
+        connectCmd,
+      });
     }
 
-    // Nachbarn zur Queue hinzufügen
+    // Nachbarn zur Queue hinzufügen und den Pfad verlängern
     const neighbors = ns.scan(current);
     for (const neighbor of neighbors) {
       if (!visited.has(neighbor)) {
-        queue.push(neighbor);
+        queue.push({
+          server: neighbor,
+          path: [...path, neighbor],
+        });
       }
     }
   }
@@ -43,14 +66,15 @@ export async function main(ns: NS): Promise<void> {
 
   ns.tprint(`\n=================== GEFUNDENE CODING CONTRACTS (${contracts.length}) ===================`);
   for (const c of contracts) {
-    const statusColor = c.triesLeft <= 3 ? "FAIL" : "INFO";
     ns.tprintf(
-      "📄 Server: %-20s | Datei: %-22s | Tries: %2d | Typ: %s",
+      "📄 Server: %-18s | Datei: %-22s | Tries: %2d | Typ: %s",
       c.server,
       c.file,
       c.triesLeft,
       c.type
     );
+    ns.tprint(`   👉 Pfad: ${c.path.join(" -> ")}`);
+    ns.tprint(`   💻 Cmd:  ${c.connectCmd}\n`);
   }
   ns.tprint("========================================================================\n");
 }

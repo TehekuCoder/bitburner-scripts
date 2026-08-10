@@ -85,11 +85,6 @@ export async function main(ns: NS): Promise<void> {
               server,
               { context: { contract: file, type, triesRemaining } },
             );
-            ns.toast(
-              `CCT Warnung: '${file}' auf ${server} hat nur noch ${triesRemaining} Versuch!`,
-              "warning",
-              8000,
-            );
             continue;
           }
 
@@ -158,83 +153,66 @@ export async function main(ns: NS): Promise<void> {
 // ============================================================================
 
 /**
- * Versucht die Lösung in allen gängigen Formaten an Bitburner zu übergeben.
- * Da ns.codingcontract.attempt() bei Misserfolg einen leeren String ("") zurückgibt,
- * prüfen wir stattdessen direkt den Rückgabewert.
+ * Führt eine sichere Abgabe eines Coding Contracts durch.
+ * Prüft das Ergebnis und schützt vor dem Verlust des letzten Versuchs.
  */
 function smartAttempt(
   ns: NS,
   answer: any,
   file: string,
   server: string,
+  minTriesToKeep = 1,
 ): string {
+  // 1. Validierung: Ungültige Solver-Ergebnisse sofort abfangen
   if (
     answer === undefined ||
     answer === null ||
-    (typeof answer === "number" && isNaN(answer))
+    (typeof answer === "number" && Number.isNaN(answer))
   ) {
-    throw new Error(`Solver lieferte ein ungültiges Ergebnis (${answer})`);
+    ns.print(
+      `[ERROR] Ungültiges Ergebnis von Solver für ${file}: ${String(answer)}`,
+    );
+    return "";
   }
 
-  const candidates: any[] = [];
-  candidates.push(answer);
-
-  if (Array.isArray(answer)) {
-    if (answer.length === 1) candidates.push(answer[0]);
-    candidates.push(answer.map(Number));
-    candidates.push(answer.join(","));
-    candidates.push(JSON.stringify(answer));
-  } else {
-    const num = Number(answer);
-    if (!isNaN(num)) {
-      candidates.push(num);
-      candidates.push([num]);
-    }
-    candidates.push(String(answer));
-    candidates.push([answer]);
-    candidates.push(JSON.stringify(answer));
+  // 2. Schutzmechanismus: Letzten Versuch für manuelle Eingabe aufbewahren
+  const triesLeft = ns.codingcontract.getNumTriesRemaining(file, server);
+  if (triesLeft <= minTriesToKeep) {
+    ns.print(
+      `[WARN] Übersprungen: Nur noch ${triesLeft} Versuch(e) für ${file} auf ${server}.`,
+    );
+    return "";
   }
 
-  const uniqueCandidates = Array.from(
-    new Map(
-      candidates.map((c) => [typeof c === "object" ? JSON.stringify(c) : c, c]),
-    ).values(),
-  );
+  // 3. Einziger Versuch ohne Multi-Attempt-Gefahr
+  try {
+    const reward = ns.codingcontract.attempt(answer, file, server);
 
-  let lastError: any = null;
-
-  for (const candidate of uniqueCandidates) {
-    // Vor jedem Versuch prüfen, ob noch mindestens 2 Versuche übrig sind
-    const triesLeft = ns.codingcontract.getNumTriesRemaining(file, server);
-    if (triesLeft <= 1) {
-      break; // Abbrechen, um den letzten Versuch für den Spieler aufzubewahren
+    if (reward) {
+      ns.tprint(
+        `SUCCESS: Contract ${file} (${server}) gelöst! Belohnung: ${reward}`,
+      );
+      return reward;
     }
 
-    try {
-      const reward = ns.codingcontract.attempt(candidate, file, server);
-      if (reward) return reward; // Erfolg!
-    } catch (err: any) {
-      const msg = String(err?.message || err);
-      if (msg.includes("not in the right format")) {
-        lastError = err;
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  if (lastError) {
-    throw lastError;
+    ns.print(
+      `FAIL: Falsche Antwort für ${file} (${server}). Verbleibend: ${triesLeft - 1}`,
+    );
+  } catch (err: any) {
+    ns.print(
+      `EXCEPT: Fehler beim Aufruf von attempt() für ${file}: ${err?.message || err}`,
+    );
   }
 
   return "";
 }
-
 /**
  * Contract: Total Number of Primes
  * Input: [min, max] (z.B. [2439997, 3287816])
  */
-export function solveTotalNumberOfPrimes(data: [number, number] | number[]): number {
+export function solveTotalNumberOfPrimes(
+  data: [number, number] | number[],
+): number {
   if (!Array.isArray(data) || data.length < 2) return 0;
 
   const min = Math.max(2, Number(data[0]));
@@ -280,7 +258,7 @@ function solveMaxSubarraySum(arr: number[]): number {
 
 function solveArrayJumping(arr: number[]): number {
   if (arr.length <= 1) return 1; // Bereits am Ziel
-  
+
   let maxReach = 0;
   for (let i = 0; i < arr.length; i++) {
     if (i > maxReach) return 0;
@@ -289,7 +267,6 @@ function solveArrayJumping(arr: number[]): number {
   }
   return 0;
 }
-
 
 function isValidParentheses(s: string): boolean {
   let count = 0;
@@ -935,8 +912,13 @@ export function solveSquareRoot(data: number | string | bigint): string {
  * Contract: Find Largest Prime Factor
  * Input: Einzelne Zahl (z. B. 82930211) oder String/Array
  */
-export function solveLargestPrimeFactor(data: number | string | number[]): number {
-  let n = typeof data === "number" ? data : Number(Array.isArray(data) ? data[0] : data);
+export function solveLargestPrimeFactor(
+  data: number | string | number[],
+): number {
+  let n =
+    typeof data === "number"
+      ? data
+      : Number(Array.isArray(data) ? data[0] : data);
   if (isNaN(n) || n < 2) return 0;
 
   let largest = 1;
