@@ -67,6 +67,9 @@ export class SystemStrategyEvaluator {
           ? stateServers
           : getAllServers(ns);
       this.lastNetworkScan = now;
+      logger.debug(
+        `Netzwerk-Cache aktualisiert (${this.allNetworkServers.length} Server)`,
+      );
     }
 
     // 2️⃣ Augmentation-Analyse Trigger
@@ -76,15 +79,7 @@ export class SystemStrategyEvaluator {
     ) {
       ns.run(PATHS.tasks.analyzeAug, 1);
       this.lastAugAnalysis = now;
-    }
-
-    // 3️⃣ Megacorp Bewerbungen
-    if (
-      p.skills.hacking >= 250 &&
-      now - this.lastCorpApplication > REFRESH_INTERVALS.MEGACORP_APPLY
-    ) {
-      applyToAllMegacorps(ns, p, logger);
-      this.lastCorpApplication = now;
+      logger.debug("Augmentation-Analyse gestartet (analyze-augs)");
     }
 
     // 4️⃣ Factions & Roadmap-Bestimmung
@@ -92,12 +87,38 @@ export class SystemStrategyEvaluator {
       currentState?.isBN2GangMode ?? isGangOfferingAllAugs(ns);
     const currentCity = CITY_FACTIONS.find((c) => p.factions.includes(c));
     const augRoadmap = currentState?.augRoadMap ?? [];
+
+    // 🔍 LOG 1: Roadmap & Spieler-Kontext (Fix: p.factions.join(", "))
+    logger.debug("[STRATEGY] Augmentation-Roadmap Status", undefined, {
+      context: {
+        hasState: !!currentState,
+        roadmapLength: augRoadmap.length,
+        roadmapFirstEntry: augRoadmap[0]?.name ?? "Keine",
+        roadmapFirstFaction: augRoadmap[0]?.bestFaction ?? "Keine",
+        playerFactions: p.factions.join(", "),
+        currentCityFaction: currentCity ?? "Keine",
+        isBN2GangMode,
+      },
+    });
+
     const nextRoadmapFaction = findNextRoadmapFaction(
       ns,
       augRoadmap,
       gangFaction,
       currentCity,
     );
+
+    // 🔍 LOG 2: Ergebnis von findNextRoadmapFaction (Fix: Rep direkt über Singularity lesen)
+    logger.debug("[STRATEGY] findNextRoadmapFaction Ergebnis", undefined, {
+      context: {
+        targetName: nextRoadmapFaction?.name ?? "null",
+        targetRep: nextRoadmapFaction?.targetRep ?? 0,
+        currentRep: nextRoadmapFaction
+          ? ns.singularity.getFactionRep(nextRoadmapFaction.name as FactionName)
+          : 0,
+        isNFG: nextRoadmapFaction?.isNFG ?? false,
+      },
+    });
 
     const factionTargets = (currentState?.factionTargets ?? {}) as Partial<
       Record<FactionName, number>
@@ -112,13 +133,24 @@ export class SystemStrategyEvaluator {
       currentFactionReps[f] = ns.singularity.getFactionRep(f);
     }
 
+    // 3️⃣ Megacorp Bewerbungen
+    if (
+      p.skills.hacking >= 250 &&
+      now - this.lastCorpApplication > REFRESH_INTERVALS.MEGACORP_APPLY
+    ) {
+      applyToAllMegacorps(ns, p, logger);
+      this.lastCorpApplication = now;
+    }
+
     // 5️⃣ Schwellenwerte & Faction-Bereitschaft
     const factionRepMult = bnMults.FactionWorkRepGain ?? 1;
     const crimeMoneyMult = bnMults.CrimeMoney ?? 1;
     const activeBatchStrategy = currentState?.batchStrategy;
+
     const isBatcherActive =
       activeBatchStrategy === "SHOTGUN_HWGW" ||
-      activeBatchStrategy === "JIT_HWGW";
+      activeBatchStrategy === "JIT_HWGW" ||
+      activeBatchStrategy === "WORKER";
 
     let baseMoneyThreshold = factionRepMult < 0.5 ? 50_000_000 : 10_000_000;
     if (
@@ -133,10 +165,16 @@ export class SystemStrategyEvaluator {
     const effectiveThreshold =
       lastStrategy === "REP" ? baseMoneyThreshold * 0.7 : baseMoneyThreshold;
 
+    const isMemberOfTarget = nextRoadmapFaction
+      ? p.factions.includes(nextRoadmapFaction.name as FactionName)
+      : false;
+
     const isReadyForFactionGrind =
-      isBatcherActive || p.money > effectiveThreshold;
+      isBatcherActive || isMemberOfTarget || p.money > effectiveThreshold;
 
     const isDaedalus = nextRoadmapFaction?.name === "Daedalus";
+
+    // Prüfen, ob die Ziel-Fraktion gefiltert wird
     const factionToWorkFor: TargetFactionResult | null =
       (!isBN2GangMode || isDaedalus || nextRoadmapFaction !== null) &&
       factionRepMult > 0.1
@@ -149,6 +187,21 @@ export class SystemStrategyEvaluator {
       PATHS.daemons.hackingOrchestrator,
       "home",
     );
+
+    // 🔍 LOG 3: Faction-Readiness & Arbeitsziel
+    logger.debug("[STRATEGY] Faction-Readiness Evaluierung", undefined, {
+      context: {
+        nextFactionName: nextRoadmapFaction?.name ?? "Keine",
+        isMemberOfTarget,
+        isBatcherActive,
+        batchStrategy: activeBatchStrategy ?? "Keine",
+        playerMoney: Math.round(p.money),
+        threshold: effectiveThreshold,
+        isReadyForFactionGrind,
+        factionRepMult,
+        factionToWorkFor: factionToWorkFor?.name ?? "null (Gefiltert)",
+      },
+    });
 
     // 6️⃣ Strategie ermitteln
     let strategy = determineStrategy(
@@ -164,8 +217,21 @@ export class SystemStrategyEvaluator {
       isReadyForFactionGrind,
     );
 
+    // 🔍 LOG 4: Primäre Strategieentscheidung
+    logger.debug("[STRATEGY] determineStrategy Ausgangs-Ergebnis", undefined, {
+      context: {
+        mode: strategy.mode,
+        targetFaction: strategy.targetFaction ?? "null",
+        targetCompany: strategy.targetCompany ?? "null",
+        targetStat: strategy.targetStat ?? "null",
+      },
+    });
+
     // Nur in den Fallback MONEY schalten, wenn REP gefordert ist, aber kein Faction-Target existiert
     if (isBN2GangMode && strategy.mode === "REP" && !factionToWorkFor) {
+      logger.debug(
+        "BN2 Gang Mode aktiv: Kein Faction-Target für REP. Fallback auf MONEY.",
+      );
       strategy = { mode: "MONEY" };
     }
 
@@ -191,7 +257,7 @@ export class SystemStrategyEvaluator {
       this.lastFallbackUpdate = now;
     }
 
-    // 8️⃣ Progress & UI Bar Generierung (Inklusive Karma, Bladeburner & Church)
+    // 8️⃣ Progress & UI Bar Generierung
     let currentVal = 0;
     let targetVal = 0;
     let label = "";
@@ -236,6 +302,15 @@ export class SystemStrategyEvaluator {
       (oldMode, newMode) => {
         logger.info(
           `🔄 Strategiewechsel: ${oldMode || "START"} ➔ ${newMode} ${label ? `(${label})` : ""}`,
+          undefined,
+          {
+            context: {
+              oldMode: oldMode || "START",
+              newMode,
+              targetFaction: targetFaction ?? "Keine",
+              targetCompany: targetCompany ?? "Keine",
+            },
+          },
         );
       },
     );

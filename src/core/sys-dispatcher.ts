@@ -32,6 +32,18 @@ export async function main(ns: NS): Promise<void> {
     let targetCompany = evalRes.targetCompany;
     let targetStat = evalRes.targetStat;
 
+    // Fallback: Wenn Hauptcharakter im MONEY-Modus ist, nutze die erste Fraktion des nächsten Roadmap-Augmentations
+    if (
+      !targetFaction &&
+      currentState?.augRoadMap &&
+      currentState.augRoadMap.length > 0
+    ) {
+      const firstAug = currentState.augRoadMap[0];
+      if (firstAug.factions && firstAug.factions.length > 0) {
+        targetFaction = firstAug.factions[0] as FactionName;
+      }
+    }
+
     // 🛡️ Oszillations-Schutz (Cooldown-Prüfung)
     const previousStrategy = currentState?.strategy || "MONEY";
     const now = Date.now();
@@ -92,6 +104,7 @@ export async function main(ns: NS): Promise<void> {
       (ns as any).heart?.break() ?? 0,
       evalRes.hasGang,
     );
+    ensureUIServices(ns, logger);
 
     await ns.sleep(2000);
   }
@@ -124,15 +137,16 @@ function manageMicroservices(
   let targetScript: string | undefined = modeToScript[currentMode];
 
   if (currentMode === "MONEY") {
-    const isGangUnlocked = hasGang || currentKarma <= -54000;
-    if (!isGangUnlocked) {
+    // Nur pausieren, wenn SOWOHL eine Gang als auch ein echter HWGW-Batcher aktiv Geld bringen.
+    // Ansonsten soll der Hauptcharakter weiter Crime-Tasks für Geld & Stats ausführen.
+    if (hasGang && isBatcherActive) {
       logger.debug(
-        `[MONEY] Keine Gang (Karma: ${Math.round(currentKarma)}). Nutze Crime-Task.`,
+        `[MONEY] Gang & HWGW-Batcher aktiv. Pausiere manuelle Tasks.`,
       );
-      targetScript = PATHS.tasks.crime;
-    } else {
-      logger.debug(`[MONEY] Gang/Batcher verfügbar. Pausiere manuelle Tasks.`);
       targetScript = undefined;
+    } else {
+      logger.debug(`[MONEY] Führe Crime-Task für zusätzliches Einkommen aus.`);
+      targetScript = PATHS.tasks.crime;
     }
   }
 
@@ -219,6 +233,25 @@ function handleFactionInvitations(ns: NS, logger: Logger): void {
         `🎉 Einladung zu Fraktion [${invite}] automatisch angenommen!`,
       );
       ns.toast(`Beigetreten: ${invite}`, "success");
+    }
+  }
+}
+
+/**
+ * Stellt sicher, dass globale UI-Skripte und Dashboards dauerhaft laufen.
+ */
+function ensureUIServices(ns: NS, logger: Logger): void {
+  const uiScript = "ui/roadmap.js"; // Alternativ PATHS.ui?.roadmap
+
+  if (ns.fileExists(uiScript, "home") && !ns.isRunning(uiScript, "home")) {
+    const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+    const requiredRam = ns.getScriptRam(uiScript, "home");
+
+    if (freeRam >= requiredRam) {
+      const pid = ns.run(uiScript, 1);
+      if (pid > 0) {
+        logger.info(`📊 UI-Dashboard gestartet: ${uiScript}`);
+      }
     }
   }
 }

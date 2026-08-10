@@ -1,11 +1,13 @@
 import { NS, FactionName } from "@ns";
 import { CITY_FACTIONS } from "/lib/constants.js";
-import { 
-  loadFactionState, 
-  patchFactionState, 
-  loadGangState 
+import {
+  loadFactionState,
+  patchFactionState,
+  loadGangState,
 } from "/lib/state.js";
 import { getNFGFallbackFaction } from "/lib/utils/faction-helpers.js";
+
+const TIAN_DI_HUI_CITIES = ["Chongqing", "New Tokyo", "Ishima"] as const;
 
 export async function main(ns: NS): Promise<void> {
   ns.print("🧬 Faction-Grinder Subsystem initialisiert.");
@@ -31,12 +33,17 @@ export async function main(ns: NS): Promise<void> {
       (ns.gang.inGang() && ns.gang.getGangInformation().faction === faction) ||
       (gangState?.hasGang && gangState.gangFaction === faction);
 
-    // Wenn das Ziel die eigene Gang-Fraktion ist ODER explizit NFG gefarmt wird:
-    if (isGangFaction || factionState.isGrindingNFG) {
+    // Nur umleiten, wenn das Ziel WIRKLICH die Gang-Fraktion ist
+    if (
+      isGangFaction ||
+      (factionState.isGrindingNFG && faction === "CyberSec")
+    ) {
       const fallbackFaction = getNFGFallbackFaction(ns, gangState);
 
       if (faction !== fallbackFaction) {
-        ns.print(`🔄 [NFG-REDIRECT] Gang/NFG-Ziel [${faction}] -> Nutze NFG-Provider [${fallbackFaction}]`);
+        ns.print(
+          `🔄 [NFG-REDIRECT] Gang/NFG-Ziel [${faction}] -> Nutze NFG-Provider [${fallbackFaction}]`,
+        );
         faction = fallbackFaction;
         patchFactionState(ns, { targetFaction: fallbackFaction });
       }
@@ -46,26 +53,40 @@ export async function main(ns: NS): Promise<void> {
     // 🛡️ LOCKOUT CHECKS
     // ------------------------------------------------------------------
     const isTargetCity = CITY_FACTIONS.includes(faction);
-    const currentCity = CITY_FACTIONS.find((c) => player.factions.includes(c));
-    const isCityLocked = isTargetCity && currentCity && currentCity !== faction;
+    const currentCityFaction = CITY_FACTIONS.find((c) =>
+      player.factions.includes(c),
+    );
+    const isCityLocked =
+      isTargetCity && currentCityFaction && currentCityFaction !== faction;
 
     if (isCityLocked) {
-      ns.print(`🛑 [LOCKOUT] Stadt-Fraktion [${faction}] kollidiert mit [${currentCity}]. Setze Ziel zurück...`);
+      ns.print(
+        `🛑 [LOCKOUT] Stadt-Fraktion [${faction}] kollidiert mit [${currentCityFaction}]. Setze Ziel zurück...`,
+      );
       patchFactionState(ns, { targetFaction: undefined });
       await ns.sleep(2000);
       continue;
     }
 
     // ------------------------------------------------------------------
-    // 🤝 EINLADUNGEN AUTOMATISCH ANNEHMEN
+    // 🤝 AUTO-REISE & EINLADUNGEN ANNEHMEN
     // ------------------------------------------------------------------
     if (!player.factions.includes(faction)) {
+      // Spezielle Trigger-Logik für Tian Di Hui Beitrittsvoraussetzungen
+      if (faction === "Tian Di Hui") {
+        const inValidCity = TIAN_DI_HUI_CITIES.includes(player.city as any);
+        if (!inValidCity && player.money >= 200_000) {
+          ns.print(`✈️ Reise nach Chongqing für Tian Di Hui Einladung...`);
+          sing.travelToCity("Chongqing");
+        }
+      }
+
       const invites = sing.checkFactionInvitations();
       if (invites.includes(faction)) {
-        ns.print(`📩 Nehme Einladung für NFG-Spender [${faction}] an...`);
+        ns.print(`📩 Nehme Einladung für [${faction}] an...`);
         sing.joinFaction(faction);
       } else {
-        ns.print(`⏳ Warte auf Beitritt/Einladung für NFG-Spender [${faction}]...`);
+        ns.print(`⏳ Warte auf Beitritt/Einladung für [${faction}]...`);
         await ns.sleep(2000);
         continue;
       }
@@ -93,7 +114,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // State Aktualisierung über spezifischen Patcher
     const currentRep = sing.getFactionRep(faction);
     patchFactionState(ns, {
       factionCurrentReps: {

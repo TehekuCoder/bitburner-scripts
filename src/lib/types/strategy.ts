@@ -91,3 +91,23 @@ export interface BotState
     BatcherState,
     FactionState,
     AugmentState {}
+
+export interface BotStateProgress {
+  progressBar?: string;
+  financeProgress: string;
+  traderProgress: string;
+  hacknetProgress: string;
+  sleeveProgress?: string;
+  sleeveGlobalMode?: string;
+  fillerConfig?: {
+    shareMaxRamPercent: number;
+    maxXpLevel: number;
+  } | null;
+  /** NEU: Aktuelle BitNode-Phase für das Roadmap Dashboard */
+  bitnodePhaseInfo?: {
+    phaseIndex: number;
+    phaseName: string;
+    progressPercent: number;
+    detail: string;
+  };
+}

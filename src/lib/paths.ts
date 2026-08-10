@@ -154,6 +154,7 @@ export const PATHS = {
     finance: "ui/finance-ui.js",
     gang: "ui/gang-ui.js",
     infra: "ui/infra-ui.js",
+    roadmap: "ui/roadmap.js",
     sleeve: "ui/sleeve-ui.js",
     helper: "ui/ui-helper.js",
   },

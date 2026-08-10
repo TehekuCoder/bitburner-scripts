@@ -17,11 +17,31 @@ export interface AugmentTarget {
 
 // 🌐 Vollständiges Register aller Bitburner-Fraktionen
 const ALL_KNOWN_FACTIONS: FactionName[] = [
-  "CyberSec", "Tian Di Hui", "Netburners", "NiteSec", "The Black Hand", "BitRunners",
-  "Daedalus", "Illuminati", "The Covenant", "ECorp", "MegaCorp", "Bachman & Associates",
-  "Blade Industries", "NWO", "Clarke Incorporated", "OmniTek Incorporated", "Four Sigma",
-  "KuaiGong International", "Fulcrum Secret Technologies", "Slum Snakes", "Tetrads",
-  "Syndicate", "The Dark Army", "Speakers for the Dead", "Shadows of Anarchy",
+  "CyberSec",
+  "Tian Di Hui",
+  "Netburners",
+  "NiteSec",
+  "The Black Hand",
+  "BitRunners",
+  "Daedalus",
+  "Illuminati",
+  "The Covenant",
+  "ECorp",
+  "MegaCorp",
+  "Bachman & Associates",
+  "Blade Industries",
+  "NWO",
+  "Clarke Incorporated",
+  "OmniTek Incorporated",
+  "Four Sigma",
+  "KuaiGong International",
+  "Fulcrum Secret Technologies",
+  "Slum Snakes",
+  "Tetrads",
+  "Syndicate",
+  "The Dark Army",
+  "Speakers for the Dead",
+  "Shadows of Anarchy",
   ...CITY_FACTIONS,
 ] as FactionName[];
 
@@ -58,14 +78,15 @@ export async function main(ns: NS): Promise<void> {
 
   for (const faction of factionsToScan) {
     let factionAugs: string[] = [];
+    let currentRep = 0;
 
     try {
       factionAugs = sing.getAugmentationsFromFaction(faction);
+      currentRep = sing.getFactionRep(faction);
     } catch {
+      // Fraktion noch nicht verfügbar oder ungültig
       continue;
     }
-
-    const currentRep = sing.getFactionRep(faction);
 
     for (const aug of factionAugs) {
       if (aug === "NeuroFlux Governor" || ownedAugs.includes(aug)) continue;
@@ -89,18 +110,19 @@ export async function main(ns: NS): Promise<void> {
           existing.factions.push(faction);
         }
 
-        const isGang = gangFaction !== null && faction === gangFaction;
+        const player = ns.getPlayer();
+        const isCurrentJoined = player.factions.includes(faction);
+        const isBestJoined = player.factions.includes(existing.bestFaction);
 
-        // Außerhalb von BN2 bevorzugen wir normale Fraktionen für bestFaction (Spieler-Work),
-        // es sei denn, NUR die Gang bietet dieses Augment an.
-        if (!isGang || isBN2Gang) {
+        // 1. Bevorzuge immer Fraktionen, bei denen der Spieler bereits Mitglied ist
+        if (isCurrentJoined && !isBestJoined) {
+          existing.bestFaction = faction;
+        } else if (isCurrentJoined === isBestJoined) {
+          // 2. Bei gleichem Mitglieds-Status gewinnt die Fraktion mit höherem Ruf
           const bestRep = sing.getFactionRep(existing.bestFaction);
-          if (currentRep > bestRep || existing.bestFaction === gangFaction) {
+          if (currentRep > bestRep) {
             existing.bestFaction = faction;
           }
-        } else if (existing.factions.length === 1 && isGang) {
-          // Verwende 'faction' statt 'gangFaction', da 'faction' garantiert FactionName ist
-          existing.bestFaction = faction;
         }
       }
     }

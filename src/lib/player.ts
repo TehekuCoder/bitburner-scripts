@@ -109,14 +109,8 @@ export function findNextRoadmapFaction(
   );
 
   for (const target of relevantTargets) {
-    if (
-      isBN2 &&
-      !hasDaedalus &&
-      !redPillOwned &&
-      target.name !== "The Red Pill"
-    ) {
-      continue;
-    }
+    // Nur überspringen, wenn die Gang das Augment AKTUELL schon kaufen kann
+    // ODER wenn man sich rein auf Daedalus / Money fokussieren soll.
 
     const validFactions = target.factions.filter((f) => {
       if (f === gangFaction && !isBN2) return false;
