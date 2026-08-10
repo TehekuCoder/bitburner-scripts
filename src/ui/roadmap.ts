@@ -137,7 +137,7 @@ export async function main(ns: NS): Promise<void> {
 
     // Header
     ns.print("=================================================");
-    ns.print(`       🗺️  ROADMAP DASHBOARD | BN${state.currentBitNode}.${state.currentBitNodeLevel}`);
+    ns.print(`       🗺️  ROADMAP DASHBOARD | BN ${state.currentBitNode}.${state.currentBitNodeLevel}`);
     ns.print("=================================================");
 
     // 1. Phasen-Übersicht

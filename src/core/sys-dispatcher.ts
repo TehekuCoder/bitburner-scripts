@@ -5,9 +5,11 @@ import { loadState, patchState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
 import { BotStrategy } from "/lib/types/strategy.js";
 import { SystemStrategyEvaluator } from "/lib/evaluators/strategy/system-strategy.js";
+import { getExactBitNode } from "/lib/utils";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
+  const currentBitnode = getExactBitNode(ns);
   const logger = new Logger(ns, "Dispatcher");
 
   if (ns.singularity === undefined) {
@@ -77,6 +79,8 @@ export async function main(ns: NS): Promise<void> {
 
     // 📝 State-Patching
     patchState(ns, {
+      currentBitNode: currentBitnode.node,
+      currentBitNodeLevel: currentBitnode.level,
       strategy: mode,
       isBN2GangMode: evalRes.isBN2GangMode,
       hasGang: evalRes.hasGang,

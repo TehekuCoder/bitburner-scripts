@@ -1,10 +1,34 @@
 import { NS, BitNodeMultipliers } from "@ns";
 import { DEFAULT_MULTIPLIERS } from "/lib/constants.js";
 import { PurchasePriority } from "./types/finance";
+import { BitNodeInfo } from "./types/common";
 
 // ============================================================================
 // 1. BitNode & System Helpers
 // ============================================================================
+
+/**
+ * Ermittelt den exakten BitNode inklusive des aktuellen Levels/Stufe.
+ * 
+ * @example
+ * const bn = getExactBitNode(ns);
+ * if (bn.node === 2) { ... } // BitNode 2 (egal welches Level)
+ * if (bn.formatted === "9.2") { ... } // Speziell BN 9.2
+ */
+export function getExactBitNode(ns: NS): BitNodeInfo {
+  const resetInfo = ns.getResetInfo();
+  const node = resetInfo.currentNode;
+  const ownedSFLevel = resetInfo.ownedSF.get(node) ?? 0;
+  const level = ownedSFLevel + 1;
+
+  return {
+    node,
+    level,
+    formatted: `${node}.${level}`,
+  };
+}
+
+
 
 /**
  * Lädt BitNode-Multiplikatoren aus der bn-multipliers.txt auf 'home'.
