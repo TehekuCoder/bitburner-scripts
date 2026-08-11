@@ -109,7 +109,7 @@ function resolveSleeveAssignment(
         }
 
         if (fac && !assignedFactions.has(fac)) {
-          return { mode: "FACTION", target: fac, subType: "field" };
+          return { mode: "FACTION", target: fac, subType: "hacking" };
         }
         break;
       }
@@ -133,7 +133,7 @@ function resolveSleeveAssignment(
     return {
       mode: "FACTION",
       target: targetFaction,
-      subType: "field" as FactionWorkType,
+      subType: "hacking" as FactionWorkType,
     };
   }
 
@@ -158,12 +158,12 @@ function manageAllSleeves(
   const assignedFactions = new Set<string>();
   const plannedAssignments: { sleeveId: number; assignment: SleeveTaskAssignment }[] = [];
 
-  // 1a. Bestehende valide Fraktions-Tasks beibehalten (verhindert unnötige Rotationen)
+  // 1a. Bestehende valide Fraktions-Tasks beibehalten
   for (const sleeve of statuses) {
     const needsRecoveryOrSync = sleeve.shock > 0 || sleeve.sync < 100;
 
     if (!needsRecoveryOrSync && !options.globalMode && !gangStatus.shouldGrindKarma) {
-      const rawTask = ns.sleeve.getTask(sleeve.id);
+      const rawTask = ns.sleeve.getTask(sleeve.id) as any;
       if (rawTask && rawTask.type === "FACTION" && rawTask.factionName) {
         const fac = rawTask.factionName as FactionName;
         if (
@@ -172,12 +172,13 @@ function manageAllSleeves(
           !assignedFactions.has(fac)
         ) {
           assignedFactions.add(fac);
+          const workType = (rawTask.factionWorkType ?? rawTask.workType ?? "hacking") as FactionWorkType;
           plannedAssignments.push({
             sleeveId: sleeve.id,
             assignment: {
               mode: "FACTION",
               target: fac,
-              subType: (rawTask.factionWorkType as FactionWorkType) || "field",
+              subType: workType,
             },
           });
         }
@@ -185,7 +186,7 @@ function manageAllSleeves(
     }
   }
 
-  // 1b. Restliche Sleeves mit neuen Tasks versorgen
+  // 1b. Restliche Sleeves versorgen
   for (const sleeve of statuses) {
     if (plannedAssignments.some((p) => p.sleeveId === sleeve.id)) continue;
 
@@ -206,8 +207,7 @@ function manageAllSleeves(
     plannedAssignments.push({ sleeveId: sleeve.id, assignment });
   }
 
-  // 2. Ausführung in 2 Phasen:
-  // Erst Nicht-Fraktions-Tasks zuweisen, damit bestehende Fraktions-Locks gelöst werden
+  // 2. Ausführung
   const nonFactionTasks = plannedAssignments.filter((p) => p.assignment.mode !== "FACTION");
   const factionTasks = plannedAssignments.filter((p) => p.assignment.mode === "FACTION");
 

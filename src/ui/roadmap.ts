@@ -42,16 +42,20 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
   }
 
   // Phase 6: Daedalus Prep (Erst wenn Roadmap abgearbeitet ODER Daedalus explizit Ansprechpartner ist)
-  const isDaedalusActive = state.targetFaction === "Daedalus" || player.factions.includes("Daedalus");
+  const isDaedalusActive =
+    state.targetFaction === "Daedalus" || player.factions.includes("Daedalus");
   const isRoadmapClear = remainingAugs === 0;
 
-  if (isDaedalusActive || (isRoadmapClear && (ownedAugs >= 30 || player.money >= 100e9))) {
+  if (
+    isDaedalusActive ||
+    (isRoadmapClear && (ownedAugs >= 30 || player.money >= 100e9))
+  ) {
     const hackProgress = (player.skills.hacking / 2500) * 100;
     const combatMin = Math.min(
       player.skills.strength,
       player.skills.defense,
       player.skills.dexterity,
-      player.skills.agility
+      player.skills.agility,
     );
     const combatProgress = (combatMin / 1500) * 100;
     const bestProgress = Math.min(100, Math.max(hackProgress, combatProgress));
@@ -87,7 +91,11 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
   }
 
   // Phase 3: Karma Rush / Gang Unlock
-  if (state.strategy === "KARMA" || state.strategy === "CRIME" || player.karma > -54000) {
+  if (
+    state.strategy === "KARMA" ||
+    state.strategy === "CRIME" ||
+    player.karma > -54000
+  ) {
     const karmaVal = Math.abs(player.karma);
     const progress = Math.min(100, (karmaVal / 54000) * 100);
     return {
@@ -131,7 +139,7 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
   ns.ui.resizeTail(580, 480);
-  ns.ui.moveTail(10, 10);
+  ns.ui.setTailTitle("Roadmap");
 
   while (true) {
     ns.clearLog();
@@ -148,7 +156,9 @@ export async function main(ns: NS): Promise<void> {
 
     // Header
     ns.print("=================================================");
-    ns.print(`       🗺️  ROADMAP DASHBOARD | BN ${state.currentBitNode}.${state.currentBitNodeLevel}`);
+    ns.print(
+      `       🗺️  ROADMAP DASHBOARD | BN ${state.currentBitNode}.${state.currentBitNodeLevel}`,
+    );
     ns.print("=================================================");
 
     // 1. Phasen-Übersicht
@@ -171,12 +181,18 @@ export async function main(ns: NS): Promise<void> {
     ns.print(`Strategie:    ${state.strategy}`);
     ns.print(`Ziel-Faction: ${state.targetFaction || "Keine"}`);
     ns.print(`Status:       ${currentPhase.detail}`);
-    ns.print(`Fortschritt:  ${renderProgressBar(currentPhase.progressPercent)}`);
+    ns.print(
+      `Fortschritt:  ${renderProgressBar(currentPhase.progressPercent)}`,
+    );
 
     // 3. Subsystem Status
     ns.print("\n--- SUBSYSTEM STATUS ---");
-    ns.print(`Batcher:      ${state.batchStrategy} (${state.batcherProgress || "Inaktiv"})`);
-    ns.print(`Gang:         ${state.hasGang ? `Aktiv (${state.gangPhase})` : "Nicht gegründet"}`);
+    ns.print(
+      `Batcher:      ${state.batchStrategy} (${state.batcherProgress || "Inaktiv"})`,
+    );
+    ns.print(
+      `Gang:         ${state.hasGang ? `Aktiv (${state.gangPhase})` : "Nicht gegründet"}`,
+    );
     ns.print(`Finanzen:     ${state.financeProgress || "N/A"}`);
     ns.print(`Sleeve:       ${state.sleeveProgress || "N/A"}`);
 

@@ -1,15 +1,67 @@
-import { NS } from "@ns";
+import { NS, SleeveTask } from "@ns";
+
+// ANSI-Farbcodes für Tail-Logs
+const COLOR = {
+  RESET: "\u001b[0m",
+  RED: "\u001b[31m",
+  GREEN: "\u001b[32m",
+  YELLOW: "\u001b[33m",
+  CYAN: "\u001b[36m",
+  GRAY: "\u001b[90m",
+  BOLD: "\u001b[1m",
+};
+
+/**
+ * Berücksichtigt Unicode-Surrogat-Paare/Emojis für die spaltengenaue Ausrichtung.
+ */
+function visualPadEnd(str: string, targetLength: number): string {
+  const actualLength = [...str].length;
+  const missing = targetLength - actualLength;
+  return missing > 0 ? str + " ".repeat(missing) : str;
+}
+
+/**
+ * Formatiert Task-Typen inklusive Icons und Fraktions-Subtypen.
+ */
+function parseTaskDetails(task: SleeveTask | null): { icon: string; text: string } {
+  if (!task) return { icon: "💤", text: "IDLE" };
+
+  const t = task as any;
+  switch (task.type) {
+    case "RECOVERY":
+      return { icon: "💔", text: "Recovery (Schock abbauen)" };
+    case "SYNCHRO":
+      return { icon: "⚡", text: "Synchronize (Sync erhöhen)" };
+    case "FACTION": {
+      const workType = t.factionWorkType ?? t.workType;
+      const detail = workType ? ` (${workType})` : "";
+      return { icon: "🤝", text: `${t.factionName}${detail}` };
+    }
+    case "COMPANY":
+      return { icon: "🏢", text: `Company: ${t.companyName}` };
+    case "CRIME":
+      return { icon: "🔫", text: `Crime: ${t.crimeType ?? t.actionName}` };
+    case "BLADEBURNER":
+      return { icon: "⚔️", text: `Bladeburner: ${t.actionName ?? "Op"}` };
+    case "CLASS":
+      return { icon: "🎓", text: `${t.classType} @ ${t.location}` };
+    case "INFILTRATE":
+      return { icon: "🥷", text: `Infiltration: ${t.location}` };
+    default:
+      return { icon: "⚙️", text: task.type };
+  }
+}
 
 export function printSleeveDashboard(ns: NS, numSleeves: number, localLogBuffer: string[]): void {
   ns.clearLog();
 
-  const dividerHeader = "==========================================================================================";
-  const dividerSub    = "------------------------------------------------------------------------------------------";
+  const dividerHeader = `${COLOR.GRAY}==========================================================================================${COLOR.RESET}`;
+  const dividerSub    = `${COLOR.GRAY}------------------------------------------------------------------------------------------${COLOR.RESET}`;
 
   ns.print(dividerHeader);
-  ns.print(" 🧠 BitOS SLEEVE CONTROL SYSTEM");
+  ns.print(` ${COLOR.BOLD}${COLOR.CYAN}🧠 BitOS SLEEVE CONTROL SYSTEM${COLOR.RESET}`);
   ns.print(dividerHeader);
-  ns.print(" ID    | SCHOCK   | SYNC     | AUGS | STADT      | AKTUELLE BESCHÄFTIGUNG");
+  ns.print(` ${COLOR.BOLD}ID  | SCHOCK   | SYNC     | AUGS | STADT      | AKTUELLE BESCHÄFTIGUNG${COLOR.RESET}`);
   ns.print(dividerSub);
 
   for (let i = 0; i < numSleeves; i++) {
@@ -23,51 +75,35 @@ export function printSleeveDashboard(ns: NS, numSleeves: number, localLogBuffer:
       /* API eingeschränkt */
     }
 
-    const idStr = `#${i}`.padEnd(5);
-    const shockStr = `${stats.shock.toFixed(1)}%`.padEnd(8);
-    const syncStr = `${stats.sync.toFixed(1)}%`.padEnd(8);
+    // 1. Farbindikatoren (Vorformatierung verhindert ANSI-Längenverzerrung)
+    const shockVal = stats.shock;
+    const shockColor = shockVal === 0 ? COLOR.GREEN : shockVal > 50 ? COLOR.RED : COLOR.YELLOW;
+    const shockFormatted = `${shockVal.toFixed(1)}%`.padStart(6);
+    const shockStr = `${shockColor}${shockFormatted}${COLOR.RESET}  `;
+
+    const syncVal = stats.sync;
+    const syncColor = syncVal === 100 ? COLOR.GREEN : COLOR.YELLOW;
+    const syncFormatted = `${syncVal.toFixed(1)}%`.padStart(6);
+    const syncStr = `${syncColor}${syncFormatted}${COLOR.RESET}  `;
+
+    // 2. Standard-Felder
+    const idStr = `#${i}`.padEnd(3);
     const augStr = `${augCount}`.padEnd(4);
     const cityStr = stats.city.padEnd(10);
 
-    let taskDesc = "IDLE";
-    if (task) {
-      switch (task.type) {
-        case "RECOVERY":
-          taskDesc = "💔 Recovery (Schock abbauen)";
-          break;
-        case "SYNCHRO":
-          taskDesc = "⚡ Synchronize (Sync erhöhen)";
-          break;
-        case "FACTION":
-          taskDesc = `🤝 Faction: ${task.factionName}`;
-          break;
-        case "COMPANY":
-          taskDesc = `🏢 Company: ${task.companyName}`;
-          break;
-        case "CRIME":
-          taskDesc = `🔫 Crime: ${task.crimeType}`;
-          break;
-        case "BLADEBURNER":
-          taskDesc = "⚔️ Bladeburner Operation";
-          break;
-        case "CLASS":
-          taskDesc = `🎓 Class: ${task.classType} @ ${task.location}`;
-          break;
-        default:
-          taskDesc = `⚙️ ${task.type}`;
-      }
-    }
+    // 3. Task-Spalte mit Unicode-Padding
+    const { icon, text } = parseTaskDetails(task);
+    const taskFormatted = visualPadEnd(`${icon} ${text}`, 36);
 
-    const taskStr = taskDesc.padEnd(38);
-    ns.print(` ${idStr} | ${shockStr} | ${syncStr} | ${augStr} | ${cityStr} | ${taskStr}`);
+    ns.print(` ${idStr} | ${shockStr} | ${syncStr} | ${augStr} | ${cityStr} | ${taskFormatted}`);
   }
 
   ns.print(dividerHeader);
 
   if (localLogBuffer.length > 0) {
-    ns.print(" LETZTE AKTIONEN:");
+    ns.print(` ${COLOR.BOLD}LETZTE AKTIONEN:${COLOR.RESET}`);
     for (const logLine of localLogBuffer) {
-      ns.print(`   ${logLine}`);
+      ns.print(`   ${COLOR.GRAY}${logLine}${COLOR.RESET}`);
     }
     ns.print(dividerSub);
   }

@@ -35,7 +35,7 @@ export interface SleeveTaskAssignment {
 }
 
 /**
- * Formatiert den aktuellen Task eines Sleeves typensicher in einen Lesbaren String.
+ * Formatiert den aktuellen Task eines Sleeves typensicher in einen lesbaren String.
  */
 function formatSleeveTask(task: SleeveTask | null): string {
   if (!task) return "Idle";
@@ -123,20 +123,33 @@ export function setSleeveTask(
         assignment.target as CompanyName,
       );
 
-    case "FACTION":
-      if (!assignment.target || !assignment.subType) return false;
-      try {
-        return (
-          ns.sleeve.setToFactionWork(
-            sleeveId,
-            assignment.target as FactionName,
-            assignment.subType as FactionWorkType,
-          ) ?? false
-        );
-      } catch {
-        // Verhindert Skript-Absturz bei Bitburner-API Konflikten
-        return false;
+    case "FACTION": {
+      if (!assignment.target) return false;
+      const targetFaction = assignment.target as FactionName;
+
+      // Dynamsicher Fallback für Arbeitstypen: Bevorzugt subType, sonst Fallbacks
+      const candidates: FactionWorkType[] = [];
+      if (assignment.subType) {
+        candidates.push(assignment.subType as FactionWorkType);
       }
+      candidates.push("hacking", "field", "security");
+
+      const uniqueCandidates = [...new Set(candidates)];
+
+      for (const workType of uniqueCandidates) {
+        try {
+          const success = ns.sleeve.setToFactionWork(
+            sleeveId,
+            targetFaction,
+            workType,
+          );
+          if (success) return true;
+        } catch {
+          // Nächsten Arbeitstyp probieren
+        }
+      }
+      return false;
+    }
 
     case "UNI":
       if (!assignment.target || !assignment.subType) return false;
@@ -160,17 +173,14 @@ export function getRecommendedTask(
 ): SleeveTaskAssignment {
   const stats = ns.sleeve.getSleeve(sleeveId);
 
-  // Shock abbauen hat höchste Priorität
   if (stats.shock > 0) {
     return { mode: "RECOVERY" };
   }
 
-  // Synchronisation bis 100% wiederherstellen
   if (stats.sync < 100) {
     return { mode: "SYNCHRO" };
   }
 
-  // Standard-Fallback für Karma / Money
   return { mode: "CRIME", target: "Homicide" };
 }
 
@@ -202,11 +212,8 @@ function isSameTask(
       return current.type === "COMPANY" && t.companyName === assignment.target;
 
     case "FACTION":
-      return (
-        current.type === "FACTION" &&
-        t.factionName === assignment.target &&
-        t.factionWorkType === assignment.subType
-      );
+      // Sobald die Ziel-Fraktion übereinstimmt, gilt die Aufgabe als identisch
+      return current.type === "FACTION" && t.factionName === assignment.target;
 
     case "UNI":
       return current.type === "CLASS" && t.classType === assignment.subType;
