@@ -34,18 +34,6 @@ export async function main(ns: NS): Promise<void> {
     let targetCompany = evalRes.targetCompany;
     let targetStat = evalRes.targetStat;
 
-    // Fallback: Wenn Hauptcharakter im MONEY-Modus ist, nutze die erste Fraktion des nächsten Roadmap-Augmentations
-    if (
-      !targetFaction &&
-      currentState?.augRoadMap &&
-      currentState.augRoadMap.length > 0
-    ) {
-      const firstAug = currentState.augRoadMap[0];
-      if (firstAug.factions && firstAug.factions.length > 0) {
-        targetFaction = firstAug.factions[0] as FactionName;
-      }
-    }
-
     // 🛡️ Oszillations-Schutz (Cooldown-Prüfung)
     const previousStrategy = currentState?.strategy || "MONEY";
     const now = Date.now();

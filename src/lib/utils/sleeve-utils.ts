@@ -93,9 +93,15 @@ export function getSleeveStatuses(ns: NS): SleeveStatus[] {
 export function setSleeveTask(
   ns: NS,
   sleeveId: number,
-  assignment: SleeveTaskAssignment
+  assignment: SleeveTaskAssignment,
 ): boolean {
   if (!ns.sleeve) return false;
+
+  // 🛑 Verhindert das Zurücksetzen laufender Timer (z. B. Homicide Progress)
+  const currentTask = ns.sleeve.getTask(sleeveId);
+  if (isSameTask(currentTask, assignment)) {
+    return true; // Task läuft bereits ungestört weiter
+  }
 
   switch (assignment.mode) {
     case "RECOVERY":
@@ -107,12 +113,15 @@ export function setSleeveTask(
     case "CRIME":
       return ns.sleeve.setToCommitCrime(
         sleeveId,
-        (assignment.target as CrimeType) || ("Homicide" as CrimeType)
+        (assignment.target as CrimeType) || ("Homicide" as CrimeType),
       );
 
     case "COMPANY":
       if (!assignment.target) return false;
-      return ns.sleeve.setToCompanyWork(sleeveId, assignment.target as CompanyName);
+      return ns.sleeve.setToCompanyWork(
+        sleeveId,
+        assignment.target as CompanyName,
+      );
 
     case "FACTION":
       if (!assignment.target || !assignment.subType) return false;
@@ -121,7 +130,7 @@ export function setSleeveTask(
           ns.sleeve.setToFactionWork(
             sleeveId,
             assignment.target as FactionName,
-            assignment.subType as FactionWorkType
+            assignment.subType as FactionWorkType,
           ) ?? false
         );
       } catch {
@@ -134,7 +143,7 @@ export function setSleeveTask(
       return ns.sleeve.setToUniversityCourse(
         sleeveId,
         assignment.target as any,
-        assignment.subType as UniversityClassType
+        assignment.subType as UniversityClassType,
       );
 
     default:
@@ -145,7 +154,10 @@ export function setSleeveTask(
 /**
  * Ermittelt den primären Ziel-Modus basierend auf den aktuellen Thresholds.
  */
-export function getRecommendedTask(ns: NS, sleeveId: number): SleeveTaskAssignment {
+export function getRecommendedTask(
+  ns: NS,
+  sleeveId: number,
+): SleeveTaskAssignment {
   const stats = ns.sleeve.getSleeve(sleeveId);
 
   // Shock abbauen hat höchste Priorität
@@ -160,4 +172,46 @@ export function getRecommendedTask(ns: NS, sleeveId: number): SleeveTaskAssignme
 
   // Standard-Fallback für Karma / Money
   return { mode: "CRIME", target: "Homicide" };
+}
+
+/**
+ * Prüft, ob die aktuell laufende Aufgabe eines Sleeves bereits mit dem Ziel-Assignment übereinstimmt.
+ */
+function isSameTask(
+  current: SleeveTask | null,
+  assignment: SleeveTaskAssignment,
+): boolean {
+  if (!current) return false;
+  const t = current as any;
+
+  switch (assignment.mode) {
+    case "RECOVERY":
+      return current.type === "RECOVERY";
+
+    case "SYNCHRO":
+      return current.type === "SYNCHRO";
+
+    case "CRIME": {
+      if (current.type !== "CRIME") return false;
+      const currentCrime = t.crimeType ?? t.actionName;
+      const targetCrime = assignment.target ?? "Homicide";
+      return currentCrime === targetCrime;
+    }
+
+    case "COMPANY":
+      return current.type === "COMPANY" && t.companyName === assignment.target;
+
+    case "FACTION":
+      return (
+        current.type === "FACTION" &&
+        t.factionName === assignment.target &&
+        t.factionWorkType === assignment.subType
+      );
+
+    case "UNI":
+      return current.type === "CLASS" && t.classType === assignment.subType;
+
+    default:
+      return false;
+  }
 }

@@ -15,7 +15,7 @@ export async function main(ns: NS): Promise<void> {
 
     try {
       const details = ns.dnet.getServerDetails(host) as any;
-      if (details && details.hasSession) {
+      if (details?.hasSession) {
         const remoteCaches = ns.ls(host, ".cache");
         if (remoteCaches.length > 0) {
           totalSuckedCaches += remoteCaches.length;
@@ -25,55 +25,32 @@ export async function main(ns: NS): Promise<void> {
           }
         }
       }
-    } catch (e) {
-      /* Failsafe */
-    }
+    } catch {}
   }
 
   if (totalSuckedCaches > 0) {
-    logger.info(
-      `🌪️ ${totalSuckedCaches} Caches von Satelliten abgesaugt.`,
-      undefined,
-      {
-        tags: ["darknet", "loot"],
-        context: { host: currentHost, count: totalSuckedCaches },
-      },
-    );
+    logger.info(`🌪️ ${totalSuckedCaches} Caches von Nachbarn abgesaugt.`);
   }
 
   const files = ns.ls(currentHost, ".cache");
-  if (files.length > 0) {
-    logger.success(
-      `💰 Verarbeite ${files.length} lokale Caches auf ${currentHost}.`,
-      undefined,
-      {
-        tags: ["darknet", "loot"],
-        context: { host: currentHost, count: files.length },
-      },
-    );
-  }
+  if (files.length === 0) return;
+
+  logger.success(`💰 Verarbeite ${files.length} lokale Caches auf ${currentHost}.`);
 
   for (const file of files) {
     try {
       const result = ns.dnet.openCache(file) as any;
-      if (result && result.success) {
-        const potentialPw = result.data || result.message;
-        if (typeof potentialPw === "string") {
-          const cleanPw = potentialPw.includes(":")
-            ? potentialPw.split(":").pop()?.trim()
-            : potentialPw.trim();
+      if (result?.success) {
+        const rawData = result.data || result.message;
+        if (typeof rawData === "string") {
+          const cleanPw = rawData.includes(":") ? rawData.split(":").pop()?.trim() : rawData.trim();
           if (cleanPw) {
             ns.write("/passwords.txt", `${cleanPw}\n`, "a");
-            ns.writePort(
-              5,
-              JSON.stringify({ host: currentHost, password: cleanPw }),
-            );
+            ns.writePort(5, JSON.stringify({ host: currentHost, password: cleanPw }));
           }
         }
         ns.rm(file, currentHost);
       }
-    } catch (e) {
-      /* Failsafe */
-    }
+    } catch {}
   }
 }

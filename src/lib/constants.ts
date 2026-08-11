@@ -1,9 +1,4 @@
-import {
-  FactionName,
-  CompanyName,
-  GymType,
-  BitNodeMultipliers,
-} from "@ns";
+import { FactionName, CompanyName, GymType, BitNodeMultipliers } from "@ns";
 import { PATHS } from "./paths.js";
 import { FactionConfig } from "./types/factions.js";
 import { LogLevel } from "./types/logger.js";
@@ -21,61 +16,110 @@ export const BATCHER_MIN_RAM = 1024;
 
 // --- MEGACORPS DEFINITION ---
 export const MEGACORPS: Record<string, CompanyName> = {
-  "Fulcrum Technologies": "Fulcrum Technologies",
-  ECorp: "ECorp",
-  MegaCorp: "MegaCorp",
-  "Four Sigma": "Four Sigma",
-  "KuaiGong International": "KuaiGong International",
-  NWO: "NWO",
-  "Blade Industries": "Blade Industries",
-  "OmniTek Incorporated": "OmniTek Incorporated",
-  "Bachman & Associates": "Bachman & Associates",
-  "Clarke Incorporated": "Clarke Incorporated",
+  "Fulcrum Technologies": "Fulcrum Technologies" as CompanyName,
+  ECorp: "ECorp" as CompanyName,
+  MegaCorp: "MegaCorp" as CompanyName,
+  "Four Sigma": "Four Sigma" as CompanyName,
+  "KuaiGong International": "KuaiGong International" as CompanyName,
+  NWO: "NWO" as CompanyName,
+  "Blade Industries": "Blade Industries" as CompanyName,
+  "OmniTek Incorporated": "OmniTek Incorporated" as CompanyName,
+  "Bachman & Associates": "Bachman & Associates" as CompanyName,
+  "Clarke Incorporated": "Clarke Incorporated" as CompanyName,
 };
+
+// --- COMBAT STATS & FACTION REQS ---
+export const COMBAT_FACTION_REQUIREMENTS: Partial<Record<FactionName, number>> =
+  {
+    "Slum Snakes": 30,
+    Tetrads: 75,
+    "The Syndicate": 200,
+    "The Dark Army": 300,
+    "Speakers for the Dead": 300,
+    "The Covenant": 850,
+    Illuminati: 1200,
+  };
 
 // --- ROADMAP LISTS ---
 export const FACTION_ROADMAP: FactionConfig[] = [
+  // Early Hacking Factions
   { name: "CyberSec", minStat: 0, priority: 1 },
   { name: "Tian Di Hui", minStat: 0, priority: 2 },
   { name: "Netburners", minStat: 0, priority: 3 },
   { name: "NiteSec", minStat: 0, priority: 4 },
   { name: "The Black Hand", minStat: 0, priority: 5 },
   { name: "BitRunners", minStat: 0, priority: 6 },
-  { name: "Aevum", minStat: 0, priority: 7 },
-  { name: "Volhaven", minStat: 0, priority: 8 },
-  { name: "Chongqing", minStat: 0, priority: 9 },
-  { name: "Ishima", minStat: 0, priority: 10 },
-  { name: "New Tokyo", minStat: 0, priority: 11 },
+
+  // Crime & Combat Factions (Requirements synchronisiert mit COMBAT_FACTION_REQUIREMENTS)
+  {
+    name: "Slum Snakes",
+    minStat: COMBAT_FACTION_REQUIREMENTS["Slum Snakes"]!,
+    priority: 7,
+  },
+  {
+    name: "Tetrads",
+    minStat: COMBAT_FACTION_REQUIREMENTS["Tetrads"]!,
+    priority: 8,
+  },
+  {
+    name: "The Syndicate",
+    minStat: COMBAT_FACTION_REQUIREMENTS["The Syndicate"]!,
+    priority: 9,
+  },
+  {
+    name: "The Dark Army",
+    minStat: COMBAT_FACTION_REQUIREMENTS["The Dark Army"]!,
+    priority: 10,
+  },
+  {
+    name: "Speakers for the Dead",
+    minStat: COMBAT_FACTION_REQUIREMENTS["Speakers for the Dead"]!,
+    priority: 11,
+  },
+
+  // City Factions (Hinweis: Schließen sich pro Reset gegenseitig aus)
   { name: "Sector-12", minStat: 0, priority: 12 },
-  { name: "Slum Snakes", minStat: 30, priority: 13 },
-  { name: "Tetrads", minStat: 75, priority: 14 },
-  { name: "The Syndicate", minStat: 200, priority: 15 },
-  { name: "Fulcrum Secret Technologies", minStat: 0, priority: 16 },
-  { name: "ECorp", minStat: 0, priority: 17 },
-  { name: "MegaCorp", minStat: 0, priority: 18 },
-  { name: "Four Sigma", minStat: 0, priority: 19 },
-  { name: "KuaiGong International", minStat: 0, priority: 20 },
-  { name: "NWO", minStat: 0, priority: 21 },
-  { name: "Blade Industries", minStat: 0, priority: 22 },
-  { name: "OmniTek Incorporated", minStat: 0, priority: 23 },
-  { name: "Bachman & Associates", minStat: 0, priority: 24 },
-  { name: "Clarke Incorporated", minStat: 0, priority: 25 },
-  { name: "Silhouette", minStat: 0, priority: 26 },
-  { name: "The Dark Army", minStat: 300, priority: 27 },
-  { name: "Speakers for the Dead", minStat: 300, priority: 28 },
-  { name: "Daedalus", minStat: 1500, priority: 29 },
-  { name: "The Covenant", minStat: 850, priority: 30 },
-  { name: "Illuminati", minStat: 1200, priority: 31 },
+  { name: "Aevum", minStat: 0, priority: 13 },
+  { name: "Volhaven", minStat: 0, priority: 14 },
+  { name: "Chongqing", minStat: 0, priority: 15 },
+  { name: "Ishima", minStat: 0, priority: 16 },
+  { name: "New Tokyo", minStat: 0, priority: 17 },
+
+  // Megacorps
+  { name: "Fulcrum Secret Technologies", minStat: 0, priority: 18 },
+  { name: "ECorp", minStat: 0, priority: 19 },
+  { name: "MegaCorp", minStat: 0, priority: 20 },
+  { name: "Four Sigma", minStat: 0, priority: 21 },
+  { name: "KuaiGong International", minStat: 0, priority: 22 },
+  { name: "NWO", minStat: 0, priority: 23 },
+  { name: "Blade Industries", minStat: 0, priority: 24 },
+  { name: "OmniTek Incorporated", minStat: 0, priority: 25 },
+  { name: "Bachman & Associates", minStat: 0, priority: 26 },
+  { name: "Clarke Incorporated", minStat: 0, priority: 27 },
+  { name: "Silhouette", minStat: 0, priority: 28 },
+
+  // Endgame Factions
+  { name: "Daedalus", minStat: 1500, priority: 29 }, // 2500 Hack oder 1500 Combat
+  {
+    name: "The Covenant",
+    minStat: COMBAT_FACTION_REQUIREMENTS["The Covenant"]!,
+    priority: 30,
+  },
+  {
+    name: "Illuminati",
+    minStat: COMBAT_FACTION_REQUIREMENTS["Illuminati"]!,
+    priority: 31,
+  },
 ];
 
 export const CITY_FACTIONS: FactionName[] = [
-  "Sector-12" as FactionName,
-  "Aevum" as FactionName,
-  "Chongqing" as FactionName,
-  "New Tokyo" as FactionName,
-  "Ishima" as FactionName,
-  "Volhaven" as FactionName,
-];
+  "Sector-12",
+  "Aevum",
+  "Chongqing",
+  "New Tokyo",
+  "Ishima",
+  "Volhaven",
+] as FactionName[];
 
 export const COMBAT_STATS = [
   "strength",
@@ -165,35 +209,33 @@ export const DEFAULT_MULTIPLIERS: Record<keyof BitNodeMultipliers, number> = {
   ScriptHackMoneyGain: 1.0,
 };
 
-// systems/finance.ts
+// Finance Constants
 export const TRANSACTION_FEE = 100_000;
 export const MIN_INVESTMENT = 5_000_000;
 export const CASH_BUFFER = 2_000_000;
 
-// tasks/dnet-crawler.ts
-export const processedServers = new Set<string>();
+// DNet Crawler Constants
 export const COOLDOWN_FILE = "/dnet-cooldowns.txt";
 export const COOLDOWN_MS = 5 * 60 * 1000;
 export const LOOT_INTERVAL_MS = 3 * 60 * 1000;
 
-export const PATH_GROW = "payloads/grow.js";
-export const PATH_HACK = "payloads/hack.js";
-export const PATH_WEAKEN = "payloads/weaken.js";
+// Payload Paths (Verwendet zentrales PATHS-Objekt)
+export const PATH_GROW = PATHS.payloads?.grow ?? "payloads/grow.js";
+export const PATH_HACK = PATHS.payloads?.hack ?? "payloads/hack.js";
+export const PATH_WEAKEN = PATHS.payloads?.weaken ?? "payloads/weaken.js";
 
-// utils/provision.ts
+// Provisioning Payload List
 export const PAYLOADS: string[] = [
-  // 1. Ausführbare Skripte für Remote-Knoten
   PATHS.daemons.crawler,
   PATHS.tasks.dnetSolver,
   PATHS.tasks.loot,
   PATHS.tasks.phish,
   PATHS.payloads.work,
 
-  // 2. Bibliotheken & Helpers, die von den Worker-Skripten importiert werden
   PATHS.lib.constants,
   PATHS.lib.logger,
   PATHS.lib.paths,
-  
+
   PATHS.lib.types.batcher,
   PATHS.lib.types.common,
   PATHS.lib.types.factions,
@@ -211,35 +253,24 @@ export const PAYLOADS: string[] = [
   PATHS.tools.lootDarknetServer,
   PATHS.tools.manDnetCrawler,
 
-  // 3. Alle Solver-Module für den DNet-Solver
   ...Object.values(PATHS.solvers),
 ];
 
-// sys-jit-batcher.ts
+// Batcher Constants
 export const SPACER = 125;
 export const BATCH_GAP = 4 * SPACER;
 export const HOME_RAM_RESERVE = 64;
 export const SCRIPT_RAM_BASE = 1.75;
 export const DYNAMIC_MAX_WEAKEN_TIME = 60 * 60 * 1000;
 export const BLACKLIST_DURATION = 30000;
-
 export const SWITCH_THRESHOLD = 1.25;
-
-export const COMBAT_FACTION_REQUIREMENTS: Partial<Record<FactionName, number>> = {
-  "Slum Snakes": 30,
-  "Tetrads": 75,
-  "The Syndicate": 200,
-  "The Dark Army": 300,
-  "Speakers for the Dead": 300,
-  "The Covenant": 850,
-  "Illuminati": 1200,
-};
 
 export const MAX_WAIT_TIME_SECONDS = 6000;
 export const AUG_PRICE_MULT = 1.9;
 
 export const LOG_PORT = 1;
 export const STATE_PORT = 2;
+
 export const LEVEL_RANK: Record<LogLevel, number> = {
   DEBUG: 0,
   INFO: 1,

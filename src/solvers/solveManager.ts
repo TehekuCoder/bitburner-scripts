@@ -1,9 +1,9 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
+import { SolverFunction } from "/lib/types/common";
 
 import { solveAccountsManager } from "./solveAccountsManager";
 import { solveAnagram } from "./solveAnagram";
-import { solveOctantVoxel } from "./solveOctantVoxel";
 import { solveCloudBlare } from "./solveCloudBlare";
 import { solveDeepGreen } from "./solveDeepGreen";
 import { solveDeskMemo } from "./solveDeskMemo";
@@ -11,13 +11,12 @@ import { solveFactoriOs } from "./solveFactoriOs";
 import { solveFreshInstall } from "./solveFreshInstall";
 import { solveLaika4 } from "./solveLaika4";
 import { solveNIL } from "./solveNIL";
+import { solveOctantVoxel } from "./solveOctantVoxel";
 import { solveOpenWebAccessPoint } from "./solveOpenWebAccessPoint";
 import { solvePHP54 } from "./solvePHP54";
 import { solvePr0verFl0 } from "./solvePr0verFl0";
 import { solveRoman } from "./solveRoman";
 import { solveZeroLogon } from "./solveZeroLogon";
-import { SolverFunction } from "/lib/types/common";
-
 
 const SOLVER_REGISTRY: Record<string, SolverFunction> = {
   accountsmanager: solveAccountsManager,
@@ -34,6 +33,7 @@ const SOLVER_REGISTRY: Record<string, SolverFunction> = {
   openwebaccesspoint: solveOpenWebAccessPoint,
   pr0verfl0: solvePr0verFl0,
   bellacuore: solveRoman,
+  roman: solveRoman,
   zerologon: solveZeroLogon,
   php54: solvePHP54,
 };
@@ -45,6 +45,24 @@ function normalizeType(type?: string): string {
     .trim();
 }
 
+/** Findet den passenden Solver – bei Teiltreffern gewinnt die längste Übereinstimmung */
+function findSolver(cleanType: string): { solver: SolverFunction; matchedKey: string } | null {
+  if (SOLVER_REGISTRY[cleanType]) {
+    return { solver: SOLVER_REGISTRY[cleanType], matchedKey: cleanType };
+  }
+
+  const matches = Object.keys(SOLVER_REGISTRY)
+    .filter((key) => cleanType.includes(key))
+    .sort((a, b) => b.length - a.length);
+
+  if (matches.length > 0) {
+    const bestKey = matches[0];
+    return { solver: SOLVER_REGISTRY[bestKey], matchedKey: bestKey };
+  }
+
+  return null;
+}
+
 export async function runSolver(
   ns: NS,
   host: string,
@@ -52,8 +70,6 @@ export async function runSolver(
   details: any,
   parentLogger?: Logger,
 ): Promise<string | null> {
-  // ⚡ GANZ WICHTIG: Wenn kein Logger übergeben wurde, erstelle sofort einen temporären
-  // LoggerClient mit PID & Host. Dadurch landest du IMMER im sys-logger!
   const logger = parentLogger
     ? parentLogger.child("MANAGER", { serverType })
     : new Logger(ns, "SOLVER-MANAGER", host, "DEBUG", undefined, { serverType });
@@ -67,33 +83,28 @@ export async function runSolver(
     return null;
   }
 
-  logger.info(
-    `🚀 Starte Solver '${cleanType}' für Host '${host}' mit Details: ${JSON.stringify(details)}`,
-  );
-  let solver = SOLVER_REGISTRY[cleanType];
-
-  if (!solver) {
-    const matchedKey = Object.keys(SOLVER_REGISTRY).find((key) =>
-      cleanType.includes(key),
-    );
-    if (matchedKey) {
-      solver = SOLVER_REGISTRY[matchedKey];
-      logger.info(
-        `ℹ️ Unscharfer Match für '${serverType}': Nutze '${matchedKey}'.`,
-      );
-    }
+  let safeDetailsDump = "N/A";
+  try {
+    safeDetailsDump = JSON.stringify(details);
+  } catch {
+    safeDetailsDump = "[Unserializable Object]";
   }
 
-  if (!solver) {
-    logger.warn(
-      `⚠️ Kein passender Solver für Typ '${serverType}' (normalisiert: '${cleanType}') registriert.`,
-    );
+  logger.info(`🚀 Starte Solver für '${cleanType}' auf Host '${host}'. Details: ${safeDetailsDump}`);
+
+  const match = findSolver(cleanType);
+  if (!match) {
+    logger.warn(`⚠️ Kein passender Solver für Typ '${serverType}' (normalisiert: '${cleanType}') registriert.`);
     return null;
   }
 
+  const { solver, matchedKey } = match;
+  if (matchedKey !== cleanType) {
+    logger.info(`ℹ️ Unscharfer Match für '${serverType}': Nutze '${matchedKey}'.`);
+  }
+
   try {
-    // Erstelle für den konkreten Solver einen Unter-Logger
-    const solverLogger = logger.child(cleanType);
+    const solverLogger = logger.child(matchedKey);
     const password = await solver(ns, host, details, solverLogger);
 
     if (password !== null) {
@@ -102,15 +113,11 @@ export async function runSolver(
       return password;
     } else {
       logger.timeEnd(timerName, "WARN");
-      logger.warn(
-        `❌ [Failed] Solver für ${host} lief durch, konnte aber kein Passwort ermitteln.`,
-      );
+      logger.warn(`❌ [Failed] Solver für ${host} lief durch, konnte aber kein Passwort ermitteln.`);
     }
   } catch (error: any) {
     logger.timeEnd(timerName, "ERROR");
-    logger.error(
-      `🔴 [Error] Schwerer Fehler im Solver für ${host}: ${error?.message || error}`,
-    );
+    logger.error(`🔴 [Error] Schwerer Fehler im Solver für ${host}: ${error?.message || error}`);
   }
 
   return null;

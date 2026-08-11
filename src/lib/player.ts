@@ -81,37 +81,19 @@ export function findNextRoadmapFaction(
   const isBN2 = isGangOfferingAllAugs(ns);
   const redPillOwned = hasRedPill(ns);
 
-  // 1️⃣ DAEDALUS PRIORITÄT (Red Pill immer bevorzugen)
-  const hasDaedalus =
-    playerFactions.includes("Daedalus") || invites.includes("Daedalus");
-  if (hasDaedalus && !redPillOwned) {
-    const daedalusTarget = augRoadmap.find(
-      (t) => t.factions.includes("Daedalus") || t.name === "The Red Pill",
-    );
-    const targetRep = daedalusTarget ? daedalusTarget.repReq : 2_500_000;
-    const currentRep = ns.singularity.getFactionRep("Daedalus");
-
-    if (currentRep < targetRep) {
-      return {
-        name: "Daedalus",
-        targetRep,
-        augName: daedalusTarget?.name ?? "The Red Pill",
-        isNFG: false,
-      };
-    }
-  }
-
-  // 2️⃣ Nur Targets betrachten, die die Gang NICHT anbietet
+  // 1️⃣ Relevant Targets aus der Roadmap (ohne Gang-Augs)
   const relevantTargets = getNonGangRoadmapTargets(
     ns,
     augRoadmap,
     gangFaction ?? null,
   );
 
-  for (const target of relevantTargets) {
-    // Nur überspringen, wenn die Gang das Augment AKTUELL schon kaufen kann
-    // ODER wenn man sich rein auf Daedalus / Money fokussieren soll.
+  // Zuerst alle Nicht-Daedalus Augments abarbeiten
+  const nonDaedalusTargets = relevantTargets.filter(
+    (t) => !t.factions.includes("Daedalus") && t.name !== "The Red Pill",
+  );
 
+  for (const target of nonDaedalusTargets) {
     const validFactions = target.factions.filter((f) => {
       if (f === "Shadows of Anarchy") return false;
       if (f === gangFaction && !isBN2) return false;
@@ -137,6 +119,26 @@ export function findNextRoadmapFaction(
         targetRep: target.repReq,
         augName: target.name,
         isNFG: target.name.includes("NeuroFlux Governor"),
+      };
+    }
+  }
+
+  // 2️⃣ DAEDALUS PRIORITÄT (Erst wenn alle anderen Roadmap-Augs erreichbar/gekauft sind)
+  const hasDaedalus =
+    playerFactions.includes("Daedalus") || invites.includes("Daedalus");
+  if (hasDaedalus && !redPillOwned) {
+    const daedalusTarget = augRoadmap.find(
+      (t) => t.factions.includes("Daedalus") || t.name === "The Red Pill",
+    );
+    const targetRep = daedalusTarget ? daedalusTarget.repReq : 2_500_000;
+    const currentRep = ns.singularity.getFactionRep("Daedalus");
+
+    if (currentRep < targetRep) {
+      return {
+        name: "Daedalus",
+        targetRep,
+        augName: daedalusTarget?.name ?? "The Red Pill",
+        isNFG: false,
       };
     }
   }
@@ -216,10 +218,15 @@ export function determineStrategy(
     return { mode: "KARMA" };
   }
 
-  // 5️⃣ PHASE 3: Vor-Daedalus Stat-Grind (Falls Einladungsvoraussetzungen fehlen)
-  if (!player.factions.includes("Daedalus") && !daedalusDone) {
+  // 5️⃣ PHASE 3: Vor-Daedalus Stat-Grind (Erst wenn Roadmap abgearbeitet ist)
+  if (
+    !player.factions.includes("Daedalus") &&
+    !daedalusDone &&
+    !factionToWorkFor
+  ) {
     const installedAugs = ns.singularity.getOwnedAugmentations(false).length;
-    if (installedAugs >= 25) {
+    // Wenn genug Augments installiert sind, aber Daedalus noch nicht beigetreten wurde:
+    if (installedAugs >= 30 || player.money >= 100e9) {
       const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
       const hasCombatReq = minCombat >= 1500;
       const hasHackReq = player.skills.hacking >= 2500;
@@ -230,7 +237,7 @@ export function determineStrategy(
           (minCombat >= 800 && player.skills.hacking < 1800);
         const targetMode = isCombatFaster ? "TRAIN" : "UNI";
         logger?.debug(
-          `[Strategie] Daedalus-Vorbereitung (Combat: ${minCombat}, Hack: ${player.skills.hacking}) ➔ ${targetMode}`,
+          `[Strategie] Daedalus-Vorbereitung (Combat: ${minCombat}/1500, Hack: ${player.skills.hacking}/2500) ➔ ${targetMode}`,
         );
         return isCombatFaster
           ? { mode: "TRAIN", targetStat: 1500 }

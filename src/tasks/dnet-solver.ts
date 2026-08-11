@@ -18,33 +18,9 @@ export async function main(ns: NS): Promise<void> {
   if (ns.args.length < 1) return;
   const host = String(ns.args[0]);
   const currentHost = ns.getHostname();
-
   const logger = new Logger(ns, `SOLVER-${host}`);
 
   if (isServerInCooldown(ns, host)) return;
-
-  const jsonDbFile = "/dnet-master-db.json";
-
-  // DB von Home holen, falls nicht lokal vorhanden
-  if (currentHost !== "home" && ns.fileExists(jsonDbFile, "home")) {
-    ns.scp(jsonDbFile, currentHost, "home");
-  }
-
-  // 1. Bekannte Passwörter aus Cache prüfen
-  if (ns.fileExists(jsonDbFile)) {
-    try {
-      const db = JSON.parse(ns.read(jsonDbFile));
-      if (db[host] !== undefined) {
-        if (await tryAuthenticate(ns, host, db[host])) {
-          logger.success(
-            `🎉 [SUCCESS] Session für ${host} über bekannten Passwort-Cache hergestellt!`,
-          );
-          handleSuccess(ns, host, db[host], logger);
-          return;
-        }
-      }
-    } catch {}
-  }
 
   const details = ns.dnet.getServerDetails(host) as ServerAuthDetails;
   if (!details) {
@@ -53,7 +29,31 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  logger.info(`🔨 Krypto-Angriff auf Modell [${details.modelId}] gestartet...`);
+  // 🚨 CRITICAL FIX: Wenn bereits eine Session besteht, abgebrochen & direkt als Erfolg werten
+  if (details.hasSession) {
+    logger.info(`ℹ️ Session auf ${host} ist bereits aktiv. Kein neuer Angriff nötig.`);
+    return;
+  }
+
+  const jsonDbFile = "/dnet-master-db.json";
+
+  if (currentHost !== "home" && ns.fileExists(jsonDbFile, "home")) {
+    ns.scp(jsonDbFile, currentHost, "home");
+  }
+
+  // 1. Bekannte Passwörter aus Cache prüfen
+  if (ns.fileExists(jsonDbFile)) {
+    try {
+      const db = JSON.parse(ns.read(jsonDbFile));
+      const cachedPw = db[host];
+      if (cachedPw && (await tryAuthenticate(ns, host, cachedPw))) {
+        handleSuccess(ns, host, cachedPw, logger);
+        return;
+      }
+    } catch {}
+  }
+
+  logger.info(`🔨 Krypto-Angriff auf Modell [${details.modelId || "Unknown"}] gestartet...`);
 
   // 2. Krypto-Solver ausführen
   let password = await runSolver(
@@ -66,9 +66,7 @@ export async function main(ns: NS): Promise<void> {
 
   // 3. Fallback: Wörterbuch- & Loot-Angriff
   if (password === null) {
-    logger.warn(
-      `⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`,
-    );
+    logger.warn(`⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`);
     password =
       (await dictionaryAttack(ns, host, details)) ||
       (await fileLootAttack(ns, host, details));
@@ -79,9 +77,7 @@ export async function main(ns: NS): Promise<void> {
     if (await tryAuthenticate(ns, host, password)) {
       handleSuccess(ns, host, password, logger);
     } else {
-      logger.error(
-        `❌ Passwort "${password}" ermittelt, aber Auth fehlgeschlagen. Setze Cooldown.`,
-      );
+      logger.error(`❌ Passwort "${password}" ermittelt, aber Auth fehlgeschlagen. Setze Cooldown.`);
       await setServerCooldown(ns, host);
     }
   } else {
@@ -91,7 +87,6 @@ export async function main(ns: NS): Promise<void> {
 }
 
 function handleSuccess(ns: NS, host: string, pw: string, logger: Logger): void {
-  // Passwort an den zentralen Master senden
   ns.writePort(5, JSON.stringify({ host, password: pw }));
   logger.success(`🎉 [SUCCESS] Server gebrochen! ${host} -> "${pw}"`);
 }
@@ -101,21 +96,17 @@ function isServerInCooldown(ns: NS, host: string): boolean {
   const lines = ns.read(COOLDOWN_FILE).split("\n");
   const now = Date.now();
 
-  for (const line of lines) {
-    const parts = line.split(",");
-    if (parts.length >= 2) {
-      const [cHost, cTime] = parts;
-      if (cHost === host && now - Number(cTime) < COOLDOWN_MS) {
-        return true;
-      }
+  for (let i = 0; i < lines.length; i++) {
+    const parts = lines[i].split(",");
+    if (parts.length >= 2 && parts[0] === host) {
+      return now - Number(parts[1]) < COOLDOWN_MS;
     }
   }
   return false;
 }
 
 async function setServerCooldown(ns: NS, host: string): Promise<void> {
-  const now = Date.now();
-  await ns.write(COOLDOWN_FILE, `${host},${now}\n`, "a");
+  await ns.write(COOLDOWN_FILE, `${host},${Date.now()}\n`, "a");
 }
 
 async function dictionaryAttack(
@@ -127,18 +118,12 @@ async function dictionaryAttack(
   if (!ns.fileExists(jsonDbFile)) return null;
   try {
     const db = JSON.parse(ns.read(jsonDbFile));
-    const list = [...new Set(Object.values(db) as string[])].filter(
-      (pw) =>
-        pw !== undefined &&
-        !pw.includes("You have discovered") &&
-        pw.length < 30,
-    );
-    for (const pw of list) {
-      if (
-        details.passwordLength !== undefined &&
-        pw.length !== details.passwordLength
-      )
-        continue;
+    const targetLen = details.passwordLength;
+
+    for (const pw of Object.values(db) as string[]) {
+      if (!pw || pw.length >= 30 || pw.includes("You have discovered")) continue;
+      if (targetLen !== undefined && pw.length !== targetLen) continue;
+
       if (await tryAuthenticate(ns, host, pw)) return pw;
     }
   } catch {}
@@ -153,14 +138,15 @@ async function fileLootAttack(
   try {
     const currentHost = ns.getHostname();
     const files = ns.ls(host, ".txt");
+    const maxLen = details.passwordLength || 30;
 
     for (const file of files) {
       ns.scp(file, currentHost, host);
       const content = ns.read(file).trim();
       ns.rm(file, currentHost);
 
-      if (content.length <= (details.passwordLength || 30)) {
-        if (await tryAuthenticate(ns, host, content)) return content;
+      if (content.length <= maxLen && (await tryAuthenticate(ns, host, content))) {
+        return content;
       }
     }
   } catch {}
