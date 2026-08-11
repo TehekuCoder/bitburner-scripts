@@ -113,6 +113,7 @@ export function findNextRoadmapFaction(
     // ODER wenn man sich rein auf Daedalus / Money fokussieren soll.
 
     const validFactions = target.factions.filter((f) => {
+      if (f === "Shadows of Anarchy") return false;
       if (f === gangFaction && !isBN2) return false;
       return playerFactions.includes(f) || invites.includes(f);
     });

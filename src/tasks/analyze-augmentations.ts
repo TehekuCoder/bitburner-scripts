@@ -41,7 +41,6 @@ const ALL_KNOWN_FACTIONS: FactionName[] = [
   "Syndicate",
   "The Dark Army",
   "Speakers for the Dead",
-  "Shadows of Anarchy",
   ...CITY_FACTIONS,
 ] as FactionName[];
 
