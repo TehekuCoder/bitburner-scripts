@@ -54,14 +54,12 @@ export async function main(ns: NS): Promise<void> {
   ns.tprint(` └─ 💻 Skript-Potenzial: $${ns.format.number(estimatedMaxScriptIncome)} / Sekunde`);
 
   // ENTSCHEIDUNG: Lohnt sich Skript-Hacking überhaupt?
-  // Bricht ab, wenn Skripte weniger als 10% des Hacknet-Einkommens ausmachen würden
   const MIN_WORTHWHILE_RATIO = 0.10;
   if (hacknetIncome > 0 && estimatedMaxScriptIncome < (hacknetIncome * MIN_WORTHWHILE_RATIO)) {
     ns.tprint(`\n🛑 [BitOS] SKRIPT-DEPLOYMENT ÜBERSPRUNGEN!`);
     ns.tprint(`💡 Hacknet ist in BN9 deutlich lukrativer als Hacking-Skripte.`);
     ns.tprint(`   Alle Worker gestoppt. Das Netzwerk läuft im reinen Hacknet-Passivmodus.`);
     
-    // Säubere Worker auf allen Hosts, damit RAM/Prozesse frei bleiben
     stopAllWorkers(ns, allServers);
     return;
   }
@@ -76,7 +74,7 @@ export async function main(ns: NS): Promise<void> {
   );
   topTargets.forEach((t, i) => {
     ns.tprint(
-      `   [Rank ${i + 1}] ${t.name.padEnd(18)} -> Max: $${ns.format.number(t.maxMoney)} | Weaken: ${formatTime(Math.round(t.weakenTime / 1000))}`,
+      `   [Rank ${i + 1}] ${t.name.padEnd(18)} -> Max: $${ns.format.number(t.maxMoney)} | Weaken: ${formatTime(t.weakenTime)}`,
     );
   });
 
@@ -105,7 +103,10 @@ export async function main(ns: NS): Promise<void> {
     // API nicht verfügbar
   }
 
-  const hostServers = [...allServers, ...hacknetServers]
+  // Set verhindert doppelte Server in der Host-Liste
+  const uniqueCandidates = Array.from(new Set([...allServers, ...hacknetServers]));
+
+  const hostServers = uniqueCandidates
     .filter(
       (s) =>
         !s.startsWith("hacknet-node") &&
@@ -202,23 +203,16 @@ export async function main(ns: NS): Promise<void> {
 // HILFSFUNKTIONEN
 // ====================================================================
 
-/**
- * Berechnet das aktuelle Hacknet-Einkommen pro Sekunde.
- * Berücksichtigt sowohl Hash-Produktion (Hacknet Servers) als auch direkte Money-Produktion (Hacknet Nodes).
- */
 function calculateHacknetIncome(ns: NS): number {
   try {
     const numNodes = ns.hacknet.numNodes();
     if (numNodes === 0) return 0;
 
-    // Prüfung auf Hacknet-Server (Hash-System)
-    // 1 Hash entspricht bei 'Sell for Money' ungefähr $250.000 ($1M pro 4 Hashes)
     if ("getHashGainRate" in ns.hacknet) {
       const hashRate = (ns.hacknet as unknown as { getHashGainRate: () => number }).getHashGainRate();
       return hashRate * 250_000;
     }
 
-    // Klassische Hacknet Nodes (direkter Geld-Ertrag)
     let totalProd = 0;
     for (let i = 0; i < numNodes; i++) {
       totalProd += ns.hacknet.getNodeStats(i).production;
@@ -244,7 +238,9 @@ function killWorkerScriptsOnServer(ns: NS, server: string): void {
 }
 
 function stopAllWorkers(ns: NS, allServers: string[]): void {
-  for (const server of allServers) {
+  const pServers = ns.cloud.getServerNames();
+  const targets = Array.from(new Set([...allServers, ...pServers]));
+  for (const server of targets) {
     if (ns.hasRootAccess(server)) {
       killWorkerScriptsOnServer(ns, server);
     }
