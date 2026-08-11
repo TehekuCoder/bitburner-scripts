@@ -12,9 +12,6 @@ import { SleeveTaskAssignment, getSleeveStatuses, setSleeveTask } from "/lib/uti
 
 type ExtendedGangStatus = SleeveGangUnlockStatus & { gangFaction?: string };
 
-/**
- * Prüft den Fortschritt bezüglich des Gang-Unlocks und ermittelt ggf. die Gang-Fraktion.
- */
 function checkSleeveGangStatus(ns: NS): ExtendedGangStatus {
   const hasSleeves = ns.sleeve !== undefined && ns.sleeve.getNumSleeves() > 0;
   const hasGangApi = ns.gang !== undefined;
@@ -44,10 +41,6 @@ function checkSleeveGangStatus(ns: NS): ExtendedGangStatus {
   };
 }
 
-/**
- * Filtert Fraktionen, bei denen der Spieler Mitglied ist und noch Reputation benötigt.
- * Schließt die eigene Gang-Fraktion aus.
- */
 function getFactionsNeedingRep(
   ns: NS,
   playerFactions: string[],
@@ -81,9 +74,6 @@ function getFactionsNeedingRep(
   return result;
 }
 
-/**
- * Ermittelt die beste Aufgabe für einen Sleeve und vermeidet Doppelbelegungen von Fraktionen.
- */
 function resolveSleeveAssignment(
   sleeveId: number,
   sleeveShock: number,
@@ -93,20 +83,16 @@ function resolveSleeveAssignment(
   factionsNeedingRep: FactionName[],
   assignedFactions: Set<string>
 ): SleeveTaskAssignment {
-  // 1. Shock Recovery (Höchste Prio)
   if (sleeveShock > 0) {
     return { mode: "RECOVERY" };
   }
 
-  // 2. Synchronisation (Zweite Prio)
   if (sleeveSync < 100) {
     return { mode: "SYNCHRO" };
   }
 
-  // Noch verbleibende, nicht belegte Fraktionen für diesen Durchlauf
   const availableFactions = factionsNeedingRep.filter((f) => !assignedFactions.has(f));
 
-  // 3. Manueller Global-Mode Override
   if (
     options.globalMode &&
     options.globalMode !== "RECOVERY" &&
@@ -125,7 +111,7 @@ function resolveSleeveAssignment(
         if (fac && !assignedFactions.has(fac)) {
           return { mode: "FACTION", target: fac, subType: "field" };
         }
-        break; // Falls belegt oder ungültig, weiter zu dynamischer Verteilung / Fallback
+        break;
       }
       case "UNI":
         return {
@@ -138,12 +124,10 @@ function resolveSleeveAssignment(
     }
   }
 
-  // 4. Karma-Grind für Gang-Unlock (-54.000 Karma)
   if (gangStatus.shouldGrindKarma) {
     return { mode: "CRIME", target: "Homicide" };
   }
 
-  // 5. Faction Reputation Farmen (Nur freie Fraktionen vergeben)
   if (availableFactions.length > 0) {
     const targetFaction = availableFactions[0];
     return {
@@ -153,12 +137,11 @@ function resolveSleeveAssignment(
     };
   }
 
-  // 6. Fallback: Homicide für Geld & Stats
   return { mode: "CRIME", target: "Homicide" };
 }
 
 /**
- * Steuert alle verlinkten Sleeves schrittweise an.
+ * Steuert alle verlinkten Sleeves konfliktfrei an.
  */
 function manageAllSleeves(
   ns: NS,
@@ -170,13 +153,42 @@ function manageAllSleeves(
   addLocalLog: (msg: string) => void
 ): string {
   const statuses = getSleeveStatuses(ns);
-  const tasksSummary: string[] = [];
   const gangStatus = checkSleeveGangStatus(ns);
 
-  // Verfolgt Fraktionen, die in diesem Tick bereits von einem Sleeve belegt wurden
   const assignedFactions = new Set<string>();
+  const plannedAssignments: { sleeveId: number; assignment: SleeveTaskAssignment }[] = [];
 
+  // 1a. Bestehende valide Fraktions-Tasks beibehalten (verhindert unnötige Rotationen)
   for (const sleeve of statuses) {
+    const needsRecoveryOrSync = sleeve.shock > 0 || sleeve.sync < 100;
+
+    if (!needsRecoveryOrSync && !options.globalMode && !gangStatus.shouldGrindKarma) {
+      const rawTask = ns.sleeve.getTask(sleeve.id);
+      if (rawTask && rawTask.type === "FACTION" && rawTask.factionName) {
+        const fac = rawTask.factionName as FactionName;
+        if (
+          factionsNeedingRep.includes(fac) &&
+          fac !== gangStatus.gangFaction &&
+          !assignedFactions.has(fac)
+        ) {
+          assignedFactions.add(fac);
+          plannedAssignments.push({
+            sleeveId: sleeve.id,
+            assignment: {
+              mode: "FACTION",
+              target: fac,
+              subType: (rawTask.factionWorkType as FactionWorkType) || "field",
+            },
+          });
+        }
+      }
+    }
+  }
+
+  // 1b. Restliche Sleeves mit neuen Tasks versorgen
+  for (const sleeve of statuses) {
+    if (plannedAssignments.some((p) => p.sleeveId === sleeve.id)) continue;
+
     const assignment = resolveSleeveAssignment(
       sleeve.id,
       sleeve.shock,
@@ -191,17 +203,28 @@ function manageAllSleeves(
       assignedFactions.add(assignment.target);
     }
 
-    const success = setSleeveTask(ns, sleeve.id, assignment);
+    plannedAssignments.push({ sleeveId: sleeve.id, assignment });
+  }
+
+  // 2. Ausführung in 2 Phasen:
+  // Erst Nicht-Fraktions-Tasks zuweisen, damit bestehende Fraktions-Locks gelöst werden
+  const nonFactionTasks = plannedAssignments.filter((p) => p.assignment.mode !== "FACTION");
+  const factionTasks = plannedAssignments.filter((p) => p.assignment.mode === "FACTION");
+
+  const tasksSummaryMap = new Map<number, string>();
+
+  for (const { sleeveId, assignment } of [...nonFactionTasks, ...factionTasks]) {
+    const success = setSleeveTask(ns, sleeveId, assignment);
 
     if (success) {
-      tasksSummary.push(`S${sleeve.id}:${assignment.mode}`);
+      tasksSummaryMap.set(sleeveId, `S${sleeveId}:${assignment.mode}`);
     } else {
-      // Fallback falls Zuweisung fehlschlägt
-      setSleeveTask(ns, sleeve.id, { mode: "CRIME", target: "Homicide" });
-      tasksSummary.push(`S${sleeve.id}:CRIME(FB)`);
+      setSleeveTask(ns, sleeveId, { mode: "CRIME", target: "Homicide" });
+      tasksSummaryMap.set(sleeveId, `S${sleeveId}:CRIME(FB)`);
     }
   }
 
+  const tasksSummary = statuses.map((s) => tasksSummaryMap.get(s.id) ?? `S${s.id}:IDLE`);
   return tasksSummary.join(" | ");
 }
 

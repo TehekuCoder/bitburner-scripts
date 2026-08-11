@@ -116,13 +116,18 @@ export function setSleeveTask(
 
     case "FACTION":
       if (!assignment.target || !assignment.subType) return false;
-      return (
-        ns.sleeve.setToFactionWork(
-          sleeveId,
-          assignment.target as FactionName,
-          assignment.subType as FactionWorkType
-        ) ?? false
-      );
+      try {
+        return (
+          ns.sleeve.setToFactionWork(
+            sleeveId,
+            assignment.target as FactionName,
+            assignment.subType as FactionWorkType
+          ) ?? false
+        );
+      } catch {
+        // Verhindert Skript-Absturz bei Bitburner-API Konflikten
+        return false;
+      }
 
     case "UNI":
       if (!assignment.target || !assignment.subType) return false;
