@@ -32,7 +32,7 @@ export function evaluateSleeveStates(ns: NS): SleeveStateEvaluation[] {
     const task = ns.sleeve.getTask(i);
     const taskName = task ? task.type : "None";
 
-    let recommendedMode: SleeveMode = "COMPANY";
+    let recommendedMode: SleeveMode = "CORP";
 
     if (stats.shock > 0) {
       recommendedMode = "RECOVERY";

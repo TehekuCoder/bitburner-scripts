@@ -105,7 +105,7 @@ export function setSleeveTask(
         (assignment.target as CrimeType) || ("Homicide" as CrimeType),
       );
 
-    case "COMPANY":
+    case "CORP":
       if (!assignment.target) return false;
       return ns.sleeve.setToCompanyWork(
         sleeveId,
@@ -206,8 +206,8 @@ function isSameTask(
       return currentCrime === targetCrime;
     }
 
-    case "COMPANY":
-      return current.type === "COMPANY" && t.companyName === assignment.target;
+    case "CORP":
+      return current.type === "CORP" && t.companyName === assignment.target;
 
     case "FACTION":
       return current.type === "FACTION" && t.factionName === assignment.target;
