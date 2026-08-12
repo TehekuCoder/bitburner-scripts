@@ -70,6 +70,7 @@ export async function main(ns: NS): Promise<void> {
       currentBitNode: currentBitnode.node,
       currentBitNodeLevel: currentBitnode.level,
       strategy: mode,
+      isDominionActive: evalRes.isDominionActive,
       isBN2GangMode: evalRes.isBN2GangMode,
       hasGang: evalRes.hasGang,
       gangFaction: evalRes.gangFaction ?? undefined,
@@ -121,17 +122,13 @@ function manageMicroservices(
     UNI: PATHS.tasks.uni,
     CRIME: PATHS.tasks.crime,
     KILLS: PATHS.tasks.crime,
-    KARMA: PATHS.tasks.crime, // Nutzt Crime-Task mit Fokus auf Homicide
-    // BLADEBURNER: PATHS.tasks.bladeburner, // Skript für Bladeburner-Orchestrierung
-    // CHURCH: PATHS.tasks.stanek, // Skript zum Laden des Stanek-Rasters
+    KARMA: PATHS.tasks.crime,
     DOMINION: PATHS.tasks.uni,
   };
 
   let targetScript: string | undefined = modeToScript[currentMode];
 
   if (currentMode === "MONEY") {
-    // Nur pausieren, wenn SOWOHL eine Gang als auch ein echter HWGW-Batcher aktiv Geld bringen.
-    // Ansonsten soll der Hauptcharakter weiter Crime-Tasks für Geld & Stats ausführen.
     if (hasGang && isBatcherActive) {
       logger.debug(
         `[MONEY] Gang & HWGW-Batcher aktiv. Pausiere manuelle Tasks.`,
@@ -143,8 +140,6 @@ function manageMicroservices(
     }
   }
 
-  // 🧹 Bereinigen: Beende alle Skripte, die nicht der aktuelle Target-Script sind.
-  // Set verhindert doppeltes Killen (da CRIME und KILLS auf dieselbe Datei zeigen)
   const activeScriptsToStop = new Set(
     Object.values(modeToScript).filter(
       (script) => script !== targetScript && ns.isRunning(script, "home"),
@@ -158,7 +153,6 @@ function manageMicroservices(
     });
   }
 
-  // 🚀 Ziel-Skript prüfen und ggf. starten
   if (targetScript && ns.fileExists(targetScript, "home")) {
     const runningProc = ns.ps("home").find((p) => p.filename === targetScript);
     const isRunning = runningProc !== undefined;
@@ -207,7 +201,7 @@ function manageMicroservices(
 }
 
 /**
- * Nimmt ausstehende Fraktionseinladungen automatisch an (unter Beachtung von Stadtfraktionen).
+ * Nimmt ausstehende Fraktionseinladungen automatisch an.
  */
 function handleFactionInvitations(ns: NS, logger: Logger): void {
   const sing = ns.singularity;
@@ -231,10 +225,10 @@ function handleFactionInvitations(ns: NS, logger: Logger): void {
 }
 
 /**
- * Stellt sicher, dass globale UI-Skripte und Dashboards dauerhaft laufen.
+ * Stellt sicher, dass globale UI-Skripte dauerhaft laufen.
  */
 function ensureUIServices(ns: NS, logger: Logger): void {
-  const uiScript = "ui/roadmap.js"; // Alternativ PATHS.ui?.roadmap
+  const uiScript = "ui/roadmap.js";
 
   if (ns.fileExists(uiScript, "home") && !ns.isRunning(uiScript, "home")) {
     const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");

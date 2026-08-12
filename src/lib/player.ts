@@ -157,6 +157,7 @@ export function determineStrategy(
   nextRoadmapFaction: TargetFactionResult | null,
   factionToWorkFor: TargetFactionResult | null,
   isReadyForFactionGrind: boolean,
+  isDominionEtaReady: boolean = false,
   logger?: Logger,
 ): StrategyResult {
   const hackExpMult = bnMults.HackExpGain ?? 1;
@@ -185,7 +186,7 @@ export function determineStrategy(
     }
   }
 
-  // 3️⃣ PHASE 1: Early-Game Fraktionen (CyberSec, Netburners, Tian Di Hui)
+  // 3️⃣ PHASE 1: Early-Game Fraktionen
   if (
     factionToWorkFor &&
     EARLY_FACTIONS.includes(factionToWorkFor.name as FactionName) &&
@@ -218,14 +219,13 @@ export function determineStrategy(
     return { mode: "KARMA" };
   }
 
-  // 5️⃣ PHASE 3: Vor-Daedalus Stat-Grind (Erst wenn Roadmap abgearbeitet ist)
+  // 5️⃣ PHASE 3: Vor-Daedalus Stat-Grind
   if (
     !player.factions.includes("Daedalus") &&
     !daedalusDone &&
     !factionToWorkFor
   ) {
     const installedAugs = ns.singularity.getOwnedAugmentations(false).length;
-    // Wenn genug Augments installiert sind, aber Daedalus noch nicht beigetreten wurde:
     if (installedAugs >= 30 || player.money >= 100e9) {
       const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
       const hasCombatReq = minCombat >= 1500;
@@ -258,6 +258,7 @@ export function determineStrategy(
       };
     }
   }
+
   // 7️⃣ PHASE 5: CHURCH OF THE MACHINE GOD / STANEK (SF13)
   try {
     if (ns.serverExists("church") && ns.stanek?.activeFragments().length > 0) {
@@ -275,20 +276,24 @@ export function determineStrategy(
   } catch {}
 
   // 9️⃣ PHASE 7: WORLD DOMINATION (Red Pill / DOMINION Modus)
-  const isDominionActive = currentState?.isDominionActive ?? false;
+  // Getriggert durch: Expliziten State-Flag, Red Pill Besitz, ODER (Daedalus Rep fertig UND ETA <= 30 Min)
+  const isDominionActive =
+    currentState?.isDominionActive ||
+    redPillOwned ||
+    (daedalusDone && isDominionEtaReady);
 
-  if (daedalusDone || isDominionActive) {
+  if (isDominionActive) {
     let worldDaemonReq = 3000;
     try {
-      worldDaemonReq = ns.getServerRequiredHackingLevel("w0r1d_d43m0n");
+      if (ns.serverExists("w0r1d_d43m0n")) {
+        worldDaemonReq = ns.getServerRequiredHackingLevel("w0r1d_d43m0n");
+      }
     } catch {}
 
-    if (player.skills.hacking < worldDaemonReq || isDominionActive) {
-      logger?.debug(
-        `[Strategie] 🌐 DOMINION Modus aktiv: Hacking Push (${player.skills.hacking}/${worldDaemonReq}) ➔ DOMINION`,
-      );
-      return { mode: "DOMINION", targetStat: worldDaemonReq };
-    }
+    logger?.debug(
+      `[Strategie] 🌐 DOMINION Modus aktiv: Hacking Push (${player.skills.hacking}/${worldDaemonReq}) ➔ DOMINION`,
+    );
+    return { mode: "DOMINION", targetStat: worldDaemonReq };
   }
 
   // 🔟 FALLBACK: MONEY

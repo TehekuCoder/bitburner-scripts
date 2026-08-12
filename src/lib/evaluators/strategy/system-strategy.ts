@@ -33,6 +33,7 @@ export interface SystemEvaluationResult {
   hasSavingTarget: boolean;
   isReadyForFactionGrind: boolean;
   cachedFallbackTarget: string;
+  isDominionActive: boolean;
   fillerConfig: {
     shareMaxRamPercent: number;
     maxXpLevel: number;
@@ -48,6 +49,11 @@ export class SystemStrategyEvaluator {
   private lastAugAnalysis = 0;
   private allNetworkServers: string[] = [];
 
+  // 📈 Skill-Rate & ETA-Tracking für Dominion Push
+  private lastHackSkill = 0;
+  private lastHackTime = 0;
+  private hackRatePerSec = 0;
+
   public evaluate(ns: NS, logger: Logger): SystemEvaluationResult {
     const now = Date.now();
     const currentState = loadState(ns);
@@ -55,6 +61,38 @@ export class SystemStrategyEvaluator {
     const bnMults = loadBnMults(ns);
     const gangState = loadGangState(ns);
     const gangFaction = gangState?.hasGang ? gangState.gangFaction : null;
+
+    // 0️⃣ DOMINION ETA-BERECHNUNG (Hacking Level Push Rate)
+    const currentHack = p.skills.hacking;
+    if (this.lastHackTime > 0 && now > this.lastHackTime) {
+      const dt = (now - this.lastHackTime) / 1000;
+      const dSkill = currentHack - this.lastHackSkill;
+      if (dt > 0 && dSkill >= 0) {
+        const currentRate = dSkill / dt;
+        // Exponentielle Glättung für stabile ETA-Werte
+        this.hackRatePerSec =
+          this.hackRatePerSec === 0
+            ? currentRate
+            : this.hackRatePerSec * 0.8 + currentRate * 0.2;
+      }
+    }
+    this.lastHackSkill = currentHack;
+    this.lastHackTime = now;
+
+    let worldDaemonReq = 3000;
+    try {
+      if (ns.serverExists("w0r1d_d43m0n")) {
+        worldDaemonReq = ns.getServerRequiredHackingLevel("w0r1d_d43m0n");
+      }
+    } catch {}
+
+    const remainingHack = Math.max(0, worldDaemonReq - currentHack);
+    const etaSeconds =
+      this.hackRatePerSec > 0 ? remainingHack / this.hackRatePerSec : Infinity;
+
+    // Ready wenn Hacking-Level bereits erreicht ODER ETA <= 30 Minuten (1800 Sekunden)
+    const isDominionEtaReady =
+      remainingHack === 0 || (this.hackRatePerSec > 0 && etaSeconds <= 1800);
 
     // 1️⃣ Netzwerk-Scan & Cache
     if (
@@ -88,7 +126,6 @@ export class SystemStrategyEvaluator {
     const currentCity = CITY_FACTIONS.find((c) => p.factions.includes(c));
     const augRoadmap = currentState?.augRoadMap ?? [];
 
-    // 🔍 LOG 1: Roadmap & Spieler-Kontext (Fix: p.factions.join(", "))
     logger.debug("[STRATEGY] Augmentation-Roadmap Status", undefined, {
       context: {
         hasState: !!currentState,
@@ -108,7 +145,6 @@ export class SystemStrategyEvaluator {
       currentCity,
     );
 
-    // 🔍 LOG 2: Ergebnis von findNextRoadmapFaction (Fix: Rep direkt über Singularity lesen)
     logger.debug("[STRATEGY] findNextRoadmapFaction Ergebnis", undefined, {
       context: {
         targetName: nextRoadmapFaction?.name ?? "null",
@@ -174,7 +210,6 @@ export class SystemStrategyEvaluator {
 
     const isDaedalus = nextRoadmapFaction?.name === "Daedalus";
 
-    // Prüfen, ob die Ziel-Fraktion gefiltert wird
     const factionToWorkFor: TargetFactionResult | null =
       (!isBN2GangMode || isDaedalus || nextRoadmapFaction !== null) &&
       factionRepMult > 0.1
@@ -188,7 +223,6 @@ export class SystemStrategyEvaluator {
       "home",
     );
 
-    // 🔍 LOG 3: Faction-Readiness & Arbeitsziel
     logger.debug("[STRATEGY] Faction-Readiness Evaluierung", undefined, {
       context: {
         nextFactionName: nextRoadmapFaction?.name ?? "Keine",
@@ -215,9 +249,9 @@ export class SystemStrategyEvaluator {
       nextRoadmapFaction,
       factionToWorkFor,
       isReadyForFactionGrind,
+      isDominionEtaReady,
     );
 
-    // 🔍 LOG 4: Primäre Strategieentscheidung
     logger.debug("[STRATEGY] determineStrategy Ausgangs-Ergebnis", undefined, {
       context: {
         mode: strategy.mode,
@@ -227,7 +261,6 @@ export class SystemStrategyEvaluator {
       },
     });
 
-    // Nur in den Fallback MONEY schalten, wenn REP gefordert ist, aber kein Faction-Target existiert
     if (isBN2GangMode && strategy.mode === "REP" && !factionToWorkFor) {
       logger.debug(
         "BN2 Gang Mode aktiv: Kein Faction-Target für REP. Fallback auf MONEY.",
@@ -291,7 +324,7 @@ export class SystemStrategyEvaluator {
       label = `⚔️ Bladeburner Ops`;
     } else if (mode === "DOMINION") {
       currentVal = p.skills.hacking;
-      targetVal = targetStat ?? 3000;
+      targetVal = targetStat ?? worldDaemonReq;
       label = `🌐 DOMINION Rush (w0r1d_d43m0n)`;
     } else if (mode === "CHURCH") {
       currentVal = 0;
@@ -340,14 +373,16 @@ export class SystemStrategyEvaluator {
       currentState,
     });
 
-    // Dynamic Filler Config
+    const isDominionActive =
+      currentState?.isDominionActive || mode === "DOMINION";
+
     const sharePercent =
       mode === "REP"
         ? 0.4
         : mode === "UNI"
           ? 0.5
           : mode === "DOMINION"
-            ? 0.9 // High-Priority XP Share während DOMINION
+            ? 0.9 // High-Priority XP Share während DOMINION (Endspurt)
             : mode === "CHURCH"
               ? 0.8
               : mode === "MONEY"
@@ -358,7 +393,7 @@ export class SystemStrategyEvaluator {
       mode === "CRIME" || mode === "KARMA"
         ? 100
         : mode === "UNI" || mode === "DOMINION"
-          ? (targetStat ?? 3000)
+          ? (targetStat ?? worldDaemonReq)
           : p.skills.hacking > 800
             ? 1500
             : 1000;
@@ -376,6 +411,7 @@ export class SystemStrategyEvaluator {
       hasSavingTarget,
       isReadyForFactionGrind,
       cachedFallbackTarget: this.cachedFallbackTarget,
+      isDominionActive,
       fillerConfig: {
         shareMaxRamPercent: sharePercent,
         maxXpLevel: dynamicMaxXp,
