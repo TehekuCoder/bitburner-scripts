@@ -10,7 +10,7 @@ export class MetricTracker {
 
   /**
    * Aktualisiert den Tracker mit den aktuellen Werten und berechnet die EMA-Rate neu.
-   * @param mode Die aktuelle Bot-Strategie (z.B. "REP", "CORP", "TRAIN")
+   * @param mode Die aktuelle Bot-Strategie (z.B. "REP", "COMPANY", "TRAIN")
    * @param currentVal Der aktuelle Fortschrittswert
    * @param targetVal Das Ziel, das erreicht werden soll
    * @param onModeChange Callback-Funktion, die bei einem Strategiewechsel triggert
@@ -62,7 +62,7 @@ export class MetricTracker {
    * Generiert einen sauber formatierten ETA-String.
    */
   public getEtaString(mode: string, currentVal: number, targetVal: number): string {
-    if (targetVal === 0 && ["REP", "CORP", "TRAIN"].includes(mode)) {
+    if (targetVal === 0 && ["REP", "COMPANY", "TRAIN"].includes(mode)) {
       return "Fertig (Max)";
     }
 

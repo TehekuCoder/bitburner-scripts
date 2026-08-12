@@ -152,8 +152,8 @@ function resolveSleeveAssignment(
           target: "Rothman University",
           subType: "Algorithms" as UniversityClassType,
         };
-      case "CORP":
-        return { mode: "CORP", target: "ECORP" };
+      case "COMPANY":
+        return { mode: "COMPANY", target: "ECORP" };
     }
   }
 

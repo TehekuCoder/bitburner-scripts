@@ -173,7 +173,7 @@ function getDynamicPriorityList(
     });
   }
 
-  if (strategy === "CORP") {
+  if (strategy === "COMPANY") {
     list.push({
       name: "Exchange for Corporation Research",
       condition: (ns) => hasCorporation(ns) && ns.corporation.hasCorporation(),

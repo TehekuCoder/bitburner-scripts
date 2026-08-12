@@ -40,8 +40,8 @@ export async function main(ns: NS): Promise<void> {
 
     if (mode !== previousStrategy) {
       const isOscillating =
-        ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(mode) &&
-        ["MONEY", "CRIME", "REP", "CORP", "TRAIN"].includes(previousStrategy);
+        ["MONEY", "CRIME", "REP", "COMPANY", "TRAIN"].includes(mode) &&
+        ["MONEY", "CRIME", "REP", "COMPANY", "TRAIN"].includes(previousStrategy);
 
       if (
         isOscillating &&

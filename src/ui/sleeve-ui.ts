@@ -33,7 +33,7 @@ function parseTaskDetails(task: SleeveTask | null): {
       const detail = workType ? ` (${workType})` : "";
       return { icon: "🤝", text: `${t.factionName}${detail}` };
     }
-    case "CORP":
+    case "COMPANY":
       return { icon: "🏢", text: `Company: ${t.companyName}` };
     case "CRIME":
       return { icon: "🔫", text: `Crime: ${t.crimeType ?? t.actionName}` };

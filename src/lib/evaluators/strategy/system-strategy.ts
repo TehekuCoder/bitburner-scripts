@@ -323,7 +323,7 @@ export class SystemStrategyEvaluator {
         ns.singularity.getFactionRep(factionKey);
       targetVal = factionTargets[factionKey] ?? 0;
       label = `Fraktion: ${targetFaction}`;
-    } else if (mode === "CORP" && targetCompany) {
+    } else if (mode === "COMPANY" && targetCompany) {
       currentVal = ns.singularity.getCompanyRep(targetCompany);
       targetVal = targetCompany === "Fulcrum Technologies" ? 250_000 : 400_000;
       label = `Corp: ${targetCompany}`;

@@ -26,7 +26,7 @@ export function generateProgressBar(ns: NS, params: UIProgressBarParams): string
   let generatedBar = "";
 
   // --- STRATEGIE-SPEZIFISCHE UI-GENERIERUNG ---
-  if (["REP", "CORP", "TRAIN"].includes(mode) && targetVal > 0) {
+  if (["REP", "COMPANY", "TRAIN"].includes(mode) && targetVal > 0) {
     const pct = ((currentVal / targetVal) * 100).toFixed(1);
     generatedBar = `${label} | ${ns.format.number(currentVal, 1)}/${ns.format.number(targetVal, 1)} (${pct}%) | ETA: ${etaStr}`;
   } 

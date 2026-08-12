@@ -11,7 +11,7 @@ export type PurchaseCategory =
   | "SLEEVE_AUG"
   | "GANG_EQUIPMENT"
   | "HACKNET"
-  | "CORP"
+  | "COMPANY"
   | "STOCK_LICENSE" // Neue Kategorie für API Zugänge
   | "STOCK_TRADE";
 
@@ -48,7 +48,7 @@ export const CATEGORY_WEIGHTS: Record<PurchaseCategory, number> = {
   PLAYER_AUG: 50,
   HACKNET: 40,
   STOCK_LICENSE: 30,
-  CORP: 20,
+  COMPANY: 20,
   STOCK_TRADE: 10,
 };
 

@@ -6,7 +6,7 @@ export type SleeveMode =
   | "SYNCHRO"
   | "TRAIN"
   | "FACTION"
-  | "CORP"
+  | "COMPANY"
   | "CRIME"
   | "UNI"
   | "DOMINION";

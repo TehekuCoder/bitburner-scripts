@@ -13,13 +13,13 @@ export async function main(ns: NS): Promise<void> {
     const targetCompany = (state?.targetCompany as CompanyName) || undefined;
     const jobField = ((state as any)?.jobField as JobField) || "Software";
 
-    if (mode !== "CORP") {
+    if (mode !== "COMPANY") {
       ns.print(`[EXIT] Modus ist nun ${mode}. Beende Firmen-Worker.`);
       return;
     }
 
     if (!targetCompany) {
-      ns.print("[WARN] Modus ist CORP, aber kein 'targetCompany' defined.");
+      ns.print("[WARN] Modus ist COMPANY, aber kein 'targetCompany' defined.");
       await ns.sleep(2000);
       continue;
     }

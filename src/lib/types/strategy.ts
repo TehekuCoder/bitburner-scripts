@@ -6,7 +6,7 @@ import { AugmentState, AugmentTarget, FactionState } from "./factions";
 export type BotStrategy =
   | "MONEY"
   | "REP"
-  | "CORP"
+  | "COMPANY"
   | "TRAIN"
   | "KILLS"
   | "CRIME"

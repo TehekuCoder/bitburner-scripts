@@ -291,10 +291,10 @@ export function determineStrategy(
   if (factionToWorkFor && isReadyForFactionGrind) {
     if (factionToWorkFor.isCompany && factionToWorkFor.companyName) {
       logger?.debug(
-        `[Strategie] Megacorp-Ruf farmen für ${factionToWorkFor.companyName} (${factionToWorkFor.augName}) ➔ CORP`,
+        `[Strategie] Megacorp-Ruf farmen für ${factionToWorkFor.companyName} (${factionToWorkFor.augName}) ➔ COMPANY`,
       );
       return {
-        mode: "CORP",
+        mode: "COMPANY",
         targetCompany: factionToWorkFor.companyName as CompanyName,
       };
     }

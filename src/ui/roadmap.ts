@@ -1,4 +1,4 @@
-import { NS, FactionName } from "@ns";
+import { NS, FactionName, CompanyName } from "@ns";
 import { loadState } from "/lib/state.js";
 import { BotState } from "/lib/types/strategy.js";
 
@@ -15,7 +15,7 @@ const COLOR = {
 
 const BITNODE_PHASES = [
   "1. Bootstrapping",
-  "2. Early Factions",
+  "2. Early Factions & Corps",
   "3. Karma Rush",
   "4. Gang Empire",
   "5. Non-Gang Augs",
@@ -116,13 +116,46 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
     };
   }
 
-  // Phase 2: Early Factions
-  if (state.strategy === "REP") {
+  // Phase 2: Early Factions & Megacorps (REP & COMPANY Modus)
+  if (state.strategy === "REP" || state.strategy === "COMPANY") {
+    let detail = "";
+    let progress = 50;
+
+    if (state.strategy === "COMPANY") {
+      const company = state.targetCompany || "N/A";
+      detail = `Corp: ${company}`;
+
+      if (state.targetCompany && ns.singularity) {
+        try {
+          const currentRep = ns.singularity.getCompanyRep(state.targetCompany as CompanyName);
+          const targetRep = state.targetCompany === "Fulcrum Technologies" ? 250_000 : 400_000;
+          progress = Math.min(100, (currentRep / targetRep) * 100);
+          detail = `Corp: ${company} (${(currentRep / 1000).toFixed(0)}k / ${(targetRep / 1000).toFixed(0)}k Rep)`;
+        } catch {
+          progress = 0;
+        }
+      }
+    } else {
+      const faction = state.targetFaction || "N/A";
+      detail = `Fraktion: ${faction}`;
+
+      if (state.targetFaction && ns.singularity) {
+        try {
+          const currentRep = ns.singularity.getFactionRep(state.targetFaction as FactionName);
+          const targetRep = state.factionTargets?.[state.targetFaction] ?? 0;
+          if (targetRep > 0) {
+            progress = Math.min(100, (currentRep / targetRep) * 100);
+            detail = `Fraktion: ${faction} (${(currentRep / 1000).toFixed(0)}k / ${(targetRep / 1000).toFixed(0)}k Rep)`;
+          }
+        } catch {}
+      }
+    }
+
     return {
       phaseIndex: 2,
-      phaseName: "Early Factions",
-      detail: `Fraktion: ${state.targetFaction || "N/A"}`,
-      progressPercent: 50,
+      phaseName: "Early Factions & Corps",
+      detail,
+      progressPercent: progress,
     };
   }
 
@@ -200,7 +233,14 @@ export async function main(ns: NS): Promise<void> {
     ns.print(` ${COLOR.BOLD}AKTUELLE PHASEN-DETAILS${COLOR.RESET}`);
     ns.print(dividerSub);
     ns.print(` Strategie:    ${COLOR.YELLOW}${state.strategy || "N/A"}${COLOR.RESET}`);
-    ns.print(` Ziel-Faction: ${COLOR.CYAN}${state.targetFaction || "Keine"}${COLOR.RESET}`);
+    
+    // Dynamische Anpassung von Ziel-Corp / Ziel-Faction
+    const targetLabel = state.strategy === "COMPANY" ? "Ziel-Corp:   " : "Ziel-Faction:";
+    const targetValue = state.strategy === "COMPANY" 
+      ? (state.targetCompany || "Keine") 
+      : (state.targetFaction || "Keine");
+      
+    ns.print(` ${targetLabel} ${COLOR.CYAN}${targetValue}${COLOR.RESET}`);
     ns.print(` Status:       ${currentPhase.detail}`);
     ns.print(` Fortschritt:  ${renderProgressBar(currentPhase.progressPercent)}`);
 
