@@ -8,6 +8,7 @@ import {
   SleeveTask,
 } from "@ns";
 import { SleeveMode } from "/lib/types/sleeves.js";
+import { MEGACORPS } from "/lib/constants.js"; // ◄ Importieren
 
 export interface SleeveStatus {
   id: number;
@@ -105,12 +106,30 @@ export function setSleeveTask(
         (assignment.target as CrimeType) || ("Homicide" as CrimeType),
       );
 
-    case "COMPANY":
+    case "COMPANY": {
       if (!assignment.target) return false;
-      return ns.sleeve.setToCompanyWork(
-        sleeveId,
-        assignment.target as CompanyName,
-      );
+
+      // Firmennamen über MEGACORPS auflösen (falls Alias/Key übergeben wurde)
+      const targetInput = assignment.target;
+      const company: CompanyName =
+        MEGACORPS[targetInput] ?? (targetInput as CompanyName);
+
+      // 1. Prüfen, ob der Spieler bei der Firma angestellt ist (über lib/player.ts geregelt)
+      const player = ns.getPlayer();
+      const isEmployed =
+        player.jobs && Object.keys(player.jobs).includes(company);
+
+      if (!isEmployed) {
+        return false; // Player hat hier noch keinen Job -> Fail & Fallback greift
+      }
+
+      // 2. Sleeve der Firma zuweisen
+      try {
+        return ns.sleeve.setToCompanyWork(sleeveId, company);
+      } catch {
+        return false;
+      }
+    }
 
     case "FACTION": {
       if (!assignment.target) return false;
@@ -145,13 +164,11 @@ export function setSleeveTask(
       const sleeveInfo = ns.sleeve.getSleeve(sleeveId);
       let uniName = assignment.target ?? "Rothman University";
 
-      // Universitätsname an die Stadt des Sleeves anpassen
       if (sleeveInfo.city === "Aevum") {
         uniName = "Summit University";
       } else if (sleeveInfo.city === "Volhaven") {
         uniName = "ZB Institute of Technology";
       } else if (sleeveInfo.city !== "Sector-12") {
-        // Bei Städten ohne Uni (Chongqing, etc.) Reise nach Sector-12 ausführen
         ns.sleeve.travel(sleeveId, "Sector-12");
         uniName = "Rothman University";
       }
@@ -206,15 +223,22 @@ function isSameTask(
       return currentCrime === targetCrime;
     }
 
-    case "COMPANY":
-      return current.type === "COMPANY" && t.companyName === assignment.target;
+    case "COMPANY": {
+      if (current.type !== "COMPANY") return false;
+      const targetCompany = assignment.target
+        ? (MEGACORPS[assignment.target] ?? assignment.target)
+        : "";
+      return t.companyName === targetCompany;
+    }
 
     case "FACTION":
       return current.type === "FACTION" && t.factionName === assignment.target;
 
     case "UNI": {
       if (current.type !== "CLASS") return false;
-      const currentClass = (t.classType ?? t.className ?? t.actionName ?? "").toString().toLowerCase();
+      const currentClass = (t.classType ?? t.className ?? t.actionName ?? "")
+        .toString()
+        .toLowerCase();
       const targetClass = (assignment.subType ?? "").toString().toLowerCase();
       return currentClass === targetClass;
     }

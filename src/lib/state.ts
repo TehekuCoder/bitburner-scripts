@@ -221,8 +221,8 @@ export function patchFinanceState(ns: NS, partialState: FinanceStatePatch): void
 export function loadSleeveState(ns: NS): SleeveState | null {
   const state = loadState(ns);
   if (!state) return null;
-  const { sleeveGlobalMode, targetFaction, targetStat, strategy, sleeveProgress, isDominionActive } = state;
-  return { sleeveGlobalMode, targetFaction, targetStat, strategy, sleeveProgress, isDominionActive };
+  const { sleeveGlobalMode, targetFaction, targetCompany, targetStat, strategy, sleeveProgress, isDominionActive } = state;
+  return { sleeveGlobalMode, targetFaction, targetCompany, targetStat, strategy, sleeveProgress, isDominionActive };
 }
 
 export function patchSleeveState(ns: NS, partialState: SleeveStatePatch): void {

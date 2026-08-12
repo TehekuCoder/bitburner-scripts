@@ -1,6 +1,5 @@
 import { FactionName, NS } from "@ns";
 import { manageGang } from "../lib/utils/gang-utils.js";
-import { printGangDashboard } from "ui/gang-ui.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { patchGangState, loadBatcherState } from "/lib/state.js";
 
@@ -14,11 +13,7 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  ns.ui.openTail();
-  ns.ui.setTailTitle("Zentrale Gang-Verwaltung");
-  ns.ui.resizeTail(767, 340);
-
-  logger.info("👥 Gang-Subsystem gestartet.");
+  logger.info("👥 Gang-Daemon gestartet (Headless).");
 
   const localLogBuffer: string[] = [];
   function addLocalLog(msg: string) {
@@ -27,14 +22,16 @@ export async function main(ns: NS): Promise<void> {
   }
 
   while (true) {
-    // 📊 Batcher-Status aus dem zentralen State lesen
     const batcherState = loadBatcherState(ns);
     const isBatcherActive = batcherState?.batcherActive ?? false;
 
-    // 📊 Gang State synchronisieren
+    // 🔄 Gang verwalten & Entscheidungen ausführen
+    const result = manageGang(ns, logger, addLocalLog, isBatcherActive);
+
     const info = ns.gang.getGangInformation();
     const members = ns.gang.getMemberNames();
 
+    // 📊 State inklusive Logs und Gewinnchance für das UI sichern
     patchGangState(ns, {
       hasGang: true,
       gangFaction: info.faction as FactionName,
@@ -42,16 +39,10 @@ export async function main(ns: NS): Promise<void> {
       gangMembersCount: members.length,
       gangRespect: info.respect,
       gangWantedPenalty: info.wantedPenalty,
+      minWinChance: result?.minWinChance ?? 1,
+      recentLogs: localLogBuffer,
     });
 
-    // 🔄 batcherActive-Flag an manageGang übergeben
-    const result = manageGang(ns, logger, addLocalLog, isBatcherActive);
-
-    if (result) {
-      const { gangInfo, members, minWinChance } = result;
-      printGangDashboard(ns, gangInfo, members, minWinChance, localLogBuffer);
-    }
-
-    await ns.sleep(3000); 
+    await ns.sleep(3000);
   }
 }

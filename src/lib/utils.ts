@@ -190,3 +190,65 @@ export function adjustPriorityByMult(
   }
   return basePriority;
 }
+
+// ============================================================================
+// 4. Process & Service Helpers
+// ============================================================================
+
+export interface EnsureDaemonOptions {
+  host?: string;
+  threads?: number;
+  args?: (string | number | boolean)[];
+  /** Optionale Bedingung (z.B. hasSleeve(ns)), die true sein muss */
+  condition?: () => boolean;
+  /** Optionaler Logger zur Protokollierung */
+  logger?: { info: (msg: string) => void; warn?: (msg: string) => void };
+}
+
+/**
+ * Stellt sicher, dass ein Hintergrund-Daemon/Service dauerhaft läuft.
+ * Prüft automatisch API-Verfügbarkeit, Dateiexistenz, Laufzeitstatus und RAM.
+ * 
+ * @returns true, wenn das Skript bereits läuft oder erfolgreich gestartet wurde.
+ */
+export function ensureDaemon(
+  ns: NS,
+  scriptPath: string,
+  options: EnsureDaemonOptions = {}
+): boolean {
+  const { host = "home", threads = 1, args = [], condition, logger } = options;
+
+  // 1. Pre-Check (z.B. API noch nicht freigeschaltet)
+  if (condition && !condition()) {
+    return false;
+  }
+
+  // 2. Existenz & Status prüfen
+  if (!ns.fileExists(scriptPath, host)) {
+    return false;
+  }
+  if (ns.isRunning(scriptPath, host, ...args)) {
+    return true;
+  }
+
+  // 3. RAM-Check
+  const freeRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host);
+  const requiredRam = ns.getScriptRam(scriptPath, host) * threads;
+
+  if (freeRam < requiredRam) {
+    logger?.warn?.(
+      `⚠️ Zu wenig RAM für ${getScriptNameOnly(scriptPath)} auf ${host} ` +
+      `(Frei: ${formatRam(freeRam)}, Benötigt: ${formatRam(requiredRam)})`
+    );
+    return false;
+  }
+
+  // 4. Starten
+  const pid = ns.exec(scriptPath, host, threads, ...args);
+  if (pid > 0) {
+    logger?.info(`🚀 Service gestartet: ${scriptPath} (PID: ${pid})`);
+    return true;
+  }
+
+  return false;
+}

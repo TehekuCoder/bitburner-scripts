@@ -1,4 +1,4 @@
-import { FactionName, SleevePerson, SleeveTask } from "@ns";
+import { CompanyName, FactionName, SleevePerson, SleeveTask } from "@ns";
 import { BotStrategy } from "./strategy";
 
 export type SleeveMode =
@@ -20,6 +20,7 @@ export interface SleeveData {
 export interface SleeveOptions {
   globalMode?: SleeveMode;
   targetFaction?: FactionName | string | null;
+  targetCompany?: CompanyName | string | null; // ◄ Neu hinzugefügt
   targetStat?: number;
   strategy?: BotStrategy;
   autoBuyAugs?: boolean;
@@ -36,6 +37,7 @@ export interface SleeveGangUnlockStatus {
 export interface SleeveState {
   sleeveGlobalMode?: string;
   targetFaction?: string | FactionName | null;
+  targetCompany?: string | CompanyName | null; // ◄ Neu hinzugefügt
   targetStat?: number;
   strategy: BotStrategy;
   sleeveProgress?: string;

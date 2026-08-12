@@ -1,6 +1,35 @@
 import { NS, GangGenInfo, GangMemberInfo } from "@ns";
+import { loadGangState } from "/lib/state.js";
 
-export function printGangDashboard(
+export async function main(ns: NS): Promise<void> {
+  ns.disableLog("ALL");
+
+  if (!ns.gang.inGang()) {
+    ns.tprint("🛑 Keine Gang vorhanden. Dashboard kann nicht gestartet werden.");
+    return;
+  }
+
+  ns.ui.openTail();
+  ns.ui.setTailTitle("👥 BitOS Gang System");
+  ns.ui.resizeTail(767, 360);
+
+  while (true) {
+    const gangInfo = ns.gang.getGangInformation();
+    const memberNames = ns.gang.getMemberNames();
+    const members = memberNames.map((name) => ns.gang.getMemberInformation(name));
+    
+    // Status & Logs vom Daemon lesen
+    const gangState = loadGangState(ns);
+    const minWinChance = gangState?.minWinChance ?? 1;
+    const recentLogs = gangState?.recentLogs ?? [];
+
+    renderDashboard(ns, gangInfo, members, minWinChance, recentLogs);
+
+    await ns.sleep(1000); // Das UI aktualisiert flüssig im 1s-Takt
+  }
+}
+
+function renderDashboard(
   ns: NS,
   gangInfo: GangGenInfo,
   members: GangMemberInfo[],
@@ -9,16 +38,12 @@ export function printGangDashboard(
 ): void {
   ns.clearLog();
 
-  const dividerHeader =
-    "==============================================================================";
-  const dividerSub =
-    "------------------------------------------------------------------------------";
+  const dividerHeader = "==============================================================================";
+  const dividerSub    = "------------------------------------------------------------------------------";
 
   const penaltyPct = ((1 - gangInfo.wantedPenalty) * 100).toFixed(1);
   const territoryPct = (gangInfo.territory * 100).toFixed(2);
-  const warfareStatus = gangInfo.territoryWarfareEngaged
-    ? "⚔️ ENGAGED"
-    : "🛡️ IDLE";
+  const warfareStatus = gangInfo.territoryWarfareEngaged ? "⚔️ ENGAGED" : "🛡️ IDLE";
   const winChancePct = (minWinChance * 100).toFixed(1);
 
   ns.print(dividerHeader);
@@ -35,9 +60,7 @@ export function printGangDashboard(
       `Clash: ${warfareStatus} (Min Win: ${winChancePct}%)`,
   );
   ns.print(dividerSub);
-  ns.print(
-    " NAME       | TASK                      | STATS (AVG)  | ASC MULT | EQUI/AUG",
-  );
+  ns.print(" NAME       | TASK                     | STATS (AVG)  | ASC MULT | EQUI/AUG");
   ns.print(dividerSub);
 
   for (const member of members) {
@@ -54,15 +77,12 @@ export function printGangDashboard(
       : (member.str_asc_mult +
           member.def_asc_mult +
           member.dex_asc_mult +
-          member.agi_asc_mult) /
-        4;
+          member.agi_asc_mult) / 4;
     const multStr = `${mult.toFixed(1)}x`.padEnd(8);
 
     const equipCount = `${member.upgrades.length}/${member.augmentations.length}`;
 
-    ns.print(
-      ` ${nameStr} | ${taskStr} | ${statStr} | ${multStr} | ${equipCount}`,
-    );
+    ns.print(` ${nameStr} | ${taskStr} | ${statStr} | ${multStr} | ${equipCount}`);
   }
 
   ns.print(dividerHeader);

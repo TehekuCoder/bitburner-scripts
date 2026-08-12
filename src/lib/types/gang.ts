@@ -10,4 +10,8 @@ export interface GangState {
   gangPhase?: string;
   gangProgress?: string;
   isBN2GangMode?: boolean;
+
+  // Für das UI-Dashboard:
+  minWinChance?: number;
+  recentLogs?: string[];
 }

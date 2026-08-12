@@ -5,7 +5,13 @@ import { loadState, patchState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
 import { BotStrategy } from "/lib/types/strategy.js";
 import { SystemStrategyEvaluator } from "/lib/evaluators/strategy/system-strategy.js";
-import { getExactBitNode } from "/lib/utils";
+import {
+  getExactBitNode,
+  ensureDaemon,
+  hasSleeve,
+  hasGang,
+  hasCorporation,
+} from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -41,7 +47,9 @@ export async function main(ns: NS): Promise<void> {
     if (mode !== previousStrategy) {
       const isOscillating =
         ["MONEY", "CRIME", "REP", "COMPANY", "TRAIN"].includes(mode) &&
-        ["MONEY", "CRIME", "REP", "COMPANY", "TRAIN"].includes(previousStrategy);
+        ["MONEY", "CRIME", "REP", "COMPANY", "TRAIN"].includes(
+          previousStrategy,
+        );
 
       if (
         isOscillating &&
@@ -83,7 +91,7 @@ export async function main(ns: NS): Promise<void> {
       fillerConfig: evalRes.fillerConfig,
     });
 
-    // ⚙️ Microservices steuern
+    // ⚙️ Einmalige/Wechselnde Microservices steuern
     const isBatcherActive =
       currentState?.batchStrategy === "SHOTGUN_HWGW" ||
       currentState?.batchStrategy === "JIT_HWGW";
@@ -97,14 +105,16 @@ export async function main(ns: NS): Promise<void> {
       (ns as any).heart?.break() ?? 0,
       evalRes.hasGang,
     );
-    ensureUIServices(ns, logger);
+
+    // 🤖 Dauerhafte Hintergrund-Daemons & Services verwalten
+    manageServices(ns, logger);
 
     await ns.sleep(2000);
   }
 }
 
 /**
- * Steuert das Starten und Beenden der Hintergrund-Tasks (Microservices).
+ * Steuert das Starten und Beenden von modi-abhängigen Hintergrund-Tasks.
  */
 function manageMicroservices(
   ns: NS,
@@ -225,20 +235,30 @@ function handleFactionInvitations(ns: NS, logger: Logger): void {
 }
 
 /**
- * Stellt sicher, dass globale UI-Skripte dauerhaft laufen.
+ * Stellt sicher, dass dauerhafte Hintergrund-Daemons & Manager kontinuierlich laufen.
  */
-function ensureUIServices(ns: NS, logger: Logger): void {
-  const uiScript = "ui/roadmap.js";
+function manageServices(ns: NS, logger: Logger): void {
+  // 1. UI-Dashboards
+  ensureDaemon(ns, "ui/roadmap.js", { logger });
 
-  if (ns.fileExists(uiScript, "home") && !ns.isRunning(uiScript, "home")) {
-    const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
-    const requiredRam = ns.getScriptRam(uiScript, "home");
+  // Optional: Das Sleeve-Dashboard automatisch mit starten, wenn Sleeves existieren
+  ensureDaemon(ns, "ui/sleeve.js", {
+    condition: () => hasSleeve(ns),
+    logger,
+  });
 
-    if (freeRam >= requiredRam) {
-      const pid = ns.run(uiScript, 1);
-      if (pid > 0) {
-        logger.info(`📊 UI-Dashboard gestartet: ${uiScript}`);
-      }
-    }
-  }
+  // 2. Hintergrund-Daemons (Logik)
+  ensureDaemon(ns, "daemons/sleeve-manager.js", {
+    condition: () => hasSleeve(ns),
+    logger,
+  });
+  ensureDaemon(ns, "ui/gang.js", {
+    condition: () => hasSleeve(ns),
+    logger,
+  });
+
+  ensureDaemon(ns, "daemons/gang-manager.js", {
+    condition: () => hasGang(ns),
+    logger,
+  });
 }

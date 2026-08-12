@@ -5,7 +5,6 @@ import {
   FactionWorkType,
   UniversityClassType,
 } from "@ns";
-import { printSleeveDashboard } from "/ui/sleeve-ui.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { loadSleeveState, patchSleeveState } from "/lib/state.js";
 import {
@@ -18,6 +17,7 @@ import {
   getSleeveStatuses,
   setSleeveTask,
 } from "/lib/utils/sleeve-utils.js";
+import { MEGACORPS } from "/lib/constants.js";
 
 type ExtendedGangStatus = SleeveGangUnlockStatus & { gangFaction?: string };
 
@@ -103,7 +103,7 @@ function resolveSleeveAssignment(
     return { mode: "SYNCHRO" };
   }
 
-  // 2️⃣ DOMINION / XP-RUSH (Prüft Strategy, Flag UND globalMode)
+  // 2️⃣ DOMINION / XP-RUSH
   const isDominion =
     options.strategy === "DOMINION" ||
     options.isDominionActive === true ||
@@ -152,12 +152,20 @@ function resolveSleeveAssignment(
           target: "Rothman University",
           subType: "Algorithms" as UniversityClassType,
         };
-      case "COMPANY":
-        return { mode: "COMPANY", target: "ECORP" };
+      case "COMPANY": {
+        const corpTarget =
+          options.targetCompany || MEGACORPS["Bachman & Associates"];
+        return { mode: "COMPANY", target: corpTarget };
+      }
     }
   }
 
   // 4️⃣ STRATEGIE-REAKTION
+  if (options.strategy === "COMPANY") {
+    const corpTarget = options.targetCompany || MEGACORPS["Bachman & Associates"];
+    return { mode: "COMPANY", target: corpTarget };
+  }
+
   if (options.strategy === "UNI") {
     return {
       mode: "UNI",
@@ -191,7 +199,6 @@ function manageAllSleeves(
   ownedAugs: string[],
   factionsNeedingRep: FactionName[],
   logger: Logger,
-  addLocalLog: (msg: string) => void,
 ): string {
   const statuses = getSleeveStatuses(ns);
   const gangStatus = checkSleeveGangStatus(ns);
@@ -263,7 +270,7 @@ function manageAllSleeves(
     plannedAssignments.push({ sleeveId: sleeve.id, assignment });
   }
 
-  // 2. Ausführung
+  // 2. Ausführung mit intelligentem Fallback
   const nonFactionTasks = plannedAssignments.filter(
     (p) => p.assignment.mode !== "FACTION",
   );
@@ -282,8 +289,22 @@ function manageAllSleeves(
     if (success) {
       tasksSummaryMap.set(sleeveId, `S${sleeveId}:${assignment.mode}`);
     } else {
+      if (assignment.mode === "COMPANY") {
+        const uniSuccess = setSleeveTask(ns, sleeveId, {
+          mode: "UNI",
+          target: "Rothman University",
+          subType: "Algorithms" as UniversityClassType,
+        });
+        if (uniSuccess) {
+          tasksSummaryMap.set(sleeveId, `S${sleeveId}:UNI(NO_JOB)`);
+          logger.warn(`Sleeve #${sleeveId}: Noch keinen Job bei ${assignment.target}. Sende zur Uni.`);
+          continue;
+        }
+      }
+
       setSleeveTask(ns, sleeveId, { mode: "CRIME", target: "Homicide" });
       tasksSummaryMap.set(sleeveId, `S${sleeveId}:CRIME(FB)`);
+      logger.warn(`Sleeve #${sleeveId}: Aufgabe ${assignment.mode} fehlgeschlagen. Fallback auf Homicide.`);
     }
   }
 
@@ -296,24 +317,14 @@ function manageAllSleeves(
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
-  ns.ui.openTail();
-  ns.ui.setTailTitle("Zentrale Sleeve-Verwaltung");
-  ns.ui.resizeTail(800, 320);
-
   const logger = new Logger(ns, "SLEEVE");
-  logger.info("🦾 Sleeve-Subsystem aktiv. Kontrolliere Klone...");
+  logger.info("🦾 Sleeve-Subsystem gestartet.");
 
   let factionsNeedingRep: FactionName[] = [];
   let lastFactionScan = 0;
   let lastStateProgress = "";
   let lastStatusMsg = "";
   const SCAN_INTERVAL = 30000;
-
-  const localLogBuffer: string[] = [];
-  function addLocalLog(msg: string) {
-    localLogBuffer.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
-    if (localLogBuffer.length > 5) localLogBuffer.shift();
-  }
 
   while (true) {
     if (ns.sleeve === undefined) {
@@ -331,18 +342,17 @@ export async function main(ns: NS): Promise<void> {
     const unlockStatus = checkSleeveGangStatus(ns);
     let statusMsg = "";
     if (unlockStatus.inGang) {
-      statusMsg = `🟢 Sleeves + Gang aktiv (${unlockStatus.gangFaction ?? "Gang"} wird ignoriert)`;
+      statusMsg = `Sleeves + Gang aktiv (${unlockStatus.gangFaction ?? "Gang"} wird ignoriert)`;
     } else if (unlockStatus.shouldGrindKarma) {
-      statusMsg = `🟡 Sleeves aktiv, Gang ausstehend (Karma: ${ns.heart.break().toFixed(0)} / -54000)`;
+      statusMsg = `Sleeves aktiv, Gang ausstehend (Karma: ${ns.heart.break().toFixed(0)} / -54000)`;
     } else if (unlockStatus.hasGangApi) {
-      statusMsg = "🟢 Sleeves + Gang-API bereit (Karma-Ziel erreicht)";
+      statusMsg = "Sleeves + Gang-API bereit (Karma-Ziel erreicht)";
     } else {
-      statusMsg = "🔵 Sleeves-only Modus (Keine Gang-API im Node)";
+      statusMsg = "Sleeves-only Modus (Keine Gang-API im Node)";
     }
 
     if (statusMsg !== lastStatusMsg) {
       logger.info(statusMsg);
-      addLocalLog(statusMsg);
       lastStatusMsg = statusMsg;
     }
 
@@ -352,6 +362,7 @@ export async function main(ns: NS): Promise<void> {
     const options: SleeveOptions = {
       globalMode: botState?.sleeveGlobalMode as SleeveMode | undefined,
       targetFaction: botState?.targetFaction,
+      targetCompany: botState?.targetCompany,
       targetStat: botState?.targetStat,
       strategy: botState?.strategy,
       autoBuyAugs: botState?.autoBuyAugs,
@@ -380,15 +391,13 @@ export async function main(ns: NS): Promise<void> {
       ownedAugs,
       factionsNeedingRep,
       logger,
-      addLocalLog,
     );
 
     if (currentProgress && currentProgress !== lastStateProgress) {
       patchSleeveState(ns, { sleeveProgress: currentProgress });
+      logger.debug(`Fortschritt aktualisiert: ${currentProgress}`);
       lastStateProgress = currentProgress;
     }
-
-    printSleeveDashboard(ns, numSleeves, localLogBuffer);
 
     await ns.sleep(2000);
   }
