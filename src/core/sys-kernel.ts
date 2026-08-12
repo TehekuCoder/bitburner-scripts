@@ -7,7 +7,7 @@ import { REFRESH_INTERVALS } from "/lib/constants.js";
 
 // RAM-Puffer-Konfiguration für Home
 const HOME_RESERVED_RAM_DEFAULT = 16; // Standard-Puffer (GB) für Backdoor / System-Scripts
-const HOME_RESERVED_RAM_LOW = 8;      // Reduzierter Puffer bei <= 32GB Home-RAM
+const HOME_RESERVED_RAM_LOW = 8; // Reduzierter Puffer bei <= 32GB Home-RAM
 
 /** Hilfsmethode zur Auflösung von .ts zu .js Dateipfaden für Bitburner Runtime Checks */
 const resolvePath = (path: string): string =>
@@ -50,12 +50,13 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
+  const defaultTarget = resolveFallbackTarget(ns);
   const existingState = (loadState(ns) || {}) as Record<string, any>;
   patchState(ns, {
     strategy: existingState.strategy || "MONEY",
     progressBar: "Kernel operativ. Warte auf Subsysteme.",
     allServers: existingState.allServers || [],
-    kernelTarget: existingState.kernelTarget || "n00dles",
+    kernelTarget: defaultTarget,
   });
 
   let lastNetworkScan = 0;
@@ -95,10 +96,16 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // C. FALLBACK WORKER (Netzwerkweite Verteilung & dynamische Home-Steuerung)
-    const orchestratorExecPath = resolvePath(PATHS.daemons.hackingOrchestrator);
     const workExecPath = resolvePath(PATHS.payloads.work);
-    const isHackingOrchestratorRunning = ns.isRunning(orchestratorExecPath, "home");
-    const allServersList = currentState?.allServers?.length ? currentState.allServers : getAllServers(ns);
+
+    // Robuster Prozess-Check via ns.ps() statt anfälligem ns.isRunning()-Pfadvergleich
+    const isHackingOrchestratorRunning = ns
+      .ps("home")
+      .some((proc) => proc.filename.includes("hacking-orchestrator"));
+
+    const allServersList = currentState?.allServers?.length
+      ? currentState.allServers
+      : getAllServers(ns);
 
     if (isHackingOrchestratorRunning) {
       // Beende Fallback-Worker überall, wenn der Batch-Orchestrator übernimmt
@@ -108,7 +115,7 @@ export async function main(ns: NS): Promise<void> {
         }
       }
     } else if (ns.fileExists(workExecPath, "home")) {
-      const target = currentState?.kernelTarget || "n00dles";
+      const target = resolveFallbackTarget(ns);
       const workerRam = ns.getScriptRam(workExecPath, "home");
 
       if (workerRam > 0) {
@@ -127,6 +134,8 @@ export async function main(ns: NS): Promise<void> {
               ns.scp(workExecPath, server, "home");
             }
             if (!ns.isRunning(workExecPath, server, target)) {
+              // Alte Worker mit evtl. altem Target beenden
+              ns.scriptKill(workExecPath, server);
               ns.exec(workExecPath, server, threads, target);
             }
           }
@@ -134,19 +143,23 @@ export async function main(ns: NS): Promise<void> {
 
         // 2. DYNAMISCHE STEUERUNG AUF HOME
         const financeExecPath = resolvePath(PATHS.daemons.financeDispatcher);
-        const isFinanceWaiting = homeMax >= 128 &&
+        const isFinanceWaiting =
+          homeMax >= 128 &&
           ns.fileExists(financeExecPath, "home") &&
           !ns.isRunning(financeExecPath, "home");
 
         // Wenn der Finance Dispatcher bereitsteht, aber noch nicht läuft -> Home RAM freigeben
         if (isFinanceWaiting) {
           if (ns.isRunning(workExecPath, "home")) {
-            logger.info("Finance Dispatcher wartet auf RAM. Gebe Home-RAM frei...");
+            logger.info(
+              "Finance Dispatcher wartet auf RAM. Gebe Home-RAM frei...",
+            );
             ns.scriptKill(workExecPath, "home");
           }
         } else {
           // Normaler Fallback mit reserviertem Puffer
-          const reservedRam = homeMax <= 32 ? HOME_RESERVED_RAM_LOW : HOME_RESERVED_RAM_DEFAULT;
+          const reservedRam =
+            homeMax <= 32 ? HOME_RESERVED_RAM_LOW : HOME_RESERVED_RAM_DEFAULT;
           const usableHomeFree = Math.max(0, homeFree - reservedRam);
           const maxThreads = Math.floor(usableHomeFree / workerRam);
           const isWorkerRunning = ns.isRunning(workExecPath, "home", target);
@@ -154,12 +167,14 @@ export async function main(ns: NS): Promise<void> {
           if (maxThreads > 0) {
             if (!isWorkerRunning) {
               logger.info(
-                `Starte Fallback-Worker auf home (${target}) mit ${maxThreads} Threads (Puffer: ${reservedRam}GB)...`
+                `Starte Fallback-Worker auf home (${target}) mit ${maxThreads} Threads (Puffer: ${reservedRam}GB)...`,
               );
               ns.run(workExecPath, maxThreads, target);
             }
           } else if (isWorkerRunning) {
-            logger.warn(`Zu wenig RAM für Puffer (${reservedRam}GB). Stoppe Fallback-Worker auf home...`);
+            logger.warn(
+              `Zu wenig RAM für Puffer (${reservedRam}GB). Stoppe Fallback-Worker auf home...`,
+            );
             ns.scriptKill(workExecPath, "home");
           }
         }
@@ -181,4 +196,14 @@ export async function main(ns: NS): Promise<void> {
 
     await ns.sleep(5000);
   }
+}
+
+/**
+ * Ermittelt dynamisch ein geeignetes Fallback-Ziel für schwache Worker
+ */
+function resolveFallbackTarget(ns: NS): string {
+  if (ns.serverExists("joesguns") && ns.hasRootAccess("joesguns")) {
+    return "joesguns";
+  }
+  return "n00dles";
 }

@@ -2,7 +2,7 @@ import { NS } from "@ns";
 import { loadBatcherState, patchBatcherState } from "/lib/state.js";
 import { evaluateHackingStrategy } from "/lib/evaluators/strategy/hacking-strategy.js";
 import { BatchStrategy } from "/lib/types/batcher.js";
-import { PATHS } from "/lib/paths";
+import { PATHS } from "/lib/paths.js";
 import { LoggerClient } from "/lib/logger-client.js";
 
 export async function main(ns: NS): Promise<void> {
@@ -18,13 +18,13 @@ export async function main(ns: NS): Promise<void> {
     const currentState = loadBatcherState(ns);
     const evalRec = evaluateHackingStrategy(ns);
 
-    // 1️⃣ Strategie-Ermittlung: batchStrategy prüfen
+    // 1️⃣ Strategie-Ermittlung
     let activeStrategy: BatchStrategy = evalRec.strategy;
     if (currentState?.batchStrategy === "XP_GRIND") {
       activeStrategy = "XP_GRIND";
     }
 
-    // 2️⃣ Target-Ermittlung mit Root-Prüfung & Dynamic Fallback
+    // 2️⃣ Target-Ermittlung
     let activeTarget = evalRec.preferredTarget ?? resolveXpTarget(ns);
 
     if (activeStrategy === "XP_GRIND") {
@@ -37,27 +37,27 @@ export async function main(ns: NS): Promise<void> {
 
       if (hasDaemonRoot && playerSkill >= reqSkill) {
         activeTarget = daemon;
-      } else {
+      } else if (!evalRec.preferredTarget) {
         activeTarget = resolveXpTarget(ns);
       }
     }
 
-    // 🛡️ Letzte Absicherung: Falls das Evaluator-Target noch kein Root hat
+    // 🛡️ Absicherung bei fehlendem Root
     if (!ns.hasRootAccess(activeTarget)) {
       const fallbackTarget = resolveXpTarget(ns);
       logger.warn(
         `Target '${activeTarget}' hat keinen Root-Zugriff. Fallback auf '${fallbackTarget}'`,
-        activeTarget
+        activeTarget,
       );
       activeTarget = fallbackTarget;
     }
 
-    // 📊 Statusänderungen im Logger protokollieren (vermeidet Spam in der Loop)
+    // 📊 Statusänderungen protokollieren
     if (activeStrategy !== lastStrategy || activeTarget !== lastTarget) {
       logger.info(
         `Strategie-Wechsel: ${activeStrategy} | Target: ${activeTarget}`,
         activeTarget,
-        { context: { strategy: activeStrategy, target: activeTarget } }
+        { context: { strategy: activeStrategy, target: activeTarget } },
       );
       lastStrategy = activeStrategy;
       lastTarget = activeTarget;
@@ -73,33 +73,74 @@ export async function main(ns: NS): Promise<void> {
           : `Laufende Strategie: ${activeStrategy}`,
     });
 
-    // 4️⃣ Engine starten / umschalten
+    // 4️⃣ Engine starten
     if (ns.hasRootAccess(activeTarget)) {
       ensureEngineRunning(ns, activeStrategy, activeTarget, logger);
     } else {
-      logger.error(`Kein Root-Zugriff auf ${activeTarget} vorhanden! Engine gestoppt.`, activeTarget);
+      logger.error(
+        `Kein Root-Zugriff auf ${activeTarget} vorhanden! Engine gestoppt.`,
+        activeTarget,
+      );
     }
 
     await ns.sleep(5000);
   }
 }
 
-/**
- * Ermittelt das beste verfügbare XP-Ziel basierend auf vorhandenen Root-Rechten.
- */
 function resolveXpTarget(ns: NS): string {
-  if (ns.serverExists("joesguns") && ns.hasRootAccess("joesguns")) return "joesguns";
-  if (ns.serverExists("n00dles") && ns.hasRootAccess("n00dles")) return "n00dles";
-  if (ns.serverExists("foodnstuff") && ns.hasRootAccess("foodnstuff")) return "foodnstuff";
+  const rootedServers = getAllRootedServers(ns);
 
-  return "n00dles";
+  if (rootedServers.length === 0) {
+    return "n00dles";
+  }
+
+  // 1. Primärziel "joesguns" bevorzugen, sofern gerootet (optimales XP/Zeit-Verhältnis im Early Game)
+  if (rootedServers.includes("joesguns")) {
+    return "joesguns";
+  }
+
+  // 2. Dynamische Auswahl: Sortiere nach niedrigster Min-Security für maximale Ausführungsgeschwindigkeit
+  const playerSkill = ns.getHackingLevel();
+  const validTargets = rootedServers
+    .map((host) => ns.getServer(host))
+    .filter((server) => (server.requiredHackingSkill ?? 0) <= playerSkill)
+    .sort((a, b) => (a.minDifficulty ?? 99) - (b.minDifficulty ?? 99));
+
+  return validTargets.length > 0 ? validTargets[0].hostname : "n00dles";
+}
+
+/**
+ * Scannt rekursiv das gesamte Netzwerk nach allen Geräten mit Root-Zugriff (exkl. Home & Purchased)
+ */
+function getAllRootedServers(ns: NS): string[] {
+  const visited = new Set<string>();
+  const queue = ["home"];
+  const rootedTargets: string[] = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    visited.add(current);
+
+    const isPurchased = current.startsWith("pserv-") || current === "home";
+    if (!isPurchased && ns.hasRootAccess(current)) {
+      rootedTargets.push(current);
+    }
+
+    for (const neighbor of ns.scan(current)) {
+      if (!visited.has(neighbor) && !queue.includes(neighbor)) {
+        queue.push(neighbor);
+      }
+    }
+  }
+
+  return rootedTargets;
 }
 
 function ensureEngineRunning(
   ns: NS,
   strategy: BatchStrategy,
   target: string,
-  logger: LoggerClient
+  logger: LoggerClient,
 ): void {
   const engineMap: Partial<Record<BatchStrategy, string>> = {
     BOOTSTRAP: PATHS.payloads.work,
@@ -114,7 +155,10 @@ function ensureEngineRunning(
   const scriptPath = engineMap[strategy];
 
   if (!scriptPath) {
-    logger.error(`Keine Engine-Route für Strategie '${strategy}' konfiguriert!`, target);
+    logger.error(
+      `Keine Engine-Route für Strategie '${strategy}' konfiguriert!`,
+      target,
+    );
     return;
   }
 
@@ -128,7 +172,6 @@ function ensureEngineRunning(
     .some((proc) => proc.filename === scriptPath && proc.args[0] === target);
 
   if (!isRunning) {
-    // Alte Engines stoppen
     Object.values(engineMap).forEach((path) => {
       if (path && path !== scriptPath && ns.fileExists(path)) {
         if (ns.scriptKill(path, "home")) {
@@ -146,7 +189,7 @@ function ensureEngineRunning(
         logger.success(
           `Engine gestartet: ${scriptPath} auf ${target} (PID: ${pid})`,
           target,
-          { context: { pid, strategy, scriptPath } }
+          { context: { pid, strategy, scriptPath } },
         );
       } else {
         logger.error(`Fehler beim Starten der Engine: ${scriptPath}`, target);
@@ -155,7 +198,7 @@ function ensureEngineRunning(
       logger.warn(
         `Zu wenig RAM auf 'home' für ${scriptPath} (${requiredRam} GB benötigt, ${freeRam.toFixed(2)} GB frei)`,
         target,
-        { context: { requiredRam, freeRam } }
+        { context: { requiredRam, freeRam } },
       );
     }
   }
