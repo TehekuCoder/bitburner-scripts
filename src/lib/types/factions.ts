@@ -30,6 +30,8 @@ export interface TargetFactionResult {
   targetRep: number;
   augName: string;
   isNFG?: boolean;
+  isCompany: boolean;
+  companyName?: string;
 }
 
 export interface AugShoppingItem {

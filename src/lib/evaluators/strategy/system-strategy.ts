@@ -49,34 +49,49 @@ export class SystemStrategyEvaluator {
   private lastAugAnalysis = 0;
   private allNetworkServers: string[] = [];
 
-  // 📈 Skill-Rate & ETA-Tracking für Dominion Push
-  private lastHackSkill = 0;
+  // In der SystemStrategyEvaluator-Klasse:
+
+  private lastHackExp = 0;
   private lastHackTime = 0;
-  private hackRatePerSec = 0;
+  private xpRatePerSec = 0;
+
+  /**
+   * Berechnet die benötigte XP für ein Ziel-Level unter Berücksichtigung des Hacking-Multiplikators.
+   */
+  private getRequiredExp(ns: NS, level: number, hackMult: number): number {
+    if (ns.fileExists("Formulas.exe", "home")) {
+      return ns.formulas.skills.calculateExp(level, hackMult);
+    }
+    // Exakte Bitburner-Formel für Hacking-XP
+    return Math.exp((level + 200) / (32 * hackMult)) - 500;
+  }
 
   public evaluate(ns: NS, logger: Logger): SystemEvaluationResult {
     const now = Date.now();
     const currentState = loadState(ns);
     const p = ns.getPlayer();
     const bnMults = loadBnMults(ns);
+
     const gangState = loadGangState(ns);
     const gangFaction = gangState?.hasGang ? gangState.gangFaction : null;
 
-    // 0️⃣ DOMINION ETA-BERECHNUNG (Hacking Level Push Rate)
-    const currentHack = p.skills.hacking;
+    // 0️⃣ DOMINION ETA-BERECHNUNG (XP-basiert)
+    const currentExp = p.exp.hacking;
+    const hackMult = p.mults.hacking; // z.B. 9.51 (951.06%)
+    const hackExpMult = p.mults.hacking_exp; // z.B. 1.47 (147.56%)
+
     if (this.lastHackTime > 0 && now > this.lastHackTime) {
       const dt = (now - this.lastHackTime) / 1000;
-      const dSkill = currentHack - this.lastHackSkill;
-      if (dt > 0 && dSkill >= 0) {
-        const currentRate = dSkill / dt;
-        // Exponentielle Glättung für stabile ETA-Werte
-        this.hackRatePerSec =
-          this.hackRatePerSec === 0
+      const dExp = currentExp - this.lastHackExp;
+      if (dt > 0 && dExp >= 0) {
+        const currentRate = dExp / dt;
+        this.xpRatePerSec =
+          this.xpRatePerSec === 0
             ? currentRate
-            : this.hackRatePerSec * 0.8 + currentRate * 0.2;
+            : this.xpRatePerSec * 0.8 + currentRate * 0.2;
       }
     }
-    this.lastHackSkill = currentHack;
+    this.lastHackExp = currentExp;
     this.lastHackTime = now;
 
     let worldDaemonReq = 3000;
@@ -86,13 +101,19 @@ export class SystemStrategyEvaluator {
       }
     } catch {}
 
-    const remainingHack = Math.max(0, worldDaemonReq - currentHack);
+    // XP-Differenz ermitteln
+    const targetExp = this.getRequiredExp(ns, worldDaemonReq, hackMult);
+    const remainingExp = Math.max(0, targetExp - currentExp);
     const etaSeconds =
-      this.hackRatePerSec > 0 ? remainingHack / this.hackRatePerSec : Infinity;
+      this.xpRatePerSec > 0 ? remainingExp / this.xpRatePerSec : Infinity;
 
-    // Ready wenn Hacking-Level bereits erreicht ODER ETA <= 30 Minuten (1800 Sekunden)
+    // Multiplikator-Schwellenwert prüfen (z. B. mind. 2.0x Level-Mult & 1.0x EXP-Mult für BN9)
+    const hasMinMultipliers = hackMult >= 2.0 && hackExpMult >= 1.0;
+
+    // DOMINION erst freigeben, wenn Hacking-Level erreicht ODER ETA exakt <= 20 Min IST UND Multiplikatoren reichen
     const isDominionEtaReady =
-      remainingHack === 0 || (this.hackRatePerSec > 0 && etaSeconds <= 1800);
+      p.skills.hacking >= worldDaemonReq ||
+      (hasMinMultipliers && this.xpRatePerSec > 0 && etaSeconds <= 1200);
 
     // 1️⃣ Netzwerk-Scan & Cache
     if (
@@ -304,7 +325,7 @@ export class SystemStrategyEvaluator {
       label = `Fraktion: ${targetFaction}`;
     } else if (mode === "CORP" && targetCompany) {
       currentVal = ns.singularity.getCompanyRep(targetCompany);
-      targetVal = 400_000;
+      targetVal = targetCompany === "Fulcrum Technologies" ? 250_000 : 400_000;
       label = `Corp: ${targetCompany}`;
     } else if (mode === "TRAIN") {
       currentVal = Math.min(...COMBAT_STATS.map((s) => p.skills[s]));

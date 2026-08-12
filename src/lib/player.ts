@@ -6,6 +6,19 @@ import { BotState, StrategyResult } from "./types/strategy.js";
 
 const EARLY_FACTIONS: FactionName[] = ["CyberSec", "Tian Di Hui", "Netburners"];
 
+const MEGACORP_FACTION_TO_COMPANY: Record<string, CompanyName> = {
+  ECorp: "ECorp" as CompanyName,
+  MegaCorp: "MegaCorp" as CompanyName,
+  "Bachman & Associates": "Bachman & Associates" as CompanyName,
+  "Blade Industries": "Blade Industries" as CompanyName,
+  NWO: "NWO" as CompanyName,
+  "Clarke Incorporated": "Clarke Incorporated" as CompanyName,
+  "OmniTek Incorporated": "OmniTek Incorporated" as CompanyName,
+  "Four Sigma": "Four Sigma" as CompanyName,
+  "KuaiGong International": "KuaiGong International" as CompanyName,
+  "Fulcrum Secret Technologies": "Fulcrum Technologies" as CompanyName,
+};
+
 export function getPurchasedUninstalledAugs(ns: NS): string[] {
   const allOwned = ns.singularity.getOwnedAugmentations(true);
   const installed = ns.singularity.getOwnedAugmentations(false);
@@ -100,26 +113,53 @@ export function findNextRoadmapFaction(
       return playerFactions.includes(f) || invites.includes(f);
     });
 
-    if (validFactions.length === 0) continue;
+    if (validFactions.length > 0) {
+      let bestFaction = validFactions[0];
+      let maxRep = ns.singularity.getFactionRep(bestFaction);
 
-    let bestFaction = validFactions[0];
-    let maxRep = ns.singularity.getFactionRep(bestFaction);
-
-    for (const f of validFactions) {
-      const rep = ns.singularity.getFactionRep(f);
-      if (rep > maxRep) {
-        maxRep = rep;
-        bestFaction = f;
+      for (const f of validFactions) {
+        const rep = ns.singularity.getFactionRep(f);
+        if (rep > maxRep) {
+          maxRep = rep;
+          bestFaction = f;
+        }
       }
+
+      if (maxRep < target.repReq) {
+        return {
+          name: bestFaction,
+          targetRep: target.repReq,
+          augName: target.name,
+          isNFG: target.name.includes("NeuroFlux Governor"),
+          isCompany: false,
+        };
+      }
+      continue;
     }
 
-    if (maxRep < target.repReq) {
-      return {
-        name: bestFaction,
-        targetRep: target.repReq,
-        augName: target.name,
-        isNFG: target.name.includes("NeuroFlux Governor"),
-      };
+    // Falls noch in keiner Ziel-Fraktion: Prüfen auf Firmen-Ruf für Megacorp-Einladung
+    for (const f of target.factions) {
+      if (f === "Shadows of Anarchy" || (f === gangFaction && !isBN2)) continue;
+
+      const companyName = MEGACORP_FACTION_TO_COMPANY[f];
+      if (companyName) {
+        const companyRep = ns.singularity.getCompanyRep(companyName);
+        const reqCompanyRep =
+          companyName === ("Fulcrum Technologies" as CompanyName)
+            ? 250_000
+            : 400_000;
+
+        if (companyRep < reqCompanyRep) {
+          return {
+            name: f as FactionName,
+            targetRep: target.repReq,
+            augName: target.name,
+            isNFG: target.name.includes("NeuroFlux Governor"),
+            isCompany: true,
+            companyName: companyName,
+          };
+        }
+      }
     }
   }
 
@@ -139,6 +179,7 @@ export function findNextRoadmapFaction(
         targetRep,
         augName: daedalusTarget?.name ?? "The Red Pill",
         isNFG: false,
+        isCompany: false,
       };
     }
   }
@@ -246,8 +287,18 @@ export function determineStrategy(
     }
   }
 
-  // 6️⃣ PHASE 4: Nicht-Gang Fraktionen aus der Roadmap farmen
+  // 6️⃣ PHASE 4: Roadmap-Fraktionen oder Firmen-Grind
   if (factionToWorkFor && isReadyForFactionGrind) {
+    if (factionToWorkFor.isCompany && factionToWorkFor.companyName) {
+      logger?.debug(
+        `[Strategie] Megacorp-Ruf farmen für ${factionToWorkFor.companyName} (${factionToWorkFor.augName}) ➔ CORP`,
+      );
+      return {
+        mode: "CORP",
+        targetCompany: factionToWorkFor.companyName as CompanyName,
+      };
+    }
+
     if (player.factions.includes(factionToWorkFor.name as FactionName)) {
       logger?.debug(
         `[Strategie] Ziel-Fraktion: ${factionToWorkFor.name} (${factionToWorkFor.augName}) ➔ REP`,
@@ -275,8 +326,7 @@ export function determineStrategy(
     }
   } catch {}
 
-  // 9️⃣ PHASE 7: WORLD DOMINATION (Red Pill / DOMINION Modus)
-  // Getriggert durch: Expliziten State-Flag, Red Pill Besitz, ODER (Daedalus Rep fertig UND ETA <= 30 Min)
+  // 9️⃣ PHASE 7: WORLD DOMINATION
   const isDominionActive =
     currentState?.isDominionActive ||
     redPillOwned ||
