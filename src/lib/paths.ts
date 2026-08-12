@@ -152,10 +152,10 @@ export const PATHS = {
     batcher: "ui/batcher-ui.js",
     engine: "ui/engine-ui.js",
     finance: "ui/finance-ui.js",
-    gang: "ui/gang-ui.js",
+    gang: "ui/gang.js",
     infra: "ui/infra-ui.js",
     roadmap: "ui/roadmap.js",
-    sleeve: "ui/sleeve-ui.js",
+    sleeve: "ui/sleeve.js",
     helper: "ui/ui-helper.js",
   },
 } as const;

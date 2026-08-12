@@ -15,14 +15,10 @@ export async function main(ns: NS): Promise<void> {
   let lastTarget: string | null = null;
 
   while (true) {
-    const currentState = loadBatcherState(ns);
     const evalRec = evaluateHackingStrategy(ns);
 
-    // 1️⃣ Strategie-Ermittlung
+    // 1️⃣ Dynamische Strategie-Ermittlung (kein starrer XP_GRIND Lock)
     let activeStrategy: BatchStrategy = evalRec.strategy;
-    if (currentState?.batchStrategy === "XP_GRIND") {
-      activeStrategy = "XP_GRIND";
-    }
 
     // 2️⃣ Target-Ermittlung
     let activeTarget = evalRec.preferredTarget ?? resolveXpTarget(ns);
@@ -52,6 +48,17 @@ export async function main(ns: NS): Promise<void> {
       activeTarget = fallbackTarget;
     }
 
+    // 3️⃣ PREP-Check: Server muss erst vorbereitet werden, bevor HWGW/PROTO laufen kann
+    if (ns.hasRootAccess(activeTarget) && activeStrategy !== "XP_GRIND" && activeStrategy !== "WORKER") {
+      const server = ns.getServer(activeTarget);
+      const isMaxMoney = (server.moneyAvailable ?? 0) >= (server.moneyMax ?? 1) * 0.99;
+      const isMinSec = (server.hackDifficulty ?? 99) <= (server.minDifficulty ?? 1) + 0.01;
+
+      if (!isMaxMoney || !isMinSec) {
+        activeStrategy = "PREP";
+      }
+    }
+
     // 📊 Statusänderungen protokollieren
     if (activeStrategy !== lastStrategy || activeTarget !== lastTarget) {
       logger.info(
@@ -63,17 +70,18 @@ export async function main(ns: NS): Promise<void> {
       lastTarget = activeTarget;
     }
 
-    // 3️⃣ State aktualisieren
+    // 4️⃣ State aktualisieren (inklusive batcherActive)
     patchBatcherState(ns, {
       batchStrategy: activeStrategy,
       batcherTarget: activeTarget,
+      batcherActive: true,
       batcherProgress:
         activeStrategy === "XP_GRIND"
           ? `XP-Grind aktiv auf ${activeTarget}`
           : `Laufende Strategie: ${activeStrategy}`,
     });
 
-    // 4️⃣ Engine starten
+    // 5️⃣ Engine starten & verwalten
     if (ns.hasRootAccess(activeTarget)) {
       ensureEngineRunning(ns, activeStrategy, activeTarget, logger);
     } else {
@@ -94,12 +102,10 @@ function resolveXpTarget(ns: NS): string {
     return "n00dles";
   }
 
-  // 1. Primärziel "joesguns" bevorzugen, sofern gerootet (optimales XP/Zeit-Verhältnis im Early Game)
   if (rootedServers.includes("joesguns")) {
     return "joesguns";
   }
 
-  // 2. Dynamische Auswahl: Sortiere nach niedrigster Min-Security für maximale Ausführungsgeschwindigkeit
   const playerSkill = ns.getHackingLevel();
   const validTargets = rootedServers
     .map((host) => ns.getServer(host))
@@ -109,9 +115,6 @@ function resolveXpTarget(ns: NS): string {
   return validTargets.length > 0 ? validTargets[0].hostname : "n00dles";
 }
 
-/**
- * Scannt rekursiv das gesamte Netzwerk nach allen Geräten mit Root-Zugriff (exkl. Home & Purchased)
- */
 function getAllRootedServers(ns: NS): string[] {
   const visited = new Set<string>();
   const queue = ["home"];
@@ -167,18 +170,31 @@ function ensureEngineRunning(
     return;
   }
 
-  const isRunning = ns
-    .ps("home")
-    .some((proc) => proc.filename === scriptPath && proc.args[0] === target);
+  // Alle bekannten Engine-Pfade ermitteln
+  const allEnginePaths = new Set(
+    Object.values(engineMap).filter((p): p is string => Boolean(p)),
+  );
 
-  if (!isRunning) {
-    Object.values(engineMap).forEach((path) => {
-      if (path && path !== scriptPath && ns.fileExists(path)) {
-        if (ns.scriptKill(path, "home")) {
-          logger.info(`Alte Engine beendet: ${path}`, target);
-        }
+  // Suche nach allen aktuell laufenden Engine-Prozessen auf home
+  const runningEngineProcs = ns
+    .ps("home")
+    .filter((proc) => allEnginePaths.has(proc.filename));
+
+  // Prüfen, ob exakt die gewünschte Engine mit dem korrekten Target läuft
+  const isExactRunning = runningEngineProcs.some(
+    (proc) => proc.filename === scriptPath && proc.args[0] === target,
+  );
+
+  if (!isExactRunning) {
+    // Beende ALLE abweichenden oder veralteten Engine-Prozesse präzise via PID
+    for (const proc of runningEngineProcs) {
+      if (ns.kill(proc.pid)) {
+        logger.info(
+          `Alte Engine beendet (PID ${proc.pid}: ${proc.filename} -> ${proc.args[0]})`,
+          target,
+        );
       }
-    });
+    }
 
     const requiredRam = ns.getScriptRam(scriptPath);
     const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
