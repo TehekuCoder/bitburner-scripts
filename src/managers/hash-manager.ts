@@ -1,10 +1,11 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { loadBatcherState } from "/lib/state.js"; // 🟢 Zentrales Port-State Handling
+import { loadState, loadBatcherState } from "/lib/state.js";
+import { BotStrategy } from "/lib/types/strategy.js";
 import {
   hasSingularity,
   hasCorporation,
-  hasbladeburner, // bzw. hasBladeburner
+  hasbladeburner,
   formatMoney,
   loadBnMults,
 } from "/lib/utils.js";
@@ -72,7 +73,6 @@ function getActiveBatcherTargets(ns: NS): string[] {
     return batcherState.batcherTargetsSummary.map((t) => t.target);
   }
 
-  // Fallback auf Einzelziel aus State
   if (batcherState?.batcherTarget) {
     return [batcherState.batcherTarget];
   }
@@ -81,9 +81,6 @@ function getActiveBatcherTargets(ns: NS): string[] {
   return fallback ? [fallback] : [];
 }
 
-/**
- * Ermittelt die Kosten für das günstigste Home-Hardware-Upgrade.
- */
 function getHardwareUpgradeCost(ns: NS): number | null {
   if (!hasSingularity(ns)) return null;
 
@@ -101,9 +98,6 @@ function getHardwareUpgradeCost(ns: NS): number | null {
   }
 }
 
-/**
- * Kauft automatisch Home RAM oder Cores, sobald genug Geld da ist.
- */
 function tryAutoUpgradeHome(ns: NS, logger: Logger): void {
   if (!hasSingularity(ns)) return;
 
@@ -129,6 +123,78 @@ function tryAutoUpgradeHome(ns: NS, logger: Logger): void {
   } catch {
     // Ignorieren bei fehlenden Rechten
   }
+}
+
+function getDynamicPriorityList(
+  ns: NS,
+  bnMults: ReturnType<typeof loadBnMults>,
+  strategy?: BotStrategy,
+): UpgradePriority[] {
+  const list: UpgradePriority[] = [];
+  const isAugmentationExpensive = bnMults.AugmentationMoneyCost > 2.0;
+  const canContractMoney = (bnMults.CodingContractMoney ?? 1) > 0;
+
+  // 1️⃣ STRATEGIE-SPEZIFISCHE HIGH-PRIORITY UPGRADES
+
+  // DOMINION & UNI Modus: Maximaler Boost auf Uni-Studium für XP-Rush
+  if (strategy === "DOMINION" || strategy === "UNI") {
+    list.push({ name: "Improve Studying" });
+  }
+
+  // TRAIN & KILLS Modus: Gym-Training pushen
+  if (strategy === "TRAIN" || strategy === "KILLS") {
+    list.push({ name: "Improve Gym Training" });
+  }
+
+  // BLADEBURNER Modus: SP & Rank generieren
+  if (strategy === "BLADEBURNER") {
+    list.push({
+      name: "Exchange for Bladeburner SP",
+      condition: (ns) => hasbladeburner(ns) && ns.bladeburner.inBladeburner(),
+    });
+    list.push({
+      name: "Exchange for Bladeburner Rank",
+      condition: (ns) => hasbladeburner(ns) && ns.bladeburner.inBladeburner(),
+    });
+  }
+
+  // CORP Modus: Research & Capital Injection
+  if (strategy === "CORP") {
+    list.push({
+      name: "Exchange for Corporation Research",
+      condition: (ns) => hasCorporation(ns) && ns.corporation.hasCorporation(),
+    });
+    list.push({
+      name: "Sell for Corporation Funds",
+      condition: (ns) =>
+        hasCorporation(ns) &&
+        ns.corporation.hasCorporation() &&
+        bnMults.CorporationValuation > 0.1,
+    });
+  }
+
+  // 2️⃣ GENERELLE HOCHWERTIGE UPGRADES
+
+  // Coding Contracts (sehr hohe Rendite)
+  if (canContractMoney) {
+    list.push({ name: "Generate Coding Contract" });
+  }
+
+  // Teure Augmentations: Geldverkauf nach oben ziehen
+  if (isAugmentationExpensive) {
+    list.push({ name: "Sell for Money" });
+  }
+
+  // Batcher-Server Buffs
+  list.push({ name: "Increase Maximum Money", requiresTarget: true });
+  list.push({ name: "Reduce Minimum Security", requiresTarget: true });
+
+  // 3️⃣ FALLBACKS & RESTLICHE BUFFS
+  list.push({ name: "Improve Studying" });
+  list.push({ name: "Improve Gym Training" });
+  list.push({ name: "Sell for Money" });
+
+  return list;
 }
 
 function trySpendHashes(
@@ -182,47 +248,11 @@ export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "Hash-Manager");
   const bnMults = loadBnMults(ns);
 
-  // 1. Notfall-Untergrenze & Log-Timer (wichtig für Liquidation)
   const criticalMoneyFloor =
     typeof ns.args[0] === "number" ? ns.args[0] : 50_000_000;
 
   let lastLoggedHardwareGoal = 0;
   let lastLiquidationLogTime = 0;
-
-  // 2. Dynamische BitNode-Checks
-  const isAugmentationExpensive = bnMults.AugmentationMoneyCost > 2.0;
-  const isBladeburnerViable =
-    bnMults.BladeburnerSkillCost < 5.0 && hasbladeburner(ns);
-  const canContractMoney = (bnMults.CodingContractMoney ?? 1) > 0;
-
-  const priorityList: UpgradePriority[] = [
-    ...(canContractMoney
-      ? [{ name: "Generate Coding Contract" as HashUpgradeName }]
-      : []),
-    {
-      name: "Sell for Corporation Funds",
-      condition: (ns) =>
-        hasCorporation(ns) &&
-        ns.corporation.hasCorporation() &&
-        bnMults.CorporationValuation > 0.1,
-    },
-    {
-      name: "Exchange for Bladeburner SP",
-      condition: (ns) =>
-        isBladeburnerViable &&
-        hasbladeburner(ns) &&
-        ns.bladeburner.inBladeburner(),
-    },
-    // Bei teuren Augmentations Geldverkauf nach oben ziehen
-    ...(isAugmentationExpensive
-      ? [{ name: "Sell for Money" as HashUpgradeName }]
-      : []),
-    { name: "Sell for Money" },
-    { name: "Increase Maximum Money", requiresTarget: true },
-    { name: "Reduce Minimum Security", requiresTarget: true },
-    { name: "Improve Studying" },
-    { name: "Improve Gym Training" },
-  ];
 
   logger.info(
     `🟢 Hash-Manager Daemon gestartet (Notfall-Boden: ${formatMoney(criticalMoneyFloor)}).`,
@@ -250,10 +280,7 @@ export async function main(ns: NS): Promise<void> {
       lastLoggedHardwareGoal = hardwareCost;
     }
 
-    // 2. PRÜFUNG: Soll Notfall-Liquidation greifen?
-    // Notfall greift nur wenn:
-    // a) Kontostand unter absolutem Notfall-Boden ($50M) ODER
-    // b) Wir sind in "Greifweite" des Hardware-Ziels (>= 75% des Preises erreicht)
+    // 2. PRÜFUNG: Notfall-Liquidation
     const isCriticalMoney = currentMoney < criticalMoneyFloor;
     const isCloseToHardware =
       hardwareCost !== null &&
@@ -272,7 +299,6 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-      // Log-Spam Dämpfung: Maximal alle 30 Sekunden warnen
       const now = Date.now();
       if (soldCount > 0 && now - lastLiquidationLogTime > 30000) {
         const reason = isCriticalMoney
@@ -286,9 +312,16 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 3. REGULÄRE PRIORITÄTEN (bei >= 50% Speicher)
+    // 3. REGULÄRE PRIORITÄTEN EVALUIEREN (ab 50% Kapazität)
     if (currentHashes >= capacity * 0.5) {
+      const botState = loadState(ns);
       const activeTargets = getActiveBatcherTargets(ns);
+      const priorityList = getDynamicPriorityList(
+        ns,
+        bnMults,
+        botState?.strategy,
+      );
+
       for (const upgrade of priorityList) {
         while (trySpendHashes(ns, upgrade, activeTargets, logger)) {
           await ns.sleep(20);

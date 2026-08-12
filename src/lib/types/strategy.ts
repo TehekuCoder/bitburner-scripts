@@ -13,7 +13,8 @@ export type BotStrategy =
   | "UNI"
   | "KARMA" // 👈 Neu: Explizites Karma-Farmen für Gang-Unlock
   | "BLADEBURNER" // 👈 Neu: Bladeburner-Aktivitäten
-  | "CHURCH"; // 👈 Neu: Church of the Machine God / Stanek's Gift
+  | "CHURCH" // 👈 Neu: Church of the Machine God / Stanek's Gift
+  | "DOMINION";
 
 export interface BotStateStrategy {
   strategy: BotStrategy;
@@ -23,6 +24,7 @@ export interface BotStateStrategy {
   targetCompany?: string;
   targetStat?: number;
   targetKills?: number;
+  isDominionActive?: boolean;
 }
 
 export interface StrategyState {

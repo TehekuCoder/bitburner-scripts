@@ -1,6 +1,5 @@
 import { NS, SleeveTask } from "@ns";
 
-// ANSI-Farbcodes für Tail-Logs
 const COLOR = {
   RESET: "\u001b[0m",
   RED: "\u001b[31m",
@@ -11,19 +10,16 @@ const COLOR = {
   BOLD: "\u001b[1m",
 };
 
-/**
- * Berücksichtigt Unicode-Surrogat-Paare/Emojis für die spaltengenaue Ausrichtung.
- */
 function visualPadEnd(str: string, targetLength: number): string {
   const actualLength = [...str].length;
   const missing = targetLength - actualLength;
   return missing > 0 ? str + " ".repeat(missing) : str;
 }
 
-/**
- * Formatiert Task-Typen inklusive Icons und Fraktions-Subtypen.
- */
-function parseTaskDetails(task: SleeveTask | null): { icon: string; text: string } {
+function parseTaskDetails(task: SleeveTask | null): {
+  icon: string;
+  text: string;
+} {
   if (!task) return { icon: "💤", text: "IDLE" };
 
   const t = task as any;
@@ -52,16 +48,24 @@ function parseTaskDetails(task: SleeveTask | null): { icon: string; text: string
   }
 }
 
-export function printSleeveDashboard(ns: NS, numSleeves: number, localLogBuffer: string[]): void {
+export function printSleeveDashboard(
+  ns: NS,
+  numSleeves: number,
+  localLogBuffer: string[],
+): void {
   ns.clearLog();
 
   const dividerHeader = `${COLOR.GRAY}==========================================================================================${COLOR.RESET}`;
-  const dividerSub    = `${COLOR.GRAY}------------------------------------------------------------------------------------------${COLOR.RESET}`;
+  const dividerSub = `${COLOR.GRAY}------------------------------------------------------------------------------------------${COLOR.RESET}`;
 
   ns.print(dividerHeader);
-  ns.print(` ${COLOR.BOLD}${COLOR.CYAN}🧠 BitOS SLEEVE CONTROL SYSTEM${COLOR.RESET}`);
+  ns.print(
+    ` ${COLOR.BOLD}${COLOR.CYAN}🧠 BitOS SLEEVE CONTROL SYSTEM${COLOR.RESET}`,
+  );
   ns.print(dividerHeader);
-  ns.print(` ${COLOR.BOLD}ID  | SCHOCK   | SYNC     | AUGS | STADT      | AKTUELLE BESCHÄFTIGUNG${COLOR.RESET}`);
+  ns.print(
+    ` ${COLOR.BOLD}ID  | SCHOCK   | SYNC     | AUGS | STADT      | AKTUELLE BESCHÄFTIGUNG${COLOR.RESET}`,
+  );
   ns.print(dividerSub);
 
   for (let i = 0; i < numSleeves; i++) {
@@ -75,9 +79,9 @@ export function printSleeveDashboard(ns: NS, numSleeves: number, localLogBuffer:
       /* API eingeschränkt */
     }
 
-    // 1. Farbindikatoren (Vorformatierung verhindert ANSI-Längenverzerrung)
     const shockVal = stats.shock;
-    const shockColor = shockVal === 0 ? COLOR.GREEN : shockVal > 50 ? COLOR.RED : COLOR.YELLOW;
+    const shockColor =
+      shockVal === 0 ? COLOR.GREEN : shockVal > 50 ? COLOR.RED : COLOR.YELLOW;
     const shockFormatted = `${shockVal.toFixed(1)}%`.padStart(6);
     const shockStr = `${shockColor}${shockFormatted}${COLOR.RESET}  `;
 
@@ -86,16 +90,16 @@ export function printSleeveDashboard(ns: NS, numSleeves: number, localLogBuffer:
     const syncFormatted = `${syncVal.toFixed(1)}%`.padStart(6);
     const syncStr = `${syncColor}${syncFormatted}${COLOR.RESET}  `;
 
-    // 2. Standard-Felder
     const idStr = `#${i}`.padEnd(3);
     const augStr = `${augCount}`.padEnd(4);
     const cityStr = stats.city.padEnd(10);
 
-    // 3. Task-Spalte mit Unicode-Padding
     const { icon, text } = parseTaskDetails(task);
     const taskFormatted = visualPadEnd(`${icon} ${text}`, 36);
 
-    ns.print(` ${idStr} | ${shockStr} | ${syncStr} | ${augStr} | ${cityStr} | ${taskFormatted}`);
+    ns.print(
+      ` ${idStr} | ${shockStr} | ${syncStr} | ${augStr} | ${cityStr} | ${taskFormatted}`,
+    );
   }
 
   ns.print(dividerHeader);

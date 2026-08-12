@@ -124,6 +124,7 @@ function manageMicroservices(
     KARMA: PATHS.tasks.crime, // Nutzt Crime-Task mit Fokus auf Homicide
     // BLADEBURNER: PATHS.tasks.bladeburner, // Skript für Bladeburner-Orchestrierung
     // CHURCH: PATHS.tasks.stanek, // Skript zum Laden des Stanek-Rasters
+    DOMINION: PATHS.tasks.uni,
   };
 
   let targetScript: string | undefined = modeToScript[currentMode];

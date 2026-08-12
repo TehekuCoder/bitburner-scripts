@@ -1,6 +1,5 @@
-// managers/sleeve-manager.ts
 import { NS, FactionName, Player, FactionWorkType, UniversityClassType } from "@ns";
-import { printSleeveDashboard } from "ui/sleeve-ui.js";
+import { printSleeveDashboard } from "/ui/sleeve-ui.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { loadSleeveState, patchSleeveState } from "/lib/state.js";
 import {
@@ -8,7 +7,7 @@ import {
   SleeveMode,
   SleeveGangUnlockStatus,
 } from "/lib/types/sleeves.js";
-import { SleeveTaskAssignment, getSleeveStatuses, setSleeveTask } from "/lib/utils/sleeve-utils";
+import { SleeveTaskAssignment, getSleeveStatuses, setSleeveTask } from "/lib/utils/sleeve-utils.js";
 
 type ExtendedGangStatus = SleeveGangUnlockStatus & { gangFaction?: string };
 
@@ -83,6 +82,7 @@ function resolveSleeveAssignment(
   factionsNeedingRep: FactionName[],
   assignedFactions: Set<string>
 ): SleeveTaskAssignment {
+  // 1️⃣ NOTFALL: Schock abbauen & Synchronisieren
   if (sleeveShock > 0) {
     return { mode: "RECOVERY" };
   }
@@ -93,6 +93,7 @@ function resolveSleeveAssignment(
 
   const availableFactions = factionsNeedingRep.filter((f) => !assignedFactions.has(f));
 
+  // 2️⃣ EXPLIZITER OVERRIDE (sleeveGlobalMode)
   if (
     options.globalMode &&
     options.globalMode !== "RECOVERY" &&
@@ -124,10 +125,20 @@ function resolveSleeveAssignment(
     }
   }
 
-  if (gangStatus.shouldGrindKarma) {
+  // 3️⃣ STRATEGIE-REAKTION (DOMINION, KARMA, UNI, REP)
+  if (options.strategy === "DOMINION" || options.strategy === "UNI") {
+    return {
+      mode: "UNI",
+      target: "Rothman University",
+      subType: "Algorithms" as UniversityClassType,
+    };
+  }
+
+  if (options.strategy === "KARMA" || gangStatus.shouldGrindKarma) {
     return { mode: "CRIME", target: "Homicide" };
   }
 
+  // 4️⃣ STANDARD: Fraktions-Reputation farmen
   if (availableFactions.length > 0) {
     const targetFaction = availableFactions[0];
     return {
@@ -137,6 +148,7 @@ function resolveSleeveAssignment(
     };
   }
 
+  // 5️⃣ FALLBACK: Homicide für Karma & Exp
   return { mode: "CRIME", target: "Homicide" };
 }
 
@@ -162,7 +174,7 @@ function manageAllSleeves(
   for (const sleeve of statuses) {
     const needsRecoveryOrSync = sleeve.shock > 0 || sleeve.sync < 100;
 
-    if (!needsRecoveryOrSync && !options.globalMode && !gangStatus.shouldGrindKarma) {
+    if (!needsRecoveryOrSync && !options.globalMode && !gangStatus.shouldGrindKarma && options.strategy !== "DOMINION") {
       const rawTask = ns.sleeve.getTask(sleeve.id) as any;
       if (rawTask && rawTask.type === "FACTION" && rawTask.factionName) {
         const fac = rawTask.factionName as FactionName;

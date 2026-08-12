@@ -1,4 +1,3 @@
-// lib/utils/sleeve-utils.ts
 import {
   NS,
   CrimeType,
@@ -100,7 +99,7 @@ export function setSleeveTask(
   // 🛑 Verhindert das Zurücksetzen laufender Timer (z. B. Homicide Progress)
   const currentTask = ns.sleeve.getTask(sleeveId);
   if (isSameTask(currentTask, assignment)) {
-    return true; // Task läuft bereits ungestört weiter
+    return true;
   }
 
   switch (assignment.mode) {
@@ -127,7 +126,6 @@ export function setSleeveTask(
       if (!assignment.target) return false;
       const targetFaction = assignment.target as FactionName;
 
-      // Dynamsicher Fallback für Arbeitstypen: Bevorzugt subType, sonst Fallbacks
       const candidates: FactionWorkType[] = [];
       if (assignment.subType) {
         candidates.push(assignment.subType as FactionWorkType);
@@ -212,7 +210,6 @@ function isSameTask(
       return current.type === "COMPANY" && t.companyName === assignment.target;
 
     case "FACTION":
-      // Sobald die Ziel-Fraktion übereinstimmt, gilt die Aufgabe als identisch
       return current.type === "FACTION" && t.factionName === assignment.target;
 
     case "UNI":

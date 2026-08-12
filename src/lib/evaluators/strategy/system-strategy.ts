@@ -289,6 +289,10 @@ export class SystemStrategyEvaluator {
       currentVal = ns.bladeburner?.getRank() ?? 0;
       targetVal = 0;
       label = `⚔️ Bladeburner Ops`;
+    } else if (mode === "DOMINION") {
+      currentVal = p.skills.hacking;
+      targetVal = targetStat ?? 3000;
+      label = `🌐 DOMINION Rush (w0r1d_d43m0n)`;
     } else if (mode === "CHURCH") {
       currentVal = 0;
       targetVal = 0;
@@ -342,16 +346,19 @@ export class SystemStrategyEvaluator {
         ? 0.4
         : mode === "UNI"
           ? 0.5
-          : mode === "CHURCH"
-            ? 0.8
-            : mode === "MONEY"
-              ? 0.1
-              : 0.0;
+          : mode === "DOMINION"
+            ? 0.9 // High-Priority XP Share während DOMINION
+            : mode === "CHURCH"
+              ? 0.8
+              : mode === "MONEY"
+                ? 0.1
+                : 0.0;
+
     const dynamicMaxXp =
       mode === "CRIME" || mode === "KARMA"
         ? 100
-        : mode === "UNI"
-          ? 3000
+        : mode === "UNI" || mode === "DOMINION"
+          ? (targetStat ?? 3000)
           : p.skills.hacking > 800
             ? 1500
             : 1000;

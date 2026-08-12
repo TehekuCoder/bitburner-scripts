@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { loadBatcherState, patchState } from "/lib/state.js";
+import { loadState, patchState } from "/lib/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -17,7 +17,8 @@ export async function main(ns: NS): Promise<void> {
       if (ownedAugs && "The Red Pill" in ownedAugs) return true;
     } catch {
       try {
-        if (ns.singularity.getOwnedAugmentations().includes("The Red Pill")) return true;
+        if (ns.singularity.getOwnedAugmentations().includes("The Red Pill"))
+          return true;
       } catch {
         return ns.serverExists("w0r1d_d43m0n");
       }
@@ -32,7 +33,8 @@ export async function main(ns: NS): Promise<void> {
   const elements = doc.querySelectorAll("p, span, h6");
   for (const el of elements) {
     if (el.textContent === "Overview") {
-      overviewContainer = el.closest(".MuiPaper-root") || el.parentElement?.parentElement || null;
+      overviewContainer =
+        el.closest(".MuiPaper-root") || el.parentElement?.parentElement || null;
       break;
     }
   }
@@ -53,7 +55,7 @@ export async function main(ns: NS): Promise<void> {
 
   addon.innerHTML = `
     <div style="color: #00ff66; font-size: 0.8rem; font-weight: bold; letter-spacing: 1px; margin-bottom: 8px;">
-      💊 RED PILL PROTOCOL
+      💊 DOMINION PROTOCOL
     </div>
     <button id="redpill-btn" style="
       background: #051a08; 
@@ -67,7 +69,7 @@ export async function main(ns: NS): Promise<void> {
       width: 90%; 
       box-shadow: 0 0 5px rgba(0,255,102,0.2);
       transition: all 0.2s;
-    ">OVERRIDE: ENGAGE XP RUSH</button>
+    ">ACTIVATE DOMINION MODE</button>
     <div id="redpill-status" style="margin-top: 6px; font-size: 0.7rem; color: #008833;">
       Status: Standby (Auto-Mode)
     </div>
@@ -75,22 +77,30 @@ export async function main(ns: NS): Promise<void> {
 
   overviewContainer.appendChild(addon);
 
-  let isXpRushActive = false;
+  let isDominionActive = false;
 
   const btn = doc.getElementById("redpill-btn") as HTMLButtonElement | null;
   const statusEl = doc.getElementById("redpill-status");
 
   btn?.addEventListener("click", () => {
-    isXpRushActive = !isXpRushActive;
+    isDominionActive = !isDominionActive;
 
-    if (isXpRushActive) {
-      // 🟢 WICHTIG: batchStrategy anstelle von strategy verwenden
-      patchState(ns, { batchStrategy: "XP_GRIND" });
-      ns.tprint("💊 [RED PILL] Fokus auf maximalen XP-Grind umgeschaltet! (World Daemon Rush)");
+    if (isDominionActive) {
+      patchState(ns, {
+        isDominionActive: true,
+        batchStrategy: "XP_GRIND",
+      });
+      ns.tprint(
+        "💊 [DOMINION] Modus aktiviert! Spieler & Batcher auf maximalen XP-Grind umgestellt.",
+      );
     } else {
-      // Bricht das Override ab und lässt den Evaluator wieder steuern
-      patchState(ns, { batchStrategy: "BOOTSTRAP" });
-      ns.tprint("⏸️ [RED PILL] XP-Grind pausiert. Standard-Evaluierung wieder aktiv.");
+      patchState(ns, {
+        isDominionActive: false,
+        batchStrategy: "BOOTSTRAP",
+      });
+      ns.tprint(
+        "⏸️ [DOMINION] Modus deaktiviert. Automatische Evaluierung wieder aktiv.",
+      );
     }
   });
 
@@ -99,30 +109,30 @@ export async function main(ns: NS): Promise<void> {
 
     if (hasRedPill && addon.style.display === "none") {
       addon.style.display = "block";
-      ns.toast("💊 Red Pill Protocol im Overview-Panel verfügbar!", "info", 5000);
+      ns.toast(
+        "💊 Dominion Protocol im Overview-Panel verfügbar!",
+        "info",
+        5000,
+      );
     }
 
     if (hasRedPill) {
-      const currentState = loadBatcherState(ns);
-      if (currentState?.batchStrategy === "XP_GRIND" && !isXpRushActive) {
-        isXpRushActive = true;
-      } else if (currentState?.batchStrategy !== "XP_GRIND" && isXpRushActive) {
-        isXpRushActive = false;
-      }
+      const currentState = loadState(ns);
+      isDominionActive = currentState?.isDominionActive ?? false;
 
       if (btn && statusEl) {
-        if (isXpRushActive) {
+        if (isDominionActive) {
           btn.style.background = "#0d3814";
           btn.style.borderColor = "#00ff66";
           btn.style.color = "#ffffff";
-          btn.innerText = "DEFER DOMINATION (PAUSE)";
+          btn.innerText = "DEACTIVATE DOMINION MODE";
           statusEl.style.color = "#00ff66";
-          statusEl.innerText = "⚡ XP_RUSH: MAX_LEVEL_GRIND";
+          statusEl.innerText = "⚡ DOMINION: MAX_XP_RUSH";
         } else {
           btn.style.background = "#051a08";
           btn.style.borderColor = "#00aa44";
           btn.style.color = "#00ff66";
-          btn.innerText = "ENGAGE XP RUSH";
+          btn.innerText = "ACTIVATE DOMINION MODE";
           statusEl.style.color = "#008833";
           statusEl.innerText = "Status: Standby (Normalbetrieb)";
         }

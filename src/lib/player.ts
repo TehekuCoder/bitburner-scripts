@@ -274,18 +274,20 @@ export function determineStrategy(
     }
   } catch {}
 
-  // 9️⃣ PHASE 7: WORLD DOMINATION (Red Pill installiert, Push für w0r1d_d43m0n)
-  if (daedalusDone) {
+  // 9️⃣ PHASE 7: WORLD DOMINATION (Red Pill / DOMINION Modus)
+  const isDominionActive = currentState?.isDominionActive ?? false;
+
+  if (daedalusDone || isDominionActive) {
     let worldDaemonReq = 3000;
     try {
       worldDaemonReq = ns.getServerRequiredHackingLevel("w0r1d_d43m0n");
     } catch {}
 
-    if (player.skills.hacking < worldDaemonReq) {
+    if (player.skills.hacking < worldDaemonReq || isDominionActive) {
       logger?.debug(
-        `[Strategie] 🌐 World Domination: Hacking Push (${player.skills.hacking}/${worldDaemonReq}) ➔ UNI`,
+        `[Strategie] 🌐 DOMINION Modus aktiv: Hacking Push (${player.skills.hacking}/${worldDaemonReq}) ➔ DOMINION`,
       );
-      return { mode: "UNI", targetStat: worldDaemonReq };
+      return { mode: "DOMINION", targetStat: worldDaemonReq };
     }
   }
 
