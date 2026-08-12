@@ -33,9 +33,6 @@ export interface SleeveTaskAssignment {
   subType?: string;
 }
 
-/**
- * Formatiert den aktuellen Task eines Sleeves typensicher in einen lesbaren String.
- */
 function formatSleeveTask(task: SleeveTask | null): string {
   if (!task) return "Idle";
   const t = task as any;
@@ -51,9 +48,6 @@ function formatSleeveTask(task: SleeveTask | null): string {
   return detail ? `${t.type}: ${detail}` : `${t.type}`;
 }
 
-/**
- * Liest den vollständigen Zustand aller Sleeves aus.
- */
 export function getSleeveStatuses(ns: NS): SleeveStatus[] {
   if (!ns.sleeve) return [];
 
@@ -86,9 +80,6 @@ export function getSleeveStatuses(ns: NS): SleeveStatus[] {
   return statuses;
 }
 
-/**
- * Weist einem einzelnen Sleeve eine spezifische Aufgabe zu.
- */
 export function setSleeveTask(
   ns: NS,
   sleeveId: number,
@@ -96,7 +87,6 @@ export function setSleeveTask(
 ): boolean {
   if (!ns.sleeve) return false;
 
-  // 🛑 Verhindert das Zurücksetzen laufender Timer (z. B. Homicide Progress)
   const currentTask = ns.sleeve.getTask(sleeveId);
   if (isSameTask(currentTask, assignment)) {
     return true;
@@ -149,22 +139,35 @@ export function setSleeveTask(
       return false;
     }
 
-    case "UNI":
-      if (!assignment.target || !assignment.subType) return false;
+    case "UNI": {
+      if (!assignment.subType) return false;
+
+      const sleeveInfo = ns.sleeve.getSleeve(sleeveId);
+      let uniName = assignment.target ?? "Rothman University";
+
+      // Universitätsname an die Stadt des Sleeves anpassen
+      if (sleeveInfo.city === "Aevum") {
+        uniName = "Summit University";
+      } else if (sleeveInfo.city === "Volhaven") {
+        uniName = "ZB Institute of Technology";
+      } else if (sleeveInfo.city !== "Sector-12") {
+        // Bei Städten ohne Uni (Chongqing, etc.) Reise nach Sector-12 ausführen
+        ns.sleeve.travel(sleeveId, "Sector-12");
+        uniName = "Rothman University";
+      }
+
       return ns.sleeve.setToUniversityCourse(
         sleeveId,
-        assignment.target as any,
+        uniName as any,
         assignment.subType as UniversityClassType,
       );
+    }
 
     default:
       return false;
   }
 }
 
-/**
- * Ermittelt den primären Ziel-Modus basierend auf den aktuellen Thresholds.
- */
 export function getRecommendedTask(
   ns: NS,
   sleeveId: number,
@@ -182,9 +185,6 @@ export function getRecommendedTask(
   return { mode: "CRIME", target: "Homicide" };
 }
 
-/**
- * Prüft, ob die aktuell laufende Aufgabe eines Sleeves bereits mit dem Ziel-Assignment übereinstimmt.
- */
 function isSameTask(
   current: SleeveTask | null,
   assignment: SleeveTaskAssignment,
@@ -212,8 +212,12 @@ function isSameTask(
     case "FACTION":
       return current.type === "FACTION" && t.factionName === assignment.target;
 
-    case "UNI":
-      return current.type === "CLASS" && t.classType === assignment.subType;
+    case "UNI": {
+      if (current.type !== "CLASS") return false;
+      const currentClass = (t.classType ?? t.className ?? t.actionName ?? "").toString().toLowerCase();
+      const targetClass = (assignment.subType ?? "").toString().toLowerCase();
+      return currentClass === targetClass;
+    }
 
     default:
       return false;

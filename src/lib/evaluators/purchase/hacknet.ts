@@ -9,7 +9,7 @@ import {
   loadBnMults,
   adjustPriorityByMult,
   hasCorporation,
-  hasbladeburner,
+  hasBladeburner,
 } from "lib/utils.js";
 
 interface HacknetRequest extends PurchaseRequest {
@@ -152,7 +152,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
       // 3. Dynamischen Ziel-Wert ermitteln
       targetCapNeeded = 200; // Basis z.B. für Coding Contracts
       if (hasCorporation(ns)) targetCapNeeded = Math.max(targetCapNeeded, 300);
-      if (hasbladeburner(ns)) targetCapNeeded = Math.max(targetCapNeeded, 500);
+      if (hasBladeburner(ns)) targetCapNeeded = Math.max(targetCapNeeded, 500);
 
       // Capacity Blocked: Zu wenig Speicher für Mindestanforderung ODER Speicher läuft in < 45s voll
       isCapacityBlocked = currentCapacity < targetCapNeeded || fillTimeSeconds < 45;

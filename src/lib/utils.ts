@@ -174,7 +174,7 @@ export function hasCorporation(ns: NS): boolean {
  * @param ns Bitburner Netscript Context
  * @returns true, wenn Bladburner-Funktionen genutzt werden können.
  */
-export function hasbladeburner(ns: NS): boolean {
+export function hasBladeburner(ns: NS): boolean {
   return ns.bladeburner !== undefined;
 }
 

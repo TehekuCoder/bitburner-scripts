@@ -8,7 +8,8 @@ export type SleeveMode =
   | "FACTION"
   | "COMPANY"
   | "CRIME"
-  | "UNI";
+  | "UNI"
+  | "DOMINION";
 
 export interface SleeveData {
   index: number;
@@ -22,6 +23,7 @@ export interface SleeveOptions {
   targetStat?: number;
   strategy?: BotStrategy;
   autoBuyAugs?: boolean;
+  isDominionActive?: boolean;
 }
 
 export interface SleeveGangUnlockStatus {
@@ -38,4 +40,5 @@ export interface SleeveState {
   strategy: BotStrategy;
   sleeveProgress?: string;
   autoBuyAugs?: boolean;
+  isDominionActive?: boolean;
 }

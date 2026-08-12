@@ -1,4 +1,10 @@
-import { NS, FactionName, Player, FactionWorkType, UniversityClassType } from "@ns";
+import {
+  NS,
+  FactionName,
+  Player,
+  FactionWorkType,
+  UniversityClassType,
+} from "@ns";
 import { printSleeveDashboard } from "/ui/sleeve-ui.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { loadSleeveState, patchSleeveState } from "/lib/state.js";
@@ -7,7 +13,11 @@ import {
   SleeveMode,
   SleeveGangUnlockStatus,
 } from "/lib/types/sleeves.js";
-import { SleeveTaskAssignment, getSleeveStatuses, setSleeveTask } from "/lib/utils/sleeve-utils.js";
+import {
+  SleeveTaskAssignment,
+  getSleeveStatuses,
+  setSleeveTask,
+} from "/lib/utils/sleeve-utils.js";
 
 type ExtendedGangStatus = SleeveGangUnlockStatus & { gangFaction?: string };
 
@@ -44,7 +54,7 @@ function getFactionsNeedingRep(
   ns: NS,
   playerFactions: string[],
   ownedAugs: string[],
-  gangFaction?: string
+  gangFaction?: string,
 ): FactionName[] {
   const validFactions = playerFactions.filter((f) => f !== gangFaction);
 
@@ -52,7 +62,9 @@ function getFactionsNeedingRep(
 
   const result: FactionName[] = [];
   for (const faction of validFactions) {
-    const augs = ns.singularity.getAugmentationsFromFaction(faction as FactionName);
+    const augs = ns.singularity.getAugmentationsFromFaction(
+      faction as FactionName,
+    );
     const unowned = augs.filter((aug) => !ownedAugs.includes(aug));
 
     if (unowned.length === 0) continue;
@@ -80,7 +92,7 @@ function resolveSleeveAssignment(
   options: SleeveOptions,
   gangStatus: ExtendedGangStatus,
   factionsNeedingRep: FactionName[],
-  assignedFactions: Set<string>
+  assignedFactions: Set<string>,
 ): SleeveTaskAssignment {
   // 1️⃣ NOTFALL: Schock abbauen & Synchronisieren
   if (sleeveShock > 0) {
@@ -91,9 +103,25 @@ function resolveSleeveAssignment(
     return { mode: "SYNCHRO" };
   }
 
-  const availableFactions = factionsNeedingRep.filter((f) => !assignedFactions.has(f));
+  // 2️⃣ DOMINION / XP-RUSH (Prüft Strategy, Flag UND globalMode)
+  const isDominion =
+    options.strategy === "DOMINION" ||
+    options.isDominionActive === true ||
+    options.globalMode === "DOMINION";
 
-  // 2️⃣ EXPLIZITER OVERRIDE (sleeveGlobalMode)
+  if (isDominion) {
+    return {
+      mode: "UNI",
+      target: "Rothman University",
+      subType: "Algorithms" as UniversityClassType,
+    };
+  }
+
+  const availableFactions = factionsNeedingRep.filter(
+    (f) => !assignedFactions.has(f),
+  );
+
+  // 3️⃣ EXPLIZITER OVERRIDE (sleeveGlobalMode)
   if (
     options.globalMode &&
     options.globalMode !== "RECOVERY" &&
@@ -103,10 +131,13 @@ function resolveSleeveAssignment(
       case "CRIME":
         return { mode: "CRIME", target: "Homicide" };
       case "FACTION": {
-        let fac = (options.targetFaction as FactionName) || availableFactions[0];
+        let fac =
+          (options.targetFaction as FactionName) || availableFactions[0];
 
         if (gangStatus.gangFaction && fac === gangStatus.gangFaction) {
-          fac = availableFactions.find((f) => f !== gangStatus.gangFaction) as FactionName;
+          fac = availableFactions.find(
+            (f) => f !== gangStatus.gangFaction,
+          ) as FactionName;
         }
 
         if (fac && !assignedFactions.has(fac)) {
@@ -114,6 +145,7 @@ function resolveSleeveAssignment(
         }
         break;
       }
+      case "DOMINION":
       case "UNI":
         return {
           mode: "UNI",
@@ -125,8 +157,8 @@ function resolveSleeveAssignment(
     }
   }
 
-  // 3️⃣ STRATEGIE-REAKTION (DOMINION, KARMA, UNI, REP)
-  if (options.strategy === "DOMINION" || options.strategy === "UNI") {
+  // 4️⃣ STRATEGIE-REAKTION
+  if (options.strategy === "UNI") {
     return {
       mode: "UNI",
       target: "Rothman University",
@@ -138,7 +170,7 @@ function resolveSleeveAssignment(
     return { mode: "CRIME", target: "Homicide" };
   }
 
-  // 4️⃣ STANDARD: Fraktions-Reputation farmen
+  // 5️⃣ STANDARD: Fraktions-Reputation farmen
   if (availableFactions.length > 0) {
     const targetFaction = availableFactions[0];
     return {
@@ -148,13 +180,10 @@ function resolveSleeveAssignment(
     };
   }
 
-  // 5️⃣ FALLBACK: Homicide für Karma & Exp
+  // 6️⃣ FALLBACK: Homicide
   return { mode: "CRIME", target: "Homicide" };
 }
 
-/**
- * Steuert alle verlinkten Sleeves konfliktfrei an.
- */
 function manageAllSleeves(
   ns: NS,
   player: Player,
@@ -162,19 +191,32 @@ function manageAllSleeves(
   ownedAugs: string[],
   factionsNeedingRep: FactionName[],
   logger: Logger,
-  addLocalLog: (msg: string) => void
+  addLocalLog: (msg: string) => void,
 ): string {
   const statuses = getSleeveStatuses(ns);
   const gangStatus = checkSleeveGangStatus(ns);
 
   const assignedFactions = new Set<string>();
-  const plannedAssignments: { sleeveId: number; assignment: SleeveTaskAssignment }[] = [];
+  const plannedAssignments: {
+    sleeveId: number;
+    assignment: SleeveTaskAssignment;
+  }[] = [];
 
-  // 1a. Bestehende valide Fraktions-Tasks beibehalten
+  const isDominion =
+    options.strategy === "DOMINION" ||
+    options.isDominionActive === true ||
+    options.globalMode === "DOMINION";
+
+  // 1a. Bestehende valide Fraktions-Tasks beibehalten (wird im Dominion-Modus übersprungen)
   for (const sleeve of statuses) {
     const needsRecoveryOrSync = sleeve.shock > 0 || sleeve.sync < 100;
 
-    if (!needsRecoveryOrSync && !options.globalMode && !gangStatus.shouldGrindKarma && options.strategy !== "DOMINION") {
+    if (
+      !needsRecoveryOrSync &&
+      !options.globalMode &&
+      !gangStatus.shouldGrindKarma &&
+      !isDominion
+    ) {
       const rawTask = ns.sleeve.getTask(sleeve.id) as any;
       if (rawTask && rawTask.type === "FACTION" && rawTask.factionName) {
         const fac = rawTask.factionName as FactionName;
@@ -184,7 +226,9 @@ function manageAllSleeves(
           !assignedFactions.has(fac)
         ) {
           assignedFactions.add(fac);
-          const workType = (rawTask.factionWorkType ?? rawTask.workType ?? "hacking") as FactionWorkType;
+          const workType = (rawTask.factionWorkType ??
+            rawTask.workType ??
+            "hacking") as FactionWorkType;
           plannedAssignments.push({
             sleeveId: sleeve.id,
             assignment: {
@@ -209,7 +253,7 @@ function manageAllSleeves(
       options,
       gangStatus,
       factionsNeedingRep,
-      assignedFactions
+      assignedFactions,
     );
 
     if (assignment.mode === "FACTION" && assignment.target) {
@@ -220,12 +264,19 @@ function manageAllSleeves(
   }
 
   // 2. Ausführung
-  const nonFactionTasks = plannedAssignments.filter((p) => p.assignment.mode !== "FACTION");
-  const factionTasks = plannedAssignments.filter((p) => p.assignment.mode === "FACTION");
+  const nonFactionTasks = plannedAssignments.filter(
+    (p) => p.assignment.mode !== "FACTION",
+  );
+  const factionTasks = plannedAssignments.filter(
+    (p) => p.assignment.mode === "FACTION",
+  );
 
   const tasksSummaryMap = new Map<number, string>();
 
-  for (const { sleeveId, assignment } of [...nonFactionTasks, ...factionTasks]) {
+  for (const { sleeveId, assignment } of [
+    ...nonFactionTasks,
+    ...factionTasks,
+  ]) {
     const success = setSleeveTask(ns, sleeveId, assignment);
 
     if (success) {
@@ -236,7 +287,9 @@ function manageAllSleeves(
     }
   }
 
-  const tasksSummary = statuses.map((s) => tasksSummaryMap.get(s.id) ?? `S${s.id}:IDLE`);
+  const tasksSummary = statuses.map(
+    (s) => tasksSummaryMap.get(s.id) ?? `S${s.id}:IDLE`,
+  );
   return tasksSummary.join(" | ");
 }
 
@@ -302,6 +355,7 @@ export async function main(ns: NS): Promise<void> {
       targetStat: botState?.targetStat,
       strategy: botState?.strategy,
       autoBuyAugs: botState?.autoBuyAugs,
+      isDominionActive: botState?.isDominionActive,
     };
 
     let ownedAugs: string[] = [];
@@ -309,15 +363,12 @@ export async function main(ns: NS): Promise<void> {
       ownedAugs = ns.singularity.getOwnedAugmentations(true);
     }
 
-    if (
-      lastFactionScan === 0 ||
-      Date.now() - lastFactionScan > SCAN_INTERVAL
-    ) {
+    if (lastFactionScan === 0 || Date.now() - lastFactionScan > SCAN_INTERVAL) {
       factionsNeedingRep = getFactionsNeedingRep(
         ns,
         p.factions,
         ownedAugs,
-        unlockStatus.gangFaction
+        unlockStatus.gangFaction,
       );
       lastFactionScan = Date.now();
     }
@@ -329,7 +380,7 @@ export async function main(ns: NS): Promise<void> {
       ownedAugs,
       factionsNeedingRep,
       logger,
-      addLocalLog
+      addLocalLog,
     );
 
     if (currentProgress && currentProgress !== lastStateProgress) {

@@ -2,10 +2,6 @@ import { NS } from "@ns";
 import { STATE_PORT } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 
-// Re-Export für Rückwärtskompatibilität (Logik liegt in lib/utils.ts)
-
-
-// Direkte Typ-Imports aus den jeweiligen Dateien (mit .js Endung für Bitburner)
 import { 
   BotState, 
   StrategyState, 
@@ -52,9 +48,6 @@ function isPortEmpty(data: unknown): boolean {
   );
 }
 
-/**
- * Überschreibt den gesamten BotState atomar.
- */
 export function saveState(ns: NS, state: BotStateContent): void {
   try {
     const port = ns.getPortHandle(STATE_PORT);
@@ -81,9 +74,6 @@ export function saveState(ns: NS, state: BotStateContent): void {
   }
 }
 
-/**
- * Patcht einzelne Felder im BotState atomar (schützt vor Lost Updates).
- */
 export function patchState(ns: NS, partialState: BotStatePatch): void {
   const port = ns.getPortHandle(STATE_PORT);
 
@@ -101,7 +91,6 @@ export function patchState(ns: NS, partialState: BotStatePatch): void {
     ...cleanedCurrentState
   } = currentState || {};
 
-  // Vollständiger Default-State
   const baseState: BotStateContent = {
     strategy: "MONEY",
     targetFaction: undefined,
@@ -109,6 +98,7 @@ export function patchState(ns: NS, partialState: BotStatePatch): void {
     targetCompany: undefined,
     targetStat: undefined,
     targetKills: undefined,
+    isDominionActive: false, // 🟢 Neu hinzugefügt
 
     batchStrategy: "BOOTSTRAP",
     kernelTarget: "n00dles",
@@ -191,12 +181,12 @@ export function loadBatcherState(ns: NS): BatcherState | null {
   const state = loadState(ns);
   if (!state) return null;
   const {
-    batchStrategy, // 🟢 NEU: batchStrategy aus dem BotState entpacken
+    batchStrategy,
     batcherTarget, batcherProgress, batcherActive, batcherActiveBatches,
     batcherTargetsSummary, batcherPlan, batcherDynamicMaxBatches, batcherRamNeeded,
   } = state;
   return {
-    batchStrategy, // 🟢 NEU: im BatcherState mitliefern
+    batchStrategy,
     batcherTarget, batcherProgress, batcherActive, batcherActiveBatches,
     batcherTargetsSummary, batcherPlan, batcherDynamicMaxBatches, batcherRamNeeded,
   };
@@ -231,8 +221,8 @@ export function patchFinanceState(ns: NS, partialState: FinanceStatePatch): void
 export function loadSleeveState(ns: NS): SleeveState | null {
   const state = loadState(ns);
   if (!state) return null;
-  const { sleeveGlobalMode, targetFaction, targetStat, strategy, sleeveProgress } = state;
-  return { sleeveGlobalMode, targetFaction, targetStat, strategy, sleeveProgress };
+  const { sleeveGlobalMode, targetFaction, targetStat, strategy, sleeveProgress, isDominionActive } = state;
+  return { sleeveGlobalMode, targetFaction, targetStat, strategy, sleeveProgress, isDominionActive };
 }
 
 export function patchSleeveState(ns: NS, partialState: SleeveStatePatch): void {
@@ -253,7 +243,7 @@ export function patchAugmentState(ns: NS, partialState: AugmentStatePatch): void
 export function loadFactionState(ns: NS): FactionState | null {
   const state = loadState(ns);
   if (!state) return null;
-  const { targetFaction, factionCurrentReps, strategy, isGrindingNFG } = state; // <-- isGrindingNFG hinzugefügt
+  const { targetFaction, factionCurrentReps, strategy, isGrindingNFG } = state;
   return { targetFaction, factionCurrentReps, strategy, isGrindingNFG };
 }
 
@@ -266,11 +256,11 @@ export function loadProgressState(ns: NS): BotStateProgress | null {
   if (!state) return null;
   const {
     progressBar, financeProgress, traderProgress, hacknetProgress,
-    sleeveProgress, sleeveGlobalMode, fillerConfig,
+    sleeveProgress, sleeveGlobalMode, fillerConfig, bitnodePhaseInfo, // 🟢 bitnodePhaseInfo hinzugefügt
   } = state;
   return {
     progressBar, financeProgress, traderProgress, hacknetProgress,
-    sleeveProgress, sleeveGlobalMode, fillerConfig,
+    sleeveProgress, sleeveGlobalMode, fillerConfig, bitnodePhaseInfo,
   };
 }
 

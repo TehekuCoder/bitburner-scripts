@@ -5,7 +5,7 @@ import { BotStrategy } from "/lib/types/strategy.js";
 import {
   hasSingularity,
   hasCorporation,
-  hasbladeburner,
+  hasBladeburner,
   formatMoney,
   loadBnMults,
 } from "/lib/utils.js";
@@ -107,8 +107,11 @@ function tryAutoUpgradeHome(ns: NS, logger: Logger): void {
     const ramCost = ns.singularity.getUpgradeHomeRamCost();
     if (ramCost > 0 && money >= ramCost) {
       if (ns.singularity.upgradeHomeRam()) {
+        const newRam = ns.getServerMaxRam("home");
         logger.success(
-          `🚀 Home RAM aufgerüstet! Neue Kapazität: ${ns.getServerMaxRam("home")} GB`,
+          `🚀 Home RAM aufgerüstet! Neue Kapazität: ${newRam} GB`,
+          undefined,
+          { context: { newRam, cost: ramCost } },
         );
       }
     }
@@ -117,11 +120,15 @@ function tryAutoUpgradeHome(ns: NS, logger: Logger): void {
     if (coreCost > 0 && money >= coreCost) {
       if (ns.singularity.upgradeHomeCores()) {
         const cores = ns.getServer("home").cpuCores;
-        logger.success(`🚀 Home Cores aufgerüstet! Aktuell: ${cores} Cores`);
+        logger.success(
+          `🚀 Home Cores aufgerüstet! Aktuell: ${cores} Cores`,
+          undefined,
+          { context: { cores, cost: coreCost } },
+        );
       }
     }
-  } catch {
-    // Ignorieren bei fehlenden Rechten
+  } catch (err) {
+    logger.debug(`Fehler beim automatischen Home-Upgrade: ${String(err)}`);
   }
 }
 
@@ -129,36 +136,43 @@ function getDynamicPriorityList(
   ns: NS,
   bnMults: ReturnType<typeof loadBnMults>,
   strategy?: BotStrategy,
+  isDominionActive?: boolean,
+  sleeveGlobalMode?: string,
 ): UpgradePriority[] {
   const list: UpgradePriority[] = [];
   const isAugmentationExpensive = bnMults.AugmentationMoneyCost > 2.0;
   const canContractMoney = (bnMults.CodingContractMoney ?? 1) > 0;
 
-  // 1️⃣ STRATEGIE-SPEZIFISCHE HIGH-PRIORITY UPGRADES
+  const reserveBuffer = Math.floor(ns.hacknet.hashCapacity() * 0.2);
 
-  // DOMINION & UNI Modus: Maximaler Boost auf Uni-Studium für XP-Rush
-  if (strategy === "DOMINION" || strategy === "UNI") {
+  // Prüfung auch auf sleeveGlobalMode erweitern
+  const isDominion =
+    strategy === "DOMINION" ||
+    strategy === "UNI" ||
+    isDominionActive === true ||
+    sleeveGlobalMode === "DOMINION" ||
+    sleeveGlobalMode === "UNI";
+
+  // 1️⃣ STRATEGIE-SPEZIFISCHE HIGH-PRIORITY UPGRADES
+  if (isDominion) {
     list.push({ name: "Improve Studying" });
   }
 
-  // TRAIN & KILLS Modus: Gym-Training pushen
   if (strategy === "TRAIN" || strategy === "KILLS") {
     list.push({ name: "Improve Gym Training" });
   }
 
-  // BLADEBURNER Modus: SP & Rank generieren
   if (strategy === "BLADEBURNER") {
     list.push({
       name: "Exchange for Bladeburner SP",
-      condition: (ns) => hasbladeburner(ns) && ns.bladeburner.inBladeburner(),
+      condition: (ns) => hasBladeburner(ns) && ns.bladeburner.inBladeburner(),
     });
     list.push({
       name: "Exchange for Bladeburner Rank",
-      condition: (ns) => hasbladeburner(ns) && ns.bladeburner.inBladeburner(),
+      condition: (ns) => hasBladeburner(ns) && ns.bladeburner.inBladeburner(),
     });
   }
 
-  // CORP Modus: Research & Capital Injection
   if (strategy === "CORP") {
     list.push({
       name: "Exchange for Corporation Research",
@@ -174,25 +188,24 @@ function getDynamicPriorityList(
   }
 
   // 2️⃣ GENERELLE HOCHWERTIGE UPGRADES
-
-  // Coding Contracts (sehr hohe Rendite)
   if (canContractMoney) {
-    list.push({ name: "Generate Coding Contract" });
+    list.push({
+      name: "Generate Coding Contract",
+      minReserveHashes: reserveBuffer,
+    });
   }
 
-  // Teure Augmentations: Geldverkauf nach oben ziehen
   if (isAugmentationExpensive) {
-    list.push({ name: "Sell for Money" });
+    list.push({ name: "Sell for Money", minReserveHashes: reserveBuffer });
   }
 
-  // Batcher-Server Buffs
   list.push({ name: "Increase Maximum Money", requiresTarget: true });
   list.push({ name: "Reduce Minimum Security", requiresTarget: true });
 
-  // 3️⃣ FALLBACKS & RESTLICHE BUFFS
-  list.push({ name: "Improve Studying" });
-  list.push({ name: "Improve Gym Training" });
-  list.push({ name: "Sell for Money" });
+  // 3️⃣ FALLBACKS & RESTLICHE BUFFS (mit Sicherheitsreserve)
+  list.push({ name: "Improve Studying", minReserveHashes: reserveBuffer });
+  list.push({ name: "Improve Gym Training", minReserveHashes: reserveBuffer });
+  list.push({ name: "Sell for Money", minReserveHashes: reserveBuffer });
 
   return list;
 }
@@ -203,27 +216,46 @@ function trySpendHashes(
   targets: string[],
   logger: Logger,
 ): boolean {
-  if (upgrade.condition && !upgrade.condition(ns)) return false;
+  if (upgrade.condition && !upgrade.condition(ns)) {
+    return false;
+  }
 
   const currentHashes = ns.hacknet.numHashes();
   const reserve = upgrade.minReserveHashes ?? 0;
 
-  if (currentHashes <= reserve) return false;
+  if (currentHashes <= reserve) {
+    return false;
+  }
 
   if (upgrade.maxLevel !== undefined) {
     const currentLevel = ns.hacknet.getHashUpgradeLevel(upgrade.name);
-    if (currentLevel >= upgrade.maxLevel) return false;
+    if (currentLevel >= upgrade.maxLevel) {
+      return false;
+    }
   }
 
   const cost = ns.hacknet.hashCost(upgrade.name);
-  if (currentHashes < cost) return false;
+  if (currentHashes < cost) {
+    return false;
+  }
 
   if (upgrade.requiresTarget) {
     for (const target of targets) {
       if (ns.hacknet.spendHashes(upgrade.name, target)) {
+        const remainingHashes = ns.hacknet.numHashes();
+        const currentLevel = ns.hacknet.getHashUpgradeLevel(upgrade.name);
         logger.info(
           `⚡ Hash-Buff angewendet: [${upgrade.name}] ➔ ${target}`,
           target,
+          {
+            context: {
+              upgrade: upgrade.name,
+              target,
+              cost,
+              remainingHashes,
+              level: currentLevel,
+            },
+          },
         );
         return true;
       }
@@ -232,10 +264,15 @@ function trySpendHashes(
   }
 
   if (ns.hacknet.spendHashes(upgrade.name)) {
+    const remainingHashes = ns.hacknet.numHashes();
     if (upgrade.name === "Generate Coding Contract") {
-      logger.success(`📜 Coding Contract via Hashes generiert!`);
+      logger.success(`📜 Coding Contract via Hashes generiert!`, undefined, {
+        context: { cost, remainingHashes },
+      });
     } else {
-      logger.info(`💸 Hash-Upgrade gekauft: [${upgrade.name}]`);
+      logger.info(`💸 Hash-Upgrade gekauft: [${upgrade.name}]`, undefined, {
+        context: { upgrade: upgrade.name, cost, remainingHashes },
+      });
     }
     return true;
   }
@@ -256,11 +293,12 @@ export async function main(ns: NS): Promise<void> {
 
   logger.info(
     `🟢 Hash-Manager Daemon gestartet (Notfall-Boden: ${formatMoney(criticalMoneyFloor)}).`,
+    undefined,
+    { context: { criticalMoneyFloor } },
   );
 
   while (true) {
     const capacity = ns.hacknet.hashCapacity();
-    const currentHashes = ns.hacknet.numHashes();
 
     if (capacity === 0) {
       await ns.sleep(10000);
@@ -270,17 +308,36 @@ export async function main(ns: NS): Promise<void> {
     // 1. Home-Upgrades via Singularity versuchen
     tryAutoUpgradeHome(ns, logger);
 
+    const botState = loadState(ns);
+    const activeTargets = getActiveBatcherTargets(ns);
+    const priorityList = getDynamicPriorityList(
+      ns,
+      bnMults,
+      botState?.strategy,
+      botState?.isDominionActive,
+      botState?.sleeveGlobalMode,
+    );
+
+    // 2. ZUERST STRATEGIE-UPGRADES KAUFEN (z. B. "Improve Studying")
+    for (const upgrade of priorityList) {
+      while (trySpendHashes(ns, upgrade, activeTargets, logger)) {
+        await ns.sleep(20);
+      }
+    }
+
+    // 3. ERST DANACH: Liquidation für verbleibende Hashes bei Geldbedarf
     const currentMoney = ns.getServerMoneyAvailable("home");
     const hardwareCost = getHardwareUpgradeCost(ns);
 
     if (hardwareCost && hardwareCost !== lastLoggedHardwareGoal) {
       logger.debug(
         `🎯 Nächstes Home-Hardware Ziel: ${formatMoney(hardwareCost)}`,
+        undefined,
+        { context: { hardwareCost, currentMoney } },
       );
       lastLoggedHardwareGoal = hardwareCost;
     }
 
-    // 2. PRÜFUNG: Notfall-Liquidation
     const isCriticalMoney = currentMoney < criticalMoneyFloor;
     const isCloseToHardware =
       hardwareCost !== null &&
@@ -307,25 +364,18 @@ export async function main(ns: NS): Promise<void> {
 
         logger.warn(
           `🚨 Liquidation: ${reason}. ${soldCount}x Hashes zu Geld gemacht.`,
+          undefined,
+          {
+            context: {
+              soldCount,
+              earnedMoney: soldCount * 1_000_000,
+              currentMoney,
+              isCriticalMoney,
+              isCloseToHardware,
+            },
+          },
         );
         lastLiquidationLogTime = now;
-      }
-    }
-
-    // 3. REGULÄRE PRIORITÄTEN EVALUIEREN (ab 50% Kapazität)
-    if (currentHashes >= capacity * 0.5) {
-      const botState = loadState(ns);
-      const activeTargets = getActiveBatcherTargets(ns);
-      const priorityList = getDynamicPriorityList(
-        ns,
-        bnMults,
-        botState?.strategy,
-      );
-
-      for (const upgrade of priorityList) {
-        while (trySpendHashes(ns, upgrade, activeTargets, logger)) {
-          await ns.sleep(20);
-        }
       }
     }
 
