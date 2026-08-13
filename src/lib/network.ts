@@ -16,10 +16,10 @@ function sanitizeRamValue(value: number): number {
  */
 export function getAllServers(ns: NS): string[] {
   const visited = new Set<string>(["home"]);
-  const stack = ["home"]; // Stack statt Queue spart das teure .shift()
+  const stack = ["home"];
 
   while (stack.length > 0) {
-    const current = stack.pop()!; // O(1) Operation
+    const current = stack.pop()!;
     const connections = ns.scan(current);
 
     for (const nextServer of connections) {
@@ -29,6 +29,20 @@ export function getAllServers(ns: NS): string[] {
       }
     }
   }
+
+  // Hacknet-Server explizit hinzufügen (da ns.scan sie nicht erfasst)
+  try {
+    const numHacknet = ns.hacknet.numNodes();
+    for (let i = 0; i < numHacknet; i++) {
+      const serverName = `hacknet-server-${i}`;
+      if (ns.serverExists(serverName)) {
+        visited.add(serverName);
+      }
+    }
+  } catch {
+    // Abfangen, falls ns.hacknet in früheren BitNodes noch nicht bereitsteht
+  }
+
   return Array.from(visited);
 }
 
