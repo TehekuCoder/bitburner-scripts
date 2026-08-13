@@ -26,8 +26,13 @@ export async function main(ns: NS): Promise<void> {
       path: PATHS.tasks.cctSolver,
       condition: (ns) => {
         const state = loadState(ns);
-        const nodes = state?.allServers?.length ? state.allServers : getAllServers(ns);
-        return nodes.some((server) => ns.serverExists(server) && ns.ls(server, ".cct").length > 0);
+        const nodes = state?.allServers?.length
+          ? state.allServers
+          : getAllServers(ns);
+        return nodes.some(
+          (server) =>
+            ns.serverExists(server) && ns.ls(server, ".cct").length > 0,
+        );
       },
     },
 
@@ -38,11 +43,16 @@ export async function main(ns: NS): Promise<void> {
       condition: (ns) => {
         if (ns.singularity === undefined) return false;
         const state = loadState(ns);
-        const nodes = state?.allServers?.length ? state.allServers : getAllServers(ns);
+        const nodes = state?.allServers?.length
+          ? state.allServers
+          : getAllServers(ns);
         const playerHacking = ns.getHackingLevel();
 
         return nodes.some((node) => {
-          if (["home", "darkweb", "Darknet", "w0r1d_d43m0n"].includes(node) || node.startsWith("hacknet-node")) {
+          if (
+            ["home", "darkweb", "Darknet", "w0r1d_d43m0n"].includes(node) ||
+            node.startsWith("hacknet-node")
+          ) {
             return false;
           }
           if (!ns.serverExists(node)) return false;
@@ -107,10 +117,30 @@ export async function main(ns: NS): Promise<void> {
       condition: (ns) => ns.singularity !== undefined,
     },
 
-    // 8. Gang Manager
+    // Roadmap UI (soll immer laufen)
+    {
+      name: "Roadmap UI",
+      path: PATHS.ui.roadmap, 
+      minHomeRam: 32,         
+      condition: () => true,  
+    },
+
+    // 8. Gang Manager & UI
     {
       name: "Gang Manager",
       path: PATHS.managers.gang,
+      minHomeRam: 256,
+      condition: (ns) => {
+        try {
+          return ns.gang.inGang();
+        } catch {
+          return false;
+        }
+      },
+    },
+    {
+      name: "Gang UI",
+      path: PATHS.ui.gang,
       minHomeRam: 256,
       condition: (ns) => {
         try {
@@ -125,6 +155,13 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Sleeve Manager",
       path: PATHS.managers.sleeve,
+      minHomeRam: 512,
+      condition: (ns) => ns.sleeve !== undefined,
+    },
+
+    {
+      name: "Sleeve UI",
+      path: PATHS.ui.sleeve,
       minHomeRam: 512,
       condition: (ns) => ns.sleeve !== undefined,
     },
@@ -177,14 +214,18 @@ export async function main(ns: NS): Promise<void> {
       if (freeRam >= reqRam) {
         const pid = ns.run(execPath, 1, ...args);
         if (pid > 0) {
-          logger.success(`🚀 Daemon gestartet: ${daemon.name} [PID ${pid} | ${ns.format.ram(reqRam)}]`);
+          logger.success(
+            `🚀 Daemon gestartet: ${daemon.name} [PID ${pid} | ${ns.format.ram(reqRam)}]`,
+          );
           freeRam -= reqRam;
         } else {
-          logger.error(`❌ Fehlgeschlagen: ${daemon.name} konnte nicht gestartet werden.`);
+          logger.error(
+            `❌ Fehlgeschlagen: ${daemon.name} konnte nicht gestartet werden.`,
+          );
         }
       } else {
         logger.debug(
-          `⏳ RAM-Engpass für ${daemon.name} (Benötigt: ${ns.format.ram(reqRam)} | Frei: ${ns.format.ram(freeRam)})`
+          `⏳ RAM-Engpass für ${daemon.name} (Benötigt: ${ns.format.ram(reqRam)} | Frei: ${ns.format.ram(freeRam)})`,
         );
       }
     }

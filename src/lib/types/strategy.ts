@@ -4,6 +4,7 @@ import { GangState } from "./gang";
 import { AugmentState, AugmentTarget, FactionState } from "./factions";
 
 export type BotStrategy =
+  | "MANUAL"
   | "MONEY"
   | "REP"
   | "COMPANY"
@@ -11,9 +12,9 @@ export type BotStrategy =
   | "KILLS"
   | "CRIME"
   | "UNI"
-  | "KARMA" 
-  | "BLADEBURNER" 
-  | "CHURCH" 
+  | "KARMA"
+  | "BLADEBURNER"
+  | "CHURCH"
   | "DOMINION";
 
 export interface BotStateStrategy {
@@ -25,6 +26,7 @@ export interface BotStateStrategy {
   targetStat?: number;
   targetKills?: number;
   isDominionActive?: boolean;
+  manualMode?: boolean;
 }
 
 export interface StrategyState {
@@ -33,6 +35,7 @@ export interface StrategyState {
   targetCompany?: string;
   targetStat?: number;
   targetKills?: number;
+  manualMode?: boolean;
 }
 
 export interface StrategyResult {
@@ -53,6 +56,13 @@ export interface BotStateProgress {
     shareMaxRamPercent: number;
     maxXpLevel: number;
   } | null;
+  /** Aktuelle BitNode-Phase für das Roadmap Dashboard */
+  bitnodePhaseInfo?: {
+    phaseIndex: number;
+    phaseName: string;
+    progressPercent: number;
+    detail: string;
+  };
 }
 
 export interface BotStateNetwork {
@@ -93,23 +103,3 @@ export interface BotState
     BatcherState,
     FactionState,
     AugmentState {}
-
-export interface BotStateProgress {
-  progressBar?: string;
-  financeProgress: string;
-  traderProgress: string;
-  hacknetProgress: string;
-  sleeveProgress?: string;
-  sleeveGlobalMode?: string;
-  fillerConfig?: {
-    shareMaxRamPercent: number;
-    maxXpLevel: number;
-  } | null;
-  /** NEU: Aktuelle BitNode-Phase für das Roadmap Dashboard */
-  bitnodePhaseInfo?: {
-    phaseIndex: number;
-    phaseName: string;
-    progressPercent: number;
-    detail: string;
-  };
-}

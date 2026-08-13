@@ -1,17 +1,8 @@
 import { NS, FactionName, CompanyName } from "@ns";
 import { loadState } from "/lib/state.js";
 import { BotState } from "/lib/types/strategy.js";
-
-// ANSI-Farbcodes für konsistentes BitOS Dashboard Styling
-const COLOR = {
-  RESET: "\u001b[0m",
-  RED: "\u001b[31m",
-  GREEN: "\u001b[32m",
-  YELLOW: "\u001b[33m",
-  CYAN: "\u001b[36m",
-  GRAY: "\u001b[90m",
-  BOLD: "\u001b[1m",
-};
+import { COLOR } from "/lib/constants.js";
+import { renderProgressBar, hasSingularity } from "/lib/utils.js";
 
 const BITNODE_PHASES = [
   "1. Bootstrapping",
@@ -32,12 +23,14 @@ interface PhaseEvaluated {
 
 function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
   const player = ns.getPlayer();
-  const ownedAugs = ns.singularity ? ns.singularity.getOwnedAugmentations(false).length : 0;
+  const singularityAvailable = hasSingularity(ns);
+  
+  const ownedAugs = singularityAvailable ? ns.singularity.getOwnedAugmentations(false).length : 0;
   const remainingAugs = state.augRoadMap?.length ?? 0;
   const karma = ns.heart.break();
 
   // Phase 7: World Daemon (Red Pill vorhanden)
-  if (player.factions.includes("Daedalus" as FactionName) && ns.singularity) {
+  if (player.factions.includes("Daedalus" as FactionName) && singularityAvailable) {
     const allAugs = ns.singularity.getOwnedAugmentations(true);
     if (allAugs.includes("The Red Pill")) {
       const daemonReq = ns.getServerRequiredHackingLevel("w0r1d_d43m0n");
@@ -100,7 +93,7 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
     };
   }
 
-  // Phase 3: Karma Rush / Gang Unlock (Sicherheits-Check via ns.heart.break)
+  // Phase 3: Karma Rush / Gang Unlock
   if (
     state.strategy === "KARMA" ||
     state.strategy === "CRIME" ||
@@ -116,7 +109,7 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
     };
   }
 
-  // Phase 2: Early Factions & Megacorps (REP & COMPANY Modus)
+  // Phase 2: Early Factions & Megacorps
   if (state.strategy === "REP" || state.strategy === "COMPANY") {
     let detail = "";
     let progress = 50;
@@ -125,7 +118,7 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
       const company = state.targetCompany || "N/A";
       detail = `Corp: ${company}`;
 
-      if (state.targetCompany && ns.singularity) {
+      if (state.targetCompany && singularityAvailable) {
         try {
           const currentRep = ns.singularity.getCompanyRep(state.targetCompany as CompanyName);
           const targetRep = state.targetCompany === "Fulcrum Technologies" ? 250_000 : 400_000;
@@ -139,7 +132,7 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
       const faction = state.targetFaction || "N/A";
       detail = `Fraktion: ${faction}`;
 
-      if (state.targetFaction && ns.singularity) {
+      if (state.targetFaction && singularityAvailable) {
         try {
           const currentRep = ns.singularity.getFactionRep(state.targetFaction as FactionName);
           const targetRep = state.factionTargets?.[state.targetFaction] ?? 0;
@@ -172,22 +165,47 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
   };
 }
 
-/**
- * Erstellt einen visuellen Ladebalken mit Farbformatierung.
- */
-function renderProgressBar(percent: number, width: number = 20): string {
-  const safePercent = Math.max(0, Math.min(100, percent));
-  const filled = Math.floor((safePercent / 100) * width);
-  const empty = width - filled;
-  const color = safePercent === 100 ? COLOR.GREEN : COLOR.CYAN;
+function getNextManualStep(ns: NS, state: BotState): string {
+  const player = ns.getPlayer();
+  const karma = ns.heart.break();
 
-  return `${color}[${"█".repeat(filled)}${"░".repeat(empty)}] ${safePercent.toFixed(1)}%${COLOR.RESET}`;
+  if (player.skills.hacking >= 3000) {
+    return "🎯 Kaufe 'The Red Pill' & hacke w0r1d_d43m0n im Terminal!";
+  }
+
+  if (!state.hasGang) {
+    if (karma <= -54000) {
+      return "🚨 Gründe jetzt eine Gang im Faction-Tab!";
+    }
+    return `🔪 Treibe Karma via Slumgullion/Crime auf -54.000 (Aktuell: ${karma.toFixed(0)})`;
+  }
+
+  if (player.factions.length === 0) {
+    if (player.skills.hacking >= 30) {
+      return "📜 Nimm Einladung von CyberSec / CSEC an!";
+    }
+    return "💻 Hacking Level steigern für erste Faction-Invites.";
+  }
+
+  if (player.money >= 100e9 && player.skills.hacking >= 2500 && !player.factions.includes("Daedalus")) {
+    return "🏆 Warten auf Daedalus-Einladung (30 Augs ODER $100b + Hack 2500)!";
+  }
+
+  return "🔄 Rep bei Factions farmen & Augmentations manuell kaufen.";
 }
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
+
+  const flags = ns.flags([
+    ["manual", false],
+    ["m", false],
+    ["auto", false],
+    ["a", false],
+  ]);
+
   ns.ui.openTail();
-  ns.ui.resizeTail(600, 500);
+  ns.ui.resizeTail(600, 620);
   ns.ui.setTailTitle("BitOS - Roadmap Dashboard");
 
   const dividerHeader = `${COLOR.GRAY}=========================================================${COLOR.RESET}`;
@@ -204,12 +222,42 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
+    const singularityAvailable = hasSingularity(ns);
+    let isManual = false;
+    let autoErrorMsg: string | null = null;
+
+    // Logik zur Bestimmung des Modus
+    if (flags.auto || flags.a) {
+      if (!singularityAvailable) {
+        isManual = true;
+        autoErrorMsg = "❌ [--auto abgelehnt]: Singularity (SF4) nicht vorhanden!";
+      } else {
+        isManual = false;
+      }
+    } else if (flags.manual || flags.m) {
+      isManual = true;
+    } else {
+      // Automatische Erkennung ohne Flags
+      isManual = !singularityAvailable || Boolean(state.manualMode || state.strategy === "MANUAL");
+    }
+
     const currentPhase = evaluateBitNodePhase(ns, state);
+
+    const modeBadge = isManual 
+      ? `${COLOR.YELLOW}[MANUELL]${COLOR.RESET}` 
+      : `${COLOR.GREEN}[AUTO-PILOT]${COLOR.RESET}`;
 
     // Header
     ns.print(dividerHeader);
-    ns.print(`  ${COLOR.BOLD}${COLOR.CYAN}🗺️  BITOS ROADMAP DASHBOARD | BN ${state.currentBitNode}.${state.currentBitNodeLevel}${COLOR.RESET}`);
+    ns.print(`  ${COLOR.BOLD}${COLOR.CYAN}🗺️  BITOS ROADMAP DASHBOARD | BN ${state.currentBitNode}.${state.currentBitNodeLevel}${COLOR.RESET} ${modeBadge}`);
     ns.print(dividerHeader);
+
+    // Fehler-Warnung anzeigen, falls --auto ohne Singularity erzwungen wurde
+    if (autoErrorMsg) {
+      ns.print(` ${COLOR.RED}${COLOR.BOLD}${autoErrorMsg}${COLOR.RESET}`);
+      ns.print(` ${COLOR.YELLOW}-> System schaltet erzwungen auf MANUELL um.${COLOR.RESET}`);
+      ns.print(dividerSub);
+    }
 
     // 1. Phasen-Übersicht
     ns.print(` ${COLOR.BOLD}BITNODE PHASEN-FORTSCHRITT${COLOR.RESET}`);
@@ -234,7 +282,6 @@ export async function main(ns: NS): Promise<void> {
     ns.print(dividerSub);
     ns.print(` Strategie:    ${COLOR.YELLOW}${state.strategy || "N/A"}${COLOR.RESET}`);
     
-    // Dynamische Anpassung von Ziel-Corp / Ziel-Faction
     const targetLabel = state.strategy === "COMPANY" ? "Ziel-Corp:   " : "Ziel-Faction:";
     const targetValue = state.strategy === "COMPANY" 
       ? (state.targetCompany || "Keine") 
@@ -244,7 +291,15 @@ export async function main(ns: NS): Promise<void> {
     ns.print(` Status:       ${currentPhase.detail}`);
     ns.print(` Fortschritt:  ${renderProgressBar(currentPhase.progressPercent)}`);
 
-    // 3. Subsystem Status
+    // 3. Manuelle Handlungsempfehlung (falls manueller Modus aktiv)
+    if (isManual) {
+      ns.print(dividerSub);
+      ns.print(` ${COLOR.BOLD}${COLOR.YELLOW}💡 MANUELLE HANDLUNGSEMPFEHLUNG${COLOR.RESET}`);
+      ns.print(dividerSub);
+      ns.print(` ${COLOR.BOLD}${getNextManualStep(ns, state)}${COLOR.RESET}`);
+    }
+
+    // 4. Subsystem Status
     ns.print(dividerSub);
     ns.print(` ${COLOR.BOLD}SUBSYSTEM STATUS${COLOR.RESET}`);
     ns.print(dividerSub);

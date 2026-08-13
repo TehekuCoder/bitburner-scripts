@@ -93,6 +93,7 @@ export function patchState(ns: NS, partialState: BotStatePatch): void {
 
   const baseState: BotStateContent = {
     strategy: "MONEY",
+    manualMode: false,
     targetFaction: undefined,
     isGrindingNFG: false,
     targetCompany: undefined,
@@ -195,8 +196,8 @@ export function loadBatcherState(ns: NS): BatcherState | null {
 export function loadStrategyState(ns: NS): StrategyState | null {
   const state = loadState(ns);
   if (!state) return null;
-  const { strategy, targetFaction, targetCompany, targetStat, targetKills } = state;
-  return { strategy, targetFaction, targetCompany, targetStat, targetKills };
+  const { strategy, targetFaction, targetCompany, targetStat, targetKills , manualMode } = state;
+  return { strategy, targetFaction, targetCompany, targetStat, targetKills, manualMode };
 }
 
 export function patchStrategyState(ns: NS, partialState: StrategyStatePatch): void {

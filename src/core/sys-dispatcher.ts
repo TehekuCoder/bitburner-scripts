@@ -7,7 +7,6 @@ import { BotStrategy } from "/lib/types/strategy.js";
 import { SystemStrategyEvaluator } from "/lib/evaluators/strategy/system-strategy.js";
 import {
   getExactBitNode,
-  ensureDaemon,
   hasSleeve,
   hasGang,
   hasCorporation,
@@ -106,8 +105,6 @@ export async function main(ns: NS): Promise<void> {
       evalRes.hasGang,
     );
 
-    // 🤖 Dauerhafte Hintergrund-Daemons & Services verwalten
-    manageServices(ns, logger);
 
     await ns.sleep(2000);
   }
@@ -234,31 +231,3 @@ function handleFactionInvitations(ns: NS, logger: Logger): void {
   }
 }
 
-/**
- * Stellt sicher, dass dauerhafte Hintergrund-Daemons & Manager kontinuierlich laufen.
- */
-function manageServices(ns: NS, logger: Logger): void {
-  // 1. UI-Dashboards
-  ensureDaemon(ns, "ui/roadmap.js", { logger });
-
-  // Optional: Das Sleeve-Dashboard automatisch mit starten, wenn Sleeves existieren
-  ensureDaemon(ns, "ui/sleeve.js", {
-    condition: () => hasSleeve(ns),
-    logger,
-  });
-
-  // 2. Hintergrund-Daemons (Logik)
-  ensureDaemon(ns, "daemons/sleeve-manager.js", {
-    condition: () => hasSleeve(ns),
-    logger,
-  });
-  ensureDaemon(ns, "ui/gang.js", {
-    condition: () => hasSleeve(ns),
-    logger,
-  });
-
-  ensureDaemon(ns, "daemons/gang-manager.js", {
-    condition: () => hasGang(ns),
-    logger,
-  });
-}

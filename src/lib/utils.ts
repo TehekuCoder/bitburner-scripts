@@ -2,6 +2,7 @@ import { NS, BitNodeMultipliers } from "@ns";
 import { DEFAULT_MULTIPLIERS } from "/lib/constants.js";
 import { PurchasePriority } from "./types/finance";
 import { BitNodeInfo } from "./types/common";
+import { COLOR } from "/lib/constants.js";
 
 // ============================================================================
 // 1. BitNode & System Helpers
@@ -9,7 +10,7 @@ import { BitNodeInfo } from "./types/common";
 
 /**
  * Ermittelt den exakten BitNode inklusive des aktuellen Levels/Stufe.
- * 
+ *
  * @example
  * const bn = getExactBitNode(ns);
  * if (bn.node === 2) { ... } // BitNode 2 (egal welches Level)
@@ -28,8 +29,6 @@ export function getExactBitNode(ns: NS): BitNodeInfo {
   };
 }
 
-
-
 /**
  * Lädt BitNode-Multiplikatoren aus der bn-multipliers.txt auf 'home'.
  * Fällt auf DEFAULT_MULTIPLIERS zurück, falls die Datei fehlt oder ungültig ist.
@@ -42,7 +41,9 @@ export function loadBnMults(ns: NS): Record<keyof BitNodeMultipliers, number> {
         return { ...DEFAULT_MULTIPLIERS, ...JSON.parse(fileContent) };
       }
     } catch {
-      ns.print("⚠️ [LIB] Fehler beim Parsen der bn-multipliers.txt. Nutze Fallback.");
+      ns.print(
+        "⚠️ [LIB] Fehler beim Parsen der bn-multipliers.txt. Nutze Fallback.",
+      );
     }
   }
   return DEFAULT_MULTIPLIERS;
@@ -134,7 +135,7 @@ export function getProgressRatio(current: number, target: number): number {
 
 /**
  * Prüft sauber, ob die Singularity-API (SF4 / BN4) verfügbar ist.
- * 
+ *
  * @param ns Bitburner Netscript Context
  * @returns true, wenn Singularity-Funktionen genutzt werden können.
  */
@@ -143,7 +144,7 @@ export function hasSingularity(ns: NS): boolean {
 }
 /**
  * Prüft sauber, ob die Gang-API (SF2 / BN2) verfügbar ist.
- * 
+ *
  * @param ns Bitburner Netscript Context
  * @returns true, wenn Gang-Funktionen genutzt werden können.
  */
@@ -152,7 +153,7 @@ export function hasGang(ns: NS): boolean {
 }
 /**
  * Prüft sauber, ob die Sleeve-API (SF10 / BN10) verfügbar ist.
- * 
+ *
  * @param ns Bitburner Netscript Context
  * @returns true, wenn Sleeve-Funktionen genutzt werden können.
  */
@@ -161,7 +162,7 @@ export function hasSleeve(ns: NS): boolean {
 }
 /**
  * Prüft sauber, ob die Sleeve-API (SF3 / BN3) verfügbar ist.
- * 
+ *
  * @param ns Bitburner Netscript Context
  * @returns true, wenn Corporation-Funktionen genutzt werden können.
  */
@@ -170,7 +171,7 @@ export function hasCorporation(ns: NS): boolean {
 }
 /**
  * Prüft sauber, ob die Bladeburner-API (SF6/7 / BN6/7) verfügbar ist.
- * 
+ *
  * @param ns Bitburner Netscript Context
  * @returns true, wenn Bladburner-Funktionen genutzt werden können.
  */
@@ -180,7 +181,7 @@ export function hasBladeburner(ns: NS): boolean {
 
 export function adjustPriorityByMult(
   basePriority: PurchasePriority,
-  mult: number
+  mult: number,
 ): PurchasePriority {
   if (mult <= 0) return PurchasePriority.IDLE;
   if (mult < 0.1) return Math.min(PurchasePriority.IDLE, basePriority + 2); // Stark ge-nerft (z.B. 2 Stufen schlechter)
@@ -191,64 +192,23 @@ export function adjustPriorityByMult(
   return basePriority;
 }
 
-// ============================================================================
-// 4. Process & Service Helpers
-// ============================================================================
+/**
+ * Erstellt einen visuellen Ladebalken mit Farbformatierung.
+ */
+export function renderProgressBar(percent: number, width: number = 20): string {
+  const safePercent = clamp(percent, 0, 100);
+  const filled = Math.floor((safePercent / 100) * width);
+  const empty = width - filled;
+  const color = safePercent === 100 ? COLOR.GREEN : COLOR.CYAN;
 
-export interface EnsureDaemonOptions {
-  host?: string;
-  threads?: number;
-  args?: (string | number | boolean)[];
-  /** Optionale Bedingung (z.B. hasSleeve(ns)), die true sein muss */
-  condition?: () => boolean;
-  /** Optionaler Logger zur Protokollierung */
-  logger?: { info: (msg: string) => void; warn?: (msg: string) => void };
+  return `${color}[${"█".repeat(filled)}${"░".repeat(empty)}] ${safePercent.toFixed(1)}%${COLOR.RESET}`;
 }
 
-/**
- * Stellt sicher, dass ein Hintergrund-Daemon/Service dauerhaft läuft.
- * Prüft automatisch API-Verfügbarkeit, Dateiexistenz, Laufzeitstatus und RAM.
- * 
- * @returns true, wenn das Skript bereits läuft oder erfolgreich gestartet wurde.
- */
-export function ensureDaemon(
-  ns: NS,
-  scriptPath: string,
-  options: EnsureDaemonOptions = {}
-): boolean {
-  const { host = "home", threads = 1, args = [], condition, logger } = options;
-
-  // 1. Pre-Check (z.B. API noch nicht freigeschaltet)
-  if (condition && !condition()) {
-    return false;
+function getOwnedAugCount(ns: NS): number {
+  if (!hasSingularity(ns)) return 0; // Fallback ohne Singularity
+  try {
+    return ns.singularity.getOwnedAugmentations(false).length;
+  } catch {
+    return 0;
   }
-
-  // 2. Existenz & Status prüfen
-  if (!ns.fileExists(scriptPath, host)) {
-    return false;
-  }
-  if (ns.isRunning(scriptPath, host, ...args)) {
-    return true;
-  }
-
-  // 3. RAM-Check
-  const freeRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host);
-  const requiredRam = ns.getScriptRam(scriptPath, host) * threads;
-
-  if (freeRam < requiredRam) {
-    logger?.warn?.(
-      `⚠️ Zu wenig RAM für ${getScriptNameOnly(scriptPath)} auf ${host} ` +
-      `(Frei: ${formatRam(freeRam)}, Benötigt: ${formatRam(requiredRam)})`
-    );
-    return false;
-  }
-
-  // 4. Starten
-  const pid = ns.exec(scriptPath, host, threads, ...args);
-  if (pid > 0) {
-    logger?.info(`🚀 Service gestartet: ${scriptPath} (PID: ${pid})`);
-    return true;
-  }
-
-  return false;
 }
