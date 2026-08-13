@@ -105,7 +105,6 @@ export async function main(ns: NS): Promise<void> {
       evalRes.hasGang,
     );
 
-
     await ns.sleep(2000);
   }
 }
@@ -122,9 +121,11 @@ function manageMicroservices(
   currentKarma: number = 0,
   hasGang: boolean = false,
 ): void {
+  const currentState = loadState(ns);
+
   const modeToScript: Record<string, string> = {
     REP: PATHS.tasks.faction,
-    CORP: PATHS.tasks.corp,
+    COMPANY: PATHS.tasks.company,
     TRAIN: PATHS.tasks.train,
     UNI: PATHS.tasks.uni,
     CRIME: PATHS.tasks.crime,
@@ -165,8 +166,13 @@ function manageMicroservices(
     const isRunning = runningProc !== undefined;
     let shouldStart = !isRunning;
 
-    const effectiveArgs: (string | number)[] =
-      currentMode === "TRAIN" && targetStat !== undefined ? [targetStat] : [];
+    // 🟢 Argumente dynamisch je nach Modus übergeben
+    const effectiveArgs: (string | number)[] = [];
+    if (currentMode === "TRAIN" && targetStat !== undefined) {
+      effectiveArgs.push(targetStat);
+    } else if (currentMode === "COMPANY" && currentState?.targetCompany) {
+      effectiveArgs.push(currentState.targetCompany);
+    }
 
     if (isRunning && effectiveArgs.length > 0) {
       const currentRunningTarget = runningProc?.args[0];
@@ -230,4 +236,3 @@ function handleFactionInvitations(ns: NS, logger: Logger): void {
     }
   }
 }
-

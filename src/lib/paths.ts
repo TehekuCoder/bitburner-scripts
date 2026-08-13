@@ -124,7 +124,7 @@ export const PATHS = {
   tasks: {
     analyzeAug: "tasks/analyze-augmentations.js",
     cctSolver: "tasks/cct-solver.js",
-    corp: "tasks/corp.js",
+    company: "tasks/company.js",
     crime: "tasks/crime.js",
     loot: "tasks/dnet-loot.js",
     phish: "tasks/dnet-phish.js",

@@ -93,12 +93,8 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
     };
   }
 
-  // Phase 3: Karma Rush / Gang Unlock
-  if (
-    state.strategy === "KARMA" ||
-    state.strategy === "CRIME" ||
-    karma > -54000
-  ) {
+  // Phase 3: Karma Rush / Gang Unlock (Aktiv wenn Strategie KARMA oder CRIME ist)
+  if (state.strategy === "KARMA" || state.strategy === "CRIME") {
     const karmaVal = Math.abs(karma);
     const progress = Math.min(100, (karmaVal / 54000) * 100);
     return {
@@ -109,7 +105,7 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
     };
   }
 
-  // Phase 2: Early Factions & Megacorps
+  // Phase 2: Early Factions & Megacorps (Aktiv wenn Strategie REP oder COMPANY ist)
   if (state.strategy === "REP" || state.strategy === "COMPANY") {
     let detail = "";
     let progress = 50;
@@ -152,8 +148,8 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
     };
   }
 
-  // Phase 1: Bootstrapping / DOMINION
-  const hackTarget = 30;
+  // Phase 1: Bootstrapping / Fallback (MONEY, MANUAL, TRAIN, etc.)
+  const hackTarget = 250; // Ziel bis Megacorps/Fraktionen bereit sind
   const hackProgress = Math.min(100, (player.skills.hacking / hackTarget) * 100);
   const stratSuffix = state.strategy ? ` (${state.strategy})` : "";
 
@@ -226,7 +222,6 @@ export async function main(ns: NS): Promise<void> {
     let isManual = false;
     let autoErrorMsg: string | null = null;
 
-    // Logik zur Bestimmung des Modus
     if (flags.auto || flags.a) {
       if (!singularityAvailable) {
         isManual = true;
@@ -237,7 +232,6 @@ export async function main(ns: NS): Promise<void> {
     } else if (flags.manual || flags.m) {
       isManual = true;
     } else {
-      // Automatische Erkennung ohne Flags
       isManual = !singularityAvailable || Boolean(state.manualMode || state.strategy === "MANUAL");
     }
 
@@ -247,19 +241,16 @@ export async function main(ns: NS): Promise<void> {
       ? `${COLOR.YELLOW}[MANUELL]${COLOR.RESET}` 
       : `${COLOR.GREEN}[AUTO-PILOT]${COLOR.RESET}`;
 
-    // Header
     ns.print(dividerHeader);
     ns.print(`  ${COLOR.BOLD}${COLOR.CYAN}🗺️  BITOS ROADMAP DASHBOARD | BN ${state.currentBitNode}.${state.currentBitNodeLevel}${COLOR.RESET} ${modeBadge}`);
     ns.print(dividerHeader);
 
-    // Fehler-Warnung anzeigen, falls --auto ohne Singularity erzwungen wurde
     if (autoErrorMsg) {
       ns.print(` ${COLOR.RED}${COLOR.BOLD}${autoErrorMsg}${COLOR.RESET}`);
       ns.print(` ${COLOR.YELLOW}-> System schaltet erzwungen auf MANUELL um.${COLOR.RESET}`);
       ns.print(dividerSub);
     }
 
-    // 1. Phasen-Übersicht
     ns.print(` ${COLOR.BOLD}BITNODE PHASEN-FORTSCHRITT${COLOR.RESET}`);
     ns.print(dividerSub);
 
@@ -276,7 +267,6 @@ export async function main(ns: NS): Promise<void> {
       ns.print(` ${statusStr}`);
     });
 
-    // 2. Aktueller Fokus
     ns.print(dividerSub);
     ns.print(` ${COLOR.BOLD}AKTUELLE PHASEN-DETAILS${COLOR.RESET}`);
     ns.print(dividerSub);
@@ -291,7 +281,6 @@ export async function main(ns: NS): Promise<void> {
     ns.print(` Status:       ${currentPhase.detail}`);
     ns.print(` Fortschritt:  ${renderProgressBar(currentPhase.progressPercent)}`);
 
-    // 3. Manuelle Handlungsempfehlung (falls manueller Modus aktiv)
     if (isManual) {
       ns.print(dividerSub);
       ns.print(` ${COLOR.BOLD}${COLOR.YELLOW}💡 MANUELLE HANDLUNGSEMPFEHLUNG${COLOR.RESET}`);
@@ -299,7 +288,6 @@ export async function main(ns: NS): Promise<void> {
       ns.print(` ${COLOR.BOLD}${getNextManualStep(ns, state)}${COLOR.RESET}`);
     }
 
-    // 4. Subsystem Status
     ns.print(dividerSub);
     ns.print(` ${COLOR.BOLD}SUBSYSTEM STATUS${COLOR.RESET}`);
     ns.print(dividerSub);

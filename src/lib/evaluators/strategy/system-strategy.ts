@@ -20,6 +20,25 @@ import { PATHS } from "/lib/paths.js";
 import { BotStrategy } from "/lib/types/strategy.js";
 import { TargetFactionResult } from "/lib/types/factions.js";
 
+const MEGACORP_FACTIONS: string[] = [
+  "ECorp",
+  "MegaCorp",
+  "Bachman & Associates",
+  "Blade Industries",
+  "NWO",
+  "Clarke Incorporated",
+  "OmniTek Incorporated",
+  "Four Sigma",
+  "KuaiGong International",
+  "Fulcrum Technologies",
+  "Fulcrum Secret Technologies",
+];
+
+function isMegacorpFaction(factionName: string | undefined | null): boolean {
+  if (!factionName) return false;
+  return MEGACORP_FACTIONS.includes(factionName);
+}
+
 export interface SystemEvaluationResult {
   mode: BotStrategy;
   targetFaction: FactionName | null;
@@ -49,8 +68,6 @@ export class SystemStrategyEvaluator {
   private lastAugAnalysis = 0;
   private allNetworkServers: string[] = [];
 
-  // In der SystemStrategyEvaluator-Klasse:
-
   private lastHackExp = 0;
   private lastHackTime = 0;
   private xpRatePerSec = 0;
@@ -62,7 +79,6 @@ export class SystemStrategyEvaluator {
     if (ns.fileExists("Formulas.exe", "home")) {
       return ns.formulas.skills.calculateExp(level, hackMult);
     }
-    // Exakte Bitburner-Formel für Hacking-XP
     return Math.exp((level + 200) / (32 * hackMult)) - 500;
   }
 
@@ -77,8 +93,8 @@ export class SystemStrategyEvaluator {
 
     // 0️⃣ DOMINION ETA-BERECHNUNG (XP-basiert)
     const currentExp = p.exp.hacking;
-    const hackMult = p.mults.hacking; // z.B. 9.51 (951.06%)
-    const hackExpMult = p.mults.hacking_exp; // z.B. 1.47 (147.56%)
+    const hackMult = p.mults.hacking;
+    const hackExpMult = p.mults.hacking_exp;
 
     if (this.lastHackTime > 0 && now > this.lastHackTime) {
       const dt = (now - this.lastHackTime) / 1000;
@@ -101,16 +117,13 @@ export class SystemStrategyEvaluator {
       }
     } catch {}
 
-    // XP-Differenz ermitteln
     const targetExp = this.getRequiredExp(ns, worldDaemonReq, hackMult);
     const remainingExp = Math.max(0, targetExp - currentExp);
     const etaSeconds =
       this.xpRatePerSec > 0 ? remainingExp / this.xpRatePerSec : Infinity;
 
-    // Multiplikator-Schwellenwert prüfen (z. B. mind. 2.0x Level-Mult & 1.0x EXP-Mult für BN9)
     const hasMinMultipliers = hackMult >= 2.0 && hackExpMult >= 1.0;
 
-    // DOMINION erst freigeben, wenn Hacking-Level erreicht ODER ETA exakt <= 20 Min IST UND Multiplikatoren reichen
     const isDominionEtaReady =
       p.skills.hacking >= worldDaemonReq ||
       (hasMinMultipliers && this.xpRatePerSec > 0 && etaSeconds <= 1200);
@@ -190,7 +203,7 @@ export class SystemStrategyEvaluator {
       currentFactionReps[f] = ns.singularity.getFactionRep(f);
     }
 
-    // 3️⃣ Megacorp Bewerbungen
+    // 3️⃣ Megacorp Bewerbungen (erst ab Hacking Level 250 möglich)
     if (
       p.skills.hacking >= 250 &&
       now - this.lastCorpApplication > REFRESH_INTERVALS.MEGACORP_APPLY
@@ -231,9 +244,16 @@ export class SystemStrategyEvaluator {
 
     const isDaedalus = nextRoadmapFaction?.name === "Daedalus";
 
+    // Megacorps sperren, wenn Hacking < 250 ist
+    const isMegacorpTarget = nextRoadmapFaction
+      ? isMegacorpFaction(nextRoadmapFaction.name)
+      : false;
+    const isHackingEnoughForCorp = p.skills.hacking >= 250;
+
     const factionToWorkFor: TargetFactionResult | null =
       (!isBN2GangMode || isDaedalus || nextRoadmapFaction !== null) &&
-      factionRepMult > 0.1
+      factionRepMult > 0.1 &&
+      (!isMegacorpTarget || isHackingEnoughForCorp)
         ? nextRoadmapFaction
         : null;
 
@@ -273,14 +293,13 @@ export class SystemStrategyEvaluator {
       isDominionEtaReady,
     );
 
-    logger.debug("[STRATEGY] determineStrategy Ausgangs-Ergebnis", undefined, {
-      context: {
-        mode: strategy.mode,
-        targetFaction: strategy.targetFaction ?? "null",
-        targetCompany: strategy.targetCompany ?? "null",
-        targetStat: strategy.targetStat ?? "null",
-      },
-    });
+    // Fallback: Wenn Company-Modus ermittelt wurde, aber Hacking < 250 ist -> MONEY
+    if (strategy.mode === "COMPANY" && p.skills.hacking < 250) {
+      logger.debug(
+        `Company-Modus (${strategy.targetCompany}) abgelehnt: Hacking-Level ${p.skills.hacking} < 250. Fallback auf MONEY.`,
+      );
+      strategy = { mode: "MONEY" };
+    }
 
     if (isBN2GangMode && strategy.mode === "REP" && !factionToWorkFor) {
       logger.debug(
@@ -403,7 +422,7 @@ export class SystemStrategyEvaluator {
         : mode === "UNI"
           ? 0.5
           : mode === "DOMINION"
-            ? 0.9 // High-Priority XP Share während DOMINION (Endspurt)
+            ? 0.9
             : mode === "CHURCH"
               ? 0.8
               : mode === "MONEY"
