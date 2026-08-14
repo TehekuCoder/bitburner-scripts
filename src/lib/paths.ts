@@ -50,7 +50,7 @@ export const PATHS = {
       },
       strategy: {
         hacking: "lib/evaluators/strategy/hacking-strategy.js",
-        system: "lib/evaluators/strategy/system-strategy-js",
+        system: "lib/evaluators/strategy/system-strategy.js",
         target: "lib/evaluators/strategy/target-selection.js",
       },
     },
