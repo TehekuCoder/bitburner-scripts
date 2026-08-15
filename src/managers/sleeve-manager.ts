@@ -4,6 +4,7 @@ import {
   Player,
   FactionWorkType,
   UniversityClassType,
+  CompanyName,
 } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { loadSleeveState, patchSleeveState } from "/lib/state.js";
@@ -93,15 +94,12 @@ function resolveSleeveAssignment(
   gangStatus: ExtendedGangStatus,
   factionsNeedingRep: FactionName[],
   assignedFactions: Set<string>,
+  companiesNeedingRep: CompanyName[], 
+  assignedCompanies: Set<string>       
 ): SleeveTaskAssignment {
   // 1️⃣ NOTFALL: Schock abbauen & Synchronisieren
-  if (sleeveShock > 0) {
-    return { mode: "RECOVERY" };
-  }
-
-  if (sleeveSync < 100) {
-    return { mode: "SYNCHRO" };
-  }
+  if (sleeveShock > 0) return { mode: "RECOVERY" };
+  if (sleeveSync < 100) return { mode: "SYNCHRO" };
 
   // 2️⃣ DOMINION / XP-RUSH
   const isDominion =
@@ -118,7 +116,11 @@ function resolveSleeveAssignment(
   }
 
   const availableFactions = factionsNeedingRep.filter(
-    (f) => !assignedFactions.has(f),
+    (f) => !assignedFactions.has(f)
+  );
+
+  const availableCompanies = companiesNeedingRep.filter(
+    (c) => !assignedCompanies.has(c)
   );
 
   // 3️⃣ EXPLIZITER OVERRIDE (sleeveGlobalMode)
@@ -136,7 +138,7 @@ function resolveSleeveAssignment(
 
         if (gangStatus.gangFaction && fac === gangStatus.gangFaction) {
           fac = availableFactions.find(
-            (f) => f !== gangStatus.gangFaction,
+            (f) => f !== gangStatus.gangFaction
           ) as FactionName;
         }
 
@@ -153,17 +155,49 @@ function resolveSleeveAssignment(
           subType: "Algorithms" as UniversityClassType,
         };
       case "COMPANY": {
-        const corpTarget =
-          options.targetCompany || MEGACORPS["Bachman & Associates"];
-        return { mode: "COMPANY", target: corpTarget };
+        const primaryTarget = options.targetCompany
+          ? (MEGACORPS[options.targetCompany] ?? (options.targetCompany as CompanyName))
+          : undefined;
+
+        if (primaryTarget && !assignedCompanies.has(primaryTarget)) {
+          return { mode: "COMPANY", target: primaryTarget };
+        }
+        if (availableCompanies.length > 0) {
+          return { mode: "COMPANY", target: availableCompanies[0] };
+        }
+        break;
       }
     }
   }
 
-  // 4️⃣ STRATEGIE-REAKTION
+  // 4️⃣ STRATEGIE-REAKTION: COMPANY
   if (options.strategy === "COMPANY") {
-    const corpTarget = options.targetCompany || MEGACORPS["Bachman & Associates"];
-    return { mode: "COMPANY", target: corpTarget };
+    // 1. Primäres Roadmap-Ziel zuweisen (falls noch frei & benötigt)
+    const primaryTarget = options.targetCompany
+      ? (MEGACORPS[options.targetCompany] ?? (options.targetCompany as CompanyName))
+      : undefined;
+
+    if (
+      primaryTarget &&
+      !assignedCompanies.has(primaryTarget) &&
+      companiesNeedingRep.includes(primaryTarget)
+    ) {
+      return { mode: "COMPANY", target: primaryTarget };
+    }
+
+    // 2. Andere Sleeves auf verbleibende Megacorps verteilen
+    if (availableCompanies.length > 0) {
+      return { mode: "COMPANY", target: availableCompanies[0] };
+    }
+
+    // 3. Fallback: Fraktions-Reputation farmen
+    if (availableFactions.length > 0) {
+      return {
+        mode: "FACTION",
+        target: availableFactions[0],
+        subType: "hacking" as FactionWorkType,
+      };
+    }
   }
 
   if (options.strategy === "UNI") {
@@ -188,7 +222,11 @@ function resolveSleeveAssignment(
     };
   }
 
-  // 6️⃣ FALLBACK: Homicide
+  // 6️⃣ FALLBACK: Andere Firmen abklappern oder Crime
+  if (availableCompanies.length > 0) {
+    return { mode: "COMPANY", target: availableCompanies[0] };
+  }
+
   return { mode: "CRIME", target: "Homicide" };
 }
 
@@ -198,12 +236,14 @@ function manageAllSleeves(
   options: SleeveOptions,
   ownedAugs: string[],
   factionsNeedingRep: FactionName[],
+  companiesNeedingRep: CompanyName[],
   logger: Logger,
 ): string {
   const statuses = getSleeveStatuses(ns);
   const gangStatus = checkSleeveGangStatus(ns);
 
   const assignedFactions = new Set<string>();
+  const assignedCompanies = new Set<string>();
   const plannedAssignments: {
     sleeveId: number;
     assignment: SleeveTaskAssignment;
@@ -261,10 +301,15 @@ function manageAllSleeves(
       gangStatus,
       factionsNeedingRep,
       assignedFactions,
+      companiesNeedingRep,
+      assignedCompanies,
     );
 
     if (assignment.mode === "FACTION" && assignment.target) {
       assignedFactions.add(assignment.target);
+    }
+    if (assignment.mode === "COMPANY" && assignment.target) {
+      assignedCompanies.add(assignment.target);
     }
 
     plannedAssignments.push({ sleeveId: sleeve.id, assignment });
@@ -297,14 +342,18 @@ function manageAllSleeves(
         });
         if (uniSuccess) {
           tasksSummaryMap.set(sleeveId, `S${sleeveId}:UNI(NO_JOB)`);
-          logger.warn(`Sleeve #${sleeveId}: Noch keinen Job bei ${assignment.target}. Sende zur Uni.`);
+          logger.warn(
+            `Sleeve #${sleeveId}: Noch keinen Job bei ${assignment.target}. Sende zur Uni.`,
+          );
           continue;
         }
       }
 
       setSleeveTask(ns, sleeveId, { mode: "CRIME", target: "Homicide" });
       tasksSummaryMap.set(sleeveId, `S${sleeveId}:CRIME(FB)`);
-      logger.warn(`Sleeve #${sleeveId}: Aufgabe ${assignment.mode} fehlgeschlagen. Fallback auf Homicide.`);
+      logger.warn(
+        `Sleeve #${sleeveId}: Aufgabe ${assignment.mode} fehlgeschlagen. Fallback auf Homicide.`,
+      );
     }
   }
 
@@ -314,6 +363,49 @@ function manageAllSleeves(
   return tasksSummary.join(" | ");
 }
 
+function getCompaniesNeedingRep(
+  ns: NS,
+  player: Player,
+  ownedAugs: string[],
+): CompanyName[] {
+  const result: CompanyName[] = [];
+  const playerJobs = Object.keys(player.jobs || {});
+
+  for (const [_, companyName] of Object.entries(MEGACORPS)) {
+    const company = companyName as CompanyName;
+
+    // 1. Ist der Spieler überhaupt bei der Firma angestellt? (Pflicht für Sleeves)
+    if (!playerJobs.includes(company)) continue;
+
+    // 2. Hat der Spieler die Fraktion schon beigetreten & alle Augs gekauft?
+    const factionName =
+      company === "Fulcrum Technologies"
+        ? ("Fulcrum Secret Technologies" as FactionName)
+        : (company as unknown as FactionName);
+
+    if (player.factions.includes(factionName)) {
+      if (ns.singularity) {
+        const augs = ns.singularity.getAugmentationsFromFaction(factionName);
+        const unowned = augs.filter((aug) => !ownedAugs.includes(aug));
+        if (unowned.length === 0) continue; // Fraktion erledigt
+      }
+    }
+
+    // 3. Prüfen, ob der Firmen-Ruf schon das Limit erreicht hat (200k / 250k)
+    const currentRep = ns.singularity
+      ? ns.singularity.getCompanyRep(company)
+      : 0;
+    const reqRep = company === "Fulcrum Technologies" ? 250000 : 200000;
+
+    if (currentRep < reqRep) {
+      result.push(company);
+    }
+  }
+
+  return result;
+}
+
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
@@ -321,6 +413,7 @@ export async function main(ns: NS): Promise<void> {
   logger.info("🦾 Sleeve-Subsystem gestartet.");
 
   let factionsNeedingRep: FactionName[] = [];
+  let companiesNeedingRep: CompanyName[] = [];
   let lastFactionScan = 0;
   let lastStateProgress = "";
   let lastStatusMsg = "";
@@ -381,6 +474,7 @@ export async function main(ns: NS): Promise<void> {
         ownedAugs,
         unlockStatus.gangFaction,
       );
+      companiesNeedingRep = getCompaniesNeedingRep(ns, p, ownedAugs);
       lastFactionScan = Date.now();
     }
 
@@ -390,6 +484,7 @@ export async function main(ns: NS): Promise<void> {
       options,
       ownedAugs,
       factionsNeedingRep,
+      companiesNeedingRep,
       logger,
     );
 
@@ -402,3 +497,4 @@ export async function main(ns: NS): Promise<void> {
     await ns.sleep(2000);
   }
 }
+
