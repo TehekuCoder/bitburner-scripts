@@ -1,37 +1,37 @@
 import { NS } from "@ns";
-import { PAYLOADS } from "/lib/constants";
+import { PAYLOADS, ProvisionProfile } from "/lib/constants.js";
 
 /**
- * Kopiert alle benötigten Worker-Skripte auf den Zielserver, falls sie fehlen.
+ * Kopiert profilbasierte Worker-Skripte auf den Zielserver, falls sie fehlen.
  * @param ns NS API Objekt
- * @param serverName Der Zielserver (z.B. "p-serv-01" oder "n00dles")
+ * @param serverName Der Zielserver (z.B. "pserv-0" oder "darknet-node-1")
+ * @param profile Profilauswahl ('hgw' | 'darknet') - Standard: 'hgw'
  */
 export async function provisionServer(
   ns: NS,
   serverName: string,
+  profile: ProvisionProfile = "hgw"
 ): Promise<void> {
-  // Home braucht keine Kopien seiner eigenen Dateien
   if (serverName === "home") return;
 
+  const filesToCopy = PAYLOADS[profile];
   const currentHost = ns.getHostname();
   const sourceCandidates = ["home", currentHost];
 
-  const missingFiles = PAYLOADS.filter(
-    (file) => !ns.fileExists(file, serverName),
+  const missingFiles = filesToCopy.filter(
+    (file) => !ns.fileExists(file, serverName)
   );
 
   if (missingFiles.length === 0) return;
 
   for (const file of missingFiles) {
     const sourceHost = sourceCandidates.find(
-      (host) => host !== serverName && ns.fileExists(file, host),
+      (host) => host !== serverName && ns.fileExists(file, host)
     );
 
     if (sourceHost) {
       ns.scp(file, serverName, sourceHost);
-    }
-
-    if (!sourceHost) {
+    } else {
       ns.print(`[PROVISION] Datei fehlt: ${file} auf home & ${currentHost}`);
     }
   }

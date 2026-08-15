@@ -3,7 +3,7 @@ import {
   COOLDOWN_FILE,
   COOLDOWN_MS,
   LOOT_INTERVAL_MS,
-} from "/lib/constants.js";
+} from "/lib/constants/dnet.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths";
 import { provisionServer } from "../lib/utils/provision";
@@ -167,7 +167,7 @@ async function deployWorm(
       tags: ["darknet", "propagation"],
       context: { host: hostname },
     });
-    await provisionServer(ns, hostname);
+    await provisionServer(ns, hostname, "darknet");
     ns.scp(scriptName, hostname, "home");
     return ns.exec(scriptName, hostname, 1) > 0;
   }
@@ -287,7 +287,7 @@ export async function main(ns: NS): Promise<void> {
         !ns.fileExists(phishScript, currentHost) ||
         !ns.fileExists(lootScript, currentHost)
       ) {
-        await provisionServer(ns, currentHost);
+        await provisionServer(ns, currentHost, "darknet");
       }
 
       const freeRam =

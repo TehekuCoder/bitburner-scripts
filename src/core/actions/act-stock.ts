@@ -1,6 +1,6 @@
 // core/actions/act-stock.ts
 import { NS } from "@ns";
-import { TRANSACTION_FEE } from "/lib/constants.js";
+import { TRANSACTION_FEE } from "/lib/constants/finance.js";
 
 export async function main(ns: NS): Promise<void> {
   if (!ns.stock) return;

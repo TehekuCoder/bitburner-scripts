@@ -3,7 +3,7 @@ import { getAllServers } from "/lib/network.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { patchBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
-import { HOME_RAM_RESERVE } from "/lib/constants.js";
+import { HOME_RAM_RESERVE } from "/lib/constants/batcher.js";
 
 // Modul-Konstanten für schnelle Namens-Vergleiche ohne RegEx-Overhead
 const WEAKEN_NAME = PATHS.payloads.weaken.split("/").pop()!;

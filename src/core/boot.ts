@@ -2,7 +2,7 @@ import { NS } from "@ns";
 // Direkte Imports verhindern AST-Parsing-Fehler bei Barrel-Exports
 import { loadState, patchState } from "lib/state.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { DEFAULT_MULTIPLIERS } from "lib/constants.js";
+import { DEFAULT_MULTIPLIERS } from "lib/constants/game.js"
 import { PATHS } from "/lib/paths.js";
 
 export async function main(ns: NS): Promise<void> {

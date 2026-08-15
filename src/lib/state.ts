@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { STATE_PORT } from "/lib/constants.js";
+import { STATE_PORT } from "./constants/system.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 
 import { 

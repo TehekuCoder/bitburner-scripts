@@ -6,7 +6,7 @@ import {
   PurchasePriority,
   PurchaseCategory,
 } from "/lib/types/finance.js";
-import { AUG_PRICE_MULT } from "/lib/constants.js";
+import { AUG_PRICE_MULT } from "/lib/constants/game.js";
 import { hasSingularity, loadBnMults, adjustPriorityByMult } from "/lib/utils.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
 

@@ -3,7 +3,7 @@ import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths.js";
 import { loadState, patchState } from "/lib/state.js";
 import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
-import { REFRESH_INTERVALS } from "/lib/constants.js";
+import { REFRESH_INTERVALS } from "/lib/constants/game.js";
 
 // RAM-Puffer-Konfiguration für Home
 const HOME_RESERVED_RAM_DEFAULT = 16; // Standard-Puffer (GB) für Backdoor / System-Scripts

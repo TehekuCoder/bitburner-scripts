@@ -3,7 +3,7 @@ import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { getAllServers } from "/lib/network.js";
 import { patchBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
-import { HOME_RAM_RESERVE } from "/lib/constants.js";
+import { HOME_RAM_RESERVE } from "/lib/constants/batcher.js";
 
 /**
  * Ermittelt das optimale XP-Grind-Ziel basierend auf XP/Sekunde.

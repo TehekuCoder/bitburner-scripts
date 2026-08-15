@@ -16,7 +16,7 @@ import {
   getAdaptiveBatchGap,
   pruneBatchFromQueue,
 } from "/lib/batcher-helpers.js";
-import { SPACER } from "/lib/constants.js";
+import { SPACER } from "/lib/constants/batcher.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import {
   getAllServers,

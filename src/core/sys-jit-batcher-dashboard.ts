@@ -1,9 +1,9 @@
 import { NS } from "@ns";
 import { drawBatcherDashboard } from "../ui/batcher-ui.js";
-import { HOME_RAM_RESERVE } from "../lib/constants.js";
 import { getAllServers } from "../lib/network.js";
 import { loadBatcherState } from "../lib/state.js";
 import { DashboardData } from "../lib/types/common.js";
+import { HOME_RAM_RESERVE } from "/lib/constants/batcher.js";
 
 function cleanProgressString(str: string): string {
   return str.replace(/\s*\([^)]*?\d+s[^)]*?\)/g, "").trim();

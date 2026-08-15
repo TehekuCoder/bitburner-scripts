@@ -5,7 +5,7 @@ import {
   PATH_HACK,
   PATH_GROW,
   PATH_WEAKEN,
-} from "/lib/constants.js";
+} from "/lib/constants/batcher.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { JitEvent, ActiveBatch, TargetContext, BatchPlan } from "/lib/types/batcher.js";
 import { internalPlanner } from "/lib/utils/internal-planner.js";

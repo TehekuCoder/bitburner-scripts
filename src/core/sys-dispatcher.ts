@@ -1,5 +1,4 @@
 import { NS, FactionName, CompanyName } from "@ns";
-import { CITY_FACTIONS, REFRESH_INTERVALS } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { loadState, patchState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
@@ -11,6 +10,8 @@ import {
   hasGang,
   hasCorporation,
 } from "/lib/utils.js";
+import { REFRESH_INTERVALS } from "/lib/constants/game";
+import { CITY_FACTIONS } from "/lib/constants/factions";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

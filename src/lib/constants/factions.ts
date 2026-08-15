@@ -1,0 +1,109 @@
+import { CompanyName, FactionName } from "@ns";
+import { FactionConfig } from "../types/factions";
+
+// --- MEGACORPS DEFINITION ---
+export const MEGACORPS: Record<string, CompanyName> = {
+  "Fulcrum Technologies": "Fulcrum Technologies" as CompanyName,
+  ECorp: "ECorp" as CompanyName,
+  MegaCorp: "MegaCorp" as CompanyName,
+  "Four Sigma": "Four Sigma" as CompanyName,
+  "KuaiGong International": "KuaiGong International" as CompanyName,
+  NWO: "NWO" as CompanyName,
+  "Blade Industries": "Blade Industries" as CompanyName,
+  "OmniTek Incorporated": "OmniTek Incorporated" as CompanyName,
+  "Bachman & Associates": "Bachman & Associates" as CompanyName,
+  "Clarke Incorporated": "Clarke Incorporated" as CompanyName,
+};
+
+// --- COMBAT STATS & FACTION REQS ---
+export const COMBAT_FACTION_REQUIREMENTS: Partial<Record<FactionName, number>> =
+  {
+    "Slum Snakes": 30,
+    Tetrads: 75,
+    "The Syndicate": 200,
+    "The Dark Army": 300,
+    "Speakers for the Dead": 300,
+    "The Covenant": 850,
+    Illuminati: 1200,
+  };
+
+// --- ROADMAP LISTS ---
+export const FACTION_ROADMAP: FactionConfig[] = [
+  // Early Hacking Factions
+  { name: "CyberSec", minStat: 0, priority: 1 },
+  { name: "Tian Di Hui", minStat: 0, priority: 2 },
+  { name: "Netburners", minStat: 0, priority: 3 },
+  { name: "NiteSec", minStat: 0, priority: 4 },
+  { name: "The Black Hand", minStat: 0, priority: 5 },
+  { name: "BitRunners", minStat: 0, priority: 6 },
+
+  // Crime & Combat Factions (Requirements synchronisiert mit COMBAT_FACTION_REQUIREMENTS)
+  {
+    name: "Slum Snakes",
+    minStat: COMBAT_FACTION_REQUIREMENTS["Slum Snakes"]!,
+    priority: 7,
+  },
+  {
+    name: "Tetrads",
+    minStat: COMBAT_FACTION_REQUIREMENTS["Tetrads"]!,
+    priority: 8,
+  },
+  {
+    name: "The Syndicate",
+    minStat: COMBAT_FACTION_REQUIREMENTS["The Syndicate"]!,
+    priority: 9,
+  },
+  {
+    name: "The Dark Army",
+    minStat: COMBAT_FACTION_REQUIREMENTS["The Dark Army"]!,
+    priority: 10,
+  },
+  {
+    name: "Speakers for the Dead",
+    minStat: COMBAT_FACTION_REQUIREMENTS["Speakers for the Dead"]!,
+    priority: 11,
+  },
+
+  // City Factions (Hinweis: Schließen sich pro Reset gegenseitig aus)
+  { name: "Sector-12", minStat: 0, priority: 12 },
+  { name: "Aevum", minStat: 0, priority: 13 },
+  { name: "Volhaven", minStat: 0, priority: 14 },
+  { name: "Chongqing", minStat: 0, priority: 15 },
+  { name: "Ishima", minStat: 0, priority: 16 },
+  { name: "New Tokyo", minStat: 0, priority: 17 },
+
+  // Megacorps
+  { name: "Fulcrum Secret Technologies", minStat: 0, priority: 18 },
+  { name: "ECorp", minStat: 0, priority: 19 },
+  { name: "MegaCorp", minStat: 0, priority: 20 },
+  { name: "Four Sigma", minStat: 0, priority: 21 },
+  { name: "KuaiGong International", minStat: 0, priority: 22 },
+  { name: "NWO", minStat: 0, priority: 23 },
+  { name: "Blade Industries", minStat: 0, priority: 24 },
+  { name: "OmniTek Incorporated", minStat: 0, priority: 25 },
+  { name: "Bachman & Associates", minStat: 0, priority: 26 },
+  { name: "Clarke Incorporated", minStat: 0, priority: 27 },
+  { name: "Silhouette", minStat: 0, priority: 28 },
+
+  // Endgame Factions
+  { name: "Daedalus", minStat: 1500, priority: 29 }, // 2500 Hack oder 1500 Combat
+  {
+    name: "The Covenant",
+    minStat: COMBAT_FACTION_REQUIREMENTS["The Covenant"]!,
+    priority: 30,
+  },
+  {
+    name: "Illuminati",
+    minStat: COMBAT_FACTION_REQUIREMENTS["Illuminati"]!,
+    priority: 31,
+  },
+];
+
+export const CITY_FACTIONS: FactionName[] = [
+  "Sector-12",
+  "Aevum",
+  "Chongqing",
+  "New Tokyo",
+  "Ishima",
+  "Volhaven",
+] as FactionName[];

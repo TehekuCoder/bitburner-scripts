@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { HOME_RAM_RESERVE } from "./constants.js";
+import { HOME_RAM_RESERVE } from "./constants/batcher.js";
 import { provisionServer } from "./utils/provision.js";
 import { JitEvent } from "./types/batcher.js";
 
@@ -122,7 +122,7 @@ export async function breakAndInfectNetwork(ns: NS): Promise<void> {
 
       if (portsOpened >= portsRequired) {
         ns.nuke(server);
-        await provisionServer(ns, server); // Asynchrone Payload-Provisionierung
+        await provisionServer(ns, server, "hgw"); // Asynchrone Payload-Provisionierung
         ns.print(`🔓 Server erfolgreich gehackt & provisioniert: ${server}`);
       }
     }

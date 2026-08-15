@@ -1,6 +1,6 @@
 import { NS } from "@ns";
 import { LogLevel, LogPayload } from "lib/types/logger";
-import { LEVEL_RANK } from "/lib/constants";
+import { LEVEL_RANK } from "/lib/constants/system";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

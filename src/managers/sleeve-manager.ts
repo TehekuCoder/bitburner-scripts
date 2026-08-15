@@ -18,7 +18,7 @@ import {
   getSleeveStatuses,
   setSleeveTask,
 } from "/lib/utils/sleeve-utils.js";
-import { MEGACORPS } from "/lib/constants.js";
+import { MEGACORPS } from "/lib/constants/factions.js";
 
 type ExtendedGangStatus = SleeveGangUnlockStatus & { gangFaction?: string };
 

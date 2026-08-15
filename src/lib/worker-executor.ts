@@ -5,7 +5,7 @@ import {
   PATH_GROW,
   PATH_WEAKEN,
   DispatchResult,
-} from "/lib/constants.js";
+} from "/lib/constants/batcher.js";
 import { JitEvent } from "/lib/types/batcher.js";
 import { WorkerNode } from "/lib/types/network.js";
 import { getUsableThreads } from "./batcher-helpers.js";

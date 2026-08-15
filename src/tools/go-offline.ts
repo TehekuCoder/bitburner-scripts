@@ -128,7 +128,7 @@ export async function main(ns: NS): Promise<void> {
       await ns.sleep(20);
     }
 
-    await provisionServer(ns, server);
+    await provisionServer(ns, server, "hgw");
 
     const reserve = server === "home" ? 32 : 0;
     const maxRam = Math.max(0, ns.getServerMaxRam(server) - reserve);
