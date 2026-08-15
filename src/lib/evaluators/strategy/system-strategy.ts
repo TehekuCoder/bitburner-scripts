@@ -1,10 +1,5 @@
 import { NS, FactionName, CompanyName } from "@ns";
 import { generateProgressBar } from "/ui/ui-helper.js";
-import {
-  REFRESH_INTERVALS,
-  COMBAT_STATS,
-  CITY_FACTIONS,
-} from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { MetricTracker } from "/lib/metrics.js";
 import { getAllServers, findBestTarget } from "/lib/network.js";
@@ -19,6 +14,8 @@ import { loadBnMults } from "/lib/utils.js";
 import { PATHS } from "/lib/paths.js";
 import { BotStrategy } from "/lib/types/strategy.js";
 import { TargetFactionResult } from "/lib/types/factions.js";
+import { CITY_FACTIONS } from "/lib/constants/factions";
+import { REFRESH_INTERVALS, COMBAT_STATS } from "/lib/constants/game";
 
 const MEGACORP_FACTIONS: string[] = [
   "ECorp",

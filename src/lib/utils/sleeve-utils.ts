@@ -8,7 +8,7 @@ import {
   SleeveTask,
 } from "@ns";
 import { SleeveMode } from "/lib/types/sleeves.js";
-import { MEGACORPS } from "/lib/constants.js";
+import { MEGACORPS } from "../constants/factions";
 
 export interface SleeveStatus {
   id: number;

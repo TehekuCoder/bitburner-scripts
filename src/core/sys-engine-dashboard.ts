@@ -1,9 +1,9 @@
 import { NS } from "@ns";
 import { drawEngineDashboard, EngineDashboardData } from "../ui/engine-ui.js";
-import { HOME_RAM_RESERVE } from "/lib/constants.js";
 import { getAllServers } from "/lib/network.js";
 import { loadBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
+import { HOME_RAM_RESERVE } from "/lib/constants/batcher.js";
 
 // Modul-Konstanten für präzise Prozessidentifikation
 const HACK_NAME = PATHS.payloads.hack.split("/").pop()!;

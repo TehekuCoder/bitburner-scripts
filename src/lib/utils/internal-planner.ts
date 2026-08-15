@@ -1,6 +1,6 @@
 import { NS, BitNodeMultipliers, Player, Server } from "@ns";
-import { BATCH_GAP, HOME_RAM_RESERVE } from "/lib/constants.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
+import { HOME_RAM_RESERVE, BATCH_GAP } from "../constants/batcher";
 
 export interface BatchPlan {
   target: string;

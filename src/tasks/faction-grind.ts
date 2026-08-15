@@ -1,11 +1,11 @@
 import { NS, FactionName } from "@ns";
-import { CITY_FACTIONS } from "/lib/constants.js";
 import {
   loadFactionState,
   patchFactionState,
   loadGangState,
 } from "/lib/state.js";
 import { getNFGFallbackFaction } from "/lib/utils/faction-helpers.js";
+import { CITY_FACTIONS } from "/lib/constants/factions";
 
 const TIAN_DI_HUI_CITIES = ["Chongqing", "New Tokyo", "Ishima"] as const;
 

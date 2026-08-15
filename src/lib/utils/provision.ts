@@ -1,5 +1,6 @@
 import { NS } from "@ns";
-import { PAYLOADS, ProvisionProfile } from "/lib/constants.js";
+import { ProvisionProfile, PAYLOADS } from "../constants/game";
+
 
 /**
  * Kopiert profilbasierte Worker-Skripte auf den Zielserver, falls sie fehlen.
