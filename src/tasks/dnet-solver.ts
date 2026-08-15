@@ -22,7 +22,17 @@ export async function main(ns: NS): Promise<void> {
 
   if (isServerInCooldown(ns, host)) return;
 
-  const details = ns.dnet.getServerDetails(host) as ServerAuthDetails;
+  let details: ServerAuthDetails | null = null;
+  try {
+    details = ns.dnet.getServerDetails(host) as ServerAuthDetails;
+  } catch (err: any) {
+    logger.error(
+      `❌ Konnte ServerDetails für '${host}' auf '${currentHost}' nicht abrufen: ${err?.message || err}`,
+    );
+    await setServerCooldown(ns, host);
+    return;
+  }
+
   if (!details) {
     logger.error(`❌ Konnte ServerDetails für '${host}' nicht abrufen.`);
     await setServerCooldown(ns, host);
@@ -31,7 +41,9 @@ export async function main(ns: NS): Promise<void> {
 
   // 🚨 CRITICAL FIX: Wenn bereits eine Session besteht, abgebrochen & direkt als Erfolg werten
   if (details.hasSession) {
-    logger.info(`ℹ️ Session auf ${host} ist bereits aktiv. Kein neuer Angriff nötig.`);
+    logger.info(
+      `ℹ️ Session auf ${host} ist bereits aktiv. Kein neuer Angriff nötig.`,
+    );
     return;
   }
 
@@ -53,7 +65,9 @@ export async function main(ns: NS): Promise<void> {
     } catch {}
   }
 
-  logger.info(`🔨 Krypto-Angriff auf Modell [${details.modelId || "Unknown"}] gestartet...`);
+  logger.info(
+    `🔨 Krypto-Angriff auf Modell [${details.modelId || "Unknown"}] gestartet...`,
+  );
 
   // 2. Krypto-Solver ausführen
   let password = await runSolver(
@@ -66,7 +80,9 @@ export async function main(ns: NS): Promise<void> {
 
   // 3. Fallback: Wörterbuch- & Loot-Angriff
   if (password === null) {
-    logger.warn(`⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`);
+    logger.warn(
+      `⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`,
+    );
     password =
       (await dictionaryAttack(ns, host, details)) ||
       (await fileLootAttack(ns, host, details));
@@ -77,7 +93,9 @@ export async function main(ns: NS): Promise<void> {
     if (await tryAuthenticate(ns, host, password)) {
       handleSuccess(ns, host, password, logger);
     } else {
-      logger.error(`❌ Passwort "${password}" ermittelt, aber Auth fehlgeschlagen. Setze Cooldown.`);
+      logger.error(
+        `❌ Passwort "${password}" ermittelt, aber Auth fehlgeschlagen. Setze Cooldown.`,
+      );
       await setServerCooldown(ns, host);
     }
   } else {
@@ -121,7 +139,8 @@ async function dictionaryAttack(
     const targetLen = details.passwordLength;
 
     for (const pw of Object.values(db) as string[]) {
-      if (!pw || pw.length >= 30 || pw.includes("You have discovered")) continue;
+      if (!pw || pw.length >= 30 || pw.includes("You have discovered"))
+        continue;
       if (targetLen !== undefined && pw.length !== targetLen) continue;
 
       if (await tryAuthenticate(ns, host, pw)) return pw;
@@ -145,7 +164,10 @@ async function fileLootAttack(
       const content = ns.read(file).trim();
       ns.rm(file, currentHost);
 
-      if (content.length <= maxLen && (await tryAuthenticate(ns, host, content))) {
+      if (
+        content.length <= maxLen &&
+        (await tryAuthenticate(ns, host, content))
+      ) {
         return content;
       }
     }
@@ -153,7 +175,11 @@ async function fileLootAttack(
   return null;
 }
 
-async function tryAuthenticate(ns: NS, host: string, pw: string): Promise<boolean> {
+async function tryAuthenticate(
+  ns: NS,
+  host: string,
+  pw: string,
+): Promise<boolean> {
   try {
     const authResult = await ns.dnet.authenticate(host, pw);
     return isAuthSuccess(authResult);

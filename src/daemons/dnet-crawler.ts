@@ -34,7 +34,12 @@ function loadProcessedServers(ns: NS, currentHost: string): Set<string> {
 }
 
 /** Speichere verarbeitete Server lokal und synchronisiere sie nach 'home' */
-function saveProcessedServer(ns: NS, currentHost: string, hostToAdd: string, currentSet: Set<string>): void {
+function saveProcessedServer(
+  ns: NS,
+  currentHost: string,
+  hostToAdd: string,
+  currentSet: Set<string>,
+): void {
   currentSet.add(hostToAdd);
   const data = JSON.stringify(Array.from(currentSet));
   ns.write(PROCESSED_FILE, data, "w");
@@ -82,12 +87,19 @@ async function ensureSession(
   logger: Logger,
 ): Promise<boolean> {
   if (!details) return false;
-  if (details.isConnectedToCurrentServer === false || details.isOnline === false) return false;
+  if (
+    details.isConnectedToCurrentServer === false ||
+    details.isOnline === false
+  )
+    return false;
   if (details.hasSession) return true;
 
   const passwordCandidates: Array<string | null> = [masterDb[hostname] ?? null];
 
-  if (details.modelId && String(details.modelId).toLowerCase().includes("zerologon")) {
+  if (
+    details.modelId &&
+    String(details.modelId).toLowerCase().includes("zerologon")
+  ) {
     passwordCandidates.push("");
   }
   passwordCandidates.push("default", "admin", "password", "letmein", "root");
@@ -96,13 +108,23 @@ async function ensureSession(
     if (candidate === null) continue;
     try {
       const authResult = await ns.dnet.authenticate(hostname, candidate);
-      const authSuccess = typeof authResult === "boolean" ? authResult : Boolean(authResult?.success);
+      const authSuccess =
+        typeof authResult === "boolean"
+          ? authResult
+          : Boolean(authResult?.success);
 
       if (authSuccess) {
-        logger.info(`✅ Authentifizierung erfolgreich auf ${hostname}.`, undefined, {
-          tags: ["darknet", "auth"],
-          context: { host: hostname, model: String(details?.modelId || "unknown") },
-        });
+        logger.info(
+          `✅ Authentifizierung erfolgreich auf ${hostname}.`,
+          undefined,
+          {
+            tags: ["darknet", "auth"],
+            context: {
+              host: hostname,
+              model: String(details?.modelId || "unknown"),
+            },
+          },
+        );
         return true;
       }
     } catch {
@@ -125,8 +147,20 @@ async function deployWorm(
   const minRamRequired = hostname === "darkweb" ? 2 : 6;
   if (ns.getServerMaxRam(hostname) < minRamRequired) return false;
 
-  const details = ns.dnet.getServerDetails(hostname) as any;
-  const sessionReady = await ensureSession(ns, hostname, details, masterDb, logger);
+  let details: any = null;
+  try {
+    details = ns.dnet.getServerDetails(hostname);
+  } catch {
+    return false;
+  }
+
+  const sessionReady = await ensureSession(
+    ns,
+    hostname,
+    details,
+    masterDb,
+    logger,
+  );
 
   if (sessionReady) {
     logger.info(`🚀 Wurm-Ausbreitung: Infiziere ${hostname}.`, undefined, {
@@ -172,31 +206,49 @@ export async function main(ns: NS): Promise<void> {
     const lastTopology = lastKnownConnections.slice().sort().join(",");
 
     if (currentTopology !== lastTopology && lastKnownConnections.length > 0) {
-      logger.info(`🔄 Topologie-Wechsel: Vorher ${lastKnownConnections.length} | Jetzt ${nearbyServers.length} Nachbarn.`);
+      logger.info(
+        `🔄 Topologie-Wechsel: Vorher ${lastKnownConnections.length} | Jetzt ${nearbyServers.length} Nachbarn.`,
+      );
     }
     lastKnownConnections = nearbyServers;
 
-    const allTargets = Array.from(new Set([...nearbyServers, ...processedSet]));
-
-    for (const hostname of allTargets) {
+    // 🚨 FIX: Nur direkt erreichbare Nachbarn (nearbyServers) verarbeiten!
+    for (const hostname of nearbyServers) {
       if (hostname === "home" || !ns.serverExists(hostname)) continue;
 
       // 1. Wurm-Ausbreitung
-      const deployed = await deployWorm(ns, hostname, scriptName, masterDb, logger);
+      const deployed = await deployWorm(
+        ns,
+        hostname,
+        scriptName,
+        masterDb,
+        logger,
+      );
       if (deployed) {
         saveProcessedServer(ns, currentHost, hostname, processedSet);
       }
 
       // 2. Lokales Cracken
-      const details = ns.dnet.getServerDetails(hostname) as any;
+      let details: any = null;
+      try {
+        details = ns.dnet.getServerDetails(hostname);
+      } catch {
+        continue;
+      }
+
       const cooldownTime = cooldowns.get(hostname) ?? 0;
       const inCooldown = now - cooldownTime < COOLDOWN_MS;
+      const isConnected =
+        details && details.isConnectedToCurrentServer !== false;
 
-      if (details && !details.hasSession && !inCooldown) {
+      if (details && isConnected && !details.hasSession && !inCooldown) {
         const targetSolverNormalized = normalizeScriptPath(solverScript);
         const isAnySolverRunning = ns
           .ps(currentHost)
-          .some((proc) => normalizeScriptPath(proc.filename) === targetSolverNormalized);
+          .some(
+            (proc) =>
+              normalizeScriptPath(proc.filename) === targetSolverNormalized,
+          );
 
         if (isAnySolverRunning) {
           logger.info(`⏳ Solver läuft bereits auf ${currentHost}. Warte...`);
@@ -206,15 +258,20 @@ export async function main(ns: NS): Promise<void> {
         const SUB_SOLVER_BUFFER_RAM = 2.6;
         const solverRam = ns.getScriptRam(solverScript, currentHost);
         const totalRequiredRam = solverRam + SUB_SOLVER_BUFFER_RAM;
-        const freeRam = ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
+        const freeRam =
+          ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
 
         if (freeRam >= totalRequiredRam) {
-          logger.info(`⚡ Starte LOKALEN Solver für '${hostname}' auf ${currentHost}...`);
+          logger.info(
+            `⚡ Starte LOKALEN Solver für '${hostname}' auf ${currentHost}...`,
+          );
           if (ns.exec(solverScript, currentHost, 1, hostname) > 0) {
             break;
           }
         } else {
-          logger.warn(`⚠️ Zu wenig RAM auf '${currentHost}' für '${hostname}'. Benötigt: ${totalRequiredRam.toFixed(2)} GB | Frei: ${freeRam.toFixed(2)} GB`);
+          logger.warn(
+            `⚠️ Zu wenig RAM auf '${currentHost}' für '${hostname}'. Benötigt: ${totalRequiredRam.toFixed(2)} GB | Frei: ${freeRam.toFixed(2)} GB`,
+          );
         }
       }
     }
@@ -226,11 +283,15 @@ export async function main(ns: NS): Promise<void> {
       !ns.scriptRunning(phishScript, currentHost) &&
       now - lastLootTime > LOOT_INTERVAL_MS
     ) {
-      if (!ns.fileExists(phishScript, currentHost) || !ns.fileExists(lootScript, currentHost)) {
+      if (
+        !ns.fileExists(phishScript, currentHost) ||
+        !ns.fileExists(lootScript, currentHost)
+      ) {
         await provisionServer(ns, currentHost);
       }
 
-      const freeRam = ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
+      const freeRam =
+        ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
       const phishRam = ns.getScriptRam(phishScript, currentHost);
       const lootRam = ns.getScriptRam(lootScript, currentHost);
       const requiredRam = Math.max(phishRam, lootRam);
