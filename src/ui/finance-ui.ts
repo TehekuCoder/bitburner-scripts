@@ -33,17 +33,6 @@ export interface FinanceDashboardData {
   lastWarnings: string[];
 }
 
-// ANSI-Farbcodes für Bitburner Tail-Fenster
-const CLR = {
-  RESET: "\u001b[0m",
-  CYAN: "\u001b[36m",
-  GREEN: "\u001b[32m",
-  YELLOW: "\u001b[33m",
-  RED: "\u001b[31m",
-  GRAY: "\u001b[90m",
-  WHITE_BOLD: "\u001b[1;37m",
-};
-
 function makeProgressBar(value: number, max: number, width = 20): string {
   if (max <= 0) return "░".repeat(width);
   const ratio = Math.max(0, Math.min(value, max)) / max;
@@ -59,6 +48,17 @@ function formatPercent(value: number, max: number): string {
 
 export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   ns.clearLog();
+
+  // ANSI-Farbcodes für Bitburner Tail-Fenster
+  const CLR = {
+    RESET: "\u001b[0m",
+    CYAN: "\u001b[36m",
+    GREEN: "\u001b[32m",
+    YELLOW: "\u001b[33m",
+    RED: "\u001b[31m",
+    GRAY: "\u001b[90m",
+    WHITE_BOLD: "\u001b[1;37m",
+  };
 
   const W = 64;
   const H_LINE = `${CLR.GRAY}${"=".repeat(W)}${CLR.RESET}`;
@@ -94,31 +94,27 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   const pservBar = makeProgressBar(
     data.purchasedServerCount,
     data.purchasedServerLimit,
-    12
+    12,
   );
   const maxRamStr =
     data.largestPurchasedServerRam > 0
       ? ns.format.ram(data.largestPurchasedServerRam)
       : "–";
   ns.print(
-    `Pserv Pool:  ${pservStr.padEnd(8)} [${CLR.CYAN}${pservBar}${CLR.RESET}] (Max: ${maxRamStr})`
+    `Pserv Pool:  ${pservStr.padEnd(8)} [${CLR.CYAN}${pservBar}${CLR.RESET}] (Max: ${maxRamStr})`,
   );
 
   if (data.hacknetLimit > 0) {
     const hnetStr = `${data.hacknetCount} / ${data.hacknetLimit}`;
-    const hnetBar = makeProgressBar(
-      data.hacknetCount,
-      data.hacknetLimit,
-      12
-    );
+    const hnetBar = makeProgressBar(data.hacknetCount, data.hacknetLimit, 12);
     const modeLabel = data.isHacknetServer ? "Servers" : "Nodes";
     ns.print(
-      `Hacknet Pool:${hnetStr.padEnd(8)} [${CLR.CYAN}${hnetBar}${CLR.RESET}] (${modeLabel})`
+      `Hacknet Pool:${hnetStr.padEnd(8)} [${CLR.CYAN}${hnetBar}${CLR.RESET}] (${modeLabel})`,
     );
   }
 
   ns.print(
-    `Home Cores:  ${data.homeCores} Core${data.homeCores > 1 ? "s" : ""}`
+    `Home Cores:  ${data.homeCores} Core${data.homeCores > 1 ? "s" : ""}`,
   );
 
   ns.print(D_LINE);
@@ -134,7 +130,9 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     : `${CLR.RED}[OFFLINE]${CLR.RESET}`;
 
   ns.print(`${CLR.WHITE_BOLD}SUPERVISOR & EVALUATOREN STATUS:${CLR.RESET}`);
-  ns.print(`Manager:     ${fMgrStatus.padEnd(19)} |  Orchestrator: ${sMgrStatus}`);
+  ns.print(
+    `Manager:     ${fMgrStatus.padEnd(19)} |  Orchestrator: ${sMgrStatus}`,
+  );
 
   const allEvaluators = [
     "home",
@@ -150,7 +148,9 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
 
   const badges = allEvaluators.map((name) => {
     const isActive = activeSet.has(name);
-    const icon = isActive ? `${CLR.GREEN}[✓]${CLR.RESET}` : `${CLR.RED}[✗]${CLR.RESET}`;
+    const icon = isActive
+      ? `${CLR.GREEN}[✓]${CLR.RESET}`
+      : `${CLR.RED}[✗]${CLR.RESET}`;
     const label = `${icon} ${name}`;
     // Breite exakt 12 sichtbare Zeichen für perfektes 4er-Grid bei W=64
     return isActive ? label.padEnd(20) : label.padEnd(19);
@@ -183,10 +183,14 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
 
     ns.print(`Ziel:        ${shortDesc}`);
     ns.print(`Kosten:      ${reqCostStr} (${progressPct.toFixed(1)}%)`);
-    ns.print(`Status:      [${CLR.CYAN}${progressBar}${CLR.RESET}] ${statusStr}`);
+    ns.print(
+      `Status:      [${CLR.CYAN}${progressBar}${CLR.RESET}] ${statusStr}`,
+    );
   } else {
     ns.print(`Ziel:        Keine offenen Anfragen im Port`);
-    ns.print(`Status:      [${CLR.GREEN}${makeProgressBar(1, 1, 20)}${CLR.RESET}] Bereit`);
+    ns.print(
+      `Status:      [${CLR.GREEN}${makeProgressBar(1, 1, 20)}${CLR.RESET}] Bereit`,
+    );
   }
 
   ns.print(D_LINE);
@@ -206,7 +210,9 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
         req.description.length > 22
           ? req.description.substring(0, 19) + "..."
           : req.description;
-      ns.print(`> [${CLR.CYAN}${prio}${CLR.RESET}] ${cat} | ${desc.padEnd(22)} ${cost.padStart(9)}`);
+      ns.print(
+        `> [${CLR.CYAN}${prio}${CLR.RESET}] ${cat} | ${desc.padEnd(22)} ${cost.padStart(9)}`,
+      );
     }
   }
 

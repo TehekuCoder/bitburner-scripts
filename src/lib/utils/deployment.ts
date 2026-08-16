@@ -1,5 +1,60 @@
 import { NS } from "@ns";
-import { ScriptList } from "/lib/types/common";
+
+interface ScriptList {
+  // Observability
+  perfMonitor: string;
+  logger: string;
+  //-------------------------
+
+  // Finanz-Verwaltung
+  financeDispatcher?: string;
+  financeCore: string;
+  //-------------------------
+
+  // Hacking-Payloads
+  worker: string;
+  hack: string;
+  grow: string;
+  weaken: string;
+  //-------------------------
+
+  // Orchestrator
+  sysOrchestrator: string;
+
+  // Batcher
+  hackingOrchestrator: string;
+  //-------------------------
+
+  // Share
+  fillShare: string;
+  //-------------------------
+
+  // Kontrakte
+  cctSolver: string;
+
+  // Darknet
+  dnet: string;
+  crawler: string;
+  //-------------------------
+
+  // Singularity
+  sysDispatcher: string;
+  backdoor: string;
+  augAnalyze: string;
+  //-------------------------
+
+  // Sleeve
+  sleeve: string;
+  //-------------------------
+
+  // Gang
+  gang: string;
+  //-------------------------
+
+  // Hacknet
+  hashManager: string;
+  //-------------------------
+}
 
 /**
  * Verteilt Worker-Skripte auf einem Ziel-Server und maximiert die Thread-Auslastung.

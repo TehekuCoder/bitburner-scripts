@@ -9,9 +9,9 @@ import {
 import { runEvaluator } from "/lib/evaluator-runner.js";
 import { loadBnMults, adjustPriorityByMult } from "lib/utils.js";
 
-const PSERV_PREFIX = "cloud-";
+const CLOUD_PREFIX = "cloud-";
 const INITIAL_RAM = 8;
-const MIN_HOME_RAM_FOR_PSERVS = 64;
+const MIN_HOME_RAM_FOR_CLOUD = 64;
 const BASELINE_TARGET_RAM = 32; // 🎯 Ziel-RAM vor regulärer Staffelung
 
 export const PservEvaluator: PurchaseEvaluator = {
@@ -27,13 +27,13 @@ export const PservEvaluator: PurchaseEvaluator = {
     if (limit === 0 || limitMult <= 0) return [];
 
     // Kosten-Multiplikator berechnen
-const costMult = bnMults.CloudServerCost ?? bnMults.CloudServerCost ?? 1.0;
+    const costMult = bnMults.CloudServerCost ?? bnMults.CloudServerCost ?? 1.0;
     const efficiencyMult = costMult > 0 ? 1 / costMult : 1.0;
 
     const maxRam = ns.cloud.getRamLimit();
     const owned = ns.cloud.getServerNames();
     const isHomeUnderpowered =
-      ns.getServerMaxRam("home") < MIN_HOME_RAM_FOR_PSERVS;
+      ns.getServerMaxRam("home") < MIN_HOME_RAM_FOR_CLOUD;
 
     const requests: PurchaseRequest[] = [];
 
@@ -42,7 +42,7 @@ const costMult = bnMults.CloudServerCost ?? bnMults.CloudServerCost ?? 1.0;
       const cost = ns.cloud.getServerCost(INITIAL_RAM);
       if (cost > 0 && Number.isFinite(cost)) {
         let index = 0;
-        while (owned.includes(`${PSERV_PREFIX}${index}`)) index++;
+        while (owned.includes(`${CLOUD_PREFIX}${index}`)) index++;
 
         const basePriority = isHomeUnderpowered
           ? PurchasePriority.LOW
@@ -53,15 +53,15 @@ const costMult = bnMults.CloudServerCost ?? bnMults.CloudServerCost ?? 1.0;
         const score = Math.max(1, Math.floor(baseScore * efficiencyMult));
 
         requests.push({
-          id: `cloud-buy-${PSERV_PREFIX}${index}`,
+          id: `cloud-buy-${CLOUD_PREFIX}${index}`,
           category: "PURCHASED_SERVER" as PurchaseCategory,
           priority,
           score,
           cost,
-          description: `Server kaufen: ${PSERV_PREFIX}${index} (${INITIAL_RAM}GB) [${owned.length + 1}/${limit}]`,
+          description: `Server kaufen: ${CLOUD_PREFIX}${index} (${INITIAL_RAM}GB) [${owned.length + 1}/${limit}]`,
           action: {
             script: "core/actions/act-cloud.js",
-            args: ["cloud-buy", `${PSERV_PREFIX}${index}`, INITIAL_RAM],
+            args: ["cloud-buy", `${CLOUD_PREFIX}${index}`, INITIAL_RAM],
           },
         });
       }

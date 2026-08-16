@@ -1,16 +1,6 @@
 import { NS, SleeveTask } from "@ns";
 import { loadSleeveState } from "/lib/state.js";
 
-const COLOR = {
-  RESET: "\u001b[0m",
-  RED: "\u001b[31m",
-  GREEN: "\u001b[32m",
-  YELLOW: "\u001b[33m",
-  CYAN: "\u001b[36m",
-  GRAY: "\u001b[90m",
-  BOLD: "\u001b[1m",
-};
-
 function visualPadEnd(str: string, targetLength: number): string {
   const actualLength = [...str].length;
   const missing = targetLength - actualLength;
@@ -51,6 +41,16 @@ function parseTaskDetails(task: SleeveTask | null): {
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
+
+  const COLOR = {
+    RESET: "\u001b[0m",
+    RED: "\u001b[31m",
+    GREEN: "\u001b[32m",
+    YELLOW: "\u001b[33m",
+    CYAN: "\u001b[36m",
+    GRAY: "\u001b[90m",
+    BOLD: "\u001b[1m",
+  };
 
   if (ns.sleeve === undefined || ns.sleeve.getNumSleeves() === 0) {
     ns.tprint("⚠️ Keine Sleeve-API oder keine Sleeves vorhanden.");

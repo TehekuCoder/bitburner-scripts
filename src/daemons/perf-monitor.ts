@@ -1,19 +1,6 @@
 import { NS } from "@ns";
 import { LoggerClient } from "lib/logger-client";
-
-// ANSI Farb-Codes für Terminal-Styling
-const COLORS = {
-  reset: "\u001b[0m",
-  green: "\u001b[32m",
-  yellow: "\u001b[33m",
-  red: "\u001b[31m",
-  cyan: "\u001b[36m",
-  gray: "\u001b[90m",
-  bold: "\u001b[1m",
-};
-
-// ASCII Stufen für den Chart
-const SPARK_CHARS = [" ", " ", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+import { SPARK_CHARS, COLOR } from "/lib/constants/system";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -89,13 +76,13 @@ function renderDashboard(
   ns.clearLog();
 
   // Status-Auswertung
-  let statusColor = COLORS.green;
+  let statusColor = COLOR.GREEN;
   let statusText = "NOMINAL";
   if (currentLag > 50) {
-    statusColor = COLORS.red;
+    statusColor = COLOR.RED;
     statusText = "CRITICAL SPIKE";
   } else if (currentLag > 20) {
-    statusColor = COLORS.yellow;
+    statusColor = COLOR.YELLOW;
     statusText = "ELEVATED LAG";
   }
 
@@ -108,8 +95,8 @@ function renderDashboard(
         Math.floor((val / maxInHistory) * SPARK_CHARS.length),
       );
       const color =
-        val > 50 ? COLORS.red : val > 15 ? COLORS.yellow : COLORS.green;
-      return `${color}${SPARK_CHARS[idx]}${COLORS.reset}`;
+        val > 50 ? COLOR.RED : val > 15 ? COLOR.YELLOW : COLOR.GREEN;
+      return `${color}${SPARK_CHARS[idx]}${COLOR.RESET}`;
     })
     .join("");
 
@@ -122,14 +109,14 @@ function renderDashboard(
   const healthBar =
     `${statusColor}` +
     "█".repeat(filled) +
-    `${COLORS.gray}` +
+    `${COLOR.GRAY}` +
     "░".repeat(barLength - filled) +
-    `${COLORS.reset}`;
+    `${COLOR.RESET}`;
 
   // UI Rendern
   ns.print(`====================================================`);
   ns.print(
-    `${COLORS.bold}${COLORS.cyan}SYSTEM PERFORMANCE MONITOR${COLORS.reset}   ${statusColor}${statusText.padEnd(12)}${COLORS.reset}`,
+    `${COLOR.BOLD}${COLOR.CYAN}SYSTEM PERFORMANCE MONITOR${COLOR.RESET}   ${statusColor}${statusText.padEnd(12)}${COLOR.RESET}`,
   );
   ns.print(`====================================================`);
   ns.print(`  Current Lag : ${formatMs(currentLag)} ${healthBar} `);
@@ -143,7 +130,7 @@ function renderDashboard(
 
 function formatMs(ms: number): string {
   const formatted = `+${ms.toFixed(1)}ms`.padStart(8);
-  if (ms > 50) return `${COLORS.red}${formatted}${COLORS.reset}`;
-  if (ms > 15) return `${COLORS.yellow}${formatted}${COLORS.reset}`;
-  return `${COLORS.green}${formatted}${COLORS.reset}`;
+  if (ms > 50) return `${COLOR.RED}${formatted}${COLOR.RESET}`;
+  if (ms > 15) return `${COLOR.YELLOW}${formatted}${COLOR.RESET}`;
+  return `${COLOR.GREEN}${formatted}${COLOR.RESET}`;
 }

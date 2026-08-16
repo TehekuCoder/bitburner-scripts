@@ -8,10 +8,20 @@ import {
   BotStateProgress 
 } from "/lib/types/strategy.js";
 import { BatcherState } from "/lib/types/batcher.js";
-import { FinanceState } from "/lib/types/common.js";
 import { SleeveState } from "/lib/types/sleeves.js";
 import { AugmentState, FactionState } from "/lib/types/factions.js";
 import { GangState } from "/lib/types/gang.js";
+
+
+interface FinanceState {
+  traderMode?: string;
+  traderProgress: string;
+  financeProgress: string;
+  moneyReserve?: number;
+  isHomePrioritized?: boolean;
+  isRushModeActive?: boolean;
+  homeCores?: number;
+}
 
 type BotStateContent = Omit<
   BotState,

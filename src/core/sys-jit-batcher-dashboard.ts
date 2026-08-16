@@ -2,7 +2,7 @@ import { NS } from "@ns";
 import { drawBatcherDashboard } from "../ui/batcher-ui.js";
 import { getAllServers } from "../lib/network.js";
 import { loadBatcherState } from "../lib/state.js";
-import { DashboardData } from "../lib/types/common.js";
+import { DashboardData } from "../lib/types/batcher.js";
 import { HOME_RAM_RESERVE } from "/lib/constants/batcher.js";
 
 

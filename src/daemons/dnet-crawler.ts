@@ -3,19 +3,17 @@ import {
   COOLDOWN_FILE,
   COOLDOWN_MS,
   LOOT_INTERVAL_MS,
-} from "/lib/constants/dnet.js";
+  PROCESSED_FILE,
+  MASTER_DB_FILE,
+
+} from "../lib/constants/darknet.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths";
 import { provisionServer } from "../lib/utils/provision";
 
-const PROCESSED_FILE = "/dnet-processed.json";
-const MASTER_DB_FILE = "/dnet-master-db.json";
+
 
 let lastLootTime = 0;
-
-function normalizeScriptPath(path: string): string {
-  return path.replace(/^\//, "").replace(/\.(ts|js)$/, "");
-}
 
 /** Sync & Lade verarbeitete Server aus der zentralen JSON-Datei */
 function loadProcessedServers(ns: NS, currentHost: string): Set<string> {
@@ -242,13 +240,9 @@ export async function main(ns: NS): Promise<void> {
         details && details.isConnectedToCurrentServer !== false;
 
       if (details && isConnected && !details.hasSession && !inCooldown) {
-        const targetSolverNormalized = normalizeScriptPath(solverScript);
         const isAnySolverRunning = ns
           .ps(currentHost)
-          .some(
-            (proc) =>
-              normalizeScriptPath(proc.filename) === targetSolverNormalized,
-          );
+          .some((proc) => proc.filename.includes("dnet-solver"));
 
         if (isAnySolverRunning) {
           logger.info(`⏳ Solver läuft bereits auf ${currentHost}. Warte...`);

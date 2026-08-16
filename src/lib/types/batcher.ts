@@ -109,3 +109,19 @@ export type DispatchResult = "SUCCESS" | "NO_RAM" | "EXEC_FAIL";
 
 // engine-proto
 export type EngineMode = "WEAKEN" | "GROW" | "HARVEST" | "UNKNOWN";
+
+export interface DashboardData {
+  status: string;
+  target: string;
+  progress: number;
+  progressText: string;
+  greed: number;
+  ramNeeded: number;
+  ramFree: number;
+  ramTotal: number;
+  batchesSent: number;
+  batchesMax: number;
+  eventLog: string[];
+  lastWaveProfit: number;
+  targetsSummary?: TargetSummary[];
+}

@@ -1,8 +1,16 @@
 import { NS, BitNodeMultipliers } from "@ns";
 import { DEFAULT_MULTIPLIERS } from "/lib/constants/game.js";
 import { PurchasePriority } from "./types/finance";
-import { BitNodeInfo } from "./types/common";
 import { COLOR } from "./constants/logger";
+
+interface BitNodeInfo {
+  /** Die Nummer des aktuellen BitNodes (z. B. 9) */
+  node: number;
+  /** Die aktuelle Iteration/Level in diesem BitNode (z. B. 2 bei BN 9.2) */
+  level: number;
+  /** Formatierte String-Darstellung (z. B. "9.2") */
+  formatted: string;
+}
 
 // ============================================================================
 // 1. BitNode & System Helpers

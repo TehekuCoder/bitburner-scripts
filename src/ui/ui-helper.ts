@@ -1,5 +1,24 @@
-import { NS} from "@ns";
-import { UIProgressBarParams } from "/lib/types/common";
+import { FactionName, NS} from "@ns";
+import { BotStrategy } from "/lib/types/strategy";
+
+
+interface UIProgressBarParams {
+  mode: BotStrategy;
+  label: string;
+  currentVal: number;
+  targetVal: number;
+  etaStr: string;
+  targetFaction: FactionName | null;
+  playerMoney: number;
+  effectiveThreshold: number;
+  cachedFallbackTarget: string;
+  hasFormulas: boolean;
+  canRunBatcher: boolean;
+  factionToWorkFor: { name: FactionName } | null;
+  isReadyForFactionGrind: boolean;
+  crimeMoneyMult: number;
+  currentState: any;
+}
 
 /**
  * Generiert den formatierten Statusbalken (Progress Bar) für das Dashboard.

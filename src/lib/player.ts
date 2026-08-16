@@ -5,8 +5,6 @@ import { AugmentTarget, TargetFactionResult } from "./types/factions.js";
 import { BotState, StrategyResult } from "./types/strategy.js";
 import { COMBAT_STATS } from "./types/game.js";
 
-const EARLY_FACTIONS: FactionName[] = ["CyberSec", "Tian Di Hui", "Netburners"];
-
 const MEGACORP_FACTION_TO_COMPANY: Record<string, CompanyName> = {
   ECorp: "ECorp" as CompanyName,
   MegaCorp: "MegaCorp" as CompanyName,
@@ -202,6 +200,12 @@ export function determineStrategy(
   isDominionEtaReady: boolean = false,
   logger?: Logger,
 ): StrategyResult {
+  const EARLY_FACTIONS: FactionName[] = [
+    "CyberSec",
+    "Tian Di Hui",
+    "Netburners",
+  ];
+
   const hackExpMult = bnMults.HackExpGain ?? 1;
   const hasGang = currentState?.hasGang || (ns.gang?.inGang() ?? false);
   const redPillOwned = hasRedPill(ns);

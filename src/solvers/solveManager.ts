@@ -1,6 +1,5 @@
 import { NS } from "@ns";
-import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { SolverFunction } from "/lib/types/common";
+import { LoggerClient as Logger, LoggerClient } from "/lib/logger-client.js";
 
 import { solveAccountsManager } from "./solveAccountsManager";
 import { solveAnagram } from "./solveAnagram";
@@ -17,6 +16,14 @@ import { solvePHP54 } from "./solvePHP54";
 import { solvePr0verFl0 } from "./solvePr0verFl0";
 import { solveRoman } from "./solveRoman";
 import { solveZeroLogon } from "./solveZeroLogon";
+
+
+type SolverFunction = (
+  ns: NS,
+  host: string,
+  details: any,
+  logger?: LoggerClient,
+) => Promise<string | null> | string | null;
 
 const SOLVER_REGISTRY: Record<string, SolverFunction> = {
   accountsmanager: solveAccountsManager,
