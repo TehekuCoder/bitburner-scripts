@@ -108,5 +108,9 @@ export const REFRESH_INTERVALS = {
 };
 
 export const AUG_PRICE_MULT = 1.9;
-export const HOME_RESERVED_RAM_DEFAULT = 16;
-export const HOME_RESERVED_RAM_LOW = 8;
+
+// Gestaffelter RAM-Puffer für Home
+export const HOME_RESERVED_RAM_LOW = 8;      // <= 32 GB Home-RAM
+export const HOME_RESERVED_RAM_MID = 32;     // <= 128 GB Home-RAM
+export const HOME_RESERVED_RAM_HIGH = 80;    // <= 256 GB Home-RAM
+export const HOME_RESERVED_RAM_ULTRA = 160;  // > 256 GB Home-RAM (Deckt alle Evaluatoren ab)

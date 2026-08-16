@@ -9,8 +9,11 @@ import { drawFinanceDashboard, FinanceDashboardData } from "/ui/finance-ui.js";
 import { PATHS } from "/lib/paths.js";
 import { loadBnMults } from "/lib/utils.js";
 import { FINANCE_PORT } from "/lib/evaluator-runner.js";
-import { BASE_CATEGORY_MARGINS, CATEGORY_TO_EVALUATOR, CATEGORY_WEIGHTS } from "/lib/constants/finance";
-
+import {
+  BASE_CATEGORY_MARGINS,
+  CATEGORY_TO_EVALUATOR,
+  CATEGORY_WEIGHTS,
+} from "/lib/constants/finance";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -38,8 +41,8 @@ export async function main(ns: NS): Promise<void> {
     const dynamicMargins: Partial<Record<PurchaseCategory, number>> = {
       ...BASE_CATEGORY_MARGINS,
       // Bei extrem teuren Augmentations 20% Puffer erzwingen
-      PLAYER_AUG: augCostMult > 2.0 ? 1.20 : 1.0,
-      SLEEVE_AUG: augCostMult > 2.0 ? 1.20 : 1.0,
+      PLAYER_AUG: augCostMult > 2.0 ? 1.2 : 1.0,
+      SLEEVE_AUG: augCostMult > 2.0 ? 1.2 : 1.0,
       PURCHASED_SERVER: pservCostMult > 3.0 ? 1.15 : 1.0,
     };
 
@@ -54,7 +57,10 @@ export async function main(ns: NS): Promise<void> {
         try {
           const parsed = JSON.parse(reqData);
 
-          const registerRequests = (reqs: PurchaseRequest[], cat?: PurchaseCategory) => {
+          const registerRequests = (
+            reqs: PurchaseRequest[],
+            cat?: PurchaseCategory,
+          ) => {
             const evalName = cat ? CATEGORY_TO_EVALUATOR[cat] : undefined;
             if (evalName) evaluatorLastSeen[evalName] = Date.now();
 
@@ -65,7 +71,11 @@ export async function main(ns: NS): Promise<void> {
             }
           };
 
-          if (parsed && typeof parsed === "object" && Array.isArray(parsed.requests)) {
+          if (
+            parsed &&
+            typeof parsed === "object" &&
+            Array.isArray(parsed.requests)
+          ) {
             registerRequests(parsed.requests, parsed.category);
           } else if (Array.isArray(parsed)) {
             for (const req of parsed as PurchaseRequest[]) {
@@ -104,10 +114,17 @@ export async function main(ns: NS): Promise<void> {
 
     const hacknetCount = ns.hacknet.numNodes();
     const hacknetLimit = ns.hacknet.maxNumNodes();
-    const isHacknetServer = typeof (ns.hacknet as any).hashCapacity === "function";
+    const isHacknetServer =
+      typeof (ns.hacknet as any).hashCapacity === "function";
 
-    const financeManagerActive = ns.isRunning(PATHS.daemons.financeDispatcher, "home");
-    const sysOrchestratorActive = ns.isRunning("core/sys-orchestrator.js", "home");
+    const financeManagerActive = ns.isRunning(
+      PATHS.daemons.financeDispatcher,
+      "home",
+    );
+    const sysOrchestratorActive = ns.isRunning(
+      "core/sys-orchestrator.js",
+      "home",
+    );
 
     const evaluators = [
       "home",
@@ -125,7 +142,11 @@ export async function main(ns: NS): Promise<void> {
 
     for (const name of evaluators) {
       const lastSeen = evaluatorLastSeen[name] ?? 0;
-      if (now - lastSeen < 10000 || ns.isRunning(`lib/evaluators/${name}.js`, "home")) {
+      // 30s Timeout für sequenzielle Durchläufe
+      if (
+        now - lastSeen < 30000 ||
+        ns.isRunning(`lib/evaluators/${name}.js`, "home")
+      ) {
         activeEvaluators.push(name);
       } else {
         inactiveEvaluators.push(name);

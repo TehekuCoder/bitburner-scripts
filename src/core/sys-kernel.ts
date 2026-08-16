@@ -3,15 +3,17 @@ import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths.js";
 import { loadState, patchState } from "/lib/state.js";
 import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
-import { HOME_RESERVED_RAM_DEFAULT, HOME_RESERVED_RAM_LOW, REFRESH_INTERVALS } from "/lib/constants/game.js";
-
+import {
+  HOME_RESERVED_RAM_LOW,
+  HOME_RESERVED_RAM_MID,
+  HOME_RESERVED_RAM_HIGH,
+  HOME_RESERVED_RAM_ULTRA,
+  REFRESH_INTERVALS,
+} from "/lib/constants/game.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
-  // ====================================================================
-  // 1. CORE SYSTEM INIT (Logger & Performance Monitor)
-  // ====================================================================
   if (
     ns.fileExists(PATHS.core.logger, "home") &&
     !ns.isRunning(PATHS.core.logger, "home")
@@ -30,9 +32,6 @@ export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "Kernel");
   logger.info("Kernel gestartet. Überprüfe System-State...");
 
-  // ====================================================================
-  // 2. STATE INITIALIZER (One-Time Boot Script)
-  // ====================================================================
   if (!loadState(ns) && ns.fileExists(PATHS.core.boot, "home")) {
     logger.info("Kein State gefunden. Führe Einmal-Initializer aus...");
     const bootPid = ns.run(PATHS.core.boot, 1);
@@ -53,11 +52,8 @@ export async function main(ns: NS): Promise<void> {
   });
 
   let lastNetworkScan = 0;
-  let fallbackActive = false; // Status-Flag: Laufen aktuell Notfall-Worker vom Kernel?
+  let fallbackActive = false;
 
-  // ====================================================================
-  // 3. MAIN KERNEL LOOP (Supervisor & Network & Fallback)
-  // ====================================================================
   while (true) {
     const now = Date.now();
     const homeMax = ns.getServerMaxRam("home");
@@ -65,7 +61,6 @@ export async function main(ns: NS): Promise<void> {
     const homeFree = homeMax - homeUsed;
     const currentState = loadState(ns);
 
-    // A. NETWORK BREACH & INFECT
     if (
       now - lastNetworkScan > (REFRESH_INTERVALS?.NETWORK_SCAN ?? 10_000) ||
       !currentState?.allServers?.length
@@ -76,7 +71,6 @@ export async function main(ns: NS): Promise<void> {
       lastNetworkScan = now;
     }
 
-    // B. SYSTEM ORCHESTRATOR (Zentraler Service Manager)
     if (
       homeMax >= 16 &&
       ns.fileExists(PATHS.core.sysOrchestrator, "home") &&
@@ -89,7 +83,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // C. FALLBACK WORKER vs. ORCHESTRATOR HANDOVER
     const workExecPath = PATHS.payloads.work;
 
     const isHackingOrchestratorRunning = ns
@@ -101,7 +94,6 @@ export async function main(ns: NS): Promise<void> {
       : getAllServers(ns);
 
     if (isHackingOrchestratorRunning) {
-      // 🟢 HANDOVER: Falls der Kernel bisher Fallback-Worker betrieben hat, beenden wir diese JETZT EINMALIG.
       if (fallbackActive) {
         logger.info(
           "Hacking-Orchestrator aktiv! Übergebe Hacking-Steuerung & beende Kernel-Fallback-Worker...",
@@ -109,9 +101,7 @@ export async function main(ns: NS): Promise<void> {
         stopFallbackWorkers(ns, allServersList, workExecPath);
         fallbackActive = false;
       }
-      // Sobald der Orchestrator greift, greift der Kernel NIEMALS mehr in workExecPath ein!
     } else if (ns.fileExists(workExecPath, "home")) {
-      // 🔴 FALLBACK: Kein Orchestrator aktiv -> Kernel übernimmt als Übergangs-Worker
       fallbackActive = true;
       runFallbackWorkers(
         ns,
@@ -123,7 +113,6 @@ export async function main(ns: NS): Promise<void> {
       );
     }
 
-    // D. ENDGAME TRIGGER (WorldDaemon Watchdog)
     const targetNode = "w0r1d_d43m0n";
     if (ns.serverExists(targetNode) && ns.hasRootAccess(targetNode)) {
       const reqSkill = ns.getServerRequiredHackingLevel(targetNode);
@@ -140,9 +129,6 @@ export async function main(ns: NS): Promise<void> {
   }
 }
 
-/**
- * Beendet einmalig die Notfall-Worker des Kernels bei der Übergabe an den Orchestrator.
- */
 function stopFallbackWorkers(
   ns: NS,
   servers: string[],
@@ -155,9 +141,13 @@ function stopFallbackWorkers(
   }
 }
 
-/**
- * Verteilt Notfall-Worker im Netzwerk, solange kein Hacking-Orchestrator läuft.
- */
+function getHomeReservedRam(homeMax: number): number {
+  if (homeMax <= 32) return HOME_RESERVED_RAM_LOW;
+  if (homeMax <= 128) return HOME_RESERVED_RAM_MID;
+  if (homeMax <= 256) return HOME_RESERVED_RAM_HIGH;
+  return HOME_RESERVED_RAM_ULTRA;
+}
+
 function runFallbackWorkers(
   ns: NS,
   servers: string[],
@@ -171,7 +161,6 @@ function runFallbackWorkers(
 
   if (workerRam <= 0) return;
 
-  // 1. VERTEILUNG AUF EXTERNE SERVER (Root-Zugriff & freier RAM)
   for (const server of servers) {
     if (server === "home") continue;
     if (!ns.serverExists(server) || !ns.hasRootAccess(server)) continue;
@@ -192,7 +181,6 @@ function runFallbackWorkers(
     }
   }
 
-  // 2. DYNAMISCHE STEUERUNG AUF HOME
   const financeExecPath = PATHS.daemons.financeDispatcher;
   const isFinanceWaiting =
     homeMax >= 128 &&
@@ -205,8 +193,7 @@ function runFallbackWorkers(
       ns.scriptKill(workExecPath, "home");
     }
   } else {
-    const reservedRam =
-      homeMax <= 32 ? HOME_RESERVED_RAM_LOW : HOME_RESERVED_RAM_DEFAULT;
+    const reservedRam = getHomeReservedRam(homeMax);
     const usableHomeFree = Math.max(0, homeFree - reservedRam);
     const maxThreads = Math.floor(usableHomeFree / workerRam);
     const isWorkerRunning = ns.isRunning(workExecPath, "home", target);
@@ -227,9 +214,6 @@ function runFallbackWorkers(
   }
 }
 
-/**
- * Ermittelt dynamisch ein geeignetes Fallback-Ziel für schwache Worker.
- */
 function resolveFallbackTarget(ns: NS): string {
   if (ns.serverExists("joesguns") && ns.hasRootAccess("joesguns")) {
     return "joesguns";
