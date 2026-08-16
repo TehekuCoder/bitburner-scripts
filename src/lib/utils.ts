@@ -2,7 +2,7 @@ import { NS, BitNodeMultipliers } from "@ns";
 import { DEFAULT_MULTIPLIERS } from "/lib/constants/game.js";
 import { PurchasePriority } from "./types/finance";
 import { BitNodeInfo } from "./types/common";
-import { COLOR } from "./constants/system";
+import { COLOR } from "./constants/logger";
 
 // ============================================================================
 // 1. BitNode & System Helpers

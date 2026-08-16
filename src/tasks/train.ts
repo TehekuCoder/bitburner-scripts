@@ -1,6 +1,6 @@
 import { NS, CityName, GymType } from "@ns";
-import { COMBAT_STATS } from "/lib/constants/game.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
+import { COMBAT_STATS } from "/lib/types/game";
 
 interface GymOption {
   name: string;

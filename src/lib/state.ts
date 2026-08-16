@@ -182,14 +182,14 @@ export function loadBatcherState(ns: NS): BatcherState | null {
   const state = loadState(ns);
   if (!state) return null;
   const {
-    batchStrategy,
-    batcherTarget, batcherProgress, batcherActive, batcherActiveBatches,
-    batcherTargetsSummary, batcherPlan, batcherDynamicMaxBatches, batcherRamNeeded,
+    batchStrategy, batcherPhase, batcherTarget, batcherProgress, batcherActive,
+    batcherActiveBatches, batcherTargetsSummary, batcherPlan,
+    batcherDynamicMaxBatches, batcherRamNeeded,
   } = state;
   return {
-    batchStrategy,
-    batcherTarget, batcherProgress, batcherActive, batcherActiveBatches,
-    batcherTargetsSummary, batcherPlan, batcherDynamicMaxBatches, batcherRamNeeded,
+    batchStrategy, batcherPhase, batcherTarget, batcherProgress, batcherActive,
+    batcherActiveBatches, batcherTargetsSummary, batcherPlan,
+    batcherDynamicMaxBatches, batcherRamNeeded,
   };
 }
 

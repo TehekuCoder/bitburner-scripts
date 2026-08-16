@@ -1,5 +1,5 @@
 import { NS, FactionName } from "@ns";
-import { NFG_WHITELIST_CONFIG } from "../types/factions";
+import { NFG_WHITELIST_CONFIG } from "../constants/factions";
 import { GangState } from "../types/gang";
 import { CITY_FACTIONS } from "../constants/factions";
 

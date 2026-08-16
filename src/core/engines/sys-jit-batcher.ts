@@ -16,7 +16,7 @@ import {
   getAdaptiveBatchGap,
   pruneBatchFromQueue,
 } from "/lib/batcher-helpers.js";
-import { SPACER } from "/lib/constants/batcher.js";
+import { MAX_SAFE_CONCURRENT_SCRIPTS, SPACER } from "/lib/constants/batcher.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import {
   getAllServers,
@@ -28,7 +28,6 @@ import { ActiveBatch, JitEvent, TargetContext } from "/lib/types/batcher.js";
 import { patchBatcherState } from "/lib/state.js";
 import { loadBnMults } from "/lib/utils.js";
 
-const MAX_SAFE_CONCURRENT_SCRIPTS = 10000;
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

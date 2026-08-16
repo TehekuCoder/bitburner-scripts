@@ -5,11 +5,6 @@ import { loadBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
 import { HOME_RAM_RESERVE } from "/lib/constants/batcher.js";
 
-// Modul-Konstanten für präzise Prozessidentifikation
-const HACK_NAME = PATHS.payloads.hack.split("/").pop()!;
-const GROW_NAME = PATHS.payloads.grow.split("/").pop()!;
-const WEAKEN_NAME = PATHS.payloads.weaken.split("/").pop()!;
-
 function detectEngineName(progressStr: string): string {
   if (progressStr.includes("PREP")) return "PREP";
   if (progressStr.includes("PROTO")) return "PROTO";
@@ -48,12 +43,16 @@ export async function main(ns: NS): Promise<void> {
 
     // Event-Log Aktualisierungen bei Modus- oder Zielwechsel
     if (engineName !== lastEngineName && engineName !== "STANDBY") {
-      eventLog.push(`[${new Date().toLocaleTimeString()}] ⚙️ Modus gewechselt: [${engineName}]`);
+      eventLog.push(
+        `[${new Date().toLocaleTimeString()}] ⚙️ Modus gewechselt: [${engineName}]`,
+      );
       lastEngineName = engineName;
     }
 
     if (target !== lastTarget && target !== "Keines" && target !== "Suche...") {
-      eventLog.push(`[${new Date().toLocaleTimeString()}] 🎯 Neues Fokus-Ziel: ${target}`);
+      eventLog.push(
+        `[${new Date().toLocaleTimeString()}] 🎯 Neues Fokus-Ziel: ${target}`,
+      );
       lastTarget = target;
     }
 
@@ -79,9 +78,22 @@ export async function main(ns: NS): Promise<void> {
 
       // 2. Aktive In-Flight-Threads scannen
       for (const proc of ns.ps(s)) {
-        if (proc.filename.endsWith(HACK_NAME)) totalHack += proc.threads;
-        else if (proc.filename.endsWith(GROW_NAME)) totalGrow += proc.threads;
-        else if (proc.filename.endsWith(WEAKEN_NAME)) totalWeaken += proc.threads;
+        if (
+          proc.filename === PATHS.payloads.hack ||
+          proc.filename.endsWith(PATHS.payloads.hack)
+        ) {
+          totalHack += proc.threads;
+        } else if (
+          proc.filename === PATHS.payloads.grow ||
+          proc.filename.endsWith(PATHS.payloads.grow)
+        ) {
+          totalGrow += proc.threads;
+        } else if (
+          proc.filename === PATHS.payloads.weaken ||
+          proc.filename.endsWith(PATHS.payloads.weaken)
+        ) {
+          totalWeaken += proc.threads;
+        }
       }
     }
 

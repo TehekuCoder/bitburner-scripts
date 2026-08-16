@@ -5,9 +5,6 @@ import { patchBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
 import { HOME_RAM_RESERVE } from "/lib/constants/batcher.js";
 
-// Modul-Konstanten für schnelle Namens-Vergleiche ohne RegEx-Overhead
-const WEAKEN_NAME = PATHS.payloads.weaken.split("/").pop()!;
-const GROW_NAME = PATHS.payloads.grow.split("/").pop()!;
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -64,6 +61,8 @@ export async function main(ns: NS): Promise<void> {
       ns,
       workerNodes,
       target,
+      growScript,
+      weakenScript
     );
 
     const inFlightSecEffect =
@@ -145,6 +144,8 @@ function getInFlightThreads(
   ns: NS,
   workerNodes: string[],
   target: string,
+  growScript: string,
+  weakenScript: string,
 ): { inFlightGrowThreads: number; inFlightWeakenThreads: number } {
   let inFlightGrowThreads = 0;
   let inFlightWeakenThreads = 0;
@@ -152,9 +153,9 @@ function getInFlightThreads(
   for (const node of workerNodes) {
     for (const proc of ns.ps(node)) {
       if (proc.args[0] === target) {
-        if (proc.filename.endsWith(GROW_NAME)) {
+        if (proc.filename === growScript || proc.filename.endsWith(growScript)) {
           inFlightGrowThreads += proc.threads;
-        } else if (proc.filename.endsWith(WEAKEN_NAME)) {
+        } else if (proc.filename === weakenScript || proc.filename.endsWith(weakenScript)) {
           inFlightWeakenThreads += proc.threads;
         }
       }

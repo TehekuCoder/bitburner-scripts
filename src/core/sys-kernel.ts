@@ -3,15 +3,8 @@ import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths.js";
 import { loadState, patchState } from "/lib/state.js";
 import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
-import { REFRESH_INTERVALS } from "/lib/constants/game.js";
+import { HOME_RESERVED_RAM_DEFAULT, HOME_RESERVED_RAM_LOW, REFRESH_INTERVALS } from "/lib/constants/game.js";
 
-// RAM-Puffer-Konfiguration für Home
-const HOME_RESERVED_RAM_DEFAULT = 16; // Standard-Puffer (GB) für Backdoor / System-Scripts
-const HOME_RESERVED_RAM_LOW = 8; // Reduzierter Puffer bei <= 32GB Home-RAM
-
-/** Hilfsmethode zur Auflösung von .ts zu .js Dateipfaden für Bitburner Runtime Checks */
-const resolvePath = (path: string): string =>
-  path.endsWith(".ts") ? path.replace(/\.ts$/, ".js") : path;
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -97,7 +90,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // C. FALLBACK WORKER vs. ORCHESTRATOR HANDOVER
-    const workExecPath = resolvePath(PATHS.payloads.work);
+    const workExecPath = PATHS.payloads.work;
 
     const isHackingOrchestratorRunning = ns
       .ps("home")
@@ -200,7 +193,7 @@ function runFallbackWorkers(
   }
 
   // 2. DYNAMISCHE STEUERUNG AUF HOME
-  const financeExecPath = resolvePath(PATHS.daemons.financeDispatcher);
+  const financeExecPath = PATHS.daemons.financeDispatcher;
   const isFinanceWaiting =
     homeMax >= 128 &&
     ns.fileExists(financeExecPath, "home") &&

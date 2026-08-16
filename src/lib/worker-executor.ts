@@ -3,10 +3,9 @@ import {
   HOME_RAM_RESERVE,
   PATH_HACK,
   PATH_GROW,
-  PATH_WEAKEN,
-  DispatchResult,
+  PATH_WEAKEN
 } from "/lib/constants/batcher.js";
-import { JitEvent } from "/lib/types/batcher.js";
+import { DispatchResult, JitEvent } from "/lib/types/batcher.js";
 import { WorkerNode } from "/lib/types/network.js";
 import { getUsableThreads } from "./batcher-helpers.js";
 

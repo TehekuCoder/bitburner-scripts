@@ -5,9 +5,6 @@ import { loadBatcherState } from "../lib/state.js";
 import { DashboardData } from "../lib/types/common.js";
 import { HOME_RAM_RESERVE } from "/lib/constants/batcher.js";
 
-function cleanProgressString(str: string): string {
-  return str.replace(/\s*\([^)]*?\d+s[^)]*?\)/g, "").trim();
-}
 
 function getPrimaryTarget(rawTarget: string): string {
   if (!rawTarget) return "Keines";
@@ -25,7 +22,7 @@ export async function main(ns: NS): Promise<void> {
 
   const eventLog: string[] = [];
   let lastTarget = "";
-  let lastStateString = "";
+  let lastPhase = "";
 
   ns.print("Warte auf Synchronisation mit Kernel-Port 1...");
 
@@ -66,14 +63,11 @@ export async function main(ns: NS): Promise<void> {
       lastTarget = rawTarget;
     }
 
-    const cleanCurrent = cleanProgressString(progressStr);
-    const cleanLast = cleanProgressString(lastStateString);
-
-    if (cleanCurrent !== cleanLast && !progressStr.includes("Executing")) {
-      eventLog.push(`[${new Date().toLocaleTimeString()}] ⚙️ ${progressStr}`);
-      lastStateString = progressStr;
-    } else {
-      lastStateString = progressStr;
+    if (state.batcherPhase && state.batcherPhase !== lastPhase) {
+      eventLog.push(
+        `[${new Date().toLocaleTimeString()}] ⚙️ Modus: ${state.batcherPhase}`,
+      );
+      lastPhase = state.batcherPhase;
     }
 
     if (eventLog.length > 3) eventLog.shift();

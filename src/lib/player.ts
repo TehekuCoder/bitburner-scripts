@@ -1,9 +1,9 @@
 import { NS, Player, FactionName, CompanyName, BitNodeMultipliers } from "@ns";
 import { MEGACORPS } from "./constants/factions.js";
-import { COMBAT_STATS } from "./constants/game.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { AugmentTarget, TargetFactionResult } from "./types/factions.js";
 import { BotState, StrategyResult } from "./types/strategy.js";
+import { COMBAT_STATS } from "./types/game.js";
 
 const EARLY_FACTIONS: FactionName[] = ["CyberSec", "Tian Di Hui", "Netburners"];
 

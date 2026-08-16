@@ -1,14 +1,6 @@
 import { GymType, BitNodeMultipliers } from "@ns";
 import { PATHS } from "../paths";
-
-export const COMBAT_STATS = [
-  "strength",
-  "defense",
-  "dexterity",
-  "agility",
-] as const;
-
-export type CombatStat = (typeof COMBAT_STATS)[number];
+import { CombatStat } from "../types/game";
 
 export const GYM_STAT_MAP: Record<CombatStat, GymType> = {
   strength: "str",
@@ -90,15 +82,12 @@ export const DEFAULT_MULTIPLIERS: Record<keyof BitNodeMultipliers, number> = {
 };
 
 export const PAYLOADS = {
-  /** Normale Remote-Worker (HGW Batching / Sharing) */
   hgw: [
     PATHS.payloads.hack,
     PATHS.payloads.grow,
     PATHS.payloads.weaken,
     PATHS.payloads.share,
   ],
-
-  /** Darknet-Knoten für Wurm-Ausbreitung & Automatisierung */
   darknet: [
     PATHS.daemons.crawler,
     PATHS.tasks.dnetSolver,
@@ -111,14 +100,13 @@ export const PAYLOADS = {
   ],
 } as const;
 
-export type ProvisionProfile = keyof typeof PAYLOADS;
-
-// --- REFRESH INTERVALS ---
 export const REFRESH_INTERVALS = {
-  MEGACORP_APPLY: 600_000, // 10 Min.
-  FALLBACK_TARGET: 300_000, // 5 Min.
-  STRATEGY_COOLDOWN: 60_000, // 1 Min.
-  NETWORK_SCAN: 20_000, // 20 Sek.
+  MEGACORP_APPLY: 600_000,
+  FALLBACK_TARGET: 300_000,
+  STRATEGY_COOLDOWN: 60_000,
+  NETWORK_SCAN: 20_000,
 };
 
 export const AUG_PRICE_MULT = 1.9;
+export const HOME_RESERVED_RAM_DEFAULT = 16;
+export const HOME_RESERVED_RAM_LOW = 8;

@@ -1,6 +1,6 @@
 import { NS } from "@ns";
-import { ProvisionProfile, PAYLOADS } from "../constants/game";
-
+import { PAYLOADS } from "../constants/game.js";
+import { ProvisionProfile } from "../types/game.js";
 
 /**
  * Kopiert profilbasierte Worker-Skripte auf den Zielserver, falls sie fehlen.
@@ -11,7 +11,7 @@ import { ProvisionProfile, PAYLOADS } from "../constants/game";
 export async function provisionServer(
   ns: NS,
   serverName: string,
-  profile: ProvisionProfile = "hgw"
+  profile: ProvisionProfile = "hgw",
 ): Promise<void> {
   if (serverName === "home") return;
 
@@ -20,14 +20,14 @@ export async function provisionServer(
   const sourceCandidates = ["home", currentHost];
 
   const missingFiles = filesToCopy.filter(
-    (file) => !ns.fileExists(file, serverName)
+    (file) => !ns.fileExists(file, serverName),
   );
 
   if (missingFiles.length === 0) return;
 
   for (const file of missingFiles) {
     const sourceHost = sourceCandidates.find(
-      (host) => host !== serverName && ns.fileExists(file, host)
+      (host) => host !== serverName && ns.fileExists(file, host),
     );
 
     if (sourceHost) {

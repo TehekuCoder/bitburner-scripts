@@ -3,30 +3,14 @@ import {
   PurchaseRequest,
   PurchasePriority,
   PurchaseCategory,
-  CATEGORY_WEIGHTS,
 } from "/lib/types/finance.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { drawFinanceDashboard, FinanceDashboardData } from "/ui/finance-ui.js";
 import { PATHS } from "/lib/paths.js";
 import { loadBnMults } from "/lib/utils.js";
 import { FINANCE_PORT } from "/lib/evaluator-runner.js";
+import { BASE_CATEGORY_MARGINS, CATEGORY_TO_EVALUATOR, CATEGORY_WEIGHTS } from "/lib/constants/finance";
 
-const BASE_CATEGORY_MARGINS: Partial<Record<PurchaseCategory, number>> = {
-  STOCK_LICENSE: 1.0,
-  STOCK_TRADE: 1.5,
-};
-
-const CATEGORY_TO_EVALUATOR: Partial<Record<PurchaseCategory, string>> = {
-  HOME_SERVER: "home",
-  PURCHASED_SERVER: "cloud",
-  DARKNET_PROGRAM: "programs",
-  GANG_EQUIPMENT: "gang",
-  SLEEVE_AUG: "sleeve",
-  PLAYER_AUG: "player",
-  HACKNET: "hacknet",
-  STOCK_LICENSE: "stock",
-  STOCK_TRADE: "stock",
-};
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

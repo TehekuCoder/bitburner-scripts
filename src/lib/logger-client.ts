@@ -1,6 +1,7 @@
 import { NS } from "@ns";
-import { LOG_PORT, LEVEL_RANK } from "lib/constants/system.js";
 import { LogLevel, LoggerContext, LogPayload } from "./types/logger";
+import { LEVEL_RANK } from "./constants/logger";
+import { LOG_PORT } from "./constants/system";
 
 // Typ für die erlaubten Context-Werte (passend zu LogPayload in types.ts)
 type ContextValue = string | number | boolean | null | undefined;

@@ -15,7 +15,8 @@ import { PATHS } from "/lib/paths.js";
 import { BotStrategy } from "/lib/types/strategy.js";
 import { TargetFactionResult } from "/lib/types/factions.js";
 import { CITY_FACTIONS } from "/lib/constants/factions";
-import { REFRESH_INTERVALS, COMBAT_STATS } from "/lib/constants/game";
+import { REFRESH_INTERVALS } from "/lib/constants/game";
+import { COMBAT_STATS } from "/lib/types/game";
 
 const MEGACORP_FACTIONS: string[] = [
   "ECorp",

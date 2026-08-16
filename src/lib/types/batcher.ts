@@ -94,6 +94,7 @@ export interface MultiTargetState {
 
 export interface BatcherState {
   batchStrategy?: BatchStrategy;
+  batcherPhase?: string;
   batcherTarget?: string | null;
   batcherProgress: string;
   batcherActive?: boolean;
@@ -103,3 +104,8 @@ export interface BatcherState {
   batcherDynamicMaxBatches?: number;
   batcherRamNeeded?: number;
 }
+
+export type DispatchResult = "SUCCESS" | "NO_RAM" | "EXEC_FAIL";
+
+// engine-proto
+export type EngineMode = "WEAKEN" | "GROW" | "HARVEST" | "UNKNOWN";
