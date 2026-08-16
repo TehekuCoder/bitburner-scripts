@@ -1,6 +1,6 @@
 import { NS } from "@ns";
-import { PAYLOADS } from "../constants/game.js";
-import { ProvisionProfile } from "../types/game.js";
+import { ProvisionProfile } from "shared/types/game.js";
+import { PAYLOADS } from "/shared/constants/payloads";
 
 /**
  * Kopiert profilbasierte Worker-Skripte auf den Zielserver, falls sie fehlen.

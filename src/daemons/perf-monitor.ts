@@ -1,6 +1,9 @@
 import { NS } from "@ns";
 import { LoggerClient } from "lib/logger-client";
-import { SPARK_CHARS, COLOR } from "/lib/constants/system";
+import { ANSI_COLORS } from "../shared/constants/colors.js";
+import { SPARK_CHARS } from "../shared/constants/charts.js";
+
+const COLOR = ANSI_COLORS;
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -76,7 +79,7 @@ function renderDashboard(
   ns.clearLog();
 
   // Status-Auswertung
-  let statusColor = COLOR.GREEN;
+  let statusColor: string = COLOR.GREEN;
   let statusText = "NOMINAL";
   if (currentLag > 50) {
     statusColor = COLOR.RED;

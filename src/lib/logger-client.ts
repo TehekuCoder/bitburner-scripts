@@ -1,7 +1,7 @@
 import { NS } from "@ns";
-import { LogLevel, LoggerContext, LogPayload } from "./types/logger";
-import { LEVEL_RANK } from "./constants/logger";
-import { LOG_PORT } from "./constants/system";
+import { LEVEL_RANK } from "../shared/constants/logger";
+import { LOG_PORT } from "./runtime/system";
+import { LogLevel, LoggerContext, LogPayload } from "/shared/types/logger";
 
 // Typ für die erlaubten Context-Werte (passend zu LogPayload in types.ts)
 type ContextValue = string | number | boolean | null | undefined;

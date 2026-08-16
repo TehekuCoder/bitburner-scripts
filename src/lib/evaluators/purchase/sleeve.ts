@@ -5,8 +5,8 @@ import {
   PurchaseRequest,
   PurchasePriority,
   PurchaseCategory,
-} from "/lib/types/finance.js";
-import { SleeveMode } from "/lib/types/sleeves.js";
+} from "/shared/types/finance.js";
+import { SleeveMode } from "/shared/types/sleeves.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
 import { loadBnMults, adjustPriorityByMult } from "/lib/utils.js";
 

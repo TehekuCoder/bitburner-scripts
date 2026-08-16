@@ -6,7 +6,7 @@ import {
   PROCESSED_FILE,
   MASTER_DB_FILE,
 
-} from "../lib/constants/darknet.js";
+} from "../shared/constants/darknet.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths";
 import { provisionServer } from "../lib/utils/provision";

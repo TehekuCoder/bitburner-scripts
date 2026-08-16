@@ -5,7 +5,7 @@ import {
   PurchaseRequest,
   PurchasePriority,
   PurchaseCategory,
-} from "/lib/types/finance.js";
+} from "/shared/types/finance.js";
 import { hasSingularity } from "/lib/utils.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
 

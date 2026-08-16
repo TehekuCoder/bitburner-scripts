@@ -1,16 +1,16 @@
 import { NS } from "@ns";
-import { STATE_PORT } from "./constants/system.js";
+import { STATE_PORT } from "./runtime/system.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 
 import { 
   BotState, 
   StrategyState, 
   BotStateProgress 
-} from "/lib/types/strategy.js";
-import { BatcherState } from "/lib/types/batcher.js";
-import { SleeveState } from "/lib/types/sleeves.js";
-import { AugmentState, FactionState } from "/lib/types/factions.js";
-import { GangState } from "/lib/types/gang.js";
+} from "/shared/types/strategy.js";
+import { BatcherState } from "/shared/types/batcher.js";
+import { SleeveState } from "/shared/types/sleeves.js";
+import { AugmentState, FactionState } from "/shared/types/factions.js";
+import { GangState } from "/shared/types/gang.js";
 
 
 interface FinanceState {

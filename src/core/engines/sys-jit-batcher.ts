@@ -16,7 +16,7 @@ import {
   getAdaptiveBatchGap,
   pruneBatchFromQueue,
 } from "/lib/batcher-helpers.js";
-import { MAX_SAFE_CONCURRENT_SCRIPTS, SPACER } from "/lib/constants/batcher.js";
+import { MAX_SAFE_CONCURRENT_SCRIPTS, SPACER } from "../../lib/runtime/batcher.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import {
   getAllServers,
@@ -24,7 +24,7 @@ import {
   getQueueRam,
   getNetworkMaxRam,
 } from "/lib/network.js";
-import { ActiveBatch, JitEvent, TargetContext } from "/lib/types/batcher.js";
+import { ActiveBatch, JitEvent, TargetContext } from "/shared/types/batcher.js";
 import { patchBatcherState } from "/lib/state.js";
 import { loadBnMults } from "/lib/utils.js";
 

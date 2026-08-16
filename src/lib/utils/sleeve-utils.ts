@@ -7,8 +7,8 @@ import {
   UniversityClassType,
   SleeveTask,
 } from "@ns";
-import { SleeveMode } from "/lib/types/sleeves.js";
-import { MEGACORPS } from "../constants/factions";
+import { SleeveMode } from "/shared/types/sleeves.js";
+import { MEGACORPS } from "../../shared/constants/factions";
 
 export interface SleeveStatus {
   id: number;

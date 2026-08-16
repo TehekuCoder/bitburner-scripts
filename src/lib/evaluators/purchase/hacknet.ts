@@ -3,7 +3,7 @@ import {
   PurchaseEvaluator,
   PurchaseRequest,
   PurchasePriority,
-} from "/lib/types/finance.js";
+} from "/shared/types/finance.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
 import {
   loadBnMults,

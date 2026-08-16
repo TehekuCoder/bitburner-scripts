@@ -1,8 +1,8 @@
 import { NS, FactionName, CompanyName } from "@ns";
 import { loadState } from "/lib/state.js";
-import { BotState } from "/lib/types/strategy.js";
+import { BotState } from "/shared/types/strategy.js";
 import { renderProgressBar, hasSingularity } from "/lib/utils.js";
-import { COLOR } from "/lib/constants/logger";
+import { COLOR } from "../shared/constants/logger";
 
 const BITNODE_PHASES = [
   "1. Bootstrapping",

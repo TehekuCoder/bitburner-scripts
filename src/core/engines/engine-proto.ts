@@ -3,7 +3,7 @@ import { getAllServers } from "/lib/network.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { patchBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
-import { EngineMode } from "/lib/types/batcher";
+import { EngineMode } from "/shared/types/batcher";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

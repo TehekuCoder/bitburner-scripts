@@ -12,11 +12,11 @@ import {
 import { loadGangState, loadState } from "/lib/state.js";
 import { loadBnMults } from "/lib/utils.js";
 import { PATHS } from "/lib/paths.js";
-import { BotStrategy } from "/lib/types/strategy.js";
-import { TargetFactionResult } from "/lib/types/factions.js";
-import { CITY_FACTIONS } from "/lib/constants/factions";
-import { REFRESH_INTERVALS } from "/lib/constants/game";
-import { COMBAT_STATS } from "/lib/types/game";
+import { BotStrategy } from "/shared/types/strategy.js";
+import { TargetFactionResult } from "/shared/types/factions.js";
+import { CITY_FACTIONS } from "../../../shared/constants/factions";
+import { COMBAT_STATS } from "/shared/types/game";
+import { REFRESH_INTERVALS } from "/shared/constants/game-defaults";
 
 const MEGACORP_FACTIONS: string[] = [
   "ECorp",

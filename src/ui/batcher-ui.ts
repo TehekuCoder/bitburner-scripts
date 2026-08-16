@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { DashboardData } from "/lib/types/batcher.js";
+import { DashboardData } from "/shared/types/batcher.js";
 
 function makeProgressBar(progress: number, width = 20): string {
   const filledLength = Math.round(Math.max(0, Math.min(1, progress)) * width);

@@ -4,7 +4,7 @@ import {
   PurchaseRequest,
   PurchasePriority,
   PurchaseCategory,
-} from "/lib/types/finance.js";
+} from "/shared/types/finance.js";
 import { hasSingularity, loadBnMults, adjustPriorityByMult } from "/lib/utils.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
 

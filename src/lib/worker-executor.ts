@@ -4,9 +4,9 @@ import {
   PATH_HACK,
   PATH_GROW,
   PATH_WEAKEN
-} from "/lib/constants/batcher.js";
-import { DispatchResult, JitEvent } from "/lib/types/batcher.js";
-import { WorkerNode } from "/lib/types/network.js";
+} from "./runtime/batcher.js";
+import { DispatchResult, JitEvent } from "/shared/types/batcher.js";
+import { WorkerNode } from "/shared/types/network.js";
 import { getUsableThreads } from "./batcher-helpers.js";
 
 const SCRIPT_RAM_MAP: Record<string, number> = {

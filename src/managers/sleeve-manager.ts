@@ -12,13 +12,13 @@ import {
   SleeveOptions,
   SleeveMode,
   SleeveGangUnlockStatus,
-} from "/lib/types/sleeves.js";
+} from "/shared/types/sleeves.js";
 import {
   SleeveTaskAssignment,
   getSleeveStatuses,
   setSleeveTask,
 } from "/lib/utils/sleeve-utils.js";
-import { MEGACORPS } from "/lib/constants/factions.js";
+import { MEGACORPS } from "../shared/constants/factions.js";
 
 type ExtendedGangStatus = SleeveGangUnlockStatus & { gangFaction?: string };
 

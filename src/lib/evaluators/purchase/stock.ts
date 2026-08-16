@@ -5,8 +5,8 @@ import {
   PurchaseRequest,
   PurchaseCategory,
   PurchasePriority,
-} from "/lib/types/finance.js";
-import { TRANSACTION_FEE } from "/lib/constants/finance.js";
+} from "/shared/types/finance.js";
+import { TRANSACTION_FEE } from "../../../shared/constants/finance.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
 import { loadBnMults, adjustPriorityByMult } from "/lib/utils.js";
 

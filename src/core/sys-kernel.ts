@@ -3,13 +3,8 @@ import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { PATHS } from "/lib/paths.js";
 import { loadState, patchState } from "/lib/state.js";
 import { breakAndInfectNetwork, getAllServers } from "/lib/network.js";
-import {
-  HOME_RESERVED_RAM_LOW,
-  HOME_RESERVED_RAM_MID,
-  HOME_RESERVED_RAM_HIGH,
-  HOME_RESERVED_RAM_ULTRA,
-  REFRESH_INTERVALS,
-} from "/lib/constants/game.js";
+import { REFRESH_INTERVALS, HOME_RESERVED_RAM_LOW, HOME_RESERVED_RAM_MID, HOME_RESERVED_RAM_HIGH, HOME_RESERVED_RAM_ULTRA } from "../shared/constants/game-defaults";
+
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -73,13 +68,13 @@ export async function main(ns: NS): Promise<void> {
 
     if (
       homeMax >= 16 &&
-      ns.fileExists(PATHS.core.sysOrchestrator, "home") &&
-      !ns.isRunning(PATHS.core.sysOrchestrator, "home")
+      ns.fileExists(PATHS.core.orchestrator, "home") &&
+      !ns.isRunning(PATHS.core.orchestrator, "home")
     ) {
-      const reqRam = ns.getScriptRam(PATHS.core.sysOrchestrator, "home");
+      const reqRam = ns.getScriptRam(PATHS.core.orchestrator, "home");
       if (homeFree >= reqRam) {
         logger.info("Starte System Orchestrator...");
-        ns.run(PATHS.core.sysOrchestrator, 1);
+        ns.run(PATHS.core.orchestrator, 1);
       }
     }
 

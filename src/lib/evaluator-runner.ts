@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { PurchaseCategory, PurchaseRequest, PurchaseEvaluator } from "/lib/types/finance.js";
+import { PurchaseCategory, PurchaseRequest, PurchaseEvaluator } from "/shared/types/finance.js";
 
 export const FINANCE_PORT = 10;
 

@@ -2,7 +2,7 @@ import { NS } from "@ns";
 import { loadBatcherState, patchBatcherState } from "/lib/state.js";
 import { evaluateHackingStrategy } from "/lib/evaluators/strategy/hacking-strategy.js";
 import { evaluateTargets } from "/lib/evaluators/strategy/target-selection.js";
-import { BatchStrategy } from "/lib/types/batcher.js";
+import { BatchStrategy } from "/shared/types/batcher.js";
 import { PATHS } from "/lib/paths.js";
 import { LoggerClient } from "/lib/logger-client.js";
 

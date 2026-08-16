@@ -1,9 +1,11 @@
 import { NS, Player, FactionName, CompanyName, BitNodeMultipliers } from "@ns";
-import { MEGACORPS } from "./constants/factions.js";
+import { MEGACORPS } from "../shared/constants/factions.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { AugmentTarget, TargetFactionResult } from "./types/factions.js";
-import { BotState, StrategyResult } from "./types/strategy.js";
-import { COMBAT_STATS } from "./types/game.js";
+import { TargetFactionResult } from "/shared/types/factions.js";
+import { COMBAT_STATS } from "/shared/types/game.js";
+import { BotState, StrategyResult } from "/shared/types/strategy.js";
+import { AugmentTarget } from "/tasks/analyze-augmentations.js";
+
 
 const MEGACORP_FACTION_TO_COMPANY: Record<string, CompanyName> = {
   ECorp: "ECorp" as CompanyName,

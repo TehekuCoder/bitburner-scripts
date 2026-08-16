@@ -1,8 +1,8 @@
 import { NS } from "@ns";
 import { loadState, patchState } from "lib/state.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
-import { DEFAULT_MULTIPLIERS } from "lib/constants/game.js"
 import { PATHS } from "/lib/paths.js";
+import { DEFAULT_MULTIPLIERS } from "../shared/constants/game-defaults";
 
 export async function main(ns: NS): Promise<void> {
   // 🟢 DUMMY-REFERENZ: Zwingt den AST-Parser von Bitburner, 

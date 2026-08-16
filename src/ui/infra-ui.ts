@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { TARGET_PROGRAMS } from "/lib/constants/game";
+import { TARGET_PROGRAMS } from "/shared/constants/programs";
 
 export function printDashboard(
   ns: NS,

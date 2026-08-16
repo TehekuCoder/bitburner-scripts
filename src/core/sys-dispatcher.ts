@@ -2,7 +2,7 @@ import { NS, FactionName, CompanyName } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { loadState, patchState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
-import { BotStrategy } from "/lib/types/strategy.js";
+import { BotStrategy } from "/shared/types/strategy.js";
 import { SystemStrategyEvaluator } from "/lib/evaluators/strategy/system-strategy.js";
 import {
   getExactBitNode,
@@ -10,8 +10,8 @@ import {
   hasGang,
   hasCorporation,
 } from "/lib/utils.js";
-import { REFRESH_INTERVALS } from "/lib/constants/game";
-import { CITY_FACTIONS } from "/lib/constants/factions";
+import { CITY_FACTIONS } from "../shared/constants/factions";
+import { REFRESH_INTERVALS } from "../shared/constants/game-defaults";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

@@ -1,5 +1,5 @@
 import { CompanyName, FactionName } from "@ns";
-import { FactionConfig, NFGFactionWhitelist } from "../types/factions";
+import { FactionConfig, NFGFactionWhitelist } from "shared/types/factions";
 
 export const NFG_WHITELIST_CONFIG: NFGFactionWhitelist = {
   hackingGangDefault: "NiteSec" as FactionName,

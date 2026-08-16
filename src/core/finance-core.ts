@@ -3,7 +3,7 @@ import {
   PurchaseRequest,
   PurchasePriority,
   PurchaseCategory,
-} from "/lib/types/finance.js";
+} from "/shared/types/finance.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { drawFinanceDashboard, FinanceDashboardData } from "/ui/finance-ui.js";
 import { PATHS } from "/lib/paths.js";
@@ -13,7 +13,7 @@ import {
   BASE_CATEGORY_MARGINS,
   CATEGORY_TO_EVALUATOR,
   CATEGORY_WEIGHTS,
-} from "/lib/constants/finance";
+} from "../shared/constants/finance";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

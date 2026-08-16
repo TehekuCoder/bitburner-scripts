@@ -3,7 +3,7 @@ import { getAllServers } from "/lib/network.js";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { patchBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
-import { HOME_RAM_RESERVE } from "/lib/constants/batcher.js";
+import { HOME_RAM_RESERVE } from "../../lib/runtime/batcher.js";
 
 
 export async function main(ns: NS): Promise<void> {

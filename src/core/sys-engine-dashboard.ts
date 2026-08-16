@@ -3,7 +3,7 @@ import { drawEngineDashboard, EngineDashboardData } from "../ui/engine-ui.js";
 import { getAllServers } from "/lib/network.js";
 import { loadBatcherState } from "/lib/state.js";
 import { PATHS } from "/lib/paths.js";
-import { HOME_RAM_RESERVE } from "/lib/constants/batcher.js";
+import { HOME_RAM_RESERVE } from "../lib/runtime/batcher.js";
 
 function detectEngineName(progressStr: string): string {
   if (progressStr.includes("PREP")) return "PREP";

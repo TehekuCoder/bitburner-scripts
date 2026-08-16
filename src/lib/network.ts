@@ -1,7 +1,7 @@
 import { NS } from "@ns";
-import { HOME_RAM_RESERVE } from "./constants/batcher.js";
+import { HOME_RAM_RESERVE } from "./runtime/batcher.js";
 import { provisionServer } from "./utils/provision.js";
-import { JitEvent } from "./types/batcher.js";
+import { JitEvent } from "/shared/types/batcher.js";
 
 const MAX_REASONABLE_RAM_GB = 1_048_576; // Support bis 1PB für Late-Game / PServs
 

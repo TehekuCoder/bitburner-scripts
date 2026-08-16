@@ -1,5 +1,5 @@
 import { FactionName, NS} from "@ns";
-import { BotStrategy } from "/lib/types/strategy";
+import { BotStrategy } from "/shared/types/strategy";
 
 
 interface UIProgressBarParams {

@@ -5,10 +5,10 @@ import {
   PurchaseRequest,
   PurchasePriority,
   PurchaseCategory,
-} from "/lib/types/finance.js";
-import { AUG_PRICE_MULT } from "/lib/constants/game.js";
+} from "/shared/types/finance.js";
 import { hasSingularity, loadBnMults, adjustPriorityByMult } from "/lib/utils.js";
 import { runEvaluator } from "/lib/evaluator-runner.js";
+import { AUG_PRICE_MULT } from "../../../shared/constants/game-defaults";
 
 interface AugCandidate {
   name: string;

@@ -2,8 +2,8 @@ import { NS } from "@ns";
 import { drawBatcherDashboard } from "../ui/batcher-ui.js";
 import { getAllServers } from "../lib/network.js";
 import { loadBatcherState } from "../lib/state.js";
-import { DashboardData } from "../lib/types/batcher.js";
-import { HOME_RAM_RESERVE } from "/lib/constants/batcher.js";
+import { DashboardData } from "../shared/types/batcher.js";
+import { HOME_RAM_RESERVE } from "../lib/runtime/batcher.js";
 
 
 function getPrimaryTarget(rawTarget: string): string {

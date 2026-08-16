@@ -1,7 +1,7 @@
 import { NS, BitNodeMultipliers } from "@ns";
-import { DEFAULT_MULTIPLIERS } from "/lib/constants/game.js";
-import { PurchasePriority } from "./types/finance";
-import { COLOR } from "./constants/logger";
+import { PurchasePriority } from "shared/types/finance.js";
+import { COLOR } from "../shared/constants/logger";
+import { DEFAULT_MULTIPLIERS } from "../shared/constants/game-defaults";
 
 interface BitNodeInfo {
   /** Die Nummer des aktuellen BitNodes (z. B. 9) */

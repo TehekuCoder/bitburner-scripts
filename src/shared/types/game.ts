@@ -1,4 +1,4 @@
-import { PAYLOADS } from "../constants/game.js";
+import { PAYLOADS } from "../constants/payloads";
 
 export const COMBAT_STATS = [
   "strength",

@@ -1,6 +1,6 @@
 import { NS, FactionName } from "@ns";
 import { patchAugmentState } from "lib/state.js";
-import { FACTION_ROADMAP, CITY_FACTIONS } from "lib/constants/factions.js";
+import { FACTION_ROADMAP, CITY_FACTIONS } from "/shared/constants/factions.js";
 import {
   getPurchasedUninstalledAugs,
   isGangOfferingAllAugs,

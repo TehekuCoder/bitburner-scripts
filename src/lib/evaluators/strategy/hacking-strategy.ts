@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { BatchStrategy } from "/lib/types/batcher.js";
+import { BatchStrategy } from "/shared/types/batcher.js";
 import { evaluateTargets } from "/lib/evaluators/strategy/target-selection.js";
 
 export interface StrategyRecommendation {

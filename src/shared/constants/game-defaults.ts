@@ -1,6 +1,5 @@
-import { GymType, BitNodeMultipliers } from "@ns";
-import { PATHS } from "../paths";
-import { CombatStat } from "../types/game";
+import { BitNodeMultipliers, GymType } from "@ns";
+import { CombatStat } from "/shared/types/game";
 
 export const GYM_STAT_MAP: Record<CombatStat, GymType> = {
   strength: "str",
@@ -15,17 +14,6 @@ export const DISPLAY_MAP: Record<CombatStat, string> = {
   dexterity: "Dex",
   agility: "Agi",
 };
-
-export const TARGET_PROGRAMS = [
-  "BruteSSH.exe",
-  "FTPCrack.exe",
-  "relaySMTP.exe",
-  "HTTPWorm.exe",
-  "DarkscapeNavigator.exe",
-  "SQLInject.exe",
-  "Formulas.exe",
-] as const;
-
 export const DEFAULT_MULTIPLIERS: Record<keyof BitNodeMultipliers, number> = {
   HackingLevelMultiplier: 1.0,
   StrengthLevelMultiplier: 1.0,
@@ -80,25 +68,6 @@ export const DEFAULT_MULTIPLIERS: Record<keyof BitNodeMultipliers, number> = {
   WorldDaemonDifficulty: 1.0,
   ScriptHackMoneyGain: 1.0,
 };
-
-export const PAYLOADS = {
-  hgw: [
-    PATHS.payloads.hack,
-    PATHS.payloads.grow,
-    PATHS.payloads.weaken,
-    PATHS.payloads.share,
-  ],
-  darknet: [
-    PATHS.daemons.crawler,
-    PATHS.tasks.dnetSolver,
-    PATHS.tasks.loot,
-    PATHS.tasks.phish,
-    PATHS.lib.constants,
-    PATHS.lib.logger,
-    PATHS.lib.paths,
-    PATHS.lib.utils.provision,
-  ],
-} as const;
 
 export const REFRESH_INTERVALS = {
   MEGACORP_APPLY: 600_000,

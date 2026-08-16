@@ -1,7 +1,7 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/lib/logger-client.js";
 import { loadState, loadBatcherState } from "/lib/state.js";
-import { BotStrategy } from "/lib/types/strategy.js";
+import { BotStrategy } from "/shared/types/strategy.js";
 import {
   hasSingularity,
   hasCorporation,

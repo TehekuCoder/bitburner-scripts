@@ -1,4 +1,4 @@
-import { PurchaseCategory } from "../types/finance";
+import { PurchaseCategory } from "shared/types/finance";
 
 export const CATEGORY_WEIGHTS: Record<PurchaseCategory, number> = {
   HOME_SERVER: 100,

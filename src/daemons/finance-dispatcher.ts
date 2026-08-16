@@ -45,22 +45,22 @@ export async function main(ns: NS): Promise<void> {
     const pservLimit = ns.cloud?.getServerLimit() ?? 0;
     const pservMult = bnMults.CloudServerLimit ?? 1.0;
     if (pservLimit > 0 && pservMult > 0) {
-      await runAndWait(PATHS.lib.evaluators.purchase.cloud);
+      await runAndWait(PATHS.evaluators.purchase.cloud);
     }
 
     // 2. Hacknet (hacknet.js - ~9.85 GB)
     if ((bnMults.HacknetNodeMoney ?? 1.0) > 0) {
-      await runAndWait(PATHS.lib.evaluators.purchase.hacknet);
+      await runAndWait(PATHS.evaluators.purchase.hacknet);
     }
 
     // 3. Singularity Evaluatoren
     if (hasSingularity(ns)) {
-      await runAndWait(PATHS.lib.evaluators.purchase.home); // home.js (~9.65 GB)
-      await runAndWait(PATHS.lib.evaluators.purchase.programs); // programs.js (~5.55 GB)
+      await runAndWait(PATHS.evaluators.purchase.home); // home.js (~9.65 GB)
+      await runAndWait(PATHS.evaluators.purchase.programs); // programs.js (~5.55 GB)
 
       // Player-Augmentations nur evaluieren, wenn ausreichend Home-RAM vorhanden ist
       if (homeMaxRam >= 64) {
-        await runAndWait(PATHS.lib.evaluators.purchase.player); // player.js (~28.10 GB)
+        await runAndWait(PATHS.evaluators.purchase.player); // player.js (~28.10 GB)
       }
     }
 
@@ -70,17 +70,17 @@ export async function main(ns: NS): Promise<void> {
       (bnMults.GangUniqueAugs ?? 1.0) > 0 &&
       ns.isRunning(PATHS.managers.gang)
     ) {
-      await runAndWait(PATHS.lib.evaluators.purchase.gang);
+      await runAndWait(PATHS.evaluators.purchase.gang);
     }
 
     // 5. Sleeves (sleeve.js - ~20.50 GB)
     if (hasSleeve(ns) && ns.isRunning(PATHS.managers.sleeve)) {
-      await runAndWait(PATHS.lib.evaluators.purchase.sleeve);
+      await runAndWait(PATHS.evaluators.purchase.sleeve);
     }
 
     // 6. Stock Market (stock.js - ~19.80 GB)
     if (Boolean(ns.stock)) {
-      await runAndWait(PATHS.lib.evaluators.purchase.stock);
+      await runAndWait(PATHS.evaluators.purchase.stock);
     }
 
     // Pause zwischen den Evaluations-Zyklen

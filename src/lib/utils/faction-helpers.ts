@@ -1,7 +1,7 @@
 import { NS, FactionName } from "@ns";
-import { NFG_WHITELIST_CONFIG } from "../constants/factions";
-import { GangState } from "../types/gang";
-import { CITY_FACTIONS } from "../constants/factions";
+import { NFG_WHITELIST_CONFIG } from "../../shared/constants/factions";
+import { GangState } from "shared/types/gang";
+import { CITY_FACTIONS } from "../../shared/constants/factions";
 
 /**
  * Gibt die aktuelle City-Fraktion zurück, in der der Spieler Mitglied ist (falls vorhanden).

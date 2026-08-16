@@ -1,5 +1,5 @@
 import { NS, Server } from "@ns";
-import { BatchStrategy } from "/lib/types/batcher";
+import { BatchStrategy } from "/shared/types/batcher";
 
 export interface TargetScore {
   hostname: string;
