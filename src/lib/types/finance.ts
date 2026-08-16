@@ -43,7 +43,7 @@ export const CATEGORY_WEIGHTS: Record<PurchaseCategory, number> = {
   HOME_SERVER: 100,      // Home RAM/Cores sind das Nadelöhr
   PURCHASED_SERVER: 90, // Pservs haben Vorrang vor Gang
   DARKNET_PROGRAM: 80,
-  GANG_EQUIPMENT: 70,   // Gang Equipment ist stark, aber hinter pserv
+  GANG_EQUIPMENT: 70,   // Gang Equipment ist stark, aber hinter cloud
   SLEEVE_AUG: 60,
   PLAYER_AUG: 50,
   HACKNET: 40,

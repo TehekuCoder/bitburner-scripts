@@ -24,35 +24,50 @@ interface PhaseEvaluated {
 function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
   const player = ns.getPlayer();
   const singularityAvailable = hasSingularity(ns);
-  
-  const ownedAugs = singularityAvailable ? ns.singularity.getOwnedAugmentations(false).length : 0;
+
+  const ownedAugsInstalled = singularityAvailable
+    ? ns.singularity.getOwnedAugmentations(false)
+    : [];
+  const ownedAugsAll = singularityAvailable
+    ? ns.singularity.getOwnedAugmentations(true)
+    : [];
+
+  const ownedCount = ownedAugsInstalled.length;
   const remainingAugs = state.augRoadMap?.length ?? 0;
   const karma = ns.heart.break();
 
-  // Phase 7: World Daemon (Red Pill vorhanden)
-  if (player.factions.includes("Daedalus" as FactionName) && singularityAvailable) {
-    const allAugs = ns.singularity.getOwnedAugmentations(true);
-    if (allAugs.includes("The Red Pill")) {
-      const daemonReq = ns.getServerRequiredHackingLevel("w0r1d_d43m0n");
-      const currentHack = player.skills.hacking;
-      const progress = Math.min(100, (currentHack / daemonReq) * 100);
-      return {
-        phaseIndex: 7,
-        phaseName: "World Daemon",
-        detail: `Hack: ${currentHack} / ${daemonReq}`,
-        progressPercent: progress,
-      };
+  const hasRedPillInstalled = ownedAugsInstalled.includes("The Red Pill");
+  const hasRedPillPurchased = ownedAugsAll.includes("The Red Pill");
+  const daemonExists = ns.serverExists("w0r1d_d43m0n");
+
+  // Phase 7: World Daemon (Red Pill INSTALLIERT und Daemon existiert)
+  if ((hasRedPillInstalled || daemonExists) && singularityAvailable) {
+    let daemonReq = 3000;
+    try {
+      daemonReq = ns.getServerRequiredHackingLevel("w0r1d_d43m0n");
+    } catch {
+      // Fallback falls der Server-Level-Request in Edge-Cases fehlschlägt
     }
+
+    const currentHack = player.skills.hacking;
+    const progress = Math.min(100, (currentHack / daemonReq) * 100);
+    return {
+      phaseIndex: 7,
+      phaseName: "World Daemon",
+      detail: `Hack: ${currentHack} / ${daemonReq}`,
+      progressPercent: progress,
+    };
   }
 
-  // Phase 6: Daedalus Prep (Roadmap abgearbeitet ODER Daedalus aktiv)
+  // Phase 6: Daedalus Prep (Roadmap abgearbeitet ODER Daedalus aktiv ODER Red Pill gekauft)
   const isDaedalusActive =
     state.targetFaction === "Daedalus" || player.factions.includes("Daedalus");
   const isRoadmapClear = remainingAugs === 0;
 
   if (
+    hasRedPillPurchased ||
     isDaedalusActive ||
-    (isRoadmapClear && (ownedAugs >= 30 || player.money >= 100e9))
+    (isRoadmapClear && (ownedCount >= 30 || player.money >= 100e9))
   ) {
     const hackProgress = (player.skills.hacking / 2500) * 100;
     const combatMin = Math.min(
@@ -64,11 +79,15 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
     const combatProgress = (combatMin / 1500) * 100;
     const bestProgress = Math.min(100, Math.max(hackProgress, combatProgress));
 
+    const detailMsg = hasRedPillPurchased
+      ? `⚠️ Red Pill gekauft! Ggf. Augs installieren (Reset)`
+      : `Augs: ${ownedCount}/30 | Hack: ${player.skills.hacking}/2500 | Combat: ${combatMin}/1500`;
+
     return {
       phaseIndex: 6,
       phaseName: "Daedalus Prep",
-      detail: `Augs: ${ownedAugs}/30 | Hack: ${player.skills.hacking}/2500 | Combat: ${combatMin}/1500`,
-      progressPercent: bestProgress,
+      detail: detailMsg,
+      progressPercent: hasRedPillPurchased ? 99 : bestProgress,
     };
   }
 
@@ -116,8 +135,11 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
 
       if (state.targetCompany && singularityAvailable) {
         try {
-          const currentRep = ns.singularity.getCompanyRep(state.targetCompany as CompanyName);
-          const targetRep = state.targetCompany === "Fulcrum Technologies" ? 250_000 : 400_000;
+          const currentRep = ns.singularity.getCompanyRep(
+            state.targetCompany as CompanyName,
+          );
+          const targetRep =
+            state.targetCompany === "Fulcrum Technologies" ? 250_000 : 400_000;
           progress = Math.min(100, (currentRep / targetRep) * 100);
           detail = `Corp: ${company} (${(currentRep / 1000).toFixed(0)}k / ${(targetRep / 1000).toFixed(0)}k Rep)`;
         } catch {
@@ -130,7 +152,9 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
 
       if (state.targetFaction && singularityAvailable) {
         try {
-          const currentRep = ns.singularity.getFactionRep(state.targetFaction as FactionName);
+          const currentRep = ns.singularity.getFactionRep(
+            state.targetFaction as FactionName,
+          );
           const targetRep = state.factionTargets?.[state.targetFaction] ?? 0;
           if (targetRep > 0) {
             progress = Math.min(100, (currentRep / targetRep) * 100);
@@ -149,8 +173,11 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
   }
 
   // Phase 1: Bootstrapping / Fallback (MONEY, MANUAL, TRAIN, etc.)
-  const hackTarget = 250; // Ziel bis Megacorps/Fraktionen bereit sind
-  const hackProgress = Math.min(100, (player.skills.hacking / hackTarget) * 100);
+  const hackTarget = 250;
+  const hackProgress = Math.min(
+    100,
+    (player.skills.hacking / hackTarget) * 100,
+  );
   const stratSuffix = state.strategy ? ` (${state.strategy})` : "";
 
   return {
@@ -164,9 +191,28 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
 function getNextManualStep(ns: NS, state: BotState): string {
   const player = ns.getPlayer();
   const karma = ns.heart.break();
+  const singularityAvailable = hasSingularity(ns);
 
-  if (player.skills.hacking >= 3000) {
-    return "🎯 Kaufe 'The Red Pill' & hacke w0r1d_d43m0n im Terminal!";
+  const ownedAugsInstalled = singularityAvailable
+    ? ns.singularity.getOwnedAugmentations(false)
+    : [];
+  const ownedAugsAll = singularityAvailable
+    ? ns.singularity.getOwnedAugmentations(true)
+    : [];
+
+  const hasRedPillInstalled = ownedAugsInstalled.includes("The Red Pill");
+  const hasRedPillPurchased = ownedAugsAll.includes("The Red Pill");
+
+  if (hasRedPillInstalled || ns.serverExists("w0r1d_d43m0n")) {
+    return "🚨 Hacke 'w0r1d_d43m0n' im Terminal zum Beenden des BitNodes!";
+  }
+
+  if (hasRedPillPurchased) {
+    return "⚡ 'The Red Pill' ist gekauft! Installiere Augmentations (Reset), um 'w0r1d_d43m0n' freizuschalten.";
+  }
+
+  if (player.factions.includes("Daedalus")) {
+    return "🎯 Kaufe 'The Red Pill' von Daedalus (Rep/Geld farmen falls nötig)!";
   }
 
   if (!state.hasGang) {
@@ -183,7 +229,11 @@ function getNextManualStep(ns: NS, state: BotState): string {
     return "💻 Hacking Level steigern für erste Faction-Invites.";
   }
 
-  if (player.money >= 100e9 && player.skills.hacking >= 2500 && !player.factions.includes("Daedalus")) {
+  if (
+    player.money >= 100e9 &&
+    player.skills.hacking >= 2500 &&
+    !player.factions.includes("Daedalus")
+  ) {
     return "🏆 Warten auf Daedalus-Einladung (30 Augs ODER $100b + Hack 2500)!";
   }
 
@@ -205,7 +255,7 @@ export async function main(ns: NS): Promise<void> {
   ns.ui.setTailTitle("BitOS - Roadmap Dashboard");
 
   const dividerHeader = `${COLOR.GRAY}=========================================================${COLOR.RESET}`;
-  const dividerSub    = `${COLOR.GRAY}---------------------------------------------------------${COLOR.RESET}`;
+  const dividerSub = `${COLOR.GRAY}---------------------------------------------------------${COLOR.RESET}`;
 
   while (true) {
     ns.clearLog();
@@ -213,7 +263,9 @@ export async function main(ns: NS): Promise<void> {
     const state = loadState(ns);
 
     if (!state) {
-      ns.print(`${COLOR.YELLOW}⚠️  [ROADMAP] Warte auf State-Port Initialisierung...${COLOR.RESET}`);
+      ns.print(
+        `${COLOR.YELLOW}⚠️  [ROADMAP] Warte auf State-Port Initialisierung...${COLOR.RESET}`,
+      );
       await ns.sleep(1000);
       continue;
     }
@@ -225,29 +277,36 @@ export async function main(ns: NS): Promise<void> {
     if (flags.auto || flags.a) {
       if (!singularityAvailable) {
         isManual = true;
-        autoErrorMsg = "❌ [--auto abgelehnt]: Singularity (SF4) nicht vorhanden!";
+        autoErrorMsg =
+          "❌ [--auto abgelehnt]: Singularity (SF4) nicht vorhanden!";
       } else {
         isManual = false;
       }
     } else if (flags.manual || flags.m) {
       isManual = true;
     } else {
-      isManual = !singularityAvailable || Boolean(state.manualMode || state.strategy === "MANUAL");
+      isManual =
+        !singularityAvailable ||
+        Boolean(state.manualMode || state.strategy === "MANUAL");
     }
 
     const currentPhase = evaluateBitNodePhase(ns, state);
 
-    const modeBadge = isManual 
-      ? `${COLOR.YELLOW}[MANUELL]${COLOR.RESET}` 
+    const modeBadge = isManual
+      ? `${COLOR.YELLOW}[MANUELL]${COLOR.RESET}`
       : `${COLOR.GREEN}[AUTO-PILOT]${COLOR.RESET}`;
 
     ns.print(dividerHeader);
-    ns.print(`  ${COLOR.BOLD}${COLOR.CYAN}🗺️  BITOS ROADMAP DASHBOARD | BN ${state.currentBitNode}.${state.currentBitNodeLevel}${COLOR.RESET} ${modeBadge}`);
+    ns.print(
+      `  ${COLOR.BOLD}${COLOR.CYAN}🗺️  BITOS ROADMAP DASHBOARD | BN ${state.currentBitNode}.${state.currentBitNodeLevel}${COLOR.RESET} ${modeBadge}`,
+    );
     ns.print(dividerHeader);
 
     if (autoErrorMsg) {
       ns.print(` ${COLOR.RED}${COLOR.BOLD}${autoErrorMsg}${COLOR.RESET}`);
-      ns.print(` ${COLOR.YELLOW}-> System schaltet erzwungen auf MANUELL um.${COLOR.RESET}`);
+      ns.print(
+        ` ${COLOR.YELLOW}-> System schaltet erzwungen auf MANUELL um.${COLOR.RESET}`,
+      );
       ns.print(dividerSub);
     }
 
@@ -270,20 +329,28 @@ export async function main(ns: NS): Promise<void> {
     ns.print(dividerSub);
     ns.print(` ${COLOR.BOLD}AKTUELLE PHASEN-DETAILS${COLOR.RESET}`);
     ns.print(dividerSub);
-    ns.print(` Strategie:    ${COLOR.YELLOW}${state.strategy || "N/A"}${COLOR.RESET}`);
-    
-    const targetLabel = state.strategy === "COMPANY" ? "Ziel-Corp:   " : "Ziel-Faction:";
-    const targetValue = state.strategy === "COMPANY" 
-      ? (state.targetCompany || "Keine") 
-      : (state.targetFaction || "Keine");
-      
+    ns.print(
+      ` Strategie:    ${COLOR.YELLOW}${state.strategy || "N/A"}${COLOR.RESET}`,
+    );
+
+    const targetLabel =
+      state.strategy === "COMPANY" ? "Ziel-Corp:   " : "Ziel-Faction:";
+    const targetValue =
+      state.strategy === "COMPANY"
+        ? state.targetCompany || "Keine"
+        : state.targetFaction || "Keine";
+
     ns.print(` ${targetLabel} ${COLOR.CYAN}${targetValue}${COLOR.RESET}`);
     ns.print(` Status:       ${currentPhase.detail}`);
-    ns.print(` Fortschritt:  ${renderProgressBar(currentPhase.progressPercent)}`);
+    ns.print(
+      ` Fortschritt:  ${renderProgressBar(currentPhase.progressPercent)}`,
+    );
 
     if (isManual) {
       ns.print(dividerSub);
-      ns.print(` ${COLOR.BOLD}${COLOR.YELLOW}💡 MANUELLE HANDLUNGSEMPFEHLUNG${COLOR.RESET}`);
+      ns.print(
+        ` ${COLOR.BOLD}${COLOR.YELLOW}💡 MANUELLE HANDLUNGSEMPFEHLUNG${COLOR.RESET}`,
+      );
       ns.print(dividerSub);
       ns.print(` ${COLOR.BOLD}${getNextManualStep(ns, state)}${COLOR.RESET}`);
     }
@@ -291,8 +358,12 @@ export async function main(ns: NS): Promise<void> {
     ns.print(dividerSub);
     ns.print(` ${COLOR.BOLD}SUBSYSTEM STATUS${COLOR.RESET}`);
     ns.print(dividerSub);
-    ns.print(` Batcher:      ${state.batchStrategy} (${state.batcherProgress || "Inaktiv"})`);
-    ns.print(` Gang:         ${state.hasGang ? `${COLOR.GREEN}Aktiv (${state.gangPhase})${COLOR.RESET}` : `${COLOR.GRAY}Nicht gegründet${COLOR.RESET}`}`);
+    ns.print(
+      ` Batcher:      ${state.batchStrategy} (${state.batcherProgress || "Inaktiv"})`,
+    );
+    ns.print(
+      ` Gang:         ${state.hasGang ? `${COLOR.GREEN}Aktiv (${state.gangPhase})${COLOR.RESET}` : `${COLOR.GRAY}Nicht gegründet${COLOR.RESET}`}`,
+    );
     ns.print(` Finanzen:     ${state.financeProgress || "N/A"}`);
     ns.print(` Sleeve:       ${state.sleeveProgress || "N/A"}`);
 

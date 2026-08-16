@@ -12,7 +12,7 @@ export async function main(ns: NS): Promise<void> {
   }
 
   switch (action) {
-    case "pserv-buy": {
+    case "cloud-buy": {
       // ns.cloud.purchaseServer gibt bei Erfolg den Hostnamen zurück, sonst ""
       const boughtHost = ns.cloud.purchaseServer(hostname, ram);
 
@@ -23,7 +23,7 @@ export async function main(ns: NS): Promise<void> {
       }
       break;
     }
-    case "pserv-upgrade": {
+    case "cloud-upgrade": {
       // ns.cloud.upgradeServer gibt boolean zurück
       const success = ns.cloud.upgradeServer(hostname, ram);
 

@@ -35,7 +35,7 @@ export function evaluateTargets(ns: NS, strategy: BatchStrategy): TargetScore[] 
   const targets: TargetScore[] = [];
 
   for (const host of allServers) {
-    if (host === "home" || host.startsWith("pserv-")) continue;
+    if (host === "home" || host.startsWith("cloud-")) continue;
     if (!ns.hasRootAccess(host)) continue;
 
     const server = ns.getServer(host);

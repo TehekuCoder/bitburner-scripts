@@ -44,7 +44,7 @@ export const PATHS = {
         home: "lib/evaluators/purchase/home.js",
         player: "lib/evaluators/purchase/player.js",
         programs: "lib/evaluators/purchase/programs.js",
-        pserv: "lib/evaluators/purchase/pserv.js",
+        cloud: "lib/evaluators/purchase/cloud.js",
         sleeve: "lib/evaluators/purchase/sleeve.js",
         stock: "lib/evaluators/purchase/stock.js",
       },

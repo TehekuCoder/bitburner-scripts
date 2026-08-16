@@ -5,7 +5,7 @@ import { ProvisionProfile, PAYLOADS } from "../constants/game";
 /**
  * Kopiert profilbasierte Worker-Skripte auf den Zielserver, falls sie fehlen.
  * @param ns NS API Objekt
- * @param serverName Der Zielserver (z.B. "pserv-0" oder "darknet-node-1")
+ * @param serverName Der Zielserver (z.B. "cloud-0" oder "darknet-node-1")
  * @param profile Profilauswahl ('hgw' | 'darknet') - Standard: 'hgw'
  */
 export async function provisionServer(

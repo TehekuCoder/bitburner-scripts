@@ -30,7 +30,7 @@ export async function main(ns: NS): Promise<void> {
   const targets: BackdoorTarget[] = [];
 
   for (const server of allServers) {
-    if (server === "home" || server.startsWith("pserv-") ||server.startsWith("hacknet-server-")) continue;
+    if (server === "home" || server.startsWith("cloud-") ||server.startsWith("hacknet-server-")) continue;
 
     const sObj = ns.getServer(server);
     // Kriterien: Root-Zugriff vorhanden, aber noch KEIN Backdoor gesetzt

@@ -1,4 +1,4 @@
-// lib/evaluators/pserv.ts
+// lib/evaluators/cloud.ts
 import { NS } from "@ns";
 import {
   PurchaseEvaluator,
@@ -9,7 +9,7 @@ import {
 import { runEvaluator } from "/lib/evaluator-runner.js";
 import { loadBnMults, adjustPriorityByMult } from "lib/utils.js";
 
-const PSERV_PREFIX = "pserv-";
+const PSERV_PREFIX = "cloud-";
 const INITIAL_RAM = 8;
 const MIN_HOME_RAM_FOR_PSERVS = 64;
 const BASELINE_TARGET_RAM = 32; // 🎯 Ziel-RAM vor regulärer Staffelung
@@ -53,7 +53,7 @@ const costMult = bnMults.CloudServerCost ?? bnMults.CloudServerCost ?? 1.0;
         const score = Math.max(1, Math.floor(baseScore * efficiencyMult));
 
         requests.push({
-          id: `pserv-buy-${PSERV_PREFIX}${index}`,
+          id: `cloud-buy-${PSERV_PREFIX}${index}`,
           category: "PURCHASED_SERVER" as PurchaseCategory,
           priority,
           score,
@@ -61,7 +61,7 @@ const costMult = bnMults.CloudServerCost ?? bnMults.CloudServerCost ?? 1.0;
           description: `Server kaufen: ${PSERV_PREFIX}${index} (${INITIAL_RAM}GB) [${owned.length + 1}/${limit}]`,
           action: {
             script: "core/actions/act-cloud.js",
-            args: ["pserv-buy", `${PSERV_PREFIX}${index}`, INITIAL_RAM],
+            args: ["cloud-buy", `${PSERV_PREFIX}${index}`, INITIAL_RAM],
           },
         });
       }
@@ -102,7 +102,7 @@ const costMult = bnMults.CloudServerCost ?? bnMults.CloudServerCost ?? 1.0;
           score = Math.max(1, Math.floor(score * efficiencyMult));
 
           requests.push({
-            id: `pserv-upgrade-${hostname}-${nextRam}gb`,
+            id: `cloud-upgrade-${hostname}-${nextRam}gb`,
             category: "PURCHASED_SERVER" as PurchaseCategory,
             priority,
             score,
@@ -110,7 +110,7 @@ const costMult = bnMults.CloudServerCost ?? bnMults.CloudServerCost ?? 1.0;
             description: `Server Upgrade: ${hostname} (${currentRam}GB ➔ ${nextRam}GB)${isUnderBaseline ? " ⚡ [Baseline Push]" : ""}`,
             action: {
               script: "core/actions/act-cloud.js",
-              args: ["pserv-upgrade", hostname, nextRam],
+              args: ["cloud-upgrade", hostname, nextRam],
             },
           });
         }

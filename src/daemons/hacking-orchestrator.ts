@@ -17,7 +17,7 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     const evalRec = evaluateHackingStrategy(ns);
 
-    // 1️⃣ Dynamische Strategie-Ermittlung (kein starrer XP_GRIND Lock)
+    // 1️⃣ Dynamische Strategie-Ermittlung
     let activeStrategy: BatchStrategy = evalRec.strategy;
 
     // 2️⃣ Target-Ermittlung
@@ -49,7 +49,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // 3️⃣ PREP-Check: Server muss erst vorbereitet werden, bevor HWGW/PROTO laufen kann
-    if (ns.hasRootAccess(activeTarget) && activeStrategy !== "XP_GRIND" && activeStrategy !== "WORKER") {
+    if (ns.hasRootAccess(activeTarget) && activeStrategy !== "XP_GRIND" && activeStrategy !== "WORKER" && activeStrategy !== "BOOTSTRAP") {
       const server = ns.getServer(activeTarget);
       const isMaxMoney = (server.moneyAvailable ?? 0) >= (server.moneyMax ?? 1) * 0.99;
       const isMinSec = (server.hackDifficulty ?? 99) <= (server.minDifficulty ?? 1) + 0.01;
@@ -70,7 +70,7 @@ export async function main(ns: NS): Promise<void> {
       lastTarget = activeTarget;
     }
 
-    // 4️⃣ State aktualisieren (inklusive batcherActive)
+    // 4️⃣ State aktualisieren
     patchBatcherState(ns, {
       batchStrategy: activeStrategy,
       batcherTarget: activeTarget,
@@ -81,9 +81,18 @@ export async function main(ns: NS): Promise<void> {
           : `Laufende Strategie: ${activeStrategy}`,
     });
 
-    // 5️⃣ Engine starten & verwalten
+    // 5️⃣ Engine starten ODER Worker im Netzwerk verteilen
     if (ns.hasRootAccess(activeTarget)) {
-      ensureEngineRunning(ns, activeStrategy, activeTarget, logger);
+      if (activeStrategy === "BOOTSTRAP" || activeStrategy === "WORKER") {
+        // Stoppe evtl. laufende Batcher-Engines auf home
+        stopAllEngines(ns, logger);
+        // Verteile work.ts netzwerkweit mit max. Threads
+        deployWorkerFleet(ns, activeTarget, logger);
+      } else {
+        // Stoppe alte Netz-Worker, falls wir auf Batcher/Prep wechseln
+        stopNetworkWorkers(ns);
+        ensureEngineRunning(ns, activeStrategy, activeTarget, logger);
+      }
     } else {
       logger.error(
         `Kein Root-Zugriff auf ${activeTarget} vorhanden! Engine gestoppt.`,
@@ -92,6 +101,104 @@ export async function main(ns: NS): Promise<void> {
     }
 
     await ns.sleep(5000);
+  }
+}
+
+/**
+ * Verteilt work.ts auf ALLE gerooteten Server im Netzwerk mit max. Threads.
+ */
+function deployWorkerFleet(ns: NS, target: string, logger: LoggerClient): void {
+  const workScript = PATHS.payloads.work;
+  if (!ns.fileExists(workScript, "home")) {
+    logger.error(`Worker-Skript '${workScript}' auf home nicht gefunden!`, target);
+    return;
+  }
+
+  const scriptRam = ns.getScriptRam(workScript, "home");
+  if (scriptRam <= 0) return;
+
+  const servers = getAllRootedServersIncludingPurchased(ns);
+
+  for (const server of servers) {
+    const maxRam = ns.getServerMaxRam(server);
+    if (maxRam <= 0) continue;
+
+    let availableRam = maxRam;
+
+    if (server === "home") {
+      const reservedHomeRam = maxRam <= 32 ? 8 : 16;
+      const usedRamExcludingWork = ns.getServerUsedRam("home") - getScriptUsedRam(ns, "home", workScript);
+      availableRam = Math.max(0, maxRam - usedRamExcludingWork - reservedHomeRam);
+    } else {
+      // Wenn andere Skripte laufen, berücksichtigen wir deren RAM
+      const usedRamExcludingWork = ns.getServerUsedRam(server) - getScriptUsedRam(ns, server, workScript);
+      availableRam = maxRam - usedRamExcludingWork;
+    }
+
+    const targetThreads = Math.floor(availableRam / scriptRam);
+
+    if (targetThreads > 0) {
+      if (server !== "home" && !ns.fileExists(workScript, server)) {
+        ns.scp(workScript, server, "home");
+      }
+      manageWorkerOnServer(ns, server, workScript, target, targetThreads);
+    } else {
+      if (ns.isRunning(workScript, server)) {
+        ns.scriptKill(workScript, server);
+      }
+    }
+  }
+}
+
+function manageWorkerOnServer(
+  ns: NS,
+  server: string,
+  script: string,
+  target: string,
+  desiredThreads: number,
+): void {
+  const procs = ns.ps(server).filter((p) => p.filename === script);
+  const isCorrect = procs.length === 1 && procs[0].args[0] === target && procs[0].threads === desiredThreads;
+
+  if (isCorrect) return;
+
+  if (procs.length > 0) {
+    ns.scriptKill(script, server);
+  }
+
+  if (desiredThreads > 0) {
+    ns.exec(script, server, desiredThreads, target);
+  }
+}
+
+function getScriptUsedRam(ns: NS, server: string, script: string): number {
+  return ns.ps(server)
+    .filter((p) => p.filename === script)
+    .reduce((acc, p) => acc + p.threads * ns.getScriptRam(script, server), 0);
+}
+
+function stopNetworkWorkers(ns: NS): void {
+  const workScript = PATHS.payloads.work;
+  const servers = getAllRootedServersIncludingPurchased(ns);
+  for (const server of servers) {
+    if (server !== "home" && ns.isRunning(workScript, server)) {
+      ns.scriptKill(workScript, server);
+    }
+  }
+}
+
+function stopAllEngines(ns: NS, logger: LoggerClient): void {
+  const engines: string[] = [
+    PATHS.core.engines.proto,
+    PATHS.core.engines.prep,
+    PATHS.core.engines.shotgun,
+    PATHS.core.engines.jitBatcher,
+  ].filter(Boolean) as string[];
+
+  const procs = ns.ps("home").filter((proc) => engines.includes(proc.filename));
+  for (const proc of procs) {
+    ns.kill(proc.pid);
+    logger.info(`Engine gestoppt für Worker-Phase: ${proc.filename}`);
   }
 }
 
@@ -116,6 +223,12 @@ function resolveXpTarget(ns: NS): string {
 }
 
 function getAllRootedServers(ns: NS): string[] {
+  return getAllRootedServersIncludingPurchased(ns).filter(
+    (s) => !s.startsWith("cloud-") && s !== "home"
+  );
+}
+
+function getAllRootedServersIncludingPurchased(ns: NS): string[] {
   const visited = new Set<string>();
   const queue = ["home"];
   const rootedTargets: string[] = [];
@@ -124,8 +237,7 @@ function getAllRootedServers(ns: NS): string[] {
     const current = queue.shift()!;
     visited.add(current);
 
-    const isPurchased = current.startsWith("pserv-") || current === "home";
-    if (!isPurchased && ns.hasRootAccess(current)) {
+    if (ns.hasRootAccess(current)) {
       rootedTargets.push(current);
     }
 
@@ -146,8 +258,6 @@ function ensureEngineRunning(
   logger: LoggerClient,
 ): void {
   const engineMap: Partial<Record<BatchStrategy, string>> = {
-    BOOTSTRAP: PATHS.payloads.work,
-    WORKER: PATHS.payloads.work,
     XP_GRIND: PATHS.core.engines.proto,
     PREP: PATHS.core.engines.prep,
     PROTO_BATCH: PATHS.core.engines.prep,
@@ -170,23 +280,19 @@ function ensureEngineRunning(
     return;
   }
 
-  // Alle bekannten Engine-Pfade ermitteln
   const allEnginePaths = new Set(
     Object.values(engineMap).filter((p): p is string => Boolean(p)),
   );
 
-  // Suche nach allen aktuell laufenden Engine-Prozessen auf home
   const runningEngineProcs = ns
     .ps("home")
     .filter((proc) => allEnginePaths.has(proc.filename));
 
-  // Prüfen, ob exakt die gewünschte Engine mit dem korrekten Target läuft
   const isExactRunning = runningEngineProcs.some(
     (proc) => proc.filename === scriptPath && proc.args[0] === target,
   );
 
   if (!isExactRunning) {
-    // Beende ALLE abweichenden oder veralteten Engine-Prozesse präzise via PID
     for (const proc of runningEngineProcs) {
       if (ns.kill(proc.pid)) {
         logger.info(

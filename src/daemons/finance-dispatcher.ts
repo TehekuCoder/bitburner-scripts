@@ -32,7 +32,7 @@ export async function main(ns: NS): Promise<void> {
     const pservLimit = ns.cloud?.getServerLimit() ?? 0;
     const pservMult = bnMults.CloudServerLimit ?? 1.0;
     if (pservLimit > 0 && pservMult > 0) {
-      tryLaunch(PATHS.lib.evaluators.purchase.pserv);
+      tryLaunch(PATHS.lib.evaluators.purchase.cloud);
     }
 
     // 2. Hacknet Evaluator (sofern nicht durch BN-Mult totgeschaltet)

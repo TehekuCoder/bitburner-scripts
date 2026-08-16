@@ -18,7 +18,7 @@ const BASE_CATEGORY_MARGINS: Partial<Record<PurchaseCategory, number>> = {
 
 const CATEGORY_TO_EVALUATOR: Partial<Record<PurchaseCategory, string>> = {
   HOME_SERVER: "home",
-  PURCHASED_SERVER: "pserv",
+  PURCHASED_SERVER: "cloud",
   DARKNET_PROGRAM: "programs",
   GANG_EQUIPMENT: "gang",
   SLEEVE_AUG: "sleeve",
@@ -129,7 +129,7 @@ export async function main(ns: NS): Promise<void> {
       "home",
       "hacknet",
       "stock",
-      "pserv",
+      "cloud",
       "programs",
       "gang",
       "sleeve",

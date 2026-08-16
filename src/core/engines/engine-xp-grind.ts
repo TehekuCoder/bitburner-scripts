@@ -21,7 +21,7 @@ function findBestXpTarget(
     .filter(
       (s) =>
         s !== "home" &&
-        !s.startsWith("pserv-") &&
+        !s.startsWith("cloud-") &&
         !s.startsWith("hacknet-") &&
         ns.hasRootAccess(s) &&
         (ns.getServerRequiredHackingLevel(s) ?? 0) <= playerSkill,

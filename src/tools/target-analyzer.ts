@@ -29,7 +29,7 @@ export async function main(ns: NS): Promise<void> {
     // Ausschlüsse: gekaufte Server, Hacknet, Home, ungerootete oder ohne Geld
     if (
       s.startsWith("hacknet-") ||
-      s.startsWith("pserv-") ||
+      s.startsWith("cloud-") ||
       s === "home" ||
       !ns.hasRootAccess(s)
     ) {

@@ -140,7 +140,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     "home",
     "hacknet",
     "stock",
-    "pserv",
+    "cloud",
     "programs",
     "gang",
     "sleeve",
