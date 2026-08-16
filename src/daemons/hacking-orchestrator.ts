@@ -1,6 +1,7 @@
 import { NS } from "@ns";
 import { loadBatcherState, patchBatcherState } from "/lib/state.js";
 import { evaluateHackingStrategy } from "/lib/evaluators/strategy/hacking-strategy.js";
+import { evaluateTargets } from "/lib/evaluators/strategy/target-selection.js";
 import { BatchStrategy } from "/lib/types/batcher.js";
 import { PATHS } from "/lib/paths.js";
 import { LoggerClient } from "/lib/logger-client.js";
@@ -49,10 +50,17 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // 3️⃣ PREP-Check: Server muss erst vorbereitet werden, bevor HWGW/PROTO laufen kann
-    if (ns.hasRootAccess(activeTarget) && activeStrategy !== "XP_GRIND" && activeStrategy !== "WORKER" && activeStrategy !== "BOOTSTRAP") {
+    if (
+      ns.hasRootAccess(activeTarget) &&
+      activeStrategy !== "XP_GRIND" &&
+      activeStrategy !== "WORKER" &&
+      activeStrategy !== "BOOTSTRAP"
+    ) {
       const server = ns.getServer(activeTarget);
-      const isMaxMoney = (server.moneyAvailable ?? 0) >= (server.moneyMax ?? 1) * 0.99;
-      const isMinSec = (server.hackDifficulty ?? 99) <= (server.minDifficulty ?? 1) + 0.01;
+      const isMaxMoney =
+        (server.moneyAvailable ?? 0) >= (server.moneyMax ?? 1) * 0.99;
+      const isMinSec =
+        (server.hackDifficulty ?? 99) <= (server.minDifficulty ?? 1) + 0.01;
 
       if (!isMaxMoney || !isMinSec) {
         activeStrategy = "PREP";
@@ -81,13 +89,21 @@ export async function main(ns: NS): Promise<void> {
           : `Laufende Strategie: ${activeStrategy}`,
     });
 
-    // 5️⃣ Engine starten ODER Worker im Netzwerk verteilen
+    // 5️⃣ Engine starten ODER Multi-Target Worker im Netzwerk verteilen
     if (ns.hasRootAccess(activeTarget)) {
       if (activeStrategy === "BOOTSTRAP" || activeStrategy === "WORKER") {
         // Stoppe evtl. laufende Batcher-Engines auf home
         stopAllEngines(ns, logger);
-        // Verteile work.ts netzwerkweit mit max. Threads
-        deployWorkerFleet(ns, activeTarget, logger);
+
+        // Top-Ziele ermitteln für Multi-Target-Verteilung
+        const evalTargets = evaluateTargets(ns, activeStrategy);
+        const topTargets =
+          evalTargets.length > 0
+            ? evalTargets.slice(0, 5).map((t) => t.hostname)
+            : [activeTarget];
+
+        // Verteile work.ts netzwerkweit auf mehrere Ziele
+        deployWorkerFleet(ns, topTargets, logger);
       } else {
         // Stoppe alte Netz-Worker, falls wir auf Batcher/Prep wechseln
         stopNetworkWorkers(ns);
@@ -105,12 +121,16 @@ export async function main(ns: NS): Promise<void> {
 }
 
 /**
- * Verteilt work.ts auf ALLE gerooteten Server im Netzwerk mit max. Threads.
+ * Verteilt work.ts auf ALLE gerooteten Server im Netzwerk verteilt über mehrere Ziele.
  */
-function deployWorkerFleet(ns: NS, target: string, logger: LoggerClient): void {
+function deployWorkerFleet(
+  ns: NS,
+  targets: string[],
+  logger: LoggerClient,
+): void {
   const workScript = PATHS.payloads.work;
   if (!ns.fileExists(workScript, "home")) {
-    logger.error(`Worker-Skript '${workScript}' auf home nicht gefunden!`, target);
+    logger.error(`Worker-Skript '${workScript}' auf home nicht gefunden!`);
     return;
   }
 
@@ -119,29 +139,43 @@ function deployWorkerFleet(ns: NS, target: string, logger: LoggerClient): void {
 
   const servers = getAllRootedServersIncludingPurchased(ns);
 
-  for (const server of servers) {
+  for (let i = 0; i < servers.length; i++) {
+    const server = servers[i];
     const maxRam = ns.getServerMaxRam(server);
     if (maxRam <= 0) continue;
 
     let availableRam = maxRam;
 
     if (server === "home") {
-      const reservedHomeRam = maxRam <= 32 ? 8 : 16;
-      const usedRamExcludingWork = ns.getServerUsedRam("home") - getScriptUsedRam(ns, "home", workScript);
-      availableRam = Math.max(0, maxRam - usedRamExcludingWork - reservedHomeRam);
+      // Mindestens 32 GB RAM auf home für CCT-Solver & Kernel reservieren
+      const reservedHomeRam = maxRam >= 64 ? 32 : maxRam >= 32 ? 16 : 8;
+      const usedRamExcludingWork =
+        ns.getServerUsedRam("home") - getScriptUsedRam(ns, "home", workScript);
+      availableRam = Math.max(
+        0,
+        maxRam - usedRamExcludingWork - reservedHomeRam,
+      );
     } else {
-      // Wenn andere Skripte laufen, berücksichtigen wir deren RAM
-      const usedRamExcludingWork = ns.getServerUsedRam(server) - getScriptUsedRam(ns, server, workScript);
+      const usedRamExcludingWork =
+        ns.getServerUsedRam(server) - getScriptUsedRam(ns, server, workScript);
       availableRam = maxRam - usedRamExcludingWork;
     }
 
     const targetThreads = Math.floor(availableRam / scriptRam);
+    // Round-Robin Zuordnung der Top-Ziele über das Server-Array
+    const assignedTarget = targets[i % targets.length];
 
     if (targetThreads > 0) {
       if (server !== "home" && !ns.fileExists(workScript, server)) {
         ns.scp(workScript, server, "home");
       }
-      manageWorkerOnServer(ns, server, workScript, target, targetThreads);
+      manageWorkerOnServer(
+        ns,
+        server,
+        workScript,
+        assignedTarget,
+        targetThreads,
+      );
     } else {
       if (ns.isRunning(workScript, server)) {
         ns.scriptKill(workScript, server);
@@ -158,7 +192,10 @@ function manageWorkerOnServer(
   desiredThreads: number,
 ): void {
   const procs = ns.ps(server).filter((p) => p.filename === script);
-  const isCorrect = procs.length === 1 && procs[0].args[0] === target && procs[0].threads === desiredThreads;
+  const isCorrect =
+    procs.length === 1 &&
+    procs[0].args[0] === target &&
+    procs[0].threads === desiredThreads;
 
   if (isCorrect) return;
 
@@ -172,7 +209,8 @@ function manageWorkerOnServer(
 }
 
 function getScriptUsedRam(ns: NS, server: string, script: string): number {
-  return ns.ps(server)
+  return ns
+    .ps(server)
     .filter((p) => p.filename === script)
     .reduce((acc, p) => acc + p.threads * ns.getScriptRam(script, server), 0);
 }
@@ -224,7 +262,7 @@ function resolveXpTarget(ns: NS): string {
 
 function getAllRootedServers(ns: NS): string[] {
   return getAllRootedServersIncludingPurchased(ns).filter(
-    (s) => !s.startsWith("cloud-") && s !== "home"
+    (s) => !s.startsWith("cloud-") && s !== "home",
   );
 }
 
