@@ -1,9 +1,11 @@
 import { NS, Player, FactionName, CompanyName, BitNodeMultipliers } from "@ns";
-import { MEGACORPS } from "../../shared/constants/factions.js";
+import { MEGACORPS, GANG_CANDIDATE_FACTIONS } from "../../shared/constants/factions.js";
 import { AugmentTarget, TargetFactionResult } from "/shared/types/factions.js";
 import { COMBAT_STATS } from "/shared/types/game.js";
 import { BotState, StrategyResult } from "/shared/types/strategy.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
+
+// 🌐 Liste aller Fraktionen, aus denen eine Gang gegründet werden kann
 
 
 const MEGACORP_FACTION_TO_COMPANY: Record<string, CompanyName> = {
@@ -94,6 +96,9 @@ export function findNextRoadmapFaction(
   const isBN2 = isGangOfferingAllAugs(ns);
   const redPillOwned = hasRedPill(ns);
 
+  // 🛑 Prüfen, ob Gang-Freischaltung aussteht (genug Karma, aber noch keine Gang)
+  const isPendingGangUnlock = !ns.gang?.inGang() && player.karma <= -54000;
+
   // 1️⃣ Relevant Targets aus der Roadmap (ohne Gang-Augs)
   const relevantTargets = getNonGangRoadmapTargets(
     ns,
@@ -110,6 +115,15 @@ export function findNextRoadmapFaction(
     const validFactions = target.factions.filter((f) => {
       if (f === "Shadows of Anarchy") return false;
       if (f === gangFaction && !isBN2) return false;
+
+      // 🆕 Gang-Kandidaten ignorieren, wenn wir vor der Gang-Gründung stehen
+      if (
+        isPendingGangUnlock &&
+        GANG_CANDIDATE_FACTIONS.includes(f as FactionName)
+      ) {
+        return false;
+      }
+
       return playerFactions.includes(f) || invites.includes(f);
     });
 
@@ -140,6 +154,13 @@ export function findNextRoadmapFaction(
     // Falls noch in keiner Ziel-Fraktion: Prüfen auf Firmen-Ruf für Megacorp-Einladung
     for (const f of target.factions) {
       if (f === "Shadows of Anarchy" || (f === gangFaction && !isBN2)) continue;
+
+      // 🆕 Auch bei Firmen-Checks Gang-Kandidaten ignorieren
+      if (
+        isPendingGangUnlock &&
+        GANG_CANDIDATE_FACTIONS.includes(f as FactionName)
+      )
+        continue;
 
       const companyName = MEGACORP_FACTION_TO_COMPANY[f];
       if (companyName) {

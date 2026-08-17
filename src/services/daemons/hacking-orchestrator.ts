@@ -148,8 +148,23 @@ function deployWorkerFleet(
     let availableRam = maxRam;
 
     if (server === "home") {
-      // Mindestens 32 GB RAM auf home für CCT-Solver & Kernel reservieren
-      const reservedHomeRam = maxRam >= 64 ? 32 : maxRam >= 32 ? 16 : 8;
+      // 1. Basispuffer basierend auf der Gesamtgröße von 'home'
+      let reservedHomeRam = 32;
+      if (maxRam >= 512) {
+        reservedHomeRam = 128;
+      } else if (maxRam >= 256) {
+        reservedHomeRam = 64;
+      }
+
+      // 2. Dynamischer Zusatzpuffer für Gang-Dienste (Manager ~14GB + UI ~16GB)
+      try {
+        if (ns.gang.inGang()) {
+          reservedHomeRam += 32;
+        }
+      } catch {
+        // Gang-API noch nicht freigeschaltet/verfügbar
+      }
+
       const usedRamExcludingWork =
         ns.getServerUsedRam("home") - getScriptUsedRam(ns, "home", workScript);
       availableRam = Math.max(

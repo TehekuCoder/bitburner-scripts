@@ -1,9 +1,15 @@
 import { NS, FactionName } from "@ns";
 
 import { getNFGFallbackFaction } from "/lib/utils/faction-helpers.js";
-import { loadFactionState, loadGangState, patchFactionState } from "/infrastructure/state/state";
-import { CITY_FACTIONS } from "/shared/constants/factions";
-
+import {
+  loadFactionState,
+  loadGangState,
+  patchFactionState,
+} from "/infrastructure/state/state";
+import {
+  CITY_FACTIONS,
+  GANG_CANDIDATE_FACTIONS,
+} from "/shared/constants/factions";
 
 const TIAN_DI_HUI_CITIES = ["Chongqing", "New Tokyo", "Ishima"] as const;
 
@@ -45,6 +51,19 @@ export async function main(ns: NS): Promise<void> {
         faction = fallbackFaction;
         patchFactionState(ns, { targetFaction: fallbackFaction });
       }
+    }
+
+    // ------------------------------------------------------------------
+    // 🛑 PENDING GANG UNLOCK CHECK
+    // ------------------------------------------------------------------
+    const isPendingGangUnlock = !ns.gang.inGang() && player.karma <= -54000;
+    if (isPendingGangUnlock && GANG_CANDIDATE_FACTIONS.includes(faction)) {
+      ns.print(
+        `🛑 [GANG-WAIT] Fraktion [${faction}] ist ein Gang-Kandidat und Gang-Gründung steht aus (Karma: ${Math.round(player.karma)}). Stoppe Ruf-Grind!`,
+      );
+      patchFactionState(ns, { targetFaction: undefined });
+      await ns.sleep(2000);
+      continue;
     }
 
     // ------------------------------------------------------------------

@@ -78,3 +78,13 @@ export const CITY_FACTIONS: FactionName[] = [
   "Ishima",
   "Volhaven",
 ] as FactionName[];
+
+export const GANG_CANDIDATE_FACTIONS: FactionName[] = [
+  "Slum Snakes",
+  "Tetrads",
+  "Syndicate",
+  "The Dark Army",
+  "Speakers for the Dead",
+  "NiteSec",
+  "The Black Hand",
+] as FactionName[];

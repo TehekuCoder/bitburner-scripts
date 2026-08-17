@@ -67,21 +67,14 @@ export async function main(ns: NS): Promise<void> {
       },
     },
 
-    // 3. Batch Orchestrator (Haupt-Geldquelle)
-    {
-      name: "Batch Orchestrator",
-      path: PATHS.services.daemons.hackingOrchestrator,
-      minHomeRam: 64,
-    },
-
-    // 4. Finance Manager
+    // 3. Finance Manager
     {
       name: "Finance Manager",
       path: PATHS.services.daemons.financeDispatcher,
       minHomeRam: 128,
     },
 
-    // 5. Hash Manager
+    // 4. Hash Manager
     {
       name: "Hash Manager",
       path: PATHS.services.managers.hash,
@@ -95,7 +88,7 @@ export async function main(ns: NS): Promise<void> {
       },
     },
 
-    // 6. Network Crawler & Darknet Subsystem
+    // 5. Network Crawler & Darknet Subsystem
     {
       name: "Network Crawler",
       path: PATHS.services.daemons.crawler,
@@ -109,7 +102,7 @@ export async function main(ns: NS): Promise<void> {
       condition: (ns) => ns.fileExists("DarkscapeNavigator.exe", "home"),
     },
 
-    // 7. Singularity Dispatcher (SF4)
+    // 6. Singularity Dispatcher (SF4)
     {
       name: "Singularity Dispatcher",
       path: PATHS.app.orchestration.dispatcher,
@@ -120,12 +113,12 @@ export async function main(ns: NS): Promise<void> {
     // Roadmap UI (soll immer laufen)
     {
       name: "Roadmap UI",
-      path: PATHS.ui.roadmap, 
-      minHomeRam: 32,         
-      condition: () => true,  
+      path: PATHS.ui.roadmap,
+      minHomeRam: 32,
+      condition: () => true,
     },
 
-    // 8. Gang Manager & UI
+    // 7. Gang Manager & UI
     {
       name: "Gang Manager",
       path: PATHS.services.managers.gang,
@@ -151,7 +144,7 @@ export async function main(ns: NS): Promise<void> {
       },
     },
 
-    // 9. Sleeve Manager
+    // 8. Sleeve Manager
     {
       name: "Sleeve Manager",
       path: PATHS.services.managers.sleeve,
@@ -164,6 +157,13 @@ export async function main(ns: NS): Promise<void> {
       path: PATHS.ui.sleeve,
       minHomeRam: 512,
       condition: (ns) => ns.sleeve !== undefined,
+    },
+
+    // 19. Batch Orchestrator (Haupt-Geldquelle)
+    {
+      name: "Batch Orchestrator",
+      path: PATHS.services.daemons.hackingOrchestrator,
+      minHomeRam: 64,
     },
 
     // 10. Background Share Filler
