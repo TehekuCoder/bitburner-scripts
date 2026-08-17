@@ -82,7 +82,7 @@ export async function main(ns: NS): Promise<void> {
   // ====================================================================
   // SCHRITT 3: WORKER-VERTEILUNG NACH RAM-LEISTUNG
   // ====================================================================
-  const pServers = ns.cloud.getServerNames();
+  const Clouders = ns.cloud.getServerNames();
   const workerScript = PATHS.services.payloads.work;
   const workerRam = ns.getScriptRam(workerScript);
 
@@ -112,7 +112,7 @@ export async function main(ns: NS): Promise<void> {
       (s) =>
         !s.startsWith("hacknet-node") &&
         (s === "home" ||
-          pServers.includes(s) ||
+          Clouders.includes(s) ||
           s.startsWith("hacknet-server") ||
           (ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0)) &&
         ns.getServerMaxRam(s) > 0,
@@ -239,8 +239,8 @@ function killWorkerScriptsOnServer(ns: NS, server: string): void {
 }
 
 function stopAllWorkers(ns: NS, allServers: string[]): void {
-  const pServers = ns.cloud.getServerNames();
-  const targets = Array.from(new Set([...allServers, ...pServers]));
+  const Clouders = ns.cloud.getServerNames();
+  const targets = Array.from(new Set([...allServers, ...Clouders]));
   for (const server of targets) {
     if (ns.hasRootAccess(server)) {
       killWorkerScriptsOnServer(ns, server);

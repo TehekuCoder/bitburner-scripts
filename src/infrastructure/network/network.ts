@@ -3,7 +3,7 @@ import { JitEvent } from "/shared/types/batcher.js";
 import { HOME_RAM_RESERVE } from "../runtime/batcher";
 import { provisionServer } from "/lib/utils/provision";
 
-const MAX_REASONABLE_RAM_GB = 1_048_576; // Support bis 1PB für Late-Game / PServs
+const MAX_REASONABLE_RAM_GB = 1_048_576; // Support bis 1PB für Late-Game / Clouds
 
 function sanitizeRamValue(value: number): number {
   if (!Number.isFinite(value) || value < 0) return 0;

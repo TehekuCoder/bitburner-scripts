@@ -33,7 +33,7 @@ export async function main(ns: NS): Promise<void> {
 
     // 1. BitNode-Multiplikatoren auswerten
     const augCostMult = bnMults.AugmentationMoneyCost ?? 1.0;
-    const pservCostMult = bnMults.CloudServerCost ?? 1.0;
+    const CloudCostMult = bnMults.CloudServerCost ?? 1.0;
 
     // Dynamische Margen basierend auf BN-Multiplikatoren
     const dynamicMargins: Partial<Record<PurchaseCategory, number>> = {
@@ -41,7 +41,7 @@ export async function main(ns: NS): Promise<void> {
       // Bei extrem teuren Augmentations 20% Puffer erzwingen
       PLAYER_AUG: augCostMult > 2.0 ? 1.2 : 1.0,
       SLEEVE_AUG: augCostMult > 2.0 ? 1.2 : 1.0,
-      PURCHASED_SERVER: pservCostMult > 3.0 ? 1.15 : 1.0,
+      PURCHASED_SERVER: CloudCostMult > 3.0 ? 1.15 : 1.0,
     };
 
     // Bei teuren BitNodes das "Kleingeld" von 1% auf 0.2% senken

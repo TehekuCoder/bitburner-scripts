@@ -55,8 +55,8 @@ export async function main(ns: NS): Promise<void> {
       "[WARN] Full network sweep failed. Falling back to cloud-only clear.",
     );
     try {
-      const pServers = ns.cloud.getServerNames();
-      for (const server of pServers) {
+      const Clouders = ns.cloud.getServerNames();
+      for (const server of Clouders) {
         ns.killall(server);
       }
       ns.print("[ OK ] Cloud server fleet cleared.");

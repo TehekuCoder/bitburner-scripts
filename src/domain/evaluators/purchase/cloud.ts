@@ -15,7 +15,7 @@ const INITIAL_RAM = 8;
 const MIN_HOME_RAM_FOR_CLOUD = 64;
 const BASELINE_TARGET_RAM = 32; // 🎯 Ziel-RAM vor regulärer Staffelung
 
-export const PservEvaluator: PurchaseEvaluator = {
+export const CloudEvaluator: PurchaseEvaluator = {
   category: "PURCHASED_SERVER",
 
   getRequests(ns: NS): PurchaseRequest[] {
@@ -123,5 +123,5 @@ export const PservEvaluator: PurchaseEvaluator = {
 };
 
 export async function main(ns: NS): Promise<void> {
-  await runEvaluator(ns, PservEvaluator);
+  await runEvaluator(ns, CloudEvaluator);
 }

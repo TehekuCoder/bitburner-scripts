@@ -21,7 +21,7 @@ export function printDashboard(
   );
   ns.print(`   CORES: ${homeCores} Kerne`);
 
-  const pServers = ns.cloud.getServerNames();
+  const Clouders = ns.cloud.getServerNames();
   const isRushMode = currentState?.isRushModeActive ?? false;
 
   if (isRushMode) {

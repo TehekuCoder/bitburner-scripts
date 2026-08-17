@@ -42,9 +42,9 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // 1. Purchased Servers (cloud.js - ~6.05 GB)
-    const pservLimit = ns.cloud?.getServerLimit() ?? 0;
-    const pservMult = bnMults.CloudServerLimit ?? 1.0;
-    if (pservLimit > 0 && pservMult > 0) {
+    const CloudLimit = ns.cloud?.getServerLimit() ?? 0;
+    const CloudMult = bnMults.CloudServerLimit ?? 1.0;
+    if (CloudLimit > 0 && CloudMult > 0) {
       await runAndWait(PATHS.domain.evaluators.purchase.cloud);
     }
 

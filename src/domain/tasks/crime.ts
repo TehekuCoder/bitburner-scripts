@@ -12,7 +12,7 @@ export async function main(ns: NS): Promise<void> {
     const state = loadStrategyState(ns);
     const mode = (state?.strategy || "IDLE") as string;
 
-    // 🟢 HIER: "PSERV_RUSH" zur Whitelist hinzugefügt!
+    // 🟢 HIER: "Cloud_RUSH" zur Whitelist hinzugefügt!
     if (
       mode !== "CRIME" &&
       mode !== "MONEY" &&

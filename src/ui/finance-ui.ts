@@ -90,8 +90,8 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   ns.print(`Home RAM:    ${ramUsedStr} / ${ramTotStr} (${ramPct})`);
   ns.print(`             [${CLR.CYAN}${ramBar}${CLR.RESET}]`);
 
-  const pservStr = `${data.purchasedServerCount} / ${data.purchasedServerLimit}`;
-  const pservBar = makeProgressBar(
+  const CloudStr = `${data.purchasedServerCount} / ${data.purchasedServerLimit}`;
+  const CloudBar = makeProgressBar(
     data.purchasedServerCount,
     data.purchasedServerLimit,
     12,
@@ -101,7 +101,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
       ? ns.format.ram(data.largestPurchasedServerRam)
       : "–";
   ns.print(
-    `Pserv Pool:  ${pservStr.padEnd(8)} [${CLR.CYAN}${pservBar}${CLR.RESET}] (Max: ${maxRamStr})`,
+    `Cloud Pool:  ${CloudStr.padEnd(8)} [${CLR.CYAN}${CloudBar}${CLR.RESET}] (Max: ${maxRamStr})`,
   );
 
   if (data.hacknetLimit > 0) {
