@@ -1,5 +1,6 @@
 import { NS } from "@ns";
-import { LoggerClient as Logger } from "/lib/logger-client.js";
+import { LoggerClient } from "/infrastructure/logging/logger-client";
+
 
 const MAP_FILE = "/data/darknet-map.json";
 
@@ -46,7 +47,7 @@ export async function main(ns: NS): Promise<void> {
   const currentHost = ns.getHostname();
   ns.disableLog("ALL");
 
-  const logger = new Logger(ns, `MAPPER-${currentHost}`);
+  const logger = new LoggerClient(ns, `MAPPER-${currentHost}`);
 
   // 1. Lokale Nachbarn ermitteln
   const neighbors: string[] = ns.dnet.probe();

@@ -1,5 +1,6 @@
 import { NS } from "@ns";
-import { getAllServers } from "lib/network.js";
+import { getAllServers } from "/infrastructure/network/network";
+import { PATHS } from "/infrastructure/runtime/paths";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -68,8 +69,8 @@ export async function main(ns: NS): Promise<void> {
 
   // --- 2. ENVIRONMENT LAYER ---
   ns.print("[...] Initializing Environment Layer (Failsafe Check)...");
-  if (ns.fileExists("core/boot.js", "home")) {
-    const initPid = ns.run("core/boot.js", 1);
+  if (ns.fileExists(PATHS.app.orchestration.boot, "home")) {
+    const initPid = ns.run(PATHS.app.orchestration.boot, 1);
     if (initPid > 0) {
       // Synchron warten, bis die Initialisierung fertig ist
       while (ns.isRunning(initPid)) {
@@ -80,22 +81,21 @@ export async function main(ns: NS): Promise<void> {
       ns.print("[WARN] Initializer failed to launch. RAM shortage?");
     }
   } else {
-    ns.print("[WARN] core/boot.js not found. Skipping init stage.");
+    ns.print(`[WARN] ${PATHS.app.orchestration.boot} not found. Skipping init stage.`);
   }
   await ns.sleep(250);
 
   // --- 3. HARDWARE-EBENE (sys-kernel) ---
   ns.print("[...] Launching Core Kernel...");
-  // 🟢 Korrektur: Auf "core/sys-kernel.js" prüfen, nicht auf "core/boot.js"
-  if (ns.fileExists("core/sys-kernel.js", "home")) {
-    const kernelPid = ns.run("core/sys-kernel.js", 1);
+  if (ns.fileExists(PATHS.app.orchestration.kernel, "home")) {
+    const kernelPid = ns.run(PATHS.app.orchestration.kernel, 1);
     if (kernelPid > 0) {
-      ns.print("[ OK ] core/sys-kernel.js successfully launched.");
+      ns.print(`[ OK ] ${PATHS.app.orchestration.kernel} successfully launched.`);
     } else {
-      ns.print("[FAIL] CRITICAL ERROR: Could not launch core/sys-kernel.js!");
+      ns.print(`[FAIL] CRITICAL ERROR: Could not launch ${PATHS.app.orchestration.kernel}!`);
     }
   } else {
-    ns.alert("CRITICAL ERROR: core/sys-kernel.js not found!");
+    ns.alert(`CRITICAL ERROR: ${PATHS.app.orchestration.kernel} not found!`);
     return;
   }
   await ns.sleep(250);

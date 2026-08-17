@@ -1,7 +1,8 @@
 import { NS } from "@ns";
-import { getAllServers } from "/lib/network.js";
 import { provisionServer } from "/lib/utils/provision";
 import { formatTime } from "/lib/utils";
+import { getAllServers } from "/infrastructure/network/network";
+import { PATHS } from "/infrastructure/runtime/paths";
 
 interface TargetScore {
   name: string;
@@ -82,7 +83,7 @@ export async function main(ns: NS): Promise<void> {
   // SCHRITT 3: WORKER-VERTEILUNG NACH RAM-LEISTUNG
   // ====================================================================
   const pServers = ns.cloud.getServerNames();
-  const workerScript = "payloads/work.js";
+  const workerScript = PATHS.services.payloads.work;
   const workerRam = ns.getScriptRam(workerScript);
 
   if (!Number.isFinite(workerRam) || workerRam <= 0) {

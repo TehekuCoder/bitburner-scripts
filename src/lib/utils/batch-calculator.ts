@@ -1,6 +1,6 @@
 import { NS, Server, Player } from "@ns";
 import { BatchPlan } from "/shared/types/batcher.js";
-import { SPACER, PATH_HACK, PATH_GROW, PATH_WEAKEN } from "../runtime/batcher";
+import { SPACER, PATH_HACK, PATH_GROW, PATH_WEAKEN } from "../../infrastructure/runtime/batcher";
 import { DEFAULT_MULTIPLIERS } from "/shared/constants/game-defaults";
 
 export function calculateBatch(

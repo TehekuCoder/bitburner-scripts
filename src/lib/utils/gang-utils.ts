@@ -1,7 +1,7 @@
 // lib/gang-utils.ts
 
 import { NS, GangMemberInfo, GangGenInfo } from "@ns";
-import { LoggerClient as Logger } from "/lib/logger-client.js";
+import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
 
 export const GANG_CONFIG = {
   ASCEND_THRESHOLD: 1.5,

@@ -1,6 +1,6 @@
 // tools/find-path.ts
 import { NS } from "@ns";
-import { getAllServers } from "/lib/network.js";
+import { getAllServers } from "/infrastructure/network/network";
 
 interface BackdoorTarget {
   name: string;

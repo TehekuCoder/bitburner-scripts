@@ -1,5 +1,5 @@
 import { NS, SleeveTask } from "@ns";
-import { loadSleeveState } from "/lib/state.js";
+import { loadSleeveState } from "/infrastructure/state/state";
 
 function visualPadEnd(str: string, targetLength: number): string {
   const actualLength = [...str].length;

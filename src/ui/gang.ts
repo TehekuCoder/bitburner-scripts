@@ -1,5 +1,5 @@
 import { NS, GangGenInfo, GangMemberInfo } from "@ns";
-import { loadGangState } from "/lib/state.js";
+import { loadGangState } from "/infrastructure/state/state";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

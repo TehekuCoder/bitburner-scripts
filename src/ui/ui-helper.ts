@@ -1,5 +1,6 @@
 import { FactionName, NS} from "@ns";
 import { BotStrategy } from "/shared/types/strategy";
+import { PATHS } from "/infrastructure/runtime/paths";
 
 
 interface UIProgressBarParams {
@@ -90,7 +91,7 @@ export function generateProgressBar(ns: NS, params: UIProgressBarParams): string
   let finalBar = generatedBar;
   if (
     (mode === "CRIME") &&
-    ns.isRunning("/tasks/crime.js", "home")
+    ns.isRunning(PATHS.domain.tasks.crime, "home")
   ) {
     if (currentState?.progressBar?.startsWith("🥷")) {
       finalBar = currentState.progressBar;

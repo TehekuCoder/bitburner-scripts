@@ -1,16 +1,16 @@
-import { PATHS } from "/lib/paths";
+import { PATHS } from "/infrastructure/runtime/paths.js";
 
 export const PAYLOADS = {
   hgw: [
-    PATHS.payloads.hack,
-    PATHS.payloads.grow,
-    PATHS.payloads.weaken,
-    PATHS.payloads.share,
+    PATHS.services.payloads.hack,
+    PATHS.services.payloads.grow,
+    PATHS.services.payloads.weaken,
+    PATHS.services.payloads.share,
   ],
   darknet: [
-    PATHS.daemons.crawler,
-    PATHS.tasks.dnetSolver,
-    PATHS.tasks.loot,
-    PATHS.tasks.phish,
+    PATHS.services.daemons.crawler,
+    PATHS.domain.tasks.dnetSolver,
+    PATHS.domain.tasks.loot,
+    PATHS.domain.tasks.phish,
   ],
 } as const;

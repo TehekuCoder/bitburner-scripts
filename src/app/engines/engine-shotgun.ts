@@ -1,0 +1,233 @@
+import { NS } from "@ns";
+import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
+import { PATHS } from "../../infrastructure/runtime/paths.js";
+import { getAllServers } from "/infrastructure/network/network.js";
+import { patchBatcherState } from "/infrastructure/state/state.js";
+
+export async function main(ns: NS): Promise<void> {
+  ns.disableLog("ALL");
+  const logger = new Logger(ns, "ShotgunEngine");
+
+  const target = (ns.args[0] as string) || "n00dles";
+
+  const scripts = {
+    hack: PATHS.services.payloads.hack,
+    grow: PATHS.services.payloads.grow,
+    weaken: PATHS.services.payloads.weaken,
+  };
+
+  logger.info(`💥 Engine-Shotgun gestartet für Ziel: [${target}]`);
+
+  // Startzustand: Wenn wir neu starten, gehen wir erst von REPARATUR aus
+  let currentState: "HEALTHY" | "REPAIR" = "REPAIR";
+  let lastLoggedState: "HEALTHY" | "REPAIR" | null = null;
+
+  while (true) {
+    if (!ns.serverExists(target)) {
+      logger.error(`Ziel-Server '${target}' existiert nicht! Beende Shotgun.`);
+      return;
+    }
+
+    // 1. Netzwerk aktualisieren
+    const allNetwork = getAllServers(ns);
+    const workerNodes = allNetwork.filter(
+      (s) => ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0,
+    );
+
+    // 2. Ziel-Zustand auslesen
+    const curSec = ns.getServerSecurityLevel(target);
+    const minSec = ns.getServerMinSecurityLevel(target);
+    const curMoney = ns.getServerMoneyAvailable(target);
+    const maxMoney = ns.getServerMaxMoney(target);
+
+    const moneyPctVal = maxMoney > 0 ? (curMoney / maxMoney) * 100 : 100;
+    const moneyPct = moneyPctVal.toFixed(1);
+    const secDeltaVal = curSec - minSec;
+    const secDelta = secDeltaVal.toFixed(2);
+
+    // 🎯 HYSTERESE-LOGIK (Puffer gegen Jojo-Effekt):
+    // - Schalte auf REPARATUR um, wenn Geld unter 70% fällt ODER Security > +2.5 steigt
+    // - Erst wieder zurück auf HEALTHY, wenn Geld wieder >= 92% UND Security <= +0.5 ist!
+    if (currentState === "HEALTHY") {
+      if (moneyPctVal < 70.0 || secDeltaVal > 2.5) {
+        currentState = "REPAIR";
+      }
+    } else {
+      if (moneyPctVal >= 92.0 && secDeltaVal <= 0.5) {
+        currentState = "HEALTHY";
+      }
+    }
+
+    // Statuswechsel im Log ausgeben
+    if (currentState !== lastLoggedState) {
+      if (currentState === "REPAIR") {
+        logger.warn(
+          `⚠️ Ziel [${target}] ungesund ($: ${moneyPct}% | Sec: +${secDelta})! Schalte auf Auto-Reparatur um.`,
+        );
+      } else {
+        logger.info(
+          `🎯 Ziel [${target}] stabil ($: ${moneyPct}% | Sec: +${secDelta}). Starte Shotgun-Feuer!`,
+        );
+      }
+      lastLoggedState = currentState;
+    }
+
+    patchBatcherState(ns, {
+      batchStrategy: "SHOTGUN_HWGW",
+      batcherActive: true,
+      batcherTarget: target,
+      batcherProgress: `SHOTGUN (${moneyPct}% | Sec: +${secDelta})`,
+    });
+
+    // 3. Dauerfeuer-Welle starten
+    deployShotgunWave(
+      ns,
+      workerNodes,
+      target,
+      currentState === "REPAIR",
+      scripts,
+      logger,
+    );
+
+    await ns.sleep(2000);
+  }
+}
+
+/**
+ * Verteilt Threads effizient auf alle verfügbaren Worker-Nodes ohne RAM-Verschnitt.
+ */
+function deployShotgunWave(
+  ns: NS,
+  workerNodes: string[],
+  target: string,
+  isRepairing: boolean,
+  scripts: { hack: string; grow: string; weaken: string },
+  logger: Logger,
+): void {
+  if (workerNodes.length === 0) return;
+
+  const hCost = ns.getScriptRam(scripts.hack, "home");
+  const gCost = ns.getScriptRam(scripts.grow, "home");
+  const wCost = ns.getScriptRam(scripts.weaken, "home");
+  const minCost = Math.min(hCost, gCost, wCost);
+
+  let totalHackThreads = 0;
+  let totalGrowThreads = 0;
+  let totalWeakenThreads = 0;
+  let activeNodes = 0;
+
+  for (const node of workerNodes) {
+    if (node !== "home") {
+      for (const scriptPath of Object.values(scripts)) {
+        if (!ns.fileExists(scriptPath, node)) {
+          ns.scp(scriptPath, node, "home");
+        }
+      }
+    }
+
+    const maxRam = ns.getServerMaxRam(node);
+    const usedRam = ns.getServerUsedRam(node);
+    const reservedRam = node === "home" ? Math.min(20, maxRam * 0.2) : 0;
+    let freeRam = Math.max(0, maxRam - usedRam - reservedRam);
+
+    if (freeRam < minCost) continue;
+
+    let hThreads = 0;
+    let gThreads = 0;
+    let wThreads = 0;
+
+    if (isRepairing) {
+      // 🛠️ REPARATUR-VERHÄLTNIS: 4x Grow, 1x Weaken
+      const unitCost = 4 * gCost + 1 * wCost;
+      const units = Math.floor(freeRam / unitCost);
+
+      if (units > 0) {
+        gThreads += units * 4;
+        wThreads += units * 1;
+        freeRam -= units * unitCost;
+      }
+
+      // Rest-RAM balanciert auffüllen (1x Weaken pro 4x Grow, um Security nicht steigen zu lassen)
+      while (freeRam >= gCost * 4 + wCost) {
+        gThreads += 4;
+        wThreads += 1;
+        freeRam -= gCost * 4 + wCost;
+      }
+      // Falls noch winziger Rest bleibt: Erst Weaken zum Absichern, dann Grow
+      if (freeRam >= wCost) {
+        wThreads++;
+        freeRam -= wCost;
+      }
+      while (freeRam >= gCost) {
+        gThreads++;
+        freeRam -= gCost;
+      }
+    } else {
+      // 💥 SHOTGUN-VERHÄLTNIS: 1x Hack (10%), 5x Grow (50%), 4x Weaken (40%)
+      const unitCost = 1 * hCost + 5 * gCost + 4 * wCost;
+      const units = Math.floor(freeRam / unitCost);
+
+      if (units > 0) {
+        hThreads += units * 1;
+        gThreads += units * 5;
+        wThreads += units * 4;
+        freeRam -= units * unitCost;
+      }
+
+      // 🛑 OPTIMIERUNG REST-RAM:
+      // Keine sture Weaken-Schleife mehr! Wir füllen in Minipaketen auf (1G + 1W oder 1H + 1W).
+      while (freeRam >= gCost + wCost) {
+        gThreads++;
+        wThreads++;
+        freeRam -= gCost + wCost;
+      }
+      if (freeRam >= hCost + wCost) {
+        hThreads++;
+        wThreads++;
+        freeRam -= hCost + wCost;
+      }
+      if (freeRam >= wCost) {
+        wThreads++;
+        freeRam -= wCost;
+      }
+    }
+
+    // Skripte ausführen
+    let nodeUsed = false;
+    if (
+      hThreads > 0 &&
+      ns.exec(scripts.hack, node, hThreads, target, 0, Math.random()) > 0
+    ) {
+      totalHackThreads += hThreads;
+      nodeUsed = true;
+    }
+    if (
+      gThreads > 0 &&
+      ns.exec(scripts.grow, node, gThreads, target, 0, Math.random()) > 0
+    ) {
+      totalGrowThreads += gThreads;
+      nodeUsed = true;
+    }
+    if (
+      wThreads > 0 &&
+      ns.exec(scripts.weaken, node, wThreads, target, 0, Math.random()) > 0
+    ) {
+      totalWeakenThreads += wThreads;
+      nodeUsed = true;
+    }
+
+    if (nodeUsed) activeNodes++;
+  }
+
+  const grandTotal = totalHackThreads + totalGrowThreads + totalWeakenThreads;
+
+  if (grandTotal > 0) {
+    logger.info(
+      `🌊 Welle gefeuert [${isRepairing ? "REPARATUR" : "SHOTGUN"}] | Nodes: ${activeNodes}/${workerNodes.length} | Threads -> H: ${totalHackThreads} | G: ${totalGrowThreads} | W: ${totalWeakenThreads}`,
+    );
+  } else {
+    logger.debug(
+      `⏳ Welle abgewartet – Netzwerk-RAM aktuell noch voll ausgelastet.`,
+    );
+  }
+}

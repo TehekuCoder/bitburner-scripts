@@ -1,0 +1,139 @@
+import { NS } from "@ns";
+import { LoggerClient } from "/infrastructure/logging/logger-client.js";
+import { SPARK_CHARS } from "/shared/constants/charts";
+import { ANSI_COLORS } from "/shared/constants/colors";
+
+const COLOR = ANSI_COLORS;
+
+export async function main(ns: NS): Promise<void> {
+  ns.disableLog("ALL");
+  ns.ui.openTail(); // Öffnet das dedizierte UI-Fenster
+  ns.ui.resizeTail(504, 271);
+  ns.ui.setTailTitle("Performance");
+
+  const logger = new LoggerClient(ns, "PERF-MONITOR");
+
+  const TARGET_INTERVAL = 100;
+  const LAG_THRESHOLD = 50;
+  const WARN_COOLDOWN = 3000;
+
+  let maxLag = 0;
+  let totalLag = 0;
+  let samples = 0;
+  let lastWarnTime = 0;
+
+  // Historie für den Sparkline-Graph (letzte 20 Messungen)
+  const historySize = 20;
+  const lagHistory: number[] = new Array(historySize).fill(0);
+
+  logger.info("⚡ Performance-Wächter mit Dashboard gestartet.");
+
+  while (true) {
+    const start = performance.now();
+    await ns.sleep(TARGET_INTERVAL);
+
+    const actualElapsed = performance.now() - start;
+    const lag = Math.max(0, actualElapsed - TARGET_INTERVAL);
+
+    samples++;
+    totalLag += lag;
+    if (lag > maxLag) maxLag = lag;
+
+    // Historie aktualisieren (FIFO)
+    lagHistory.shift();
+    lagHistory.push(lag);
+
+    const now = Date.now();
+
+    // 🚨 Stiller Alarm an sys-logger senden, wenn Spike auftritt
+    if (lag > LAG_THRESHOLD && now - lastWarnTime > WARN_COOLDOWN) {
+      logger.warn(
+        `🚨 Event-Loop Spike! Lag: +${lag.toFixed(1)}ms (Gemessen: ${actualElapsed.toFixed(1)}ms)`,
+      );
+      lastWarnTime = now;
+    }
+
+    // 📊 DASHBOARD REDRAW (Jeden Tick für flüssige Optik)
+    const avgLag = totalLag / samples;
+    renderDashboard(ns, lag, avgLag, maxLag, lagHistory);
+
+    // Statistik-Reset alle ~10 Sekunden (100 Samples)
+    if (samples >= 100) {
+      maxLag = 0;
+      totalLag = 0;
+      samples = 0;
+    }
+  }
+}
+
+/**
+ * Zeichnet das schematische Terminal-Dashboard
+ */
+function renderDashboard(
+  ns: NS,
+  currentLag: number,
+  avgLag: number,
+  maxLag: number,
+  history: number[],
+): void {
+  ns.clearLog();
+
+  // Status-Auswertung
+  let statusColor: string = COLOR.GREEN;
+  let statusText = "NOMINAL";
+  if (currentLag > 50) {
+    statusColor = COLOR.RED;
+    statusText = "CRITICAL SPIKE";
+  } else if (currentLag > 20) {
+    statusColor = COLOR.YELLOW;
+    statusText = "ELEVATED LAG";
+  }
+
+  // Sparkline Chart generieren
+  const maxInHistory = Math.max(...history, 10); // Mindestens Scale bis 10ms
+  const sparkline = history
+    .map((val) => {
+      const idx = Math.min(
+        SPARK_CHARS.length - 1,
+        Math.floor((val / maxInHistory) * SPARK_CHARS.length),
+      );
+      const color =
+        val > 50 ? COLOR.RED : val > 15 ? COLOR.YELLOW : COLOR.GREEN;
+      return `${color}${SPARK_CHARS[idx]}${COLOR.RESET}`;
+    })
+    .join("");
+
+  // Health-Bar (0-100ms Relativskala)
+  const barLength = 20;
+  const filled = Math.min(
+    barLength,
+    Math.round((currentLag / 100) * barLength),
+  );
+  const healthBar =
+    `${statusColor}` +
+    "█".repeat(filled) +
+    `${COLOR.GRAY}` +
+    "░".repeat(barLength - filled) +
+    `${COLOR.RESET}`;
+
+  // UI Rendern
+  ns.print(`====================================================`);
+  ns.print(
+    `${COLOR.BOLD}${COLOR.CYAN}SYSTEM PERFORMANCE MONITOR${COLOR.RESET}   ${statusColor}${statusText.padEnd(12)}${COLOR.RESET}`,
+  );
+  ns.print(`====================================================`);
+  ns.print(`  Current Lag : ${formatMs(currentLag)} ${healthBar} `);
+  ns.print(`  Average Lag : ${formatMs(avgLag)}                      `);
+  ns.print(`  Peak Spike  : ${formatMs(maxLag)}                      `);
+  ns.print(`----------------------------------------------------`);
+  ns.print(`  Live History (20 Ticks):                          `);
+  ns.print(`  ${sparkline}                                      `);
+  ns.print(`====================================================`);
+}
+
+function formatMs(ms: number): string {
+  const formatted = `+${ms.toFixed(1)}ms`.padStart(8);
+  if (ms > 50) return `${COLOR.RED}${formatted}${COLOR.RESET}`;
+  if (ms > 15) return `${COLOR.YELLOW}${formatted}${COLOR.RESET}`;
+  return `${COLOR.GREEN}${formatted}${COLOR.RESET}`;
+}
