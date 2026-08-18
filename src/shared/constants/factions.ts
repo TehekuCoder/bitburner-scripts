@@ -26,6 +26,7 @@ export const MEGACORPS: Record<string, CompanyName> = {
   "Clarke Incorporated": "Clarke Incorporated" as CompanyName,
 };
 
+
 export const COMBAT_FACTION_REQUIREMENTS: Partial<Record<FactionName, number>> = {
   "Slum Snakes": 30,
   Tetrads: 75,
@@ -69,6 +70,19 @@ export const FACTION_ROADMAP: FactionConfig[] = [
   { name: "The Covenant", minStat: COMBAT_FACTION_REQUIREMENTS["The Covenant"]!, priority: 30 },
   { name: "Illuminati", minStat: COMBAT_FACTION_REQUIREMENTS["Illuminati"]!, priority: 31 },
 ];
+
+export const MEGACORP_COMPANY_TO_FACTION: Partial<Record<CompanyName, FactionName>> = {
+  [MEGACORPS["Fulcrum Technologies"]]: "Fulcrum Secret Technologies" as FactionName,
+  [MEGACORPS.ECorp]: "ECorp" as FactionName,
+  [MEGACORPS.MegaCorp]: "MegaCorp" as FactionName,
+  [MEGACORPS["Four Sigma"]]: "Four Sigma" as FactionName,
+  [MEGACORPS["KuaiGong International"]]: "KuaiGong International" as FactionName,
+  [MEGACORPS.NWO]: "NWO" as FactionName,
+  [MEGACORPS["Blade Industries"]]: "Blade Industries" as FactionName,
+  [MEGACORPS["OmniTek Incorporated"]]: "OmniTek Incorporated" as FactionName,
+  [MEGACORPS["Bachman & Associates"]]: "Bachman & Associates" as FactionName,
+  [MEGACORPS["Clarke Incorporated"]]: "Clarke Incorporated" as FactionName,
+};
 
 export const CITY_FACTIONS: FactionName[] = [
   "Sector-12",

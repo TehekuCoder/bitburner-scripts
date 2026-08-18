@@ -1,4 +1,4 @@
-import { NS } from "@ns";
+import { CompanyName, FactionName, HacknetServerHashUpgrade, NS } from "@ns";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
 import { BotStrategy } from "/shared/types/strategy.js";
 import {
@@ -9,7 +9,9 @@ import {
   loadBnMults,
 } from "/lib/utils.js";
 import { loadBatcherState, loadState } from "/infrastructure/state/state";
+import { MEGACORP_COMPANY_TO_FACTION } from "/shared/constants/factions";
 
+// 1. Upgrade-Typ erweitern
 type HashUpgradeName =
   | "Sell for Money"
   | "Sell for Corporation Funds"
@@ -20,7 +22,45 @@ type HashUpgradeName =
   | "Exchange for Corporation Research"
   | "Exchange for Bladeburner Rank"
   | "Exchange for Bladeburner SP"
-  | "Generate Coding Contract";
+  | "Generate Coding Contract"
+  | "Exchange for Company Favor";
+
+// 2. Hilfsfunktion: Bestimme Ziel-Firma für Favor-Kauf
+function getTargetCompanyForFavor(ns: NS): CompanyName | null {
+  if (!hasSingularity(ns)) return null;
+
+  const player = ns.getPlayer();
+  const playerFactions = player.factions;
+  const invites = ns.singularity.checkFactionInvitations();
+
+  // A. Prüfe, ob aktuell bei einer Megacorp gearbeitet wird
+  const currentWork = player.jobs;
+  const activeCompanies = Object.keys(currentWork) as CompanyName[];
+
+  for (const company of activeCompanies) {
+    const correspondingFaction = MEGACORP_COMPANY_TO_FACTION[company];
+
+    // Falls Megacorp-Fraktion bereits freigeschaltet -> Überspringen
+    if (
+      correspondingFaction &&
+      (playerFactions.includes(correspondingFaction) || invites.includes(correspondingFaction))
+    ) {
+      continue;
+    }
+
+    // Falls Silhouette das Ziel ist und wir noch nicht drin sind -> Favor kaufen für C-Level Grind
+    if (!playerFactions.includes("Silhouette" as FactionName)) {
+      return company;
+    }
+
+    // Wenn die Megacorp-Fraktion noch fehlt -> Favor kaufen!
+    if (correspondingFaction) {
+      return company;
+    }
+  }
+
+  return null;
+}
 
 interface UpgradePriority {
   name: HashUpgradeName;
@@ -145,7 +185,6 @@ function getDynamicPriorityList(
 
   const reserveBuffer = Math.floor(ns.hacknet.hashCapacity() * 0.2);
 
-  // Prüfung auch auf sleeveGlobalMode erweitern
   const isDominion =
     strategy === "DOMINION" ||
     strategy === "UNI" ||
@@ -173,7 +212,8 @@ function getDynamicPriorityList(
     });
   }
 
-  if (strategy === "COMPANY") {
+  // 🏢 EIGENE CORPORATION (Unabhängig vom Bot-Strategiemodus)
+  if (hasCorporation(ns) && ns.corporation.hasCorporation()) {
     list.push({
       name: "Exchange for Corporation Research",
       condition: (ns) => hasCorporation(ns) && ns.corporation.hasCorporation(),
@@ -185,6 +225,22 @@ function getDynamicPriorityList(
         ns.corporation.hasCorporation() &&
         bnMults.CorporationValuation > 0.1,
     });
+  }
+
+  // 💼 COMPANY-MODUS (Megacorp Job Rep/Favor Grind)
+  // Hacknet bietet kein 'Exchange for Company Rep/Favor'.
+  // 'Improve Studying' beschleunigt Stats-Grind für Beförderungen.
+  if (strategy === "COMPANY") {
+    list.push({ name: "Improve Studying", minReserveHashes: reserveBuffer });
+
+    // 🆕 Firmen-Favor kaufen für die aktuell bearbeitete Firma (sofern Fraktion/Silhouette noch fehlt)
+    const targetCompany = getTargetCompanyForFavor(ns);
+    if (targetCompany) {
+      list.push({
+        name: "Exchange for Company Favor",
+        requiresTarget: true, // Nutzt targetCompany als Argument
+      });
+    }
   }
 
   // 2️⃣ GENERELLE HOCHWERTIGE UPGRADES
@@ -227,23 +283,26 @@ function trySpendHashes(
     return false;
   }
 
+  // Type-Cast für Hacknet-Methoden
+  const upgradeName = upgrade.name as HacknetServerHashUpgrade;
+
   if (upgrade.maxLevel !== undefined) {
-    const currentLevel = ns.hacknet.getHashUpgradeLevel(upgrade.name);
+    const currentLevel = ns.hacknet.getHashUpgradeLevel(upgradeName);
     if (currentLevel >= upgrade.maxLevel) {
       return false;
     }
   }
 
-  const cost = ns.hacknet.hashCost(upgrade.name);
+  const cost = ns.hacknet.hashCost(upgradeName);
   if (currentHashes < cost) {
     return false;
   }
 
   if (upgrade.requiresTarget) {
     for (const target of targets) {
-      if (ns.hacknet.spendHashes(upgrade.name, target)) {
+      if (ns.hacknet.spendHashes(upgradeName, target)) {
         const remainingHashes = ns.hacknet.numHashes();
-        const currentLevel = ns.hacknet.getHashUpgradeLevel(upgrade.name);
+        const currentLevel = ns.hacknet.getHashUpgradeLevel(upgradeName);
         logger.info(
           `⚡ Hash-Buff angewendet: [${upgrade.name}] ➔ ${target}`,
           target,
@@ -263,7 +322,7 @@ function trySpendHashes(
     return false;
   }
 
-  if (ns.hacknet.spendHashes(upgrade.name)) {
+  if (ns.hacknet.spendHashes(upgradeName)) {
     const remainingHashes = ns.hacknet.numHashes();
     if (upgrade.name === "Generate Coding Contract") {
       logger.success(`📜 Coding Contract via Hashes generiert!`, undefined, {
@@ -279,7 +338,6 @@ function trySpendHashes(
 
   return false;
 }
-
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new Logger(ns, "Hash-Manager");
@@ -318,7 +376,7 @@ export async function main(ns: NS): Promise<void> {
       botState?.sleeveGlobalMode,
     );
 
-    // 2. ZUERST STRATEGIE-UPGRADES KAUFEN (z. B. "Improve Studying")
+    // 2. ZUERST STRATEGIE-UPGRADES KAUFEN (z. B. Corp Research, Studying, etc.)
     for (const upgrade of priorityList) {
       while (trySpendHashes(ns, upgrade, activeTargets, logger)) {
         await ns.sleep(20);
