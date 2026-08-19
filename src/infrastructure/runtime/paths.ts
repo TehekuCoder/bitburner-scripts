@@ -102,6 +102,7 @@ export const PATHS = {
   infrastructure: {
     logging: {
       logger: "infrastructure/logging/sys-logger.js",
+      loggerClient: "infrastructure/logging/logger-client.js",
     },
     monitoring: {
       dashboard: "infrastructure/monitoring/sys-engine-dashboard.js",
@@ -109,6 +110,8 @@ export const PATHS = {
     },
     runtime: {
       workerExecutor: "infrastructure/runtime/worker-executor.js",
+      paths: "infrastructure/runtime/paths.js",
+      system: "infrastructure/runtime/system.js",
     },
   },
 
@@ -116,5 +119,21 @@ export const PATHS = {
     roadmap: "ui/roadmap.js",
     gang: "ui/gang.js",
     sleeve: "ui/sleeve.js",
+  },
+  shared: {
+    constants: {
+      payloads: "shared/constants/payloads.js",
+      darknet: "shared/constants/darknet.js",
+      logger: "shared/constants/logger.js",
+      colors: "shared/constants/colors.js"
+    },
+    types: {
+      logger: "shared/types/logger.js",
+    },
+  },
+  lib: {
+    utils: {
+      provision: "lib/utils/provision.js",
+    },
   },
 } as const;

@@ -1,10 +1,7 @@
 import { NS } from "@ns";
 import { ProvisionProfile } from "shared/types/game.js";
-import { PAYLOADS } from "/shared/constants/payloads";
+import { PAYLOADS } from "/shared/constants/payloads.js";
 
-/**
- * Kopiert profilbasierte Worker-Skripte auf den Zielserver, falls sie fehlen.
- */
 export async function provisionServer(
   ns: NS,
   serverName: string,
@@ -14,7 +11,6 @@ export async function provisionServer(
 
   const filesToCopy = PAYLOADS[profile];
   const currentHost = ns.getHostname();
-  // Priorisiere den aktuellen Host vor home für lokale Weiterverbreitung
   const sourceCandidates = [currentHost, "home"];
 
   const missingFiles = filesToCopy.filter(

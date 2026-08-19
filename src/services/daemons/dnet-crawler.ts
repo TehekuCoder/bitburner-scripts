@@ -6,7 +6,7 @@ import {
   PROCESSED_FILE,
   MASTER_DB_FILE,
 } from "../../shared/constants/darknet.js";
-import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
+import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import { PATHS } from "../../infrastructure/runtime/paths.js";
 import { provisionServer } from "../../lib/utils/provision.js";
 
@@ -79,10 +79,15 @@ async function ensureSession(
   hostname: string,
   details: any,
   masterDb: Record<string, string>,
-  logger: Logger,
+  logger: LoggerClient,
 ): Promise<boolean> {
   if (!details || details.isOnline === false) return false;
   if (details.hasSession) return true;
+
+  const hostLogger = logger.forTarget(hostname);
+  hostLogger.debug(`Starte Session-Herstellung für ${hostname}...`, undefined, {
+    tags: ["darknet", "auth"],
+  });
 
   const passwordCandidates: Array<string | null> = [masterDb[hostname] ?? null];
 
@@ -104,8 +109,8 @@ async function ensureSession(
           : Boolean(authResult?.success);
 
       if (authSuccess) {
-        logger.info(
-          `✅ Authentifizierung erfolgreich auf ${hostname}.`,
+        hostLogger.success(
+          `✅ Authentifizierung erfolgreich auf ${hostname} (Passwort: '${candidate || "<empty>"}').`,
           undefined,
           {
             tags: ["darknet", "auth"],
@@ -116,11 +121,30 @@ async function ensureSession(
           },
         );
         return true;
+      } else {
+        hostLogger.debug(
+          `Fehlgeschlagener Auth-Versuch auf ${hostname} mit PW: '${candidate}'`,
+          undefined,
+          { tags: ["darknet", "auth"] },
+        );
       }
-    } catch {
-      // Ignorieren & nächsten Kandidaten probieren
+    } catch (err: any) {
+      hostLogger.debug(
+        `Ausnahme bei Auth-Versuch auf ${hostname}: ${err?.message || err}`,
+        undefined,
+        { tags: ["darknet", "auth"] },
+      );
     }
   }
+
+  hostLogger.warn(
+    `⚠️ Alle Authentifizierungsversuche für ${hostname} fehlgeschlagen.`,
+    undefined,
+    {
+      tags: ["darknet", "auth"],
+      context: { host: hostname, model: String(details?.modelId || "unknown") },
+    },
+  );
   return false;
 }
 
@@ -129,33 +153,32 @@ async function deployWorm(
   hostname: string,
   scriptName: string,
   masterDb: Record<string, string>,
-  logger: Logger,
+  logger: LoggerClient,
 ): Promise<boolean> {
-  if (hostname === "home" || !ns.serverExists(hostname)) return false;
-  if (ns.scriptRunning(scriptName, hostname)) return false;
+  const currentHost = ns.getHostname();
 
-  // 1. RAM auf dem Zielserver freigeben VOR der Ausführungsprüfung
-  try {
-    const blockedRam = ns.dnet.getBlockedRam(hostname);
-    if (blockedRam > 0) {
-      await ns.dnet.memoryReallocation(hostname);
-    }
-  } catch {
-    // Falls API-Methode auf dem Host nicht existiert
+  if (
+    hostname === "home" ||
+    !ns.serverExists(hostname)
+  ) {
+    return false;
   }
 
-  // 2. Dynamischer RAM-Check basierend auf dem tatsächlichen Script-Bedarf
-  const requiredRam = ns.getScriptRam(scriptName, ns.getHostname());
-  const maxRam = ns.getServerMaxRam(hostname);
-  if (maxRam < requiredRam) return false;
+  const hostLogger = logger.forTarget(hostname);
 
   let details: any = null;
   try {
     details = ns.dnet.getServerDetails(hostname);
-  } catch {
+  } catch (err: any) {
+    hostLogger.debug(
+      `Konnte Server-Details für ${hostname} nicht abrufen: ${err?.message || err}`,
+      undefined,
+      { tags: ["darknet", "worm"] },
+    );
     return false;
   }
 
+  // 1. Authentifizierung IMMER zuerst sicherstellen
   const sessionReady = await ensureSession(
     ns,
     hostname,
@@ -163,35 +186,80 @@ async function deployWorm(
     masterDb,
     logger,
   );
+  if (!sessionReady) return false;
 
-  if (sessionReady) {
-    await provisionServer(ns, hostname, "darknet");
+  // 2. Prüfen, ob das Skript bereits läuft
+  if (ns.scriptRunning(scriptName, hostname)) {
+    hostLogger.debug(`Wurm läuft bereits auf ${hostname}.`, undefined, {
+      tags: ["darknet", "worm"],
+    });
+    return true;
+  }
 
-    const freeRam =
-      ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname);
-    if (freeRam < requiredRam) {
-      logger.warn(
-        `⚠️ Zu wenig freier RAM auf '${hostname}' (${freeRam.toFixed(2)} GB / ${requiredRam.toFixed(2)} GB benötigt).`,
-      );
-      return false;
-    }
+  // 3. RAM-Check für Ausführung auf dem Zielhost
+  const requiredRam = ns.getScriptRam(scriptName, currentHost);
+  const maxRam = ns.getServerMaxRam(hostname);
 
-    const pid = ns.exec(scriptName, hostname, 1);
-    if (pid > 0) {
-      logger.info(
-        `🚀 Wurm-Ausbreitung: Infiziere ${hostname} (PID: ${pid}).`,
+  if (maxRam < requiredRam) {
+    hostLogger.debug(
+      `Max-RAM zu gering für Wurm auf ${hostname}: ${maxRam} GB < ${requiredRam} GB`,
+      undefined,
+      {
+        tags: ["darknet", "worm"],
+        context: { host: hostname, maxRam, requiredRam },
+      },
+    );
+    return false;
+  }
+
+  try {
+    const blockedRam = ns.dnet.getBlockedRam(hostname);
+    if (blockedRam > 0) {
+      hostLogger.debug(
+        `Führe RAM-Reallocation für ${hostname} durch (Blocked: ${blockedRam} GB)...`,
         undefined,
-        {
-          tags: ["darknet", "propagation"],
-          context: { host: hostname },
-        },
+        { tags: ["darknet", "worm"] },
       );
-      return true;
-    } else {
-      logger.error(
-        `❌ ns.exec für ${scriptName} auf ${hostname} fehlgeschlagen.`,
-      );
+      await ns.dnet.memoryReallocation(hostname);
     }
+  } catch {
+    // Ignorieren falls API nicht vorhanden
+  }
+
+  // 4. Provisionieren & Skript starten
+  await provisionServer(ns, hostname, "darknet");
+  await ns.scp(scriptName, hostname, currentHost);
+
+  const freeRam = ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname);
+  if (freeRam < requiredRam) {
+    hostLogger.debug(
+      `Freier RAM zu gering für Wurm-Start auf ${hostname}: ${freeRam.toFixed(2)} GB < ${requiredRam} GB`,
+      undefined,
+      {
+        tags: ["darknet", "worm"],
+        context: { host: hostname, freeRam, requiredRam },
+      },
+    );
+    return false;
+  }
+
+  const pid = ns.exec(scriptName, hostname, 1);
+  if (pid > 0) {
+    hostLogger.info(
+      `🚀 Wurm-Ausbreitung: Infiziere ${hostname} (PID: ${pid}).`,
+      undefined,
+      {
+        tags: ["darknet", "worm"],
+        context: { host: hostname, pid },
+      },
+    );
+    return true;
+  } else {
+    hostLogger.error(
+      `🚨 Wurm konnte auf ${hostname} trotz ausreichend RAM nicht gestartet werden (PID: 0).`,
+      undefined,
+      { tags: ["darknet", "worm"], context: { host: hostname } },
+    );
   }
   return false;
 }
@@ -201,129 +269,208 @@ export async function main(ns: NS): Promise<void> {
   const currentHost = ns.getHostname();
   ns.disableLog("ALL");
 
-  const logger = new Logger(ns, `CRAWLER-${currentHost}`);
+  const logger = new LoggerClient(ns, `CRAWLER-${currentHost}`);
 
   if (currentHost !== "home") {
     try {
       const blockedRam = ns.dnet.getBlockedRam(currentHost);
       if (blockedRam > 0) {
+        logger.debug(
+          `Realloziere blockierten RAM auf ${currentHost} (${blockedRam} GB)...`,
+          undefined,
+          { tags: ["darknet", "ram"] },
+        );
         await ns.dnet.memoryReallocation(currentHost);
       }
     } catch {
-      // Ignorieren
+      logger.error(
+        `Realloziere blockierten RAM auf ${currentHost} nicht möglich...`,
+      );
     }
   }
 
   let lastKnownConnections: string[] = [];
+  let lastHeartbeat = 0;
+  const HEARTBEAT_INTERVAL_MS = 60_000;
 
   while (true) {
-    const now = Date.now();
-    const lootScript = PATHS.domain.tasks.loot;
-    const phishScript = PATHS.domain.tasks.phish;
-    const solverScript = PATHS.domain.tasks.dnetSolver;
+    try {
+      const now = Date.now();
 
-    const processedSet = loadProcessedServers(ns, currentHost);
-    const masterDb = loadMasterDb(ns, currentHost);
-    const cooldowns = loadCooldowns(ns, currentHost);
-
-    const nearbyServers: string[] = ns.dnet.probe();
-    const currentTopology = nearbyServers.slice().sort().join(",");
-    const lastTopology = lastKnownConnections.slice().sort().join(",");
-
-    if (currentTopology !== lastTopology && lastKnownConnections.length > 0) {
-      logger.info(
-        `🔄 Topologie-Wechsel: Vorher ${lastKnownConnections.length} | Jetzt ${nearbyServers.length} Nachbarn.`,
-      );
-    }
-    lastKnownConnections = nearbyServers;
-
-    for (const hostname of nearbyServers) {
-      if (hostname === "home" || !ns.serverExists(hostname)) continue;
-
-      // 1. Wurm-Ausbreitung
-      const deployed = await deployWorm(
-        ns,
-        hostname,
-        scriptName,
-        masterDb,
-        logger,
-      );
-      if (deployed) {
-        saveProcessedServer(ns, currentHost, hostname, processedSet);
+      // 0. Heartbeat-Log für Lebenszeichen im Steady-State
+      if (now - lastHeartbeat > HEARTBEAT_INTERVAL_MS) {
+        logger.info(`💓 Crawler aktiv auf ${currentHost}`, undefined, {
+          tags: ["darknet", "heartbeat"],
+        });
+        lastHeartbeat = now;
       }
 
-      // 2. Lokales Cracken
-      let details: any = null;
-      try {
-        details = ns.dnet.getServerDetails(hostname);
-      } catch {
+      const lootScript = PATHS.domain.tasks.loot;
+      const phishScript = PATHS.domain.tasks.phish;
+      const solverScript = PATHS.domain.tasks.dnetSolver;
+
+      const processedSet = loadProcessedServers(ns, currentHost);
+      const masterDb = loadMasterDb(ns, currentHost);
+      const cooldowns = loadCooldowns(ns, currentHost);
+
+      // Sichere Abfrage der Nachbarn
+      if (!ns.dnet || typeof ns.dnet.probe !== "function") {
+        logger.error(`🚨 ns.dnet API auf ${currentHost} nicht verfügbar!`);
+        await ns.sleep(10000);
         continue;
       }
 
-      const cooldownTime = cooldowns.get(hostname) ?? 0;
-      const inCooldown = now - cooldownTime < COOLDOWN_MS;
+      const nearbyServers: string[] = ns.dnet.probe() || [];
 
-      if (
-        details &&
-        details.isOnline !== false &&
-        !details.hasSession &&
-        !inCooldown
-      ) {
-        const isAnySolverRunning = ns
-          .ps(currentHost)
-          .some((proc) => proc.filename.includes("dnet-solver"));
+      const currentTopology = nearbyServers.slice().sort().join(",");
+      const lastTopology = lastKnownConnections.slice().sort().join(",");
 
-        if (isAnySolverRunning) {
-          logger.info(`⏳ Solver läuft bereits auf ${currentHost}. Warte...`);
-          break;
+      if (currentTopology !== lastTopology && lastKnownConnections.length > 0) {
+        logger.info(
+          `🔄 Topologie-Wechsel auf ${currentHost}: Vorher ${lastKnownConnections.length} | Jetzt ${nearbyServers.length} Nachbarn.`,
+          undefined,
+          { tags: ["darknet", "topology"] },
+        );
+      }
+      lastKnownConnections = nearbyServers;
+
+      for (const hostname of nearbyServers) {
+        if (hostname === "home" || !ns.serverExists(hostname)) continue;
+
+        const hostLogger = logger.forTarget(hostname);
+
+        // 1. Wurm-Ausbreitung versuchen
+        const deployed = await deployWorm(
+          ns,
+          hostname,
+          scriptName,
+          masterDb,
+          logger,
+        );
+        if (deployed) {
+          saveProcessedServer(ns, currentHost, hostname, processedSet);
         }
 
-        const SUB_SOLVER_BUFFER_RAM = 2.6;
-        const solverRam = ns.getScriptRam(solverScript, currentHost);
-        const totalRequiredRam = solverRam + SUB_SOLVER_BUFFER_RAM;
+        // 2. Lokales Cracken
+        let details: any = null;
+        try {
+          details = ns.dnet.getServerDetails(hostname);
+        } catch {
+          continue;
+        }
+
+        const cooldownTime = cooldowns.get(hostname) ?? 0;
+        const inCooldown = now - cooldownTime < COOLDOWN_MS;
+
+        if (inCooldown && !details.hasSession) {
+          hostLogger.debug(
+            `Überspringe Crack-Versuch für ${hostname}: Noch im Cooldown (${Math.ceil((COOLDOWN_MS - (now - cooldownTime)) / 1000)}s verbleibend).`,
+            undefined,
+            { tags: ["darknet", "solver", "cooldown"] },
+          );
+        }
+
+        if (
+          details &&
+          details.isOnline !== false &&
+          !details.hasSession &&
+          !inCooldown
+        ) {
+          const isAnySolverRunning = ns
+            .ps(currentHost)
+            .some((proc) => proc.filename.includes("dnet-solver"));
+
+          if (isAnySolverRunning) {
+            hostLogger.debug(
+              `Solver-Start für '${hostname}' übersprungen: Ein anderer Solver läuft bereits auf ${currentHost}.`,
+              undefined,
+              { tags: ["darknet", "solver"] },
+            );
+            continue;
+          }
+
+          const SUB_SOLVER_BUFFER_RAM = 2.6;
+          const solverRam = ns.getScriptRam(solverScript, currentHost);
+          const totalRequiredRam = solverRam + SUB_SOLVER_BUFFER_RAM;
+          const freeRam =
+            ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
+
+          if (freeRam >= totalRequiredRam) {
+            hostLogger.info(
+              `⚡ Starte LOKALEN Solver für '${hostname}' auf ${currentHost}...`,
+              undefined,
+              {
+                tags: ["darknet", "solver"],
+                context: {
+                  targetHost: hostname,
+                  requiredRam: totalRequiredRam,
+                  freeRam,
+                },
+              },
+            );
+            ns.exec(solverScript, currentHost, 1, hostname);
+          } else {
+            hostLogger.warn(
+              `⚠️ Zu wenig RAM auf '${currentHost}' für Solver an '${hostname}'. Benötigt: ${totalRequiredRam.toFixed(2)} GB | Frei: ${freeRam.toFixed(2)} GB`,
+              undefined,
+              {
+                tags: ["darknet", "solver", "ram"],
+                context: {
+                  targetHost: hostname,
+                  requiredRam: totalRequiredRam,
+                  freeRam,
+                },
+              },
+            );
+          }
+        }
+      }
+
+      // 3. Phishing / Loot Wartungszyklus
+      if (
+        currentHost !== "home" &&
+        !ns.scriptRunning(lootScript, currentHost) &&
+        !ns.scriptRunning(phishScript, currentHost) &&
+        now - lastLootTime > LOOT_INTERVAL_MS
+      ) {
+        if (
+          !ns.fileExists(phishScript, currentHost) ||
+          !ns.fileExists(lootScript, currentHost)
+        ) {
+          logger.debug(
+            `Provisioniere ${currentHost} für Phish/Loot-Zyklus...`,
+            undefined,
+            { tags: ["darknet", "loot"] },
+          );
+          await provisionServer(ns, currentHost, "darknet");
+        }
+
         const freeRam =
           ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
+        const phishRam = ns.getScriptRam(phishScript, currentHost);
+        const lootRam = ns.getScriptRam(lootScript, currentHost);
+        const requiredRam = Math.max(phishRam, lootRam);
 
-        if (freeRam >= totalRequiredRam) {
-          logger.info(
-            `⚡ Starte LOKALEN Solver für '${hostname}' auf ${currentHost}...`,
-          );
-          if (ns.exec(solverScript, currentHost, 1, hostname) > 0) {
-            break;
-          }
+        if (freeRam >= requiredRam) {
+          logger.info("🔄 Starte Phishing/Loot-Zyklus...", undefined, {
+            tags: ["darknet", "loot"],
+          });
+          lastLootTime = now;
+          ns.exec(phishScript, currentHost, 1);
         } else {
-          logger.warn(
-            `⚠️ Zu wenig RAM auf '${currentHost}' für '${hostname}'. Benötigt: ${totalRequiredRam.toFixed(2)} GB | Frei: ${freeRam.toFixed(2)} GB`,
+          logger.debug(
+            `Phish/Loot-Zyklus übersprungen auf ${currentHost}: Nicht genug RAM (${freeRam.toFixed(2)} GB < ${requiredRam.toFixed(2)} GB)`,
+            undefined,
+            { tags: ["darknet", "loot", "ram"] },
           );
         }
       }
-    }
-
-    // 3. Phishing / Loot Wartungszyklus
-    if (
-      currentHost !== "home" &&
-      !ns.scriptRunning(lootScript, currentHost) &&
-      !ns.scriptRunning(phishScript, currentHost) &&
-      now - lastLootTime > LOOT_INTERVAL_MS
-    ) {
-      if (
-        !ns.fileExists(phishScript, currentHost) ||
-        !ns.fileExists(lootScript, currentHost)
-      ) {
-        await provisionServer(ns, currentHost, "darknet");
-      }
-
-      const freeRam =
-        ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
-      const phishRam = ns.getScriptRam(phishScript, currentHost);
-      const lootRam = ns.getScriptRam(lootScript, currentHost);
-      const requiredRam = Math.max(phishRam, lootRam);
-
-      if (freeRam >= requiredRam) {
-        logger.info("🔄 Starte Phishing/Loot-Zyklus...");
-        lastLootTime = now;
-        ns.exec(phishScript, currentHost, 1);
-      }
+    } catch (err: any) {
+      logger.error(
+        `🚨 Unerwarteter Fehler im Crawler-Loop auf ${currentHost}: ${err?.message || err}`,
+        undefined,
+        { tags: ["darknet", "crash"] },
+      );
     }
 
     await ns.sleep(4000);
