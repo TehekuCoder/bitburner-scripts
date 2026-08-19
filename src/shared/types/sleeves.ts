@@ -20,8 +20,8 @@ export interface SleeveData {
 export interface SleeveOptions {
   globalMode?: SleeveMode;
   targetFaction?: FactionName | string | null;
-  targetCompany?: CompanyName | string | null; // ◄ Neu hinzugefügt
-  targetStat?: number;
+  targetCompany?: CompanyName | string | null;
+  targetStat?: string | number | null;
   strategy?: BotStrategy;
   autoBuyAugs?: boolean;
   isDominionActive?: boolean;
@@ -36,10 +36,10 @@ export interface SleeveGangUnlockStatus {
 
 export interface SleeveState {
   sleeveGlobalMode?: string;
-  targetFaction?: string | FactionName | null;
-  targetCompany?: string | CompanyName | null; // ◄ Neu hinzugefügt
-  targetStat?: number;
-  strategy: BotStrategy;
+  targetFaction?: FactionName | string | null;
+  targetCompany?: CompanyName | string | null;
+  targetStat?: string | number | null;
+  strategy?: BotStrategy;
   sleeveProgress?: string;
   autoBuyAugs?: boolean;
   isDominionActive?: boolean;

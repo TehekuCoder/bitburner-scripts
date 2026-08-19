@@ -2,7 +2,7 @@ import { NS, FactionName, CompanyName } from "@ns";
 import { BotState } from "/shared/types/strategy.js";
 import { renderProgressBar, hasSingularity } from "/lib/utils.js";
 import { COLOR } from "../shared/constants/logger";
-import { loadState } from "/infrastructure/state/state";
+import { loadState, loadStrategyState } from "/infrastructure/state/state";
 
 const BITNODE_PHASES = [
   "1. Bootstrapping",
@@ -155,7 +155,13 @@ function evaluateBitNodePhase(ns: NS, state: BotState): PhaseEvaluated {
           const currentRep = ns.singularity.getFactionRep(
             state.targetFaction as FactionName,
           );
-          const targetRep = state.factionTargets?.[state.targetFaction] ?? 0;
+          const rawFactionTargets = (
+            state as unknown as { factionTargets?: Record<string, number> }
+          ).factionTargets;
+          const targetRep =
+            rawFactionTargets?.[state.targetFaction] ??
+            (typeof state.targetStat === "number" ? state.targetStat : 0);
+
           if (targetRep > 0) {
             progress = Math.min(100, (currentRep / targetRep) * 100);
             detail = `Fraktion: ${faction} (${(currentRep / 1000).toFixed(0)}k / ${(targetRep / 1000).toFixed(0)}k Rep)`;
@@ -261,7 +267,8 @@ export async function main(ns: NS): Promise<void> {
     ns.clearLog();
 
     const state = loadState(ns);
-
+    const roadState = loadStrategyState(ns);
+    
     if (!state) {
       ns.print(
         `${COLOR.YELLOW}⚠️  [ROADMAP] Warte auf State-Port Initialisierung...${COLOR.RESET}`,

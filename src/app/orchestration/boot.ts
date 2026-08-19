@@ -4,7 +4,6 @@ import { PATHS } from "/infrastructure/runtime/paths";
 import { loadState, patchState } from "/infrastructure/state/state";
 import { DEFAULT_MULTIPLIERS } from "/shared/constants/game-defaults";
 
-
 export async function main(ns: NS): Promise<void> {
   // 🟢 DUMMY-REFERENZ: Zwingt den AST-Parser von Bitburner, 
   // den RAM für getHackingLevel (0.05 GB) von Anfang an korrekt zu berechnen.
@@ -37,15 +36,14 @@ export async function main(ns: NS): Promise<void> {
   if (!currentState) {
     logger.info("Kein globaler State gefunden. Initialisiere leeren Basis-State...");
     patchState(ns, { 
-      strategy: "MONEY", 
-      factionTargets: {} 
+      strategy: "MONEY"
     });
     currentState = loadState(ns);
   }
 
   // --- SCHRITT 3: FACTION ROADMAP VORBEREITEN (SYNCHRON!) ---
-  const factionTargets = currentState?.factionTargets ?? {};
-  const hasRoadmap = Object.keys(factionTargets).length > 0;
+  const augRoadMap = currentState?.augRoadMap ?? [];
+  const hasRoadmap = augRoadMap.length > 0;
 
   if (!hasRoadmap) {
     logger.info("Faction-Roadmap Targets fehlen im State. Starte Analyse...");

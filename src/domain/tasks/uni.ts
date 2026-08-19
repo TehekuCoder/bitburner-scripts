@@ -24,7 +24,8 @@ export async function main(ns: NS): Promise<void> {
     const mode: string = state?.strategy || "IDLE";
 
     const argTarget = typeof ns.args[0] === "number" ? ns.args[0] : 0;
-    const targetStat = argTarget > 0 ? argTarget : (state?.targetStat ?? 0);
+    const rawTarget = argTarget > 0 ? argTarget : (state?.targetStat ?? 0);
+    const targetStat = typeof rawTarget === "number" ? rawTarget : (Number(rawTarget) || 0);
 
     if (mode !== "MONEY" && mode !== "UNI" && mode !== "TRAIN") {
       logger.info(`Modus ist nun '${mode}'. Beende Uni-Worker.`);

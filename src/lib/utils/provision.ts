@@ -4,9 +4,6 @@ import { PAYLOADS } from "/shared/constants/payloads";
 
 /**
  * Kopiert profilbasierte Worker-Skripte auf den Zielserver, falls sie fehlen.
- * @param ns NS API Objekt
- * @param serverName Der Zielserver (z.B. "cloud-0" oder "darknet-node-1")
- * @param profile Profilauswahl ('hgw' | 'darknet') - Standard: 'hgw'
  */
 export async function provisionServer(
   ns: NS,
@@ -17,7 +14,8 @@ export async function provisionServer(
 
   const filesToCopy = PAYLOADS[profile];
   const currentHost = ns.getHostname();
-  const sourceCandidates = ["home", currentHost];
+  // Priorisiere den aktuellen Host vor home für lokale Weiterverbreitung
+  const sourceCandidates = [currentHost, "home"];
 
   const missingFiles = filesToCopy.filter(
     (file) => !ns.fileExists(file, serverName),
@@ -33,7 +31,7 @@ export async function provisionServer(
     if (sourceHost) {
       ns.scp(file, serverName, sourceHost);
     } else {
-      ns.print(`[PROVISION] Datei fehlt: ${file} auf home & ${currentHost}`);
+      ns.print(`[PROVISION] Datei fehlt: ${file} auf ${currentHost} & home`);
     }
   }
 }

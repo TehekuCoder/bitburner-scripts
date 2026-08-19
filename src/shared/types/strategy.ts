@@ -1,7 +1,9 @@
 import { FactionName, CompanyName } from "@ns";
 import { BatchStrategy, BatcherState } from "./batcher";
 import { GangState } from "./gang";
-import { AugmentState, AugmentTarget, FactionState } from "./factions";
+import { AugmentState, FactionState } from "./factions";
+import { SleeveState } from "./sleeves";
+import { FinanceState } from "./finance";
 
 export type BotStrategy =
   | "MANUAL"
@@ -17,32 +19,29 @@ export type BotStrategy =
   | "CHURCH"
   | "DOMINION";
 
-export interface BotStateStrategy {
-  strategy: BotStrategy;
-  batchStrategy?: BatchStrategy;
-  kernelTarget: string;
-  targetFaction?: string | FactionName | null;
-  targetCompany?: string;
-  targetStat?: number;
-  targetKills?: number;
-  isDominionActive?: boolean;
-  manualMode?: boolean;
-}
-
 export interface StrategyState {
-  strategy: BotStrategy;
-  targetFaction?: string | FactionName | null;
-  targetCompany?: string;
-  targetStat?: number;
+  strategy?: BotStrategy; // 👈 Optional gemacht für Typgleichheit mit FactionState & SleeveState
+  targetFaction?: FactionName | string | null;
+  targetCompany?: CompanyName | string | null;
+  targetStat?: string | number | null;
   targetKills?: number;
   manualMode?: boolean;
+  isGrindingNFG?: boolean;
+  isDominionActive?: boolean;
 }
 
 export interface StrategyResult {
   mode: BotStrategy;
   targetFaction?: FactionName | null;
-  targetCompany?: CompanyName;
-  targetStat?: number;
+  targetCompany?: CompanyName | null;
+  targetStat?: string | number | null;
+}
+
+export interface BitnodePhaseInfo {
+  phaseIndex: number;
+  phaseName: string;
+  progressPercent: number;
+  detail: string;
 }
 
 export interface BotStateProgress {
@@ -56,50 +55,38 @@ export interface BotStateProgress {
     shareMaxRamPercent: number;
     maxXpLevel: number;
   } | null;
-  /** Aktuelle BitNode-Phase für das Roadmap Dashboard */
-  bitnodePhaseInfo?: {
-    phaseIndex: number;
-    phaseName: string;
-    progressPercent: number;
-    detail: string;
-  };
+  bitnodePhaseInfo?: BitnodePhaseInfo;
 }
 
-export interface BotStateNetwork {
-  factionTargets?: Record<string, number>;
-  augRoadMap?: AugmentTarget[];
-  allServers?: string[];
-  totalNodes?: number;
-  rootCount?: number;
-}
-
-export interface BotStateMeta {
-  currentBitNode: number;
-  currentBitNodeLevel: number;
-  sourceFiles: Record<string, number>;
-  hasDarkScapeNavigator: boolean;
-  hasTorRouter: boolean;
-  hasGang: boolean;
-  hasCorporation: boolean;
-  hasBladeburner: boolean;
+/**
+  * Master-State für das gesamte BotState-System.
+  * Bündelt alle domänenspezifischen Sub-States ohne Redundanzen.
+  */
+export interface BotState
+  extends StrategyState,
+    BatcherState,
+    FinanceState,
+    SleeveState,
+    AugmentState,
+    FactionState,
+    BotStateProgress,
+    GangState {
+  // Metadata & System Runtime
   lastUpdate: number;
   playerHacking?: number;
   sources?: Record<string, string>;
-  traderMode?: string;
-  moneyReserve?: number;
-  isHomePrioritized?: boolean;
-  factionCurrentReps?: Partial<Record<FactionName, number>>;
-  homeCores?: number;
-  isRushModeActive?: boolean;
-}
 
-export interface BotState
-  extends
-    BotStateStrategy,
-    BotStateProgress,
-    BotStateNetwork,
-    BotStateMeta,
-    GangState,
-    BatcherState,
-    FactionState,
-    AugmentState {}
+  // Global BitNode State & Unlocks
+  currentBitNode: number;
+  currentBitNodeLevel: number;
+  sourceFiles: Record<string | number, number>;
+  hasDarkScapeNavigator: boolean;
+  hasTorRouter: boolean;
+  hasCorporation: boolean;
+  hasBladeburner: boolean;
+
+  // Infrastructure & Network
+  kernelTarget: string;
+  allServers?: string[];
+  totalNodes?: number;
+}

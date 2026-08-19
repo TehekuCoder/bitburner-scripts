@@ -37,3 +37,13 @@ export interface PurchaseEvaluator {
   category: PurchaseCategory;
   getRequests(ns: NS): PurchaseRequest[];
 }
+
+export interface FinanceState {
+  traderMode?: string;
+  traderProgress: string;
+  financeProgress: string;
+  moneyReserve?: number;
+  isHomePrioritized?: boolean;
+  isRushModeActive?: boolean;
+  homeCores?: number;
+}

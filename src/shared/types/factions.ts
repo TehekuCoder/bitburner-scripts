@@ -51,8 +51,8 @@ export interface NFGFactionWhitelist {
 }
 
 export interface FactionState {
-  targetFaction?: string | FactionName | null;
+  targetFaction?: FactionName | string | null;
   factionCurrentReps?: Partial<Record<FactionName, number>>;
-  strategy: BotStrategy;
+  strategy?: BotStrategy;
   isGrindingNFG?: boolean;
 }

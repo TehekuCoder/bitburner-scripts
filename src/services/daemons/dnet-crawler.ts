@@ -5,13 +5,10 @@ import {
   LOOT_INTERVAL_MS,
   PROCESSED_FILE,
   MASTER_DB_FILE,
-
 } from "../../shared/constants/darknet.js";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
 import { PATHS } from "../../infrastructure/runtime/paths.js";
 import { provisionServer } from "../../lib/utils/provision.js";
-
-
 
 let lastLootTime = 0;
 
@@ -46,7 +43,7 @@ function saveProcessedServer(
   }
 }
 
-/** Lade Master-DB einmalig pro Tick anstelle pro Host */
+/** Lade Master-DB einmalig pro Tick */
 function loadMasterDb(ns: NS, currentHost: string): Record<string, string> {
   if (currentHost !== "home" && ns.fileExists(MASTER_DB_FILE, "home")) {
     ns.scp(MASTER_DB_FILE, currentHost, "home");
@@ -84,12 +81,7 @@ async function ensureSession(
   masterDb: Record<string, string>,
   logger: Logger,
 ): Promise<boolean> {
-  if (!details) return false;
-  if (
-    details.isConnectedToCurrentServer === false ||
-    details.isOnline === false
-  )
-    return false;
+  if (!details || details.isOnline === false) return false;
   if (details.hasSession) return true;
 
   const passwordCandidates: Array<string | null> = [masterDb[hostname] ?? null];
@@ -142,8 +134,20 @@ async function deployWorm(
   if (hostname === "home" || !ns.serverExists(hostname)) return false;
   if (ns.scriptRunning(scriptName, hostname)) return false;
 
-  const minRamRequired = hostname === "darkweb" ? 2 : 6;
-  if (ns.getServerMaxRam(hostname) < minRamRequired) return false;
+  // 1. RAM auf dem Zielserver freigeben VOR der Ausführungsprüfung
+  try {
+    const blockedRam = ns.dnet.getBlockedRam(hostname);
+    if (blockedRam > 0) {
+      await ns.dnet.memoryReallocation(hostname);
+    }
+  } catch {
+    // Falls API-Methode auf dem Host nicht existiert
+  }
+
+  // 2. Dynamischer RAM-Check basierend auf dem tatsächlichen Script-Bedarf
+  const requiredRam = ns.getScriptRam(scriptName, ns.getHostname());
+  const maxRam = ns.getServerMaxRam(hostname);
+  if (maxRam < requiredRam) return false;
 
   let details: any = null;
   try {
@@ -161,13 +165,33 @@ async function deployWorm(
   );
 
   if (sessionReady) {
-    logger.info(`🚀 Wurm-Ausbreitung: Infiziere ${hostname}.`, undefined, {
-      tags: ["darknet", "propagation"],
-      context: { host: hostname },
-    });
     await provisionServer(ns, hostname, "darknet");
-    ns.scp(scriptName, hostname, "home");
-    return ns.exec(scriptName, hostname, 1) > 0;
+
+    const freeRam =
+      ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname);
+    if (freeRam < requiredRam) {
+      logger.warn(
+        `⚠️ Zu wenig freier RAM auf '${hostname}' (${freeRam.toFixed(2)} GB / ${requiredRam.toFixed(2)} GB benötigt).`,
+      );
+      return false;
+    }
+
+    const pid = ns.exec(scriptName, hostname, 1);
+    if (pid > 0) {
+      logger.info(
+        `🚀 Wurm-Ausbreitung: Infiziere ${hostname} (PID: ${pid}).`,
+        undefined,
+        {
+          tags: ["darknet", "propagation"],
+          context: { host: hostname },
+        },
+      );
+      return true;
+    } else {
+      logger.error(
+        `❌ ns.exec für ${scriptName} auf ${hostname} fehlgeschlagen.`,
+      );
+    }
   }
   return false;
 }
@@ -180,9 +204,13 @@ export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, `CRAWLER-${currentHost}`);
 
   if (currentHost !== "home") {
-    const blockedRam = ns.dnet.getBlockedRam(currentHost);
-    if (blockedRam > 0) {
-      await ns.dnet.memoryReallocation(currentHost);
+    try {
+      const blockedRam = ns.dnet.getBlockedRam(currentHost);
+      if (blockedRam > 0) {
+        await ns.dnet.memoryReallocation(currentHost);
+      }
+    } catch {
+      // Ignorieren
     }
   }
 
@@ -194,7 +222,6 @@ export async function main(ns: NS): Promise<void> {
     const phishScript = PATHS.domain.tasks.phish;
     const solverScript = PATHS.domain.tasks.dnetSolver;
 
-    // Cache-Daten einmal pro Schleifendurchlauf laden
     const processedSet = loadProcessedServers(ns, currentHost);
     const masterDb = loadMasterDb(ns, currentHost);
     const cooldowns = loadCooldowns(ns, currentHost);
@@ -210,7 +237,6 @@ export async function main(ns: NS): Promise<void> {
     }
     lastKnownConnections = nearbyServers;
 
-    // 🚨 FIX: Nur direkt erreichbare Nachbarn (nearbyServers) verarbeiten!
     for (const hostname of nearbyServers) {
       if (hostname === "home" || !ns.serverExists(hostname)) continue;
 
@@ -236,10 +262,13 @@ export async function main(ns: NS): Promise<void> {
 
       const cooldownTime = cooldowns.get(hostname) ?? 0;
       const inCooldown = now - cooldownTime < COOLDOWN_MS;
-      const isConnected =
-        details && details.isConnectedToCurrentServer !== false;
 
-      if (details && isConnected && !details.hasSession && !inCooldown) {
+      if (
+        details &&
+        details.isOnline !== false &&
+        !details.hasSession &&
+        !inCooldown
+      ) {
         const isAnySolverRunning = ns
           .ps(currentHost)
           .some((proc) => proc.filename.includes("dnet-solver"));
@@ -270,7 +299,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 3. Phishing / Loot Wartungszyklus (Nicht-blockierend ausgeführt)
+    // 3. Phishing / Loot Wartungszyklus
     if (
       currentHost !== "home" &&
       !ns.scriptRunning(lootScript, currentHost) &&

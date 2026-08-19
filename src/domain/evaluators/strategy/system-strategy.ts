@@ -190,7 +190,7 @@ export class SystemStrategyEvaluator {
       },
     });
 
-    const factionTargets = (currentState?.factionTargets ?? {}) as Partial<
+    const factionTargets = ((currentState as Record<string, any> | null)?.factionTargets ?? {}) as Partial<
       Record<FactionName, number>
     >;
     if (nextRoadmapFaction) {
@@ -312,8 +312,15 @@ export class SystemStrategyEvaluator {
       mode,
       targetFaction = null,
       targetCompany = null,
-      targetStat = null,
+      targetStat: rawTargetStat = null,
     } = strategy;
+
+    const targetStat: number | null =
+      typeof rawTargetStat === "number"
+        ? rawTargetStat
+        : rawTargetStat !== null && rawTargetStat !== undefined && !isNaN(Number(rawTargetStat))
+          ? Number(rawTargetStat)
+          : null;
 
     // 7️⃣ Fallback Target Caching
     if (

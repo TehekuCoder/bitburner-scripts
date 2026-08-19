@@ -23,7 +23,7 @@ type HashUpgradeName =
   | "Exchange for Bladeburner Rank"
   | "Exchange for Bladeburner SP"
   | "Generate Coding Contract"
-  | "Exchange for Company Favor";
+  | "Company Favor";
 
 // 2. Hilfsfunktion: Bestimme Ziel-Firma für Favor-Kauf
 function getTargetCompanyForFavor(ns: NS): CompanyName | null {
@@ -237,7 +237,7 @@ function getDynamicPriorityList(
     const targetCompany = getTargetCompanyForFavor(ns);
     if (targetCompany) {
       list.push({
-        name: "Exchange for Company Favor",
+        name: "Company Favor",
         requiresTarget: true, // Nutzt targetCompany als Argument
       });
     }
