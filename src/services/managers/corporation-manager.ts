@@ -1,4 +1,4 @@
-import { NS } from "@ns";
+import { CityName, CorpMaterialName, NS } from "@ns";
 import {
   CORP_CONFIG,
   CORP_RESEARCH_PRIORITY,
@@ -65,7 +65,6 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 }
-
 
 async function handleInitAgri(ns: NS): Promise<CorpPhase> {
   const corp = ns.corporation;
@@ -227,13 +226,13 @@ async function handleInitChem(ns: NS): Promise<CorpPhase> {
 }
 
 async function handleExportLoop(ns: NS): Promise<CorpPhase> {
-  const corp = ns.corporation;
   const { agri, chem } = CORP_CONFIG.divisions;
 
   ns.print("[CORP] Richte Export-Routen mit IPROD * -1 ein...");
 
   for (const city of CORP_CONFIG.cities) {
-    corp.exportMaterial(
+    safeExportMaterial(
+      ns,
       chem.name,
       city,
       agri.name,
@@ -241,7 +240,8 @@ async function handleExportLoop(ns: NS): Promise<CorpPhase> {
       "Chemicals",
       "IPROD * -1",
     );
-    corp.exportMaterial(
+    safeExportMaterial(
+      ns,
       agri.name,
       city,
       chem.name,
@@ -353,7 +353,8 @@ async function handleInitTobacco(ns: NS): Promise<CorpPhase> {
     upgradeWarehouseToLevel(ns, tobacco.name, city, 10);
 
     // Pflanzexporte aus Landwirtschaft sicherstellen
-    corp.exportMaterial(
+safeExportMaterial(
+      ns,
       agri.name,
       city,
       tobacco.name,
@@ -455,4 +456,44 @@ async function handleTobaccoLoop(ns: NS): Promise<void> {
     // 50% des Gewinns direkt als Dividende auf dein persönliches Spielerkonto überweisen![cite: 1]
     corp.issueDividends(0.5);
   }
+}
+
+function safeExportMaterial(
+  ns: NS,
+  sourceDiv: string,
+  sourceCity: CityName,
+  targetDiv: string,
+  targetCity: CityName, // Typ von 'string' auf 'CityName' angepasst
+  material: CorpMaterialName,
+  amount: string,
+): void {
+  const corp = ns.corporation;
+  const mat = corp.getMaterial(sourceDiv, sourceCity, material);
+
+  const existing = mat.exports.find(
+    (e) => e.division === targetDiv && e.city === targetCity,
+  );
+
+  if (existing) {
+    const normalizedExisting = existing.amount.replace(/\s+/g, "");
+    const normalizedNew = amount.replace(/\s+/g, "");
+    if (normalizedExisting === normalizedNew) return;
+
+    corp.cancelExportMaterial(
+      sourceDiv,
+      sourceCity,
+      targetDiv,
+      targetCity,
+      material,
+    );
+  }
+
+  corp.exportMaterial(
+    sourceDiv,
+    sourceCity,
+    targetDiv,
+    targetCity,
+    material,
+    amount,
+  );
 }

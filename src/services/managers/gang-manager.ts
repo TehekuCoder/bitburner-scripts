@@ -1,5 +1,5 @@
 import { FactionName, NS } from "@ns";
-import { manageGang } from "../../lib/utils/gang-utils.js";
+import { manageGang } from "../../domain/gang/gang-utils.js";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
 import { loadBatcherState, patchGangState } from "/infrastructure/state/state.js";
 

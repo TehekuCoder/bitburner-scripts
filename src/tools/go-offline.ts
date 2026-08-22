@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { provisionServer } from "/lib/utils/provision";
+import { provisionServer } from "../domain/hacking/provision";
 import { formatTime } from "/lib/utils";
 import { getAllServers } from "/infrastructure/network/network";
 import { PATHS } from "/infrastructure/runtime/paths";

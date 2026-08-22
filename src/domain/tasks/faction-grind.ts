@@ -1,6 +1,6 @@
 import { NS, FactionName } from "@ns";
 
-import { getNFGFallbackFaction } from "/lib/utils/faction-helpers.js";
+import { getNFGFallbackFaction } from "../faction/faction-helpers.js";
 import {
   loadFactionState,
   loadGangState,

@@ -16,7 +16,7 @@ import {
   SleeveTaskAssignment,
   getSleeveStatuses,
   setSleeveTask,
-} from "/lib/utils/sleeve-utils.js";
+} from "../../domain/sleeve/sleeve-utils.js";
 import { MEGACORPS } from "../../shared/constants/factions.js";
 import { loadSleeveState, patchSleeveState } from "/infrastructure/state/state.js";
 

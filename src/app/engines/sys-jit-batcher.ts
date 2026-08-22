@@ -1,5 +1,5 @@
 import { NS, BitNodeMultipliers } from "@ns";
-import { internalPlanner } from "/lib/utils/internal-planner.js";
+import { internalPlanner } from "../../domain/hacking/internal-planner.js";
 
 import {
   cleanupActiveBatches,
