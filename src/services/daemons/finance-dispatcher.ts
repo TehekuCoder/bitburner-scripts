@@ -1,6 +1,12 @@
 import { NS } from "@ns";
 import { PATHS } from "/infrastructure/runtime/paths.js";
-import { hasGang, hasSleeve, hasSingularity, loadBnMults } from "/lib/utils.js";
+import {
+  hasGang,
+  hasSleeve,
+  hasSingularity,
+  loadBnMults,
+  hasCorporation,
+} from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -81,6 +87,11 @@ export async function main(ns: NS): Promise<void> {
     // 6. Stock Market (stock.js - ~19.80 GB)
     if (Boolean(ns.stock)) {
       await runAndWait(PATHS.domain.evaluators.purchase.stock);
+    }
+
+    // 7. Corporation Evaluator (nur ausführen, wenn API da ist & noch keine Corp existiert)
+    if (hasCorporation(ns) && !ns.corporation.hasCorporation()) {
+      await runAndWait(PATHS.domain.evaluators.purchase.corporation);
     }
 
     // Pause zwischen den Evaluations-Zyklen

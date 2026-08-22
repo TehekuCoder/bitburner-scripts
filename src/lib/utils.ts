@@ -169,7 +169,7 @@ export function hasSleeve(ns: NS): boolean {
   return ns.sleeve !== undefined;
 }
 /**
- * Prüft sauber, ob die Sleeve-API (SF3 / BN3) verfügbar ist.
+ * Prüft sauber, ob die Corporation-API (SF3 / BN3) verfügbar ist.
  *
  * @param ns Bitburner Netscript Context
  * @returns true, wenn Corporation-Funktionen genutzt werden können.

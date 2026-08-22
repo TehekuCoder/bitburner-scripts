@@ -4,9 +4,7 @@ import { AugmentTarget, TargetFactionResult } from "/shared/types/factions.js";
 import { COMBAT_STATS } from "/shared/types/game.js";
 import { BotState, StrategyResult } from "/shared/types/strategy.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
-
-// 🌐 Liste aller Fraktionen, aus denen eine Gang gegründet werden kann
-
+import { loadBnMults } from "/lib/utils.js";
 
 const MEGACORP_FACTION_TO_COMPANY: Record<string, CompanyName> = {
   ECorp: "ECorp" as CompanyName,
@@ -96,17 +94,14 @@ export function findNextRoadmapFaction(
   const isBN2 = isGangOfferingAllAugs(ns);
   const redPillOwned = hasRedPill(ns);
 
-  // 🛑 Prüfen, ob Gang-Freischaltung aussteht (genug Karma, aber noch keine Gang)
   const isPendingGangUnlock = !ns.gang?.inGang() && player.karma <= -54000;
 
-  // 1️⃣ Relevant Targets aus der Roadmap (ohne Gang-Augs)
   const relevantTargets = getNonGangRoadmapTargets(
     ns,
     augRoadmap,
     gangFaction ?? null,
   );
 
-  // Zuerst alle Nicht-Daedalus Augments abarbeiten
   const nonDaedalusTargets = relevantTargets.filter(
     (t) => !t.factions.includes("Daedalus") && t.name !== "The Red Pill",
   );
@@ -116,7 +111,6 @@ export function findNextRoadmapFaction(
       if (f === "Shadows of Anarchy") return false;
       if (f === gangFaction && !isBN2) return false;
 
-      // 🆕 Gang-Kandidaten ignorieren, wenn wir vor der Gang-Gründung stehen
       if (
         isPendingGangUnlock &&
         GANG_CANDIDATE_FACTIONS.includes(f as FactionName)
@@ -151,11 +145,9 @@ export function findNextRoadmapFaction(
       continue;
     }
 
-    // Falls noch in keiner Ziel-Fraktion: Prüfen auf Firmen-Ruf für Megacorp-Einladung
     for (const f of target.factions) {
       if (f === "Shadows of Anarchy" || (f === gangFaction && !isBN2)) continue;
 
-      // 🆕 Auch bei Firmen-Checks Gang-Kandidaten ignorieren
       if (
         isPendingGangUnlock &&
         GANG_CANDIDATE_FACTIONS.includes(f as FactionName)
@@ -184,14 +176,17 @@ export function findNextRoadmapFaction(
     }
   }
 
-  // 2️⃣ DAEDALUS PRIORITÄT (Erst wenn alle anderen Roadmap-Augs erreichbar/gekauft sind)
+  const bnMults = loadBnMults(ns);
+
   const hasDaedalus =
     playerFactions.includes("Daedalus") || invites.includes("Daedalus");
   if (hasDaedalus && !redPillOwned) {
     const daedalusTarget = augRoadmap.find(
       (t) => t.factions.includes("Daedalus") || t.name === "The Red Pill",
     );
-    const targetRep = daedalusTarget ? daedalusTarget.repReq : 2_500_000;
+    const targetRep = daedalusTarget
+      ? daedalusTarget.repReq
+      : 2_500_000 * (bnMults.AugmentationRepCost ?? 1);
     const currentRep = ns.singularity.getFactionRep("Daedalus");
 
     if (currentRep < targetRep) {
@@ -229,12 +224,17 @@ export function determineStrategy(
   ];
 
   const hackExpMult = bnMults.HackExpGain ?? 1;
+  const reqDaedalusAugs = Math.floor(30 * (bnMults.DaedalusAugsRequirement ?? 1));
   const hasGang = currentState?.hasGang || (ns.gang?.inGang() ?? false);
   const redPillOwned = hasRedPill(ns);
   const daedalusRep = player.factions.includes("Daedalus")
     ? ns.singularity.getFactionRep("Daedalus")
     : 0;
-  const daedalusDone = redPillOwned || daedalusRep >= 2_500_000;
+  
+  // Korrektur: AugmentationRepCost statt AugmentationMoneyCost
+  const daedalusDone =
+    redPillOwned ||
+    daedalusRep >= 2_500_000 * (bnMults.AugmentationRepCost ?? 1);
 
   // 1️⃣ BASIC HACKING LEVELING
   const targetHackLevel = hackExpMult < 0.25 ? 15 : 30;
@@ -245,7 +245,9 @@ export function determineStrategy(
 
   // 2️⃣ DAEDALUS SOFORT-REP (Red Pill Ziel)
   if (player.factions.includes("Daedalus") && !daedalusDone) {
-    const daedalusTargetRep = factionTargets["Daedalus"] ?? 2_500_000;
+    const daedalusTargetRep =
+      factionTargets["Daedalus"] ??
+      2_500_000 * (bnMults.AugmentationRepCost ?? 1);
     if (daedalusRep < daedalusTargetRep) {
       logger?.debug(
         `[Strategie] Daedalus Priorität aktiv (${Math.round(daedalusRep)}/${daedalusTargetRep} Rep) ➔ REP`,
@@ -294,7 +296,8 @@ export function determineStrategy(
     !factionToWorkFor
   ) {
     const installedAugs = ns.singularity.getOwnedAugmentations(false).length;
-    if (installedAugs >= 30 || player.money >= 100e9) {
+    // Korrektur: reqDaedalusAugs mit DaedalusAugsRequirement
+    if (installedAugs >= reqDaedalusAugs || player.money >= 100e9) {
       const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
       const hasCombatReq = minCombat >= 1500;
       const hasHackReq = player.skills.hacking >= 2500;
@@ -360,7 +363,10 @@ export function determineStrategy(
     (daedalusDone && isDominionEtaReady);
 
   if (isDominionActive) {
-    let worldDaemonReq = 3000;
+    // Korrektur: Skalierung für Fallback-Ziel
+    let worldDaemonReq = Math.floor(
+      3000 * (bnMults.WorldDaemonDifficulty ?? 1),
+    );
     try {
       if (ns.serverExists("w0r1d_d43m0n")) {
         worldDaemonReq = ns.getServerRequiredHackingLevel("w0r1d_d43m0n");
@@ -392,12 +398,18 @@ export function isGangOfferingAllAugs(ns: NS): boolean {
   }
 }
 
-export function isReadyForDaedalus(ns: NS, player: Player): boolean {
+export function isReadyForDaedalus(
+  ns: NS,
+  player: Player,
+  bnMults?: BitNodeMultipliers,
+): boolean {
+  const mults = bnMults ?? loadBnMults(ns);
+  const reqAugs = Math.floor(30 * (mults.DaedalusAugsRequirement ?? 1));
   const installedAugs = ns.singularity.getOwnedAugmentations(false).length;
   const hasMoney = player.money >= 100e9;
   const hasSkill =
     player.skills.hacking >= 2500 ||
     COMBAT_STATS.every((s) => player.skills[s] >= 1500);
 
-  return installedAugs >= 30 && hasMoney && hasSkill;
+  return installedAugs >= reqAugs && hasMoney && hasSkill;
 }

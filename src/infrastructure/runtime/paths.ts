@@ -10,6 +10,7 @@ export const PATHS = {
     },
     actions: {
       cloud: "app/actions/act-cloud.js",
+      corporation: "app/actions/act-corporations.js",
       gang: "app/actions/act-gang.js",
       hacknet: "app/actions/act-hacknet.js",
       singularity: "app/actions/act-singularity.js",
@@ -58,6 +59,7 @@ export const PATHS = {
     },
     evaluators: {
       purchase: {
+        corporation: "domain/evaluators/purchase/corporation.js",
         cloud: "domain/evaluators/purchase/cloud.js",
         gang: "domain/evaluators/purchase/gang.js",
         hacknet: "domain/evaluators/purchase/hacknet.js",
@@ -85,6 +87,7 @@ export const PATHS = {
       perfMonitor: "services/daemons/perf-monitor.js",
     },
     managers: {
+      corporation: "services/managers/corporation-manager.js",
       dnet: "services/managers/dnet-master.js",
       gang: "services/managers/gang-manager.js",
       hash: "services/managers/hash-manager.js",
@@ -116,16 +119,18 @@ export const PATHS = {
   },
 
   ui: {
+    corporation: "ui/corporation.js",
     roadmap: "ui/roadmap.js",
     gang: "ui/gang.js",
     sleeve: "ui/sleeve.js",
   },
   shared: {
     constants: {
-      payloads: "shared/constants/payloads.js",
+      colors: "shared/constants/colors.js",
+      corporation: "shared/constants/corporation.js",
       darknet: "shared/constants/darknet.js",
       logger: "shared/constants/logger.js",
-      colors: "shared/constants/colors.js"
+      payloads: "shared/constants/payloads.js",
     },
     types: {
       logger: "shared/types/logger.js",

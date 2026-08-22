@@ -168,6 +168,7 @@ export async function main(ns: NS): Promise<void> {
       "gang",
       "sleeve",
       "player",
+      "corporation",
     ];
     const activeEvaluators: string[] = [];
     const inactiveEvaluators: string[] = [];
