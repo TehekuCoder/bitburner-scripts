@@ -9,11 +9,11 @@ import {
   upgradeWarehouseToLevel,
   purchaseBoosterMaterials,
   maintainEmployeeMorale,
+  buyCorporationUpgrades,
 } from "/domain/corporation/corporation-helpers";
 
 let spikeState: "IDLE" | "ACCUMULATING" | "SELLING" = "IDLE";
 let spikeTicks = 0;
-let productCounter = 1;
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -166,6 +166,23 @@ async function handleInvestor1(ns: NS): Promise<CorpPhase> {
     const offer = corp.getInvestmentOffer();
     ns.print(`[CORP] Investor 1 Angebot: ${ns.format.number(offer.funds)} $`);
 
+    if (offer.funds === 0) {
+      ns.print(
+        "[CORP] Keine Investitionsangebote für Runde 1 verfügbar. Überspringe...",
+      );
+      for (const city of CORP_CONFIG.cities) {
+        setupOfficeAndJobs(
+          ns,
+          agri.name,
+          city,
+          6,
+          CORP_CONFIG.jobDistribution.support6,
+        );
+      }
+      spikeState = "IDLE";
+      return "INIT_CHEM";
+    }
+
     if (offer.funds >= 200_000_000_000) {
       if (corp.acceptInvestmentOffer()) {
         ns.print(
@@ -254,6 +271,9 @@ async function handleExportLoop(ns: NS): Promise<CorpPhase> {
     maintainEmployeeMorale(ns, chem.name, city);
   }
 
+  // Nebenbei günstige Basis-Upgrades mitnehmen (5% Budget)
+  buyCorporationUpgrades(ns, 0.05);
+
   ns.print("[CORP] Export-Loop aktiv! Pflanzenqualität steigt...");
   return "INVESTOR_2";
 }
@@ -300,6 +320,30 @@ async function handleInvestor2(ns: NS): Promise<CorpPhase> {
   if (spikeState === "SELLING") {
     const offer = corp.getInvestmentOffer();
     ns.print(`[CORP] Investor 2 Angebot: ${ns.format.number(offer.funds)} $`);
+
+    if (offer.funds === 0) {
+      ns.print(
+        "[CORP] Keine weiteren Investoren-Angebote verfügbar! Überspringe Investor 2...",
+      );
+      for (const city of CORP_CONFIG.cities) {
+        setupOfficeAndJobs(
+          ns,
+          agri.name,
+          city,
+          6,
+          CORP_CONFIG.jobDistribution.support6,
+        );
+        setupOfficeAndJobs(
+          ns,
+          chem.name,
+          city,
+          6,
+          CORP_CONFIG.jobDistribution.chem6,
+        );
+      }
+      spikeState = "IDLE";
+      return "INIT_TOBACCO";
+    }
 
     if (offer.funds >= 2_000_000_000_000) {
       if (corp.acceptInvestmentOffer()) {
@@ -352,8 +396,7 @@ async function handleInitTobacco(ns: NS): Promise<CorpPhase> {
     corp.setSmartSupply(tobacco.name, city, true);
     upgradeWarehouseToLevel(ns, tobacco.name, city, 10);
 
-    // Pflanzexporte aus Landwirtschaft sicherstellen
-safeExportMaterial(
+    safeExportMaterial(
       ns,
       agri.name,
       city,
@@ -391,7 +434,7 @@ async function handleTobaccoLoop(ns: NS): Promise<void> {
     maintainEmployeeMorale(ns, tobacco.name, city);
   }
 
-  // B. Forschungs-Manager (Schaltet Market-TA.II & Buffs frei)
+  // B. Forschungs-Manager
   for (const tech of CORP_RESEARCH_PRIORITY) {
     if (!corp.hasResearched(tobacco.name, tech)) {
       const cost = corp.getResearchCost(tobacco.name, tech);
@@ -407,7 +450,6 @@ async function handleTobaccoLoop(ns: NS): Promise<void> {
   const products = divInfo.products;
   const hasTA2 = corp.hasResearched(tobacco.name, "Market-TA.II");
 
-  // 1. Fertige Produkte auf Market-TA.II oder MP konfigurieren
   for (const prodName of products) {
     const prod = corp.getProduct(tobacco.name, mainCity, prodName);
     if (prod.developmentProgress === 100) {
@@ -419,23 +461,28 @@ async function handleTobaccoLoop(ns: NS): Promise<void> {
     }
   }
 
-  // 2. Prüfen, ob ein neues Produkt gestartet werden muss
   let maxProducts = 3;
   if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.I")) maxProducts++;
   if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.II")) maxProducts++;
 
-  // Altprodukt einstellen, wenn Limit erreicht ist
   if (products.length >= maxProducts) {
     const oldestProduct = products[0];
     corp.discontinueProduct(tobacco.name, oldestProduct);
     ns.print(`[CORP] Produkt ${oldestProduct} eingestellt.`);
   }
 
-  // D. Upgrades & Marketing Skalierung (Erst Wilson Analytics, dann AdVert)[cite: 1]
+  // D. Upgrades & Marketing Skalierung
   if (corp.getCorporation().funds > 1_000_000_000) {
+    // 1. Allgemeine Basis-Upgrades ausbalanciert nachkaufen (10% Budget)
+    buyCorporationUpgrades(ns, 0.1);
+
+    // 2. Wilson Analytics mit verbleibendem Kapital priorisieren
     const wilsonCost = corp.getUpgradeLevelCost("Wilson Analytics");
     if (corp.getCorporation().funds >= wilsonCost) {
       corp.levelUpgrade("Wilson Analytics");
+      ns.print(
+        `[CORP] Wilson Analytics auf Lvl ${corp.getUpgradeLevel("Wilson Analytics")} erhöht!`,
+      );
     } else {
       const advertCost = corp.getHireAdVertCost(tobacco.name);
       if (corp.getCorporation().funds >= advertCost * 2) {
@@ -444,16 +491,14 @@ async function handleTobaccoLoop(ns: NS): Promise<void> {
     }
   }
 
-  // E. IPO (Börsengang) & Geld-Transfer an den Spieler![cite: 1]
+  // E. IPO & Dividenden
   const corpData = corp.getCorporation();
   if (!corpData.public) {
-    // Sobald die Firma extrem lukrativ ist, an die Börse gehen
     if (corpData.revenue > 100_000_000_000) {
       corp.goPublic(0);
       ns.print("[CORP] ** PHILIP MATRIX IST AN DIE BÖRSE GEGANGEN! **");
     }
   } else {
-    // 50% des Gewinns direkt als Dividende auf dein persönliches Spielerkonto überweisen![cite: 1]
     corp.issueDividends(0.5);
   }
 }
@@ -463,7 +508,7 @@ function safeExportMaterial(
   sourceDiv: string,
   sourceCity: CityName,
   targetDiv: string,
-  targetCity: CityName, // Typ von 'string' auf 'CityName' angepasst
+  targetCity: CityName,
   material: CorpMaterialName,
   amount: string,
 ): void {

@@ -1,4 +1,10 @@
-import { NS, CityName, CorpMaterialName, CorpEmployeePosition } from "@ns";
+import {
+  NS,
+  CityName,
+  CorpMaterialName,
+  CorpEmployeePosition,
+  CorpUpgradeName,
+} from "@ns";
 
 export type CorpJobRole = Exclude<CorpEmployeePosition, "Unassigned">;
 export type MaterialTargets = Partial<Record<CorpMaterialName, number>>;
@@ -131,5 +137,55 @@ export function maintainEmployeeMorale(
   if (office.avgMorale < 98 || office.avgEnergy < 98) {
     corp.buyTea(divisionName, cityName);
     corp.throwParty(divisionName, cityName, 500_000);
+  }
+}
+
+/**
+ * Kauft ausbalanciert allgemeine Corporation-Upgrades.
+ * Nutzt maximal `maxBudgetRatio` des aktuellen Guthabens (Standard: 10%),
+ * damit immer genug Kapital für andere Investitionen bleibt.
+ */
+export function buyCorporationUpgrades(ns: NS, maxBudgetRatio = 0.1): void {
+  const corp = ns.corporation;
+  const funds = corp.getCorporation().funds;
+  if (funds <= 0) return;
+
+  const budget = funds * maxBudgetRatio;
+  const upgrades: CorpUpgradeName[] = [
+    "Smart Storage",
+    "Smart Factories",
+    "FocusWires",
+    "Neural Accelerators",
+    "Speech Processor Implants",
+    "Nuoptimal Nootropic Injector Implants",
+    "ABC SalesBots",
+    "Project Insight",
+  ];
+
+  let bought = true;
+  while (bought) {
+    bought = false;
+    let cheapestUpgrade: CorpUpgradeName | null = null;
+    let minCost = Infinity;
+
+    for (const upgrade of upgrades) {
+      const cost = corp.getUpgradeLevelCost(upgrade);
+      if (cost < minCost) {
+        minCost = cost;
+        cheapestUpgrade = upgrade;
+      }
+    }
+
+    if (
+      cheapestUpgrade &&
+      minCost <= budget &&
+      minCost <= corp.getCorporation().funds
+    ) {
+      corp.levelUpgrade(cheapestUpgrade);
+      ns.print(
+        `[CORP] Upgrade gekauft: ${cheapestUpgrade} (Lvl ${corp.getUpgradeLevel(cheapestUpgrade)})`,
+      );
+      bought = true;
+    }
   }
 }
