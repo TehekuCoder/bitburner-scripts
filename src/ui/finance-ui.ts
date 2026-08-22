@@ -33,6 +33,16 @@ export interface FinanceDashboardData {
   lastWarnings: string[];
 }
 
+/**
+ * Berechnet das Padding unter Berücksichtigung von nicht-druckbaren ANSI-Escape-Sequenzen.
+ */
+function padANSI(text: string, visibleWidth: number, alignRight = false): string {
+  const visibleLength = text.replace(/\u001b\[[0-9;]*m/g, "").length;
+  const missing = Math.max(0, visibleWidth - visibleLength);
+  const padding = " ".repeat(missing);
+  return alignRight ? padding + text : text + padding;
+}
+
 function makeProgressBar(value: number, max: number, width = 20): string {
   if (max <= 0) return "░".repeat(width);
   const ratio = Math.max(0, Math.min(value, max)) / max;
@@ -69,7 +79,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   // ------------------------------------------------------------
   const queueStr = `Queue: ${data.pendingCount} Anfragen`;
   const headerTitle = `⚡ BIT-OS FINANCE CORE v1.0`;
-  const headerContent = `${CLR.WHITE_BOLD}${headerTitle.padEnd(34)}${CLR.RESET}|  ${CLR.CYAN}${queueStr}${CLR.RESET}`;
+  const headerContent = `${CLR.WHITE_BOLD}${padANSI(headerTitle, 34)}${CLR.RESET}|  ${CLR.CYAN}${queueStr}${CLR.RESET}`;
 
   ns.print(H_LINE);
   ns.print(headerContent);
@@ -90,18 +100,18 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   ns.print(`Home RAM:    ${ramUsedStr} / ${ramTotStr} (${ramPct})`);
   ns.print(`             [${CLR.CYAN}${ramBar}${CLR.RESET}]`);
 
-  const CloudStr = `${data.purchasedServerCount} / ${data.purchasedServerLimit}`;
-  const CloudBar = makeProgressBar(
+  const cloudStr = `${data.purchasedServerCount} / ${data.purchasedServerLimit}`;
+  const cloudBar = makeProgressBar(
     data.purchasedServerCount,
     data.purchasedServerLimit,
-    12,
+    12
   );
   const maxRamStr =
     data.largestPurchasedServerRam > 0
       ? ns.format.ram(data.largestPurchasedServerRam)
       : "–";
   ns.print(
-    `Cloud Pool:  ${CloudStr.padEnd(8)} [${CLR.CYAN}${CloudBar}${CLR.RESET}] (Max: ${maxRamStr})`,
+    `Cloud Pool:  ${padANSI(cloudStr, 8)} [${CLR.CYAN}${cloudBar}${CLR.RESET}] (Max: ${maxRamStr})`
   );
 
   if (data.hacknetLimit > 0) {
@@ -109,12 +119,12 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     const hnetBar = makeProgressBar(data.hacknetCount, data.hacknetLimit, 12);
     const modeLabel = data.isHacknetServer ? "Servers" : "Nodes";
     ns.print(
-      `Hacknet Pool:${hnetStr.padEnd(8)} [${CLR.CYAN}${hnetBar}${CLR.RESET}] (${modeLabel})`,
+      `Hacknet Pool:${padANSI(hnetStr, 8)} [${CLR.CYAN}${hnetBar}${CLR.RESET}] (${modeLabel})`
     );
   }
 
   ns.print(
-    `Home Cores:  ${data.homeCores} Core${data.homeCores > 1 ? "s" : ""}`,
+    `Home Cores:  ${data.homeCores} Core${data.homeCores > 1 ? "s" : ""}`
   );
 
   ns.print(D_LINE);
@@ -131,10 +141,11 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
 
   ns.print(`${CLR.WHITE_BOLD}SUPERVISOR & EVALUATOREN STATUS:${CLR.RESET}`);
   ns.print(
-    `Manager:     ${fMgrStatus.padEnd(19)} |  Orchestrator: ${sMgrStatus}`,
+    `Manager:     ${padANSI(fMgrStatus, 10)} |  Orchestrator: ${sMgrStatus}`
   );
 
-  const allEvaluators = [
+  // Alle 9 Evaluatoren aus finance-core (inkl. corporation)
+  const knownEvaluators = [
     "home",
     "hacknet",
     "stock",
@@ -143,21 +154,22 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     "gang",
     "sleeve",
     "player",
+    "corporation",
   ];
   const activeSet = new Set(data.activeEvaluators);
 
-  const badges = allEvaluators.map((name) => {
+  // 3x3 Grid (Spaltenbreite 16 sichtbare Zeichen)
+  const badges = knownEvaluators.map((name) => {
     const isActive = activeSet.has(name);
     const icon = isActive
       ? `${CLR.GREEN}[✓]${CLR.RESET}`
       : `${CLR.RED}[✗]${CLR.RESET}`;
-    const label = `${icon} ${name}`;
-    // Breite exakt 12 sichtbare Zeichen für perfektes 4er-Grid bei W=64
-    return isActive ? label.padEnd(20) : label.padEnd(19);
+    return padANSI(`${icon} ${name}`, 16);
   });
 
-  ns.print(`Evaluatoren: ${badges.slice(0, 4).join("")}`);
-  ns.print(`             ${badges.slice(4, 8).join("")}`);
+  ns.print(`Evaluatoren: ${badges.slice(0, 3).join("")}`);
+  ns.print(`             ${badges.slice(3, 6).join("")}`);
+  ns.print(`             ${badges.slice(6, 9).join("")}`);
 
   ns.print(D_LINE);
 
@@ -184,12 +196,12 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     ns.print(`Ziel:        ${shortDesc}`);
     ns.print(`Kosten:      ${reqCostStr} (${progressPct.toFixed(1)}%)`);
     ns.print(
-      `Status:      [${CLR.CYAN}${progressBar}${CLR.RESET}] ${statusStr}`,
+      `Status:      [${CLR.CYAN}${progressBar}${CLR.RESET}] ${statusStr}`
     );
   } else {
     ns.print(`Ziel:        Keine offenen Anfragen im Port`);
     ns.print(
-      `Status:      [${CLR.GREEN}${makeProgressBar(1, 1, 20)}${CLR.RESET}] Bereit`,
+      `Status:      [${CLR.GREEN}${makeProgressBar(1, 1, 20)}${CLR.RESET}] Bereit`
     );
   }
 
@@ -211,7 +223,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
           ? req.description.substring(0, 19) + "..."
           : req.description;
       ns.print(
-        `> [${CLR.CYAN}${prio}${CLR.RESET}] ${cat} | ${desc.padEnd(22)} ${cost.padStart(9)}`,
+        `> [${CLR.CYAN}${prio}${CLR.RESET}] ${cat} | ${desc.padEnd(22)} ${padANSI(cost, 9, true)}`
       );
     }
   }

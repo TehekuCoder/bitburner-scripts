@@ -1,6 +1,7 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
 import { STATE_PORT } from "../runtime/system";
+import { CorporationState } from "/shared/types/corporation.js";
 
 import {
   BotState,
@@ -27,6 +28,7 @@ export type AugmentStatePatch = Partial<AugmentState>;
 export type FactionStatePatch = Partial<FactionState>;
 export type ProgressStatePatch = Partial<BotStateProgress>;
 export type GangStatePatch = Partial<GangState>;
+export type CorporationStatePatch = Partial<CorporationState>;
 
 // ============================================================================
 // MODULARE DOMAIN DEFAULTS
@@ -127,6 +129,19 @@ const DEFAULT_SYSTEM_STATE = {
   hasBladeburner: false,
 };
 
+// 1. DEFAULT STATE HINZUFÜGEN
+const DEFAULT_CORPORATION_STATE: CorporationState = {
+  hasCorp: false,
+  corpName: undefined,
+  funds: 0,
+  revenue: 0,
+  expenses: 0,
+  divisions: [],
+  stage: "INACTIVE",
+  investmentOffer: 0,
+  corpRecentLogs: [],
+};
+
 // ============================================================================
 // MASTER DEFAULT STATE (Komposition)
 // ============================================================================
@@ -141,6 +156,7 @@ const DEFAULT_BOT_STATE: BotStateContent = {
   ...DEFAULT_PROGRESS_STATE,
   ...DEFAULT_GANG_STATE,
   ...DEFAULT_SYSTEM_STATE,
+  ...DEFAULT_CORPORATION_STATE,
 };
 
 // ============================================================================
@@ -428,5 +444,30 @@ export function loadGangState(ns: NS): GangState | null {
   return state ? pick(state, GANG_KEYS) : null;
 }
 export function patchGangState(ns: NS, partialState: GangStatePatch): void {
+  patchState(ns, partialState as BotStatePatch);
+}
+
+// 2. KEYS DEFINIEREN
+const CORPORATION_KEYS = [
+  "hasCorp",
+  "corpName",
+  "funds",
+  "revenue",
+  "expenses",
+  "divisions",
+  "stage",
+  "investmentOffer",
+  "corpRecentLogs",
+] as const satisfies readonly (keyof BotState)[];
+
+export function loadCorporationState(ns: NS): CorporationState | null {
+  const state = loadState(ns);
+  return state ? (pick(state, CORPORATION_KEYS) as CorporationState) : null;
+}
+
+export function patchCorporationState(
+  ns: NS,
+  partialState: CorporationStatePatch,
+): void {
   patchState(ns, partialState as BotStatePatch);
 }

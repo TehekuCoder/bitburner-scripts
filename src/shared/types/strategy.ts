@@ -4,6 +4,7 @@ import { GangState } from "./gang";
 import { AugmentState, FactionState } from "./factions";
 import { SleeveState } from "./sleeves";
 import { FinanceState } from "./finance";
+import { CorporationState } from "./corporation";
 
 export type BotStrategy =
   | "MANUAL"
@@ -70,7 +71,8 @@ export interface BotState
     AugmentState,
     FactionState,
     BotStateProgress,
-    GangState {
+    GangState,
+    CorporationState {
   // Metadata & System Runtime
   lastUpdate: number;
   playerHacking?: number;

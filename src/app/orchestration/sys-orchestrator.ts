@@ -3,13 +3,18 @@ import { LoggerClient } from "/infrastructure/logging/logger-client";
 import { getAllServers } from "/infrastructure/network/network";
 import { PATHS } from "/infrastructure/runtime/paths";
 import { loadState } from "/infrastructure/state/state";
+import {
+  hasSingularity,
+  hasGang,
+  hasSleeve,
+  hasCorporation,
+} from "/lib/utils";
 
 interface DaemonConfig {
   name: string;
   path: string;
   args?: (string | number)[];
   minHomeRam?: number;
-  /** Custom Check, ob der Daemon im aktuellen BitNode / Spielstand Sinn macht */
   condition?: (ns: NS) => boolean;
 }
 
@@ -18,9 +23,8 @@ export async function main(ns: NS): Promise<void> {
   const logger = new LoggerClient(ns, "SysOrchestrator");
   logger.info("⚡ BitOS System-Orchestrator initiiert.");
 
-  // Deklarative Registrierung aller Daemons nach Start-Priorität
   const daemons: DaemonConfig[] = [
-    // 1. CCT Solver (Sofort Geld/Stats abgreifen, wenn Verträge existieren)
+    // 1. CCT Solver Task
     {
       name: "CCT Solver Task",
       path: PATHS.domain.tasks.cctSolver,
@@ -36,12 +40,12 @@ export async function main(ns: NS): Promise<void> {
       },
     },
 
-    // 2. Intelligent Backdoor Service
+    // 2. Intelligent Backdoor Service (SF4 / Singularity)
     {
       name: "Backdoor Service",
       path: PATHS.services.daemons.backdoor,
       condition: (ns) => {
-        if (ns.singularity === undefined) return false;
+        if (!hasSingularity(ns)) return false;
         const state = loadState(ns);
         const nodes = state?.allServers?.length
           ? state.allServers
@@ -107,10 +111,10 @@ export async function main(ns: NS): Promise<void> {
       name: "Singularity Dispatcher",
       path: PATHS.app.orchestration.dispatcher,
       minHomeRam: 512,
-      condition: (ns) => ns.singularity !== undefined,
+      condition: (ns) => hasSingularity(ns),
     },
 
-    // Roadmap UI (soll immer laufen)
+    // Roadmap UI
     {
       name: "Roadmap UI",
       path: PATHS.ui.roadmap,
@@ -118,55 +122,58 @@ export async function main(ns: NS): Promise<void> {
       condition: () => true,
     },
 
-    // 7. Gang Manager & UI
+    // 7. Gang Manager & UI (SF2)
     {
       name: "Gang Manager",
       path: PATHS.services.managers.gang,
       minHomeRam: 256,
-      condition: (ns) => {
-        try {
-          return ns.gang.inGang();
-        } catch {
-          return false;
-        }
-      },
+      condition: (ns) => hasGang(ns) && ns.gang.inGang(),
     },
     {
       name: "Gang UI",
       path: PATHS.ui.gang,
       minHomeRam: 256,
-      condition: (ns) => {
-        try {
-          return ns.gang.inGang();
-        } catch {
-          return false;
-        }
-      },
+      condition: (ns) => hasGang(ns) && ns.gang.inGang(),
     },
 
-    // 8. Sleeve Manager
+    // 8. Sleeve Manager & UI (SF10)
     {
       name: "Sleeve Manager",
       path: PATHS.services.managers.sleeve,
       minHomeRam: 512,
-      condition: (ns) => ns.sleeve !== undefined,
+      condition: (ns) => hasSleeve(ns),
     },
-
     {
       name: "Sleeve UI",
       path: PATHS.ui.sleeve,
       minHomeRam: 512,
-      condition: (ns) => ns.sleeve !== undefined,
+      condition: (ns) => hasSleeve(ns),
     },
 
-    // 19. Batch Orchestrator (Haupt-Geldquelle)
+    // 9. Corporation Manager & UI (SF3)
+    {
+      name: "Corporation Manager",
+      path: PATHS.services.managers.corporation,
+      minHomeRam: 1024,
+      condition: (ns) =>
+        hasCorporation(ns) &&
+        (ns.corporation.hasCorporation() || ns.getServerMoneyAvailable("home") >= 150e9),
+    },
+    {
+      name: "Corporation UI",
+      path: PATHS.ui.corporation,
+      minHomeRam: 1024,
+      condition: (ns) => hasCorporation(ns) && ns.corporation.hasCorporation(),
+    },
+
+    // 10. Batch Orchestrator
     {
       name: "Batch Orchestrator",
       path: PATHS.services.daemons.hackingOrchestrator,
       minHomeRam: 64,
     },
 
-    // 10. Background Share Filler
+    // 11. Background Share Filler
     {
       name: "Share Filler",
       path: PATHS.services.daemons.fillShare,
@@ -182,33 +189,19 @@ export async function main(ns: NS): Promise<void> {
     for (const daemon of daemons) {
       if (!daemon.path) continue;
 
-      // Endung auflösen (.ts zu .js falls nötig)
       const execPath = daemon.path.endsWith(".ts")
         ? daemon.path.replace(/\.ts$/, ".js")
         : daemon.path;
 
-      // 1. Skript-Existenz auf home prüfen
-      if (!ns.fileExists(execPath, "home")) {
-        continue;
-      }
+      if (!ns.fileExists(execPath, "home")) continue;
 
-      // 2. Laufzeit-Status prüfen
       const args = daemon.args ?? [];
-      if (ns.isRunning(execPath, "home", ...args)) {
-        continue;
-      }
+      if (ns.isRunning(execPath, "home", ...args)) continue;
 
-      // 3. Hardware-Bedingung (Min RAM) prüfen
-      if (daemon.minHomeRam && maxRam < daemon.minHomeRam) {
-        continue;
-      }
+      if (daemon.minHomeRam && maxRam < daemon.minHomeRam) continue;
 
-      // 4. Optionalen Bedingungs-Guard ausführen
-      if (daemon.condition && !daemon.condition(ns)) {
-        continue;
-      }
+      if (daemon.condition && !daemon.condition(ns)) continue;
 
-      // 5. Dynamischen RAM-Bedarf abfragen & Allokation prüfen
       const reqRam = ns.getScriptRam(execPath, "home");
 
       if (freeRam >= reqRam) {
