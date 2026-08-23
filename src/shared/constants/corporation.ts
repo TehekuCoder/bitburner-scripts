@@ -74,11 +74,12 @@ export type CorpPhase =
   | "TOBACCO_LOOP";
 
 export const CORP_RESEARCH_PRIORITY = [
-  "Hi-Tech R&D Laboratory",
-  "Market-TA.I",
-  "Market-TA.II",
-  "uPgrade: Capacity.I",
-  "uPgrade: Capacity.II",
+  "Hi-Tech R&D Laboratory", // Prerequisite für fast alles
+  "Market-TA.I",            // Prerequisite für TA.II
+  "Market-TA.II",           // Automatischer Preis-Manager (extrem stark!)
+  "uPgrade: Fulcrum",       // Booster + Prerequisite für Capacity.I
+  "uPgrade: Capacity.I",    // Erhöht max. Produkte auf 4
+  "uPgrade: Capacity.II",   // Erhöht max. Produkte auf 5
   "Self-Correcting Assemblers",
   "AutoBrew",
   "AutoPartyManager",

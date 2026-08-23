@@ -439,44 +439,98 @@ async function handleTobaccoLoop(ns: NS): Promise<void> {
     if (!corp.hasResearched(tobacco.name, tech)) {
       const cost = corp.getResearchCost(tobacco.name, tech);
       if (corp.getDivision(tobacco.name).researchPoints >= cost) {
-        corp.research(tobacco.name, tech);
-        ns.print(`[CORP] Erforscht: ${tech}`);
+        try {
+          corp.research(tobacco.name, tech);
+          ns.print(`[CORP] Erforscht: ${tech}`);
+        } catch {
+          // Ignoriere fehlende Prerequisites
+        }
       }
     }
   }
 
-  // C. Produkt-Lifecycle
+  // C. Produkt-Lifecycle & Automatische Erstellung
   const divInfo = corp.getDivision(tobacco.name);
   const products = divInfo.products;
   const hasTA2 = corp.hasResearched(tobacco.name, "Market-TA.II");
 
+  // 1. Fertige Produkte zum Verkauf freigeben
   for (const prodName of products) {
     const prod = corp.getProduct(tobacco.name, mainCity, prodName);
     if (prod.developmentProgress === 100) {
       if (hasTA2) {
         corp.setProductMarketTA2(tobacco.name, prodName, true);
       } else {
-        corp.sellProduct(tobacco.name, mainCity, prodName, "MAX", "MP", true);
+        // Ohne TA.II verkaufen wir zu MP * 2
+        corp.sellProduct(
+          tobacco.name,
+          mainCity,
+          prodName,
+          "MAX",
+          "MP * 2",
+          true,
+        );
       }
     }
   }
 
+  // 2. Prüfen, ob aktuell noch ein Produkt entwickelt wird (< 100%)
+  const isDeveloping = products.some(
+    (p) => corp.getProduct(tobacco.name, mainCity, p).developmentProgress < 100,
+  );
+
+  // 3. Maximale Anzahl an gleichzeitigen Produkten ermitteln
   let maxProducts = 3;
   if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.I")) maxProducts++;
   if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.II")) maxProducts++;
 
-  if (products.length >= maxProducts) {
-    const oldestProduct = products[0];
-    corp.discontinueProduct(tobacco.name, oldestProduct);
-    ns.print(`[CORP] Produkt ${oldestProduct} eingestellt.`);
+  // 4. Neues Produkt starten, wenn aktuell keins in Entwicklung ist
+  if (!isDeveloping) {
+    // Wenn Slot-Limit erreicht ist, ältestes Produkt einstellen
+    if (products.length >= maxProducts) {
+      const oldestProduct = products[0];
+      corp.discontinueProduct(tobacco.name, oldestProduct);
+      ns.print(`[CORP] Ältestes Produkt ${oldestProduct} eingestellt.`);
+
+      // Aus lokaler Liste entfernen, damit der Name sofort wieder frei wird
+      const idx = products.indexOf(oldestProduct);
+      if (idx !== -1) products.splice(idx, 1);
+    }
+
+    // Generischen, nächsten freien Namen ermitteln (Tobacco-1, Tobacco-2, ...)
+    let prodIndex = 1;
+    while (products.includes(`Tobacco-${prodIndex}`)) {
+      prodIndex++;
+    }
+    const newProdName = `Tobacco-${prodIndex}`;
+
+    // Budget festlegen (z. B. max. 1 Milliarde $ oder 10% des Guthabens)
+    const availableFunds = corp.getCorporation().funds;
+    const totalInvestment = Math.min(
+      1_000_000_000,
+      Math.max(2_000_000, availableFunds * 0.1),
+    );
+
+    if (totalInvestment >= 2_000_000) {
+      const halfInvestment = totalInvestment / 2;
+
+      corp.makeProduct(
+        tobacco.name,
+        mainCity,
+        newProdName,
+        halfInvestment,
+        halfInvestment,
+      );
+      ns.print(
+        `[CORP] Neues Produkt gestartet: ${newProdName} (Budget: ${ns.format.number(totalInvestment)} $)`,
+      );
+    }
   }
 
   // D. Upgrades & Marketing Skalierung
   if (corp.getCorporation().funds > 1_000_000_000) {
-    // 1. Allgemeine Basis-Upgrades ausbalanciert nachkaufen (10% Budget)
     buyCorporationUpgrades(ns, 0.1);
 
-    // 2. Wilson Analytics mit verbleibendem Kapital priorisieren
     const wilsonCost = corp.getUpgradeLevelCost("Wilson Analytics");
     if (corp.getCorporation().funds >= wilsonCost) {
       corp.levelUpgrade("Wilson Analytics");
