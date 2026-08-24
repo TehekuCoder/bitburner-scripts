@@ -1,5 +1,6 @@
 import { NS, CorporationInfo } from "@ns";
 import { loadCorporationState } from "/infrastructure/state/state";
+import { CORP_CONFIG } from "/shared/constants/corporation";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -94,7 +95,6 @@ function renderDashboard(
 
     let detailsStr = "";
     if (div.makesProducts) {
-      // Dynamische Obergrenze berechnen
       let maxProducts = 3;
       if (ns.corporation.hasResearched(div.name, "uPgrade: Capacity.I"))
         maxProducts++;
@@ -111,10 +111,8 @@ function renderDashboard(
     );
   }
 
-  // Visualisierung des Phasen-Fortschritts
   ns.print(dividerSub);
   renderPhaseChecklist(ns, stage, corp);
-
   ns.print(dividerHeader);
 
   if (localLogBuffer.length > 0) {
@@ -134,15 +132,19 @@ function renderPhaseChecklist(
   ns.print(" PHASEN-FORTSCHRITT & ZIELE:");
 
   const offer = ns.corporation.getInvestmentOffer().funds;
-  const hasAgri = corp.divisions.includes("Agriculture");
-  const hasChem = corp.divisions.includes("Chemical");
-  const hasTobacco = corp.divisions.includes("Tobacco");
+  const agriName = CORP_CONFIG.divisions.agri.name;
+  const chemName = CORP_CONFIG.divisions.chem.name;
+  const tobaccoName = CORP_CONFIG.divisions.tobacco.name;
+
+  const hasAgri = corp.divisions.includes(agriName);
+  const hasChem = corp.divisions.includes(chemName);
+  const hasTobacco = corp.divisions.includes(tobaccoName);
 
   switch (stage) {
     case "INIT_AGRI":
     case "AGRI_BOOST":
       ns.print(
-        `  [${hasAgri ? "X" : " "}] Agriculture Sparte gegründet & 6 Städte freigeschaltet`,
+        `  [${hasAgri ? "X" : " "}] ${agriName} Sparte gegründet & 6 Städte freigeschaltet`,
       );
       ns.print(
         `  [ ] Booster-Materialien (Hardware/AiCore/RealEstate) auf Zielbestand kaufen`,
@@ -151,7 +153,7 @@ function renderPhaseChecklist(
       break;
 
     case "INVESTOR_1":
-      ns.print(`  [X] Agriculture Boost abgeschlossen`);
+      ns.print(`  [X] ${agriName} Boost abgeschlossen`);
       ns.print(`  [ ] Profit-Spike auslösen (Lager füllen & entleeren)`);
       ns.print(
         `  [${offer >= 200_000_000_000 ? "X" : " "}] Angebot >= $200B erzielen (Aktuell: $${ns.format.number(offer)})`,
@@ -161,13 +163,15 @@ function renderPhaseChecklist(
     case "INIT_CHEM":
     case "EXPORT_LOOP":
       ns.print(`  [X] Investor 1 abgeschlossen`);
-      ns.print(`  [${hasChem ? "X" : " "}] Chemical Sparte gegründet`);
-      ns.print(`  [ ] Exporte (Pflanzen <-> Chemie) via 'IPROD * -1' aktiv`);
+      ns.print(`  [${hasChem ? "X" : " "}] ${chemName} Sparte gegründet`);
+      ns.print(
+        `  [ ] Exporte (${agriName} <-> ${chemName}) via 'IPROD * -1' aktiv`,
+      );
       break;
 
     case "INVESTOR_2":
       ns.print(`  [X] Export-Loop etabliert`);
-      ns.print(`  [ ] Profit-Spike für Agri & Chem auslösen`);
+      ns.print(`  [ ] Profit-Spike für ${agriName} & ${chemName} auslösen`);
       ns.print(
         `  [${offer >= 2_000_000_000_000 ? "X" : " "}] Angebot >= $2T erzielen (Aktuell: $${ns.format.number(offer)})`,
       );
@@ -176,26 +180,23 @@ function renderPhaseChecklist(
     case "INIT_TOBACCO":
       ns.print(`  [X] Investor 2 Kapital erhalten`);
       ns.print(
-        `  [${hasTobacco ? "X" : " "}] Endgame-Sparte Tobacco gegründet`,
+        `  [${hasTobacco ? "X" : " "}] Endgame-Sparte ${tobaccoName} gegründet`,
       );
       ns.print(`  [ ] Hauptsitz (Aevum) auf 60 Mitarbeiter aufgestockt`);
       break;
 
     case "TOBACCO_LOOP": {
-      const tobaccoDiv = corp.divisions.includes("Tobacco")
-        ? ns.corporation.getDivision("Tobacco")
-        : null;
-      const hasTA2 = tobaccoDiv
-        ? ns.corporation.hasResearched("Tobacco", "Market-TA.II")
+      const hasTA2 = hasTobacco
+        ? ns.corporation.hasResearched(tobaccoName, "Market-TA.II")
         : false;
-      const cap1 = tobaccoDiv
-        ? ns.corporation.hasResearched("Tobacco", "uPgrade: Capacity.I")
+      const cap1 = hasTobacco
+        ? ns.corporation.hasResearched(tobaccoName, "uPgrade: Capacity.I")
         : false;
-      const cap2 = tobaccoDiv
-        ? ns.corporation.hasResearched("Tobacco", "uPgrade: Capacity.II")
+      const cap2 = hasTobacco
+        ? ns.corporation.hasResearched(tobaccoName, "uPgrade: Capacity.II")
         : false;
 
-      ns.print(`  [X] Tobacco-Entwicklungsschleife aktiv`);
+      ns.print(`  [X] ${tobaccoName}-Entwicklungsschleife aktiv`);
       ns.print(
         `  [${hasTA2 ? "X" : " "}] Market-TA.II erforscht (Automatischer Optimalpreis)`,
       );
