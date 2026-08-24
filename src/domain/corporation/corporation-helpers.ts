@@ -4,6 +4,7 @@ import {
   CorpMaterialName,
   CorpEmployeePosition,
   CorpUpgradeName,
+  CorpUnlockName,
 } from "@ns";
 
 export type CorpJobRole = Exclude<CorpEmployeePosition, "Unassigned">;
@@ -232,4 +233,37 @@ export function safeExportMaterial(
     material,
     amount,
   );
+}
+
+/**
+ * Kauft ein spezifisches Unlock, falls genug Guthaben vorhanden ist und es noch nicht erworben wurde.
+ */
+export function ensureUnlock(ns: NS, unlockName: CorpUnlockName): boolean {
+  const corp = ns.corporation;
+  if (corp.hasUnlock(unlockName)) return true;
+
+  const cost = corp.getUnlockCost(unlockName);
+  if (corp.getCorporation().funds >= cost) {
+    corp.purchaseUnlock(unlockName);
+    ns.print(`[CORP] Unlock erworben: ${unlockName}`);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Überprüft und kauft schrittweise alle sinnvollen Unlocks basierend auf der aktuellen Phase/Finanzlage.
+ */
+export function buyPhaseUnlocks(ns: NS, currentPhase: string): void {
+  // Smart Supply sofort sichern
+  ensureUnlock(ns, "Smart Supply");
+
+  // Export-Lizenz vor Chem / Export-Loop / Tobacco sichern
+  if (
+    currentPhase.includes("CHEM") ||
+    currentPhase.includes("EXPORT") ||
+    currentPhase.includes("TOBACCO")
+  ) {
+    ensureUnlock(ns, "Export");
+  }
 }
