@@ -1,3 +1,5 @@
+// evaluators/purchase/gang.ts
+
 import { NS } from "@ns";
 import {
   PurchaseEvaluator,
@@ -6,35 +8,59 @@ import {
   PurchaseCategory,
 } from "/shared/types/finance.js";
 import { runEvaluator } from "../evaluator-runner.js";
-import { loadBnMults, adjustPriorityByMult } from "/lib/utils.js";
+import { loadBnMults, adjustPriorityByMult } from "lib/utils.js";
 import { PATHS } from "/infrastructure/runtime/paths";
 
 export const GangEvaluator: PurchaseEvaluator = {
   category: "GANG_EQUIPMENT" as PurchaseCategory,
 
   getRequests(ns: NS): PurchaseRequest[] {
-    if (!ns.gang || !ns.gang.inGang()) return [];
+    // 🔴 1. API-Verfügbarkeit & Status-Check
+    if (!ns.gang) return [];
+    try {
+      if (!ns.gang.inGang()) return [];
+    } catch {
+      return [];
+    }
 
     const currentMoney = ns.getServerMoneyAvailable("home");
     if (currentMoney <= 0) return [];
 
-    const bnMults = loadBnMults(ns);
-    const gangAugMult = bnMults.GangUniqueAugs ?? 1.0;
-    const gangAugEfficiency = gangAugMult > 0 ? 1 / gangAugMult : 1.0;
+    // 🔴 2. BitNode-Multiplikatoren auswerten
+    const bnMults = loadBnMults(ns) as Record<string, number>;
+    const softcapMult = bnMults.GangSoftcap ?? bnMults.gang_softcap ?? 1.0;
+    const gangAugMult =
+      bnMults.GangUniqueAugs ?? bnMults.gang_unique_augs ?? 1.0;
+
+    // Wenn der Softcap 0 ist, generiert die Gang kaum/keinen Ertrag
+    if (softcapMult <= 0) return [];
+
+    const gangEfficiency = Math.max(0.1, softcapMult);
+    const augEfficiency =
+      gangAugMult > 0 ? (1 / gangAugMult) * gangEfficiency : gangEfficiency;
 
     const requests: PurchaseRequest[] = [];
-    const info = ns.gang.getGangInformation();
+
+    let info;
+    let memberNames: string[];
+    let equipmentNames: string[];
+
+    try {
+      info = ns.gang.getGangInformation();
+      memberNames = ns.gang.getMemberNames();
+      equipmentNames = ns.gang.getEquipmentNames();
+    } catch {
+      return [];
+    }
+
     const isHacking = info.isHacking;
 
-    const memberNames = ns.gang.getMemberNames();
-    const equipmentNames = ns.gang.getEquipmentNames();
-
-    // Cache Equipment-Daten & filtere direkt unbezahlbare Gegenstände heraus
+    // 🟢 3. Equipment-Daten cachen
     const equipCache = equipmentNames
       .map((equip) => {
         try {
           const cost = ns.gang.getEquipmentCost(equip);
-          if (cost > currentMoney) return null; // Direkt ignorieren wenn unbezahlbar
+          if (cost > currentMoney) return null;
 
           return {
             name: equip,
@@ -49,9 +75,10 @@ export const GangEvaluator: PurchaseEvaluator = {
 
     if (equipCache.length === 0) return [];
 
+    // 🟢 4. Requests pro Member & Equipment generieren
     for (const equip of equipCache) {
       const isAugmentation = equip.type === "Augmentation";
-      const effMult = isAugmentation ? gangAugEfficiency : 1.0;
+      const effMult = isAugmentation ? augEfficiency : gangEfficiency;
 
       memberNames.forEach((memberName, idx) => {
         try {
@@ -71,15 +98,15 @@ export const GangEvaluator: PurchaseEvaluator = {
           if (isHacking) {
             if (equip.type === "Rootkit") {
               basePriority = PurchasePriority.HIGH;
-              baseScore = 85;
-              reason = "Essentielles Hacking-Rootkit";
+              baseScore = 80;
+              reason = "Hacking-Rootkit";
             } else if (isAugmentation) {
-              basePriority = PurchasePriority.MEDIUM;
-              baseScore = 60;
-              reason = "Gang Augmentation (Permanent)";
+              // Augmentationen sind permanent (überstehen Member-Ascension)
+              basePriority = PurchasePriority.HIGH;
+              baseScore = 90;
+              reason = "Permanent Hacking Augmentation";
             } else {
-              // Irrelevante Upgrades überspringen, um Trash-Requests zu vermeiden
-              return;
+              return; // Unnötigen Kram für Hacking-Gangs ignorieren
             }
           } else {
             if (
@@ -87,20 +114,20 @@ export const GangEvaluator: PurchaseEvaluator = {
               equip.type === "Armor" ||
               equip.type === "Vehicle"
             ) {
-              basePriority = PurchasePriority.HIGH;
-              baseScore = 80;
+              basePriority = PurchasePriority.MEDIUM;
+              baseScore = 70;
               reason = "Kampfausrüstung";
             } else if (isAugmentation) {
-              basePriority = PurchasePriority.MEDIUM;
-              baseScore = 65;
-              reason = "Combat Augmentation (Permanent)";
+              // Augmentationen sind permanent (überstehen Member-Ascension)
+              basePriority = PurchasePriority.HIGH;
+              baseScore = 90;
+              reason = "Permanent Combat Augmentation";
             } else if (equip.type === "Rootkit") {
-              // Irrelevante Rootkits für Combat Gang überspringen
-              return;
+              return; // Rootkits für Combat-Gangs ignorieren
             }
           }
 
-          // Staffelung nach Member-Index (höhere Ränge bevorzugen)
+          // Rang-Staffelung: Ältere/höhere Member zuerst ausrüsten
           const memberScore = Math.max(1, baseScore - idx * 1.5);
 
           const priority = adjustPriorityByMult(basePriority, effMult);
@@ -119,7 +146,7 @@ export const GangEvaluator: PurchaseEvaluator = {
             },
           });
         } catch {
-          // Member-Daten konnten nicht gelesen werden
+          // Member-Status konnte nicht gelesen werden
         }
       });
     }

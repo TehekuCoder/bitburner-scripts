@@ -1,4 +1,5 @@
-// lib/evaluators/cloud.ts
+// evaluators/purchase/cloud.ts
+
 import { NS } from "@ns";
 import {
   PurchaseEvaluator,
@@ -8,7 +9,7 @@ import {
 } from "/shared/types/finance.js";
 import { runEvaluator } from "../evaluator-runner.js";
 import { loadBnMults, adjustPriorityByMult } from "lib/utils.js";
-import { PATHS } from "/infrastructure/runtime/paths";
+import { PATHS } from "/infrastructure/runtime/paths.js";
 
 const CLOUD_PREFIX = "cloud-";
 const INITIAL_RAM = 8;
@@ -19,17 +20,24 @@ export const CloudEvaluator: PurchaseEvaluator = {
   category: "PURCHASED_SERVER",
 
   getRequests(ns: NS): PurchaseRequest[] {
-    const bnMults = loadBnMults(ns);
+    const bnMults = loadBnMults(ns) as Record<string, number>;
 
-    // 🔴 Hard Check: Cloud Server Limit aus BN Multipliers (v3.01+)
+    // 🔴 1. Hard Checks & BitNode Multiplikator-Erfassung (PascalCase + snake_case)
     const limitMult =
-      bnMults.CloudServerLimit ?? bnMults.CloudServerLimit ?? 1.0;
+      bnMults.CloudServerLimit ?? bnMults.cloud_server_limit ?? 1.0;
     const limit = ns.cloud.getServerLimit();
     if (limit === 0 || limitMult <= 0) return [];
 
-    // Kosten-Multiplikator berechnen
-    const costMult = bnMults.CloudServerCost ?? bnMults.CloudServerCost ?? 1.0;
-    const efficiencyMult = costMult > 0 ? 1 / costMult : 1.0;
+    const costMult =
+      bnMults.CloudServerCost ?? bnMults.cloud_server_cost ?? 1.0;
+    const scriptMoneyMult =
+      bnMults.ScriptHackMoney ?? bnMults.script_hack_money ?? 1.0;
+
+    // 📊 Effizienzfakor aus Kosten und Hacking-Ertragspotenzial
+    // Wenn Hacking-Einnahmen im BN beschnitten sind, sinkt der Wert von Server-RAM leicht
+    const costEfficiency = costMult > 0 ? 1 / costMult : 1.0;
+    const yieldFactor = Math.max(0.1, Math.min(1.0, scriptMoneyMult));
+    const overallEfficiencyMult = costEfficiency * yieldFactor;
 
     const maxRam = ns.cloud.getRamLimit();
     const owned = ns.cloud.getServerNames();
@@ -38,7 +46,7 @@ export const CloudEvaluator: PurchaseEvaluator = {
 
     const requests: PurchaseRequest[] = [];
 
-    // 1. NEUE SERVER KAUFEN
+    // 🟢 2. NEUE SERVER KAUFEN
     if (owned.length < limit) {
       const cost = ns.cloud.getServerCost(INITIAL_RAM);
       if (cost > 0 && Number.isFinite(cost)) {
@@ -49,9 +57,15 @@ export const CloudEvaluator: PurchaseEvaluator = {
           ? PurchasePriority.LOW
           : PurchasePriority.HIGH;
 
-        const priority = adjustPriorityByMult(basePriority, efficiencyMult);
+        const priority = adjustPriorityByMult(
+          basePriority,
+          overallEfficiencyMult,
+        );
         const baseScore = isHomeUnderpowered ? 10 : 95;
-        const score = Math.max(1, Math.floor(baseScore * efficiencyMult));
+        const score = Math.max(
+          1,
+          Math.floor(baseScore * overallEfficiencyMult),
+        );
 
         requests.push({
           id: `cloud-buy-${CLOUD_PREFIX}${index}`,
@@ -68,7 +82,7 @@ export const CloudEvaluator: PurchaseEvaluator = {
       }
     }
 
-    // 2. BESTEHENDE SERVER UPGRADEN
+    // 🟢 3. BESTEHENDE SERVER UPGRADEN
     for (const hostname of owned) {
       const currentRam = ns.getServerMaxRam(hostname);
       const nextRam = currentRam * 2;
@@ -99,8 +113,11 @@ export const CloudEvaluator: PurchaseEvaluator = {
             }
           }
 
-          const priority = adjustPriorityByMult(basePriority, efficiencyMult);
-          score = Math.max(1, Math.floor(score * efficiencyMult));
+          const priority = adjustPriorityByMult(
+            basePriority,
+            overallEfficiencyMult,
+          );
+          score = Math.max(1, Math.floor(score * overallEfficiencyMult));
 
           requests.push({
             id: `cloud-upgrade-${hostname}-${nextRam}gb`,

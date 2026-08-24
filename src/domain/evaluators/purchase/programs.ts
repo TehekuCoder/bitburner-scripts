@@ -103,26 +103,34 @@ export const ProgramEvaluator: PurchaseEvaluator = {
     }
 
     // 2. Darkweb-Programme evaluieren
+    const playerMoney = ns.getServerMoneyAvailable("home");
+
     for (const [prog, meta] of Object.entries(PROGRAM_GATES) as [
       ProgramName,
       ProgramMeta,
     ][]) {
-      if (!meta) continue;
-
-      // Überspringen, falls das Programm bereits auf home existiert
-      if (ns.fileExists(prog, "home")) continue;
-
-      if (currentHacking < meta.reqHacking) continue;
+      if (
+        !meta ||
+        ns.fileExists(prog, "home") ||
+        currentHacking < meta.reqHacking
+      )
+        continue;
 
       const cost = ns.singularity.getDarkwebProgramCost(prog);
       if (cost > 0 && Number.isFinite(cost)) {
         let priority = meta.priority;
-        if (prog === "Formulas.exe") {
-          const playerMoney = ns.getServerMoneyAvailable("home");
-          // Erst auf MEDIUM setzen, wenn $5B leicht bezahlbar sind, sonst IDLE / LOW
-          if (playerMoney < cost) {
-            priority = PurchasePriority.LOW;
-          }
+
+        // Dynamische Notbremse: Wenn ein Programm mehr als 50% des aktuellen Vermögens kostet,
+        // wird die Priorität gesenkt (ausgenommen BruteSSH & FTPCrack im Early-Game).
+        const isEssentialEarlyPort =
+          prog === "BruteSSH.exe" || prog === "FTPCrack.exe";
+        if (!isEssentialEarlyPort && cost > playerMoney * 0.5) {
+          priority = PurchasePriority.LOW;
+        }
+
+        // Formulas.exe gesondert behandeln (Kosten-Nutzen-Schwelle)
+        if (prog === "Formulas.exe" && playerMoney < cost * 2) {
+          priority = PurchasePriority.LOW;
         }
 
         requests.push({
