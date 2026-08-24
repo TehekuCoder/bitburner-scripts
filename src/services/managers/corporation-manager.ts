@@ -1,19 +1,79 @@
-import { CityName, CorpMaterialName, NS } from "@ns";
-import {
-  CORP_CONFIG,
-  CORP_RESEARCH_PRIORITY,
-  CorpPhase,
-} from "../../shared/constants/corporation";
-import {
-  setupOfficeAndJobs,
-  upgradeWarehouseToLevel,
-  purchaseBoosterMaterials,
-  maintainEmployeeMorale,
-  buyCorporationUpgrades,
-} from "/domain/corporation/corporation-helpers";
+import { NS } from "@ns";
+import { CORP_CONFIG, CorpPhase } from "../../shared/constants/corporation";
+import { patchCorporationState } from "../../infrastructure/state/state";
+import { setupOfficeAndJobs } from "../../domain/corporation/corporation-helpers";
+import { CorpPhaseHandler } from "../../domain/corporation/types";
 
-let spikeState: "IDLE" | "ACCUMULATING" | "SELLING" = "IDLE";
-let spikeTicks = 0;
+// Import aller Phasen-Handler
+import {
+  InitAgriPhaseHandler,
+  AgriBoostPhaseHandler,
+} from "../../domain/corporation/phases/phase-agri";
+import { InvestorPhaseHandler } from "../../domain/corporation/phases/phase-investor";
+import {
+  InitChemPhaseHandler,
+  ExportLoopPhaseHandler,
+} from "../../domain/corporation/phases/phase-chem";
+import {
+  InitTobaccoPhaseHandler,
+  TobaccoLoopPhaseHandler,
+} from "../../domain/corporation/phases/phase-tobacco";
+
+// Registrierung der Handlungs-Strategien für jede Phase
+const handlers: Record<CorpPhase, CorpPhaseHandler> = {
+  INIT_AGRI: new InitAgriPhaseHandler(),
+  AGRI_BOOST: new AgriBoostPhaseHandler(),
+
+  INVESTOR_1: new InvestorPhaseHandler({
+    divisionNames: [CORP_CONFIG.divisions.agri.name],
+    targetOffer: 200_000_000_000,
+    nextPhase: "INIT_CHEM",
+    resetJobs: (ns) => {
+      for (const city of CORP_CONFIG.cities) {
+        setupOfficeAndJobs(
+          ns,
+          CORP_CONFIG.divisions.agri.name,
+          city,
+          6,
+          CORP_CONFIG.jobDistribution.support6,
+        );
+      }
+    },
+  }),
+
+  INIT_CHEM: new InitChemPhaseHandler(),
+  EXPORT_LOOP: new ExportLoopPhaseHandler(),
+
+  INVESTOR_2: new InvestorPhaseHandler({
+    divisionNames: [
+      CORP_CONFIG.divisions.agri.name,
+      CORP_CONFIG.divisions.chem.name,
+    ],
+    targetOffer: 2_000_000_000_000,
+    nextPhase: "INIT_TOBACCO",
+    resetJobs: (ns) => {
+      for (const city of CORP_CONFIG.cities) {
+        setupOfficeAndJobs(
+          ns,
+          CORP_CONFIG.divisions.agri.name,
+          city,
+          6,
+          CORP_CONFIG.jobDistribution.support6,
+        );
+        setupOfficeAndJobs(
+          ns,
+          CORP_CONFIG.divisions.chem.name,
+          city,
+          6,
+          CORP_CONFIG.jobDistribution.chem6,
+        );
+      }
+    },
+  }),
+
+  INIT_TOBACCO: new InitTobaccoPhaseHandler(),
+  TOBACCO_LOOP: new TobaccoLoopPhaseHandler(),
+};
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -21,578 +81,58 @@ export async function main(ns: NS): Promise<void> {
 
   const corp = ns.corporation;
   let currentPhase: CorpPhase = "INIT_AGRI";
+  const recentLogs: string[] = [];
 
-  ns.print(`[CORP] Manager gestartet. Starte Phase: ${currentPhase}`);
+  const log = (msg: string) => {
+    ns.print(msg);
+    recentLogs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+    if (recentLogs.length > 5) recentLogs.shift();
+  };
+
+  log(`[CORP] Manager gestartet. Starte Phase: ${currentPhase}`);
 
   while (true) {
     await corp.nextUpdate();
 
+    // 1. Grund-Prüfung: Corporation gründen falls nicht vorhanden
     if (!corp.hasCorporation()) {
-      ns.print("[CORP] Keine Corporation vorhanden. Versuche Gründung...");
       if (corp.createCorporation(CORP_CONFIG.corpName, true)) {
-        ns.print(`[CORP] ${CORP_CONFIG.corpName} erfolgreich gegründet!`);
+        log(`[CORP] ${CORP_CONFIG.corpName} erfolgreich gegründet!`);
       } else {
-        ns.print("[CORP] Fehler bei Gründung (Zu wenig Kapital?)");
+        log("[CORP] Fehler bei Gründung (Zu wenig Kapital?)");
         continue;
       }
     }
 
-    switch (currentPhase) {
-      case "INIT_AGRI":
-        currentPhase = await handleInitAgri(ns);
-        break;
-      case "AGRI_BOOST":
-        currentPhase = await handleAgriBoost(ns);
-        break;
-      case "INVESTOR_1":
-        currentPhase = await handleInvestor1(ns);
-        break;
-      case "INIT_CHEM":
-        currentPhase = await handleInitChem(ns);
-        break;
-      case "EXPORT_LOOP":
-        currentPhase = await handleExportLoop(ns);
-        break;
-      case "INVESTOR_2":
-        currentPhase = await handleInvestor2(ns);
-        break;
-      case "INIT_TOBACCO":
-        currentPhase = await handleInitTobacco(ns);
-        break;
-      case "TOBACCO_LOOP":
-        await handleTobaccoLoop(ns);
-        break;
-    }
-  }
-}
+    // 2. Aktuellen Phasen-Handler abrufen und ausführen
+    // Explizite Typierung für handler und nextPhase hinzufügen:
+    const handler: CorpPhaseHandler | undefined = handlers[currentPhase];
 
-async function handleInitAgri(ns: NS): Promise<CorpPhase> {
-  const corp = ns.corporation;
-  const { agri } = CORP_CONFIG.divisions;
-
-  if (!corp.getCorporation().divisions.includes(agri.name)) {
-    corp.expandIndustry(agri.type, agri.name);
-  }
-
-  for (const city of CORP_CONFIG.cities) {
-    if (!corp.getDivision(agri.name).cities.includes(city)) {
-      corp.expandCity(agri.name, city);
-    }
-    if (!corp.hasWarehouse(agri.name, city)) {
-      corp.purchaseWarehouse(agri.name, city);
-    }
-
-    corp.setSmartSupply(agri.name, city, true);
-    corp.setSmartSupplyOption(agri.name, city, "Water", "leftovers");
-    corp.setSmartSupplyOption(agri.name, city, "Chemicals", "leftovers");
-
-    corp.sellMaterial(agri.name, city, "Plants", "MAX", "MP");
-    corp.sellMaterial(agri.name, city, "Food", "MAX", "MP");
-  }
-
-  return "AGRI_BOOST";
-}
-
-async function handleAgriBoost(ns: NS): Promise<CorpPhase> {
-  const { agri } = CORP_CONFIG.divisions;
-  let allCitiesReady = true;
-
-  for (const city of CORP_CONFIG.cities) {
-    setupOfficeAndJobs(
-      ns,
-      agri.name,
-      city,
-      6,
-      CORP_CONFIG.jobDistribution.support6,
-    );
-    upgradeWarehouseToLevel(ns, agri.name, city, 3);
-
-    const ready = await purchaseBoosterMaterials(
-      ns,
-      agri.name,
-      city,
-      CORP_CONFIG.agriBoosterR1,
-    );
-    maintainEmployeeMorale(ns, agri.name, city);
-
-    if (!ready) {
-      allCitiesReady = false;
-    }
-  }
-
-  if (allCitiesReady) {
-    ns.print("[CORP] Phase AGRI_BOOST abgeschlossen! Alle Lager sind bereit.");
-    return "INVESTOR_1";
-  }
-
-  return "AGRI_BOOST";
-}
-
-async function handleInvestor1(ns: NS): Promise<CorpPhase> {
-  const corp = ns.corporation;
-  const { agri } = CORP_CONFIG.divisions;
-
-  if (spikeState === "IDLE") {
-    ns.print("[CORP] Starte Profit-Spike: Stoppe Verkäufe für 2 Ticks...");
-    for (const city of CORP_CONFIG.cities) {
-      corp.sellMaterial(agri.name, city, "Plants", "0", "MP");
-      corp.sellMaterial(agri.name, city, "Food", "0", "MP");
-    }
-    spikeState = "ACCUMULATING";
-    spikeTicks = 0;
-    return "INVESTOR_1";
-  }
-
-  if (spikeState === "ACCUMULATING") {
-    spikeTicks++;
-    if (spikeTicks < 2) return "INVESTOR_1";
-
-    ns.print(
-      "[CORP] Lager gefüllt! Stelle Belegschaft auf Business/Operations & öffne Ventile...",
-    );
-    for (const city of CORP_CONFIG.cities) {
-      setupOfficeAndJobs(ns, agri.name, city, 6, {
-        Business: 3,
-        Operations: 3,
-      });
-      corp.sellMaterial(agri.name, city, "Plants", "MAX", "MP");
-      corp.sellMaterial(agri.name, city, "Food", "MAX", "MP");
-    }
-    spikeState = "SELLING";
-    return "INVESTOR_1";
-  }
-
-  if (spikeState === "SELLING") {
-    const offer = corp.getInvestmentOffer();
-    ns.print(`[CORP] Investor 1 Angebot: ${ns.format.number(offer.funds)} $`);
-
-    if (offer.funds === 0) {
-      ns.print(
-        "[CORP] Keine Investitionsangebote für Runde 1 verfügbar. Überspringe...",
-      );
-      for (const city of CORP_CONFIG.cities) {
-        setupOfficeAndJobs(
-          ns,
-          agri.name,
-          city,
-          6,
-          CORP_CONFIG.jobDistribution.support6,
-        );
-      }
-      spikeState = "IDLE";
-      return "INIT_CHEM";
-    }
-
-    if (offer.funds >= 200_000_000_000) {
-      if (corp.acceptInvestmentOffer()) {
-        ns.print(
-          `[CORP] Erfolgreich Investor 1 angenommen! Kapital: ${ns.format.number(offer.funds)} $`,
-        );
-
-        for (const city of CORP_CONFIG.cities) {
-          setupOfficeAndJobs(
-            ns,
-            agri.name,
-            city,
-            6,
-            CORP_CONFIG.jobDistribution.support6,
-          );
-        }
-        spikeState = "IDLE";
-        return "INIT_CHEM";
-      }
-    }
-  }
-
-  return "INVESTOR_1";
-}
-
-async function handleInitChem(ns: NS): Promise<CorpPhase> {
-  const corp = ns.corporation;
-  const { chem } = CORP_CONFIG.divisions;
-
-  ns.print("[CORP] Gründe Chemical-Division...");
-  if (!corp.getCorporation().divisions.includes(chem.name)) {
-    corp.expandIndustry(chem.type, chem.name);
-  }
-
-  for (const city of CORP_CONFIG.cities) {
-    if (!corp.getDivision(chem.name).cities.includes(city)) {
-      corp.expandCity(chem.name, city);
-    }
-    if (!corp.hasWarehouse(chem.name, city)) {
-      corp.purchaseWarehouse(chem.name, city);
-    }
-
-    corp.setSmartSupply(chem.name, city, true);
-    corp.setSmartSupplyOption(chem.name, city, "Plants", "leftovers");
-    corp.setSmartSupplyOption(chem.name, city, "Water", "leftovers");
-
-    setupOfficeAndJobs(
-      ns,
-      chem.name,
-      city,
-      6,
-      CORP_CONFIG.jobDistribution.chem6,
-    );
-    upgradeWarehouseToLevel(ns, chem.name, city, 3);
-    corp.sellMaterial(chem.name, city, "Chemicals", "MAX", "MP");
-  }
-
-  return "EXPORT_LOOP";
-}
-
-async function handleExportLoop(ns: NS): Promise<CorpPhase> {
-  const { agri, chem } = CORP_CONFIG.divisions;
-
-  ns.print("[CORP] Richte Export-Routen mit IPROD * -1 ein...");
-
-  for (const city of CORP_CONFIG.cities) {
-    safeExportMaterial(
-      ns,
-      chem.name,
-      city,
-      agri.name,
-      city,
-      "Chemicals",
-      "IPROD * -1",
-    );
-    safeExportMaterial(
-      ns,
-      agri.name,
-      city,
-      chem.name,
-      city,
-      "Plants",
-      "IPROD * -1",
-    );
-
-    maintainEmployeeMorale(ns, agri.name, city);
-    maintainEmployeeMorale(ns, chem.name, city);
-  }
-
-  // Nebenbei günstige Basis-Upgrades mitnehmen (5% Budget)
-  buyCorporationUpgrades(ns, 0.05);
-
-  ns.print("[CORP] Export-Loop aktiv! Pflanzenqualität steigt...");
-  return "INVESTOR_2";
-}
-
-async function handleInvestor2(ns: NS): Promise<CorpPhase> {
-  const corp = ns.corporation;
-  const { agri, chem } = CORP_CONFIG.divisions;
-
-  if (spikeState === "IDLE") {
-    ns.print("[CORP] Starte Investor-2 Profit-Spike: Stoppe Verkäufe...");
-    for (const city of CORP_CONFIG.cities) {
-      corp.sellMaterial(agri.name, city, "Plants", "0", "MP");
-      corp.sellMaterial(agri.name, city, "Food", "0", "MP");
-      corp.sellMaterial(chem.name, city, "Chemicals", "0", "MP");
-    }
-    spikeState = "ACCUMULATING";
-    spikeTicks = 0;
-    return "INVESTOR_2";
-  }
-
-  if (spikeState === "ACCUMULATING") {
-    spikeTicks++;
-    if (spikeTicks < 2) return "INVESTOR_2";
-
-    ns.print("[CORP] Öffne Ventile für Investor 2...");
-    for (const city of CORP_CONFIG.cities) {
-      setupOfficeAndJobs(ns, agri.name, city, 6, {
-        Business: 3,
-        Operations: 3,
-      });
-      setupOfficeAndJobs(ns, chem.name, city, 6, {
-        Business: 3,
-        Operations: 3,
-      });
-
-      corp.sellMaterial(agri.name, city, "Plants", "MAX", "MP");
-      corp.sellMaterial(agri.name, city, "Food", "MAX", "MP");
-      corp.sellMaterial(chem.name, city, "Chemicals", "MAX", "MP");
-    }
-    spikeState = "SELLING";
-    return "INVESTOR_2";
-  }
-
-  if (spikeState === "SELLING") {
-    const offer = corp.getInvestmentOffer();
-    ns.print(`[CORP] Investor 2 Angebot: ${ns.format.number(offer.funds)} $`);
-
-    if (offer.funds === 0) {
-      ns.print(
-        "[CORP] Keine weiteren Investoren-Angebote verfügbar! Überspringe Investor 2...",
-      );
-      for (const city of CORP_CONFIG.cities) {
-        setupOfficeAndJobs(
-          ns,
-          agri.name,
-          city,
-          6,
-          CORP_CONFIG.jobDistribution.support6,
-        );
-        setupOfficeAndJobs(
-          ns,
-          chem.name,
-          city,
-          6,
-          CORP_CONFIG.jobDistribution.chem6,
-        );
-      }
-      spikeState = "IDLE";
-      return "INIT_TOBACCO";
-    }
-
-    if (offer.funds >= 2_000_000_000_000) {
-      if (corp.acceptInvestmentOffer()) {
-        ns.print(
-          `[CORP] Erfolgreich Investor 2 angenommen! Kapital: ${ns.format.number(offer.funds)} $`,
-        );
-
-        for (const city of CORP_CONFIG.cities) {
-          setupOfficeAndJobs(
-            ns,
-            agri.name,
-            city,
-            6,
-            CORP_CONFIG.jobDistribution.support6,
-          );
-          setupOfficeAndJobs(
-            ns,
-            chem.name,
-            city,
-            6,
-            CORP_CONFIG.jobDistribution.chem6,
-          );
-        }
-        spikeState = "IDLE";
-        return "INIT_TOBACCO";
-      }
-    }
-  }
-
-  return "INVESTOR_2";
-}
-
-async function handleInitTobacco(ns: NS): Promise<CorpPhase> {
-  const corp = ns.corporation;
-  const { tobacco, agri } = CORP_CONFIG.divisions;
-
-  ns.print("[CORP] Gründe Endgame-Sparte: Tobacco...");
-  if (!corp.getCorporation().divisions.includes(tobacco.name)) {
-    corp.expandIndustry(tobacco.type, tobacco.name);
-  }
-
-  for (const city of CORP_CONFIG.cities) {
-    if (!corp.getDivision(tobacco.name).cities.includes(city)) {
-      corp.expandCity(tobacco.name, city);
-    }
-    if (!corp.hasWarehouse(tobacco.name, city)) {
-      corp.purchaseWarehouse(tobacco.name, city);
-    }
-
-    corp.setSmartSupply(tobacco.name, city, true);
-    upgradeWarehouseToLevel(ns, tobacco.name, city, 10);
-
-    safeExportMaterial(
-      ns,
-      agri.name,
-      city,
-      tobacco.name,
-      city,
-      "Plants",
-      "IPROD * -1",
-    );
-
-    if (city === CORP_CONFIG.mainCity) {
-      setupOfficeAndJobs(
+    if (handler) {
+      const nextPhase: CorpPhase = await handler.execute({
         ns,
-        tobacco.name,
-        city,
-        60,
-        CORP_CONFIG.jobDistribution.tobaccoHQ60,
-      );
-    } else {
-      setupOfficeAndJobs(ns, tobacco.name, city, 12, {
-        "Research & Development": 12,
+        log,
+        currentPhase,
       });
-    }
-  }
 
-  return "TOBACCO_LOOP";
-}
-
-async function handleTobaccoLoop(ns: NS): Promise<void> {
-  const corp = ns.corporation;
-  const { tobacco } = CORP_CONFIG.divisions;
-  const mainCity = CORP_CONFIG.mainCity;
-
-  // A. Moral & Energie auf 100% halten
-  for (const city of CORP_CONFIG.cities) {
-    maintainEmployeeMorale(ns, tobacco.name, city);
-  }
-
-  // B. Forschungs-Manager
-  for (const tech of CORP_RESEARCH_PRIORITY) {
-    if (!corp.hasResearched(tobacco.name, tech)) {
-      const cost = corp.getResearchCost(tobacco.name, tech);
-      if (corp.getDivision(tobacco.name).researchPoints >= cost) {
-        try {
-          corp.research(tobacco.name, tech);
-          ns.print(`[CORP] Erforscht: ${tech}`);
-        } catch {
-          // Ignoriere fehlende Prerequisites
-        }
+      if (nextPhase !== currentPhase) {
+        log(`[CORP] Phasenwechsel: ${currentPhase} ➔ ${nextPhase}`);
+        currentPhase = nextPhase;
       }
     }
+
+    // 3. Zustand für das Dashboard / UI synchronisieren
+    const corpInfo = corp.getCorporation();
+    patchCorporationState(ns, {
+      hasCorp: true,
+      corpName: corpInfo.name,
+      funds: corpInfo.funds,
+      revenue: corpInfo.revenue,
+      expenses: corpInfo.expenses,
+      divisions: corpInfo.divisions,
+      stage: currentPhase,
+      investmentOffer: corp.getInvestmentOffer().funds,
+      corpRecentLogs: recentLogs,
+    });
   }
-
-  // C. Produkt-Lifecycle & Automatische Erstellung
-  const divInfo = corp.getDivision(tobacco.name);
-  const products = divInfo.products;
-  const hasTA2 = corp.hasResearched(tobacco.name, "Market-TA.II");
-
-  // 1. Fertige Produkte zum Verkauf freigeben
-  for (const prodName of products) {
-    const prod = corp.getProduct(tobacco.name, mainCity, prodName);
-    if (prod.developmentProgress === 100) {
-      if (hasTA2) {
-        corp.setProductMarketTA2(tobacco.name, prodName, true);
-      } else {
-        // Ohne TA.II verkaufen wir zu MP * 2
-        corp.sellProduct(
-          tobacco.name,
-          mainCity,
-          prodName,
-          "MAX",
-          "MP * 2",
-          true,
-        );
-      }
-    }
-  }
-
-  // 2. Prüfen, ob aktuell noch ein Produkt entwickelt wird (< 100%)
-  const isDeveloping = products.some(
-    (p) => corp.getProduct(tobacco.name, mainCity, p).developmentProgress < 100,
-  );
-
-  // 3. Maximale Anzahl an gleichzeitigen Produkten ermitteln
-  let maxProducts = 3;
-  if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.I")) maxProducts++;
-  if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.II")) maxProducts++;
-
-  // 4. Neues Produkt starten, wenn aktuell keins in Entwicklung ist
-  if (!isDeveloping) {
-    // Wenn Slot-Limit erreicht ist, ältestes Produkt einstellen
-    if (products.length >= maxProducts) {
-      const oldestProduct = products[0];
-      corp.discontinueProduct(tobacco.name, oldestProduct);
-      ns.print(`[CORP] Ältestes Produkt ${oldestProduct} eingestellt.`);
-
-      // Aus lokaler Liste entfernen, damit der Name sofort wieder frei wird
-      const idx = products.indexOf(oldestProduct);
-      if (idx !== -1) products.splice(idx, 1);
-    }
-
-    // Generischen, nächsten freien Namen ermitteln (Tobacco-1, Tobacco-2, ...)
-    let prodIndex = 1;
-    while (products.includes(`Tobacco-${prodIndex}`)) {
-      prodIndex++;
-    }
-    const newProdName = `Tobacco-${prodIndex}`;
-
-    // Budget festlegen (z. B. max. 1 Milliarde $ oder 10% des Guthabens)
-    const availableFunds = corp.getCorporation().funds;
-    const totalInvestment = Math.min(
-      1_000_000_000,
-      Math.max(2_000_000, availableFunds * 0.1),
-    );
-
-    if (totalInvestment >= 2_000_000) {
-      const halfInvestment = totalInvestment / 2;
-
-      corp.makeProduct(
-        tobacco.name,
-        mainCity,
-        newProdName,
-        halfInvestment,
-        halfInvestment,
-      );
-      ns.print(
-        `[CORP] Neues Produkt gestartet: ${newProdName} (Budget: ${ns.format.number(totalInvestment)} $)`,
-      );
-    }
-  }
-
-  // D. Upgrades & Marketing Skalierung
-  if (corp.getCorporation().funds > 1_000_000_000) {
-    buyCorporationUpgrades(ns, 0.1);
-
-    const wilsonCost = corp.getUpgradeLevelCost("Wilson Analytics");
-    if (corp.getCorporation().funds >= wilsonCost) {
-      corp.levelUpgrade("Wilson Analytics");
-      ns.print(
-        `[CORP] Wilson Analytics auf Lvl ${corp.getUpgradeLevel("Wilson Analytics")} erhöht!`,
-      );
-    } else {
-      const advertCost = corp.getHireAdVertCost(tobacco.name);
-      if (corp.getCorporation().funds >= advertCost * 2) {
-        corp.hireAdVert(tobacco.name);
-      }
-    }
-  }
-
-  // E. IPO & Dividenden
-  const corpData = corp.getCorporation();
-  if (!corpData.public) {
-    if (corpData.revenue > 100_000_000_000) {
-      corp.goPublic(0);
-      ns.print("[CORP] ** PHILIP MATRIX IST AN DIE BÖRSE GEGANGEN! **");
-    }
-  } else {
-    corp.issueDividends(0.5);
-  }
-}
-
-function safeExportMaterial(
-  ns: NS,
-  sourceDiv: string,
-  sourceCity: CityName,
-  targetDiv: string,
-  targetCity: CityName,
-  material: CorpMaterialName,
-  amount: string,
-): void {
-  const corp = ns.corporation;
-  const mat = corp.getMaterial(sourceDiv, sourceCity, material);
-
-  const existing = mat.exports.find(
-    (e) => e.division === targetDiv && e.city === targetCity,
-  );
-
-  if (existing) {
-    const normalizedExisting = existing.amount.replace(/\s+/g, "");
-    const normalizedNew = amount.replace(/\s+/g, "");
-    if (normalizedExisting === normalizedNew) return;
-
-    corp.cancelExportMaterial(
-      sourceDiv,
-      sourceCity,
-      targetDiv,
-      targetCity,
-      material,
-    );
-  }
-
-  corp.exportMaterial(
-    sourceDiv,
-    sourceCity,
-    targetDiv,
-    targetCity,
-    material,
-    amount,
-  );
 }

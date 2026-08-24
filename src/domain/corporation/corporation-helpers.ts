@@ -189,3 +189,47 @@ export function buyCorporationUpgrades(ns: NS, maxBudgetRatio = 0.1): void {
     }
   }
 }
+
+/**
+ * Exportiert Materialien sicher zwischen zwei Sparten,
+ * ohne doppelte Export-Routen mit identischem Wert anzulegen.
+ */
+export function safeExportMaterial(
+  ns: NS,
+  sourceDiv: string,
+  sourceCity: CityName,
+  targetDiv: string,
+  targetCity: CityName,
+  material: CorpMaterialName,
+  amount: string,
+): void {
+  const corp = ns.corporation;
+  const mat = corp.getMaterial(sourceDiv, sourceCity, material);
+
+  const existing = mat.exports.find(
+    (e) => e.division === targetDiv && e.city === targetCity,
+  );
+
+  if (existing) {
+    const normalizedExisting = existing.amount.replace(/\s+/g, "");
+    const normalizedNew = amount.replace(/\s+/g, "");
+    if (normalizedExisting === normalizedNew) return;
+
+    corp.cancelExportMaterial(
+      sourceDiv,
+      sourceCity,
+      targetDiv,
+      targetCity,
+      material,
+    );
+  }
+
+  corp.exportMaterial(
+    sourceDiv,
+    sourceCity,
+    targetDiv,
+    targetCity,
+    material,
+    amount,
+  );
+}
