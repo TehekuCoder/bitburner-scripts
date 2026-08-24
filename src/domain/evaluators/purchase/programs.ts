@@ -116,10 +116,19 @@ export const ProgramEvaluator: PurchaseEvaluator = {
 
       const cost = ns.singularity.getDarkwebProgramCost(prog);
       if (cost > 0 && Number.isFinite(cost)) {
+        let priority = meta.priority;
+        if (prog === "Formulas.exe") {
+          const playerMoney = ns.getServerMoneyAvailable("home");
+          // Erst auf MEDIUM setzen, wenn $5B leicht bezahlbar sind, sonst IDLE / LOW
+          if (playerMoney < cost) {
+            priority = PurchasePriority.LOW;
+          }
+        }
+
         requests.push({
           id: `program-${prog}`,
           category: "DARKNET_PROGRAM" as PurchaseCategory,
-          priority: meta.priority,
+          priority,
           score: meta.score,
           cost,
           description: `Software: ${prog}`,

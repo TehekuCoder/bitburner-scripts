@@ -4,11 +4,13 @@ import { breakAndInfectNetwork, getAllServers } from "/infrastructure/network/ne
 import { PATHS } from "/infrastructure/runtime/paths";
 import { loadState, patchState } from "/infrastructure/state/state";
 import { REFRESH_INTERVALS, HOME_RESERVED_RAM_LOW, HOME_RESERVED_RAM_MID, HOME_RESERVED_RAM_HIGH, HOME_RESERVED_RAM_ULTRA } from "/shared/constants/game-defaults";
+import { getExactBitNode } from "/lib/utils";
 
 
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
+    const currentBitnode = getExactBitNode(ns);
 
   if (
     ns.fileExists(PATHS.infrastructure.logging.logger, "home") &&
@@ -41,6 +43,8 @@ export async function main(ns: NS): Promise<void> {
   const defaultTarget = resolveFallbackTarget(ns);
   const existingState = (loadState(ns) || {}) as Record<string, any>;
   patchState(ns, {
+          currentBitNode: currentBitnode.node,
+      currentBitNodeLevel: currentBitnode.level,
     strategy: existingState.strategy || "MONEY",
     progressBar: "Kernel operativ. Warte auf Subsysteme.",
     allServers: existingState.allServers || [],

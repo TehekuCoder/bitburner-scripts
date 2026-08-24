@@ -10,7 +10,6 @@ import { REFRESH_INTERVALS } from "/shared/constants/game-defaults";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  const currentBitnode = getExactBitNode(ns);
   const logger = new LoggerClient(ns, "Dispatcher");
 
   if (ns.singularity === undefined) {
@@ -66,8 +65,6 @@ export async function main(ns: NS): Promise<void> {
 
     // 📝 State-Patching
     patchState(ns, {
-      currentBitNode: currentBitnode.node,
-      currentBitNodeLevel: currentBitnode.level,
       strategy: mode,
       isDominionActive: evalRes.isDominionActive,
       isBN2GangMode: evalRes.isBN2GangMode,

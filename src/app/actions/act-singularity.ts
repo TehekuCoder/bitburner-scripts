@@ -32,10 +32,17 @@ export async function main(ns: NS): Promise<void> {
 
     case "player-purchase-aug-batch": {
       try {
-        const batch = JSON.parse(String(ns.args[1] ?? "[]")) as { faction: FactionName; name: string }[];
+        const batch = JSON.parse(String(ns.args[1] ?? "[]")) as {
+          faction: FactionName;
+          name: string;
+        }[];
         for (const item of batch) {
           if (item.faction && item.name) {
-            ns.singularity.purchaseAugmentation(item.faction, item.name);
+            const success = ns.singularity.purchaseAugmentation(
+              item.faction,
+              item.name,
+            );
+            if (!success) break; // Abbrechen, falls Budget oder Prereqs fehlschlagen
           }
         }
       } catch {}
@@ -45,7 +52,9 @@ export async function main(ns: NS): Promise<void> {
     case "player-purchase-nfg": {
       const faction = String(ns.args[1] ?? "") as FactionName;
       if (faction) {
-        while (ns.singularity.purchaseAugmentation(faction, "NeuroFlux Governor")) {}
+        while (
+          ns.singularity.purchaseAugmentation(faction, "NeuroFlux Governor")
+        ) {}
       }
       break;
     }

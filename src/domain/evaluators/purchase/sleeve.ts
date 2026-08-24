@@ -124,7 +124,8 @@ export const SleeveEvaluator: PurchaseEvaluator = {
       }
     }
 
-    return requests.sort((a, b) => a.cost - b.cost);
+    // sleeve.ts (am Ende von getRequests)
+    return requests.sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 6); // Max 6 Augmentationen gleichzeitig anfragen
   },
 };
 

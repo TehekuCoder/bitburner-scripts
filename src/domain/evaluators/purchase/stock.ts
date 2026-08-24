@@ -169,10 +169,15 @@ export const StockEvaluator: PurchaseEvaluator = {
           const targetCost = affordableShares * sharePrice + TRANSACTION_FEE;
           const score = Math.floor(candidate.strength * 100);
 
+          const priority =
+            candidate.strength > 0.25
+              ? PurchasePriority.MEDIUM
+              : PurchasePriority.LOW;
+
           requests.push({
             id: `stock-invest-${sym}-${candidate.type}`,
             category: "STOCK_TRADE" as PurchaseCategory,
-            priority: PurchasePriority.IDLE,
+            priority, // <-- Nicht mehr IDLE!
             score,
             cost: targetCost,
             description: `Aktien-Kauf: ${sym} (${candidate.type}) [Forecast: ${(candidate.forecast * 100).toFixed(1)}%]`,

@@ -9,27 +9,26 @@ import { runEvaluator } from "../evaluator-runner.js";
 import { PATHS } from "/infrastructure/runtime/paths";
 
 const CORP_NAME = "Philip Matrix";
-const CORP_FOUNDING_COST = 150_000_000_000; // 150 Mrd. $ außerhalb BN3
 
 export const CorporationEvaluator: PurchaseEvaluator = {
   category: "CORPORATION" as PurchaseCategory,
 
   getRequests(ns: NS): PurchaseRequest[] {
-    // 1. API-Check
     if (!Boolean(ns.corporation)) return [];
-
-    // 2. Wenn bereits gegruendet -> Keine Anfragen
     if (ns.corporation.hasCorporation()) return [];
 
-    // 3. Kaufanfrage für die Erstgründung
+    // In BN3 ist die Gründung kostenlos ($0), sonst $150B
+    const currentBn = ns.getResetInfo().currentNode;
+    const cost = currentBn === 3 ? 0 : 150_000_000_000; // 150 Mrd. $ außerhalb BN3
+
     return [
       {
         id: "corp-create-initial",
         category: "CORPORATION" as PurchaseCategory,
-        priority: PurchasePriority.HIGH,
-        score: 95, // Sehr hohes Scaling, da Corp die stärkste Geldquelle im Game ist
-        cost: CORP_FOUNDING_COST,
-        description: `Corporation gründen: "${CORP_NAME}" ($150B)`,
+        priority: PurchasePriority.CRITICAL, // In BN3 sofort gründen!
+        score: 100,
+        cost,
+        description: `Corporation gründen: "${CORP_NAME}" (${cost === 0 ? "GRATIS in BN3" : "$150B"})`,
         action: {
           script: PATHS.app.actions.corporation,
           args: ["corp-create", CORP_NAME],
