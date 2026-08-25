@@ -28,7 +28,7 @@ export async function main(ns: NS): Promise<void> {
   ns.ui.openTail();
 
   const corp = ns.corporation;
-  const bnMults = loadBnMults(ns) as Record<string, number>;
+  const bnMults = loadBnMults(ns);
 
   // Multiplikatoren berechnen
   const divMult = bnMults.CorporationDivisions ?? 1.0;

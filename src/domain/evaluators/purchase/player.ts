@@ -73,7 +73,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
     if (!hasSingularity(ns)) return requests;
 
     const sing = ns.singularity;
-    const bnMults = loadBnMults(ns) as Record<string, number>;
+    const bnMults = loadBnMults(ns);
     const costMult = bnMults.AugmentationMoneyCost ?? 1.0;
     const efficiencyMult = costMult > 0 ? 1 / costMult : 1.0;
 

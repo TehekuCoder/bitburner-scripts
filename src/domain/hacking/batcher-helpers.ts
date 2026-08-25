@@ -5,10 +5,10 @@ import {
   PATH_HACK,
   PATH_GROW,
   PATH_WEAKEN,
-} from "../infrastructure/runtime/batcher.js";
+} from "../../infrastructure/runtime/batcher.js";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
 import { JitEvent, ActiveBatch, TargetContext, BatchPlan } from "/shared/types/batcher.js";
-import { internalPlanner } from "../domain/hacking/internal-planner.js";
+import { internalPlanner } from "./internal-planner.js";
 
 /** Berechnet die nutzbaren Threads für eine freie RAM-Menge (mit Epsilon-Toleranz) */
 export function getUsableThreads(freeRam: number, scriptRam: number): number {

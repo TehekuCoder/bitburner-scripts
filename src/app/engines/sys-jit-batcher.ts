@@ -10,7 +10,7 @@ import {
   getDynamicMaxTargets,
   getAdaptiveBatchGap,
   pruneBatchFromQueue,
-} from "/lib/batcher-helpers.js";
+} from "../../domain/hacking/batcher-helpers.js";
 import {
   MAX_SAFE_CONCURRENT_SCRIPTS,
   SPACER,

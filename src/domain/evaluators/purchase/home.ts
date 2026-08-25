@@ -17,12 +17,12 @@ export const HomeEvaluator: PurchaseEvaluator = {
   getRequests(ns: NS): PurchaseRequest[] {
     if (!hasSingularity(ns)) return [];
 
-    const bnMults = loadBnMults(ns) as Record<string, number>;
+    const bnMults = loadBnMults(ns);
     
     // 🔴 1. Multiplikatoren laden (PascalCase & snake_case Fallbacks)
-    const ramCostMult = bnMults.HomeComputerRamCost ?? bnMults.home_computer_ram_cost ?? 1.0;
-    const cloudLimitMult = bnMults.CloudServerLimit ?? bnMults.cloud_server_limit ?? 1.0;
-    const cloudCostMult = bnMults.CloudServerCost ?? bnMults.cloud_server_cost ?? 1.0;
+    const ramCostMult = bnMults.HomeComputerRamCost ?? 1.0;
+    const cloudLimitMult = bnMults.CloudServerLimit ?? 1.0;
+    const cloudCostMult = bnMults.CloudServerCost ?? 1.0;
 
     const ramEfficiency = ramCostMult > 0 ? 1 / ramCostMult : 1.0;
     

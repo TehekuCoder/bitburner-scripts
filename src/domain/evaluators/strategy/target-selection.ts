@@ -29,10 +29,23 @@ export function getAllServers(ns: NS): string[] {
   return Array.from(visited);
 }
 
-export function evaluateTargets(ns: NS, strategy: BatchStrategy): TargetScore[] {
+export function evaluateTargets(
+  ns: NS,
+  strategy: BatchStrategy,
+): TargetScore[] {
   const player = ns.getPlayer();
   const allServers = getAllServers(ns);
   const targets: TargetScore[] = [];
+
+  let serverGrowthMult = 1;
+  let scriptHackMoneyGain = 1;
+  try {
+    const mults = ns.getBitNodeMultipliers();
+    serverGrowthMult = mults.ServerGrowthRate;
+    scriptHackMoneyGain = mults.ScriptHackMoneyGain;
+  } catch {
+    // Fallback
+  }
 
   for (const host of allServers) {
     if (host === "home" || host.startsWith("cloud-")) continue;
@@ -45,7 +58,6 @@ export function evaluateTargets(ns: NS, strategy: BatchStrategy): TargetScore[] 
     if (maxMoney <= 0 || reqLevel > player.skills.hacking) continue;
 
     const minDiff = server.minDifficulty ?? 1;
-    
     const simulatedServer: Server = {
       ...server,
       hackDifficulty: minDiff,
@@ -58,16 +70,16 @@ export function evaluateTargets(ns: NS, strategy: BatchStrategy): TargetScore[] 
     let score = 0;
 
     if (strategy === "WORKER") {
-      // Fokus auf Erfolgschance x Geld pro Zeit
       const chance = ns.formulas?.hacking
         ? ns.formulas.hacking.hackChance(simulatedServer, player)
         : ns.hackAnalyzeChance(host);
 
-      score = (maxMoney * chance) / (weakenTime / 1000);
+      // Einbeziehen von ScriptHackMoneyGain für echten Konto-Zuwachs
+      score = (maxMoney * chance * scriptHackMoneyGain) / (weakenTime / 1000);
     } else {
-      // Fokus auf rein theoretischen Durchsatz unter Min-Security
-      const growthRate = server.serverGrowth ?? 1;
-      score = (maxMoney * (growthRate / 100)) / (weakenTime / 1000);
+      // Effektiv berechnete Growth Rate inkl. BitNode-Multiplier
+      const effectiveGrowth = (server.serverGrowth ?? 1) * serverGrowthMult;
+      score = (maxMoney * (effectiveGrowth / 100)) / (weakenTime / 1000);
     }
 
     targets.push({

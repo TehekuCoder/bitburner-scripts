@@ -2,6 +2,7 @@ import { NS, BitNodeMultipliers } from "@ns";
 import { PurchasePriority } from "shared/types/finance.js";
 import { COLOR } from "../shared/constants/logger";
 import { DEFAULT_MULTIPLIERS } from "../shared/constants/game-defaults";
+import { PATHS } from "/infrastructure/runtime/paths";
 
 interface BitNodeInfo {
   /** Die Nummer des aktuellen BitNodes (z. B. 9) */
@@ -38,25 +39,26 @@ export function getExactBitNode(ns: NS): BitNodeInfo {
 }
 
 /**
- * Lädt BitNode-Multiplikatoren aus der bn-multipliers.txt auf 'home'.
+ * Lädt BitNode-Multiplikatoren aus der zentral definierten Datei auf 'home'.
  * Fällt auf DEFAULT_MULTIPLIERS zurück, falls die Datei fehlt oder ungültig ist.
  */
-export function loadBnMults(ns: NS): Record<keyof BitNodeMultipliers, number> {
-  if (ns.fileExists("bn-multipliers.txt", "home")) {
+export function loadBnMults(ns: NS): BitNodeMultipliers {
+  const filePath = PATHS.shared?.settings.bnMultipliers;
+
+  if (ns.fileExists(filePath, "home")) {
     try {
-      const fileContent = ns.read("bn-multipliers.txt");
+      const fileContent = ns.read(filePath);
       if (fileContent) {
         return { ...DEFAULT_MULTIPLIERS, ...JSON.parse(fileContent) };
       }
     } catch {
       ns.print(
-        "⚠️ [LIB] Fehler beim Parsen der bn-multipliers.txt. Nutze Fallback.",
+        `⚠️ [LIB] Fehler beim Parsen von ${filePath}. Nutze Fallback.`,
       );
     }
   }
   return DEFAULT_MULTIPLIERS;
 }
-
 /**
  * Extrahiert den reinen Skriptnamen ohne Ordnerpfad.
  * Beispiel: "/daemons/batcher-daemon.js" -> "batcher-daemon.js"

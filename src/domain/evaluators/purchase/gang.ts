@@ -27,10 +27,10 @@ export const GangEvaluator: PurchaseEvaluator = {
     if (currentMoney <= 0) return [];
 
     // 🔴 2. BitNode-Multiplikatoren auswerten
-    const bnMults = loadBnMults(ns) as Record<string, number>;
-    const softcapMult = bnMults.GangSoftcap ?? bnMults.gang_softcap ?? 1.0;
+    const bnMults = loadBnMults(ns);
+    const softcapMult = bnMults.GangSoftcap ?? 1.0;
     const gangAugMult =
-      bnMults.GangUniqueAugs ?? bnMults.gang_unique_augs ?? 1.0;
+      bnMults.GangUniqueAugs ?? 1.0;
 
     // Wenn der Softcap 0 ist, generiert die Gang kaum/keinen Ertrag
     if (softcapMult <= 0) return [];

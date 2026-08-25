@@ -16,7 +16,8 @@ export function evaluateHackingStrategy(ns: NS): StrategyRecommendation {
   let mults = {
     ServerMaxMoney: 1,
     ScriptHackMoney: 1,
-    HomeComputerRamCost: 1,
+    ScriptHackMoneyGain: 1,
+    ServerGrowthRate: 1,
     ServerStartingSecurity: 1,
     HackingSpeedMultiplier: 1,
     ServerWeakenRate: 1,
@@ -25,13 +26,16 @@ export function evaluateHackingStrategy(ns: NS): StrategyRecommendation {
   try {
     mults = ns.getBitNodeMultipliers();
   } catch {
-    // Fallback falls BN5 (Source-File 5) noch nicht aktiv ist
+    // Fallback ohne SF5
   }
 
-  const yieldFactor = mults.ServerMaxMoney * mults.ScriptHackMoney;
-  const hasFormulas = ns.fileExists("Formulas.exe", "home");
-  const homeRam = ns.getServerMaxRam("home");
-  const effectiveRam = homeRam / mults.HomeComputerRamCost;
+  // Echtes Geld-Ertragspotenzial pro Hack
+  const yieldFactor =
+    mults.ServerMaxMoney * mults.ScriptHackMoney * mults.ScriptHackMoneyGain;
+
+  // Tatsächlich installierter RAM auf home
+  const effectiveRam = ns.getServerMaxRam("home");
+
   const desyncRisk =
     mults.ServerStartingSecurity /
     (mults.HackingSpeedMultiplier * mults.ServerWeakenRate);
@@ -39,36 +43,27 @@ export function evaluateHackingStrategy(ns: NS): StrategyRecommendation {
   let strategy: BatchStrategy = "SHOTGUN_HWGW";
   let reason = "";
 
-  // 0. XP_GRIND Check: Early-Game (< 30 Skill) oder Null-Ertrag BitNodes
   if (playerSkill < 30 || yieldFactor === 0) {
     strategy = "XP_GRIND";
     reason =
       playerSkill < 30
         ? `Hacking-Skill zu niedrig (${playerSkill} < 30). Fokus auf XP-Grind.`
         : `Yield-Factor ist 0 (kein Geldzuwachs möglich). Fokus auf XP-Grind.`;
-  }
-  // 1. Extrem reduzierter Ertrag (z.B. BN9) oder sehr wenig RAM -> WORKER
-  else if (yieldFactor < 0.05) {
+  } else if (yieldFactor < 0.05) {
     strategy = "WORKER";
     reason = `Geld-Multiplikator extrem niedrig (Yield Factor: ${yieldFactor.toFixed(3)}). Batching unrentabel.`;
   } else if (effectiveRam < 128) {
     strategy = "WORKER";
-    reason = `Zu wenig effektiver RAM (${Math.round(effectiveRam)} GB). Skript-Prozesse überschreiten RAM-Limit.`;
-  }
-  // 2. Kein Formulas.exe + moderater RAM -> PROTO_BATCH
-  else if (!hasFormulas && effectiveRam < 1024) {
+    reason = `Zu wenig RAM (${effectiveRam} GB). Skript-Prozesse überschreiten RAM-Limit.`;
+  } else if (!ns.fileExists("Formulas.exe", "home") && effectiveRam < 1024) {
     strategy = "PROTO_BATCH";
     reason =
       "Keine Formulas.exe und moderater RAM. Sequentieller Proto-Batch ist am stabilsten.";
-  }
-  // 3. Viel RAM, aber kein Formulas.exe -> SHOTGUN_HWGW
-  else if (!hasFormulas) {
+  } else if (!ns.fileExists("Formulas.exe", "home")) {
     strategy = "SHOTGUN_HWGW";
     reason =
       "Viel RAM vorhanden, aber keine Formulas.exe. Shotgun/Burst HWGW bietet optimalen Durchsatz.";
-  }
-  // 4. Formulas.exe vorhanden & hohes RAM-Budget -> JIT_HWGW
-  else if (desyncRisk <= 2.0 && effectiveRam >= 1024) {
+  } else if (desyncRisk <= 2.0 && effectiveRam >= 1024) {
     strategy = "JIT_HWGW";
     reason =
       "High Yield, Formulas.exe vorhanden und hohes RAM-Budget. Maximale JIT-Pipeline Effizienz.";

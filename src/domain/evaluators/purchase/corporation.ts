@@ -27,11 +27,11 @@ export const CorporationEvaluator: PurchaseEvaluator = {
     }
 
     // 🔴 2. BitNode Multipliers Evaluieren
-    const bnMults = loadBnMults(ns) as Record<string, number>;
+    const bnMults = loadBnMults(ns);
     const valMult =
-      bnMults.CorporationValuation ?? bnMults.corporation_valuation ?? 1.0;
+      bnMults.CorporationValuation ?? 1.0;
     const softcapMult =
-      bnMults.CorporationSoftcap ?? bnMults.corporation_softcap ?? 1.0;
+      bnMults.CorporationSoftcap ?? 1.0;
 
     // Falls Corporations im BitNode totgelegt sind
     if (valMult <= 0 || softcapMult <= 0) return [];

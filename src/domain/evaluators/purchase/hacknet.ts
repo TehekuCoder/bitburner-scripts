@@ -1,5 +1,3 @@
-// domain/evaluators/purchase/hacknet.ts
-
 import { NS } from "@ns";
 import {
   PurchaseEvaluator,
@@ -114,21 +112,10 @@ export const HacknetEvaluator: PurchaseEvaluator = {
 
   getRequests(ns: NS): PurchaseRequest[] {
     const isServerMode = typeof (ns.hacknet as any).hashCapacity === "function";
-    const bnMults = loadBnMults(ns) as Record<string, number>;
+    const bnMults = loadBnMults(ns);
 
-    // 🎯 BitNode Multiplikatoren (Fallbacks für PascalCase & snake_case)
-    const moneyMult =
-      bnMults.HacknetNodeMoney ?? bnMults.hacknet_node_money ?? 1.0;
-    const purchaseCostMult =
-      bnMults.HacknetNodePurchaseCost ??
-      bnMults.hacknet_node_purchase_cost ??
-      1.0;
-    const ramCostMult =
-      bnMults.HacknetNodeRamCost ?? bnMults.hacknet_node_ram_cost ?? 1.0;
-    const coreCostMult =
-      bnMults.HacknetNodeCoreCost ?? bnMults.hacknet_node_core_cost ?? 1.0;
-    const levelCostMult =
-      bnMults.HacknetNodeLevelCost ?? bnMults.hacknet_node_level_cost ?? 1.0;
+    // 🎯 In Bitburner existiert für Hacknet nur HacknetNodeMoney
+    const moneyMult = bnMults.HacknetNodeMoney ?? 1.0;
 
     const numNodes = ns.hacknet.numNodes();
     const player = ns.getPlayer();
@@ -137,18 +124,9 @@ export const HacknetEvaluator: PurchaseEvaluator = {
     // Im Standard-Modus abbrechen, wenn Money-Mult 0 ist und Netburners nicht benötigt wird
     if (!isServerMode && moneyMult <= 0 && inNetburners) return [];
 
-    // Effizienzfaktoren pro Upgrade-Typ (Ertrag / Kosten-Multiplikator)
-    const calcEffectiveMult = (costMult: number) => {
-      const effectiveMoney = isServerMode
-        ? Math.max(moneyMult, 0.5)
-        : moneyMult;
-      return effectiveMoney / Math.max(0.01, costMult);
-    };
-
-    const nodeEffectiveMult = calcEffectiveMult(purchaseCostMult);
-    const levelEffectiveMult = calcEffectiveMult(levelCostMult);
-    const ramEffectiveMult = calcEffectiveMult(ramCostMult);
-    const coreEffectiveMult = calcEffectiveMult(coreCostMult);
+    const effectiveMoneyMult = isServerMode
+      ? Math.max(moneyMult, 0.5)
+      : moneyMult;
 
     const requests: HacknetRequest[] = [];
     const maxNodes = ns.hacknet.maxNumNodes();
@@ -244,7 +222,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         if (needsNetburnersLevel && numNodes < 10)
           basePriority = PurchasePriority.HIGH;
 
-        const priority = adjustPriorityByMult(basePriority, nodeEffectiveMult);
+        const priority = adjustPriorityByMult(basePriority, effectiveMoneyMult);
 
         requests.push({
           id: `hacknet-new-node-${numNodes}`,
@@ -252,7 +230,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
           priority,
           score: needsNetburnersLevel
             ? 90
-            : normalizeRoiToScore(roi, nodeEffectiveMult, 1),
+            : normalizeRoiToScore(roi, effectiveMoneyMult, 1),
           cost: newNodeCost,
           roi,
           description: `Hacknet ${isServerMode ? "Server" : "Node"} #${numNodes + 1} kaufen`,
@@ -276,7 +254,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
           type: "level",
           cost: ns.hacknet.getLevelUpgradeCost(i, 1),
           ramGain: 0,
-          effectiveMult: levelEffectiveMult,
+          effectiveMult: effectiveMoneyMult,
           nextGain: getEstimatedMoneyGain(
             ns,
             stats.level + 1,
@@ -293,7 +271,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
           type: "ram",
           cost: ns.hacknet.getRamUpgradeCost(i, 1),
           ramGain: stats.ram,
-          effectiveMult: ramEffectiveMult,
+          effectiveMult: effectiveMoneyMult,
           nextGain: getEstimatedMoneyGain(
             ns,
             stats.level,
@@ -310,7 +288,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
           type: "core",
           cost: ns.hacknet.getCoreUpgradeCost(i, 1),
           ramGain: 0,
-          effectiveMult: coreEffectiveMult,
+          effectiveMult: effectiveMoneyMult,
           nextGain: getEstimatedMoneyGain(
             ns,
             stats.level,
@@ -348,7 +326,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
           requests.push({
             id: `hacknet-node-${i}-cache`,
             category: "HACKNET",
-            priority: adjustPriorityByMult(priority, ramEffectiveMult),
+            priority: adjustPriorityByMult(priority, effectiveMoneyMult),
             score,
             cost: cacheCost,
             roi: fillTimeSeconds < 45 ? 1 / 300 : 0,

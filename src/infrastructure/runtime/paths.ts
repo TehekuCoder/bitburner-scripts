@@ -146,6 +146,9 @@ export const PATHS = {
     types: {
       logger: "shared/types/logger.js",
     },
+    settings: {
+      bnMultipliers: "shared/settings/bn-multipliers.txt"
+    }
   },
   ui: {
     corporation: "ui/corporation.js",

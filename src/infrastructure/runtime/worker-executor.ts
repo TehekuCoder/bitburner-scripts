@@ -2,7 +2,7 @@ import { NS } from "@ns";
 import { DispatchResult, JitEvent } from "/shared/types/batcher.js";
 import { WorkerNode } from "/shared/types/network.js";
 import { PATH_HACK, PATH_GROW, PATH_WEAKEN, HOME_RAM_RESERVE } from "./batcher";
-import { getUsableThreads } from "/lib/batcher-helpers";
+import { getUsableThreads } from "../../domain/hacking/batcher-helpers";
 
 
 const SCRIPT_RAM_MAP: Record<string, number> = {

@@ -20,18 +20,18 @@ export const CloudEvaluator: PurchaseEvaluator = {
   category: "PURCHASED_SERVER",
 
   getRequests(ns: NS): PurchaseRequest[] {
-    const bnMults = loadBnMults(ns) as Record<string, number>;
+    const bnMults = loadBnMults(ns);
 
     // 🔴 1. Hard Checks & BitNode Multiplikator-Erfassung (PascalCase + snake_case)
     const limitMult =
-      bnMults.CloudServerLimit ?? bnMults.cloud_server_limit ?? 1.0;
+     bnMults.CloudServerLimit ?? 1.0;
     const limit = ns.cloud.getServerLimit();
     if (limit === 0 || limitMult <= 0) return [];
 
     const costMult =
-      bnMults.CloudServerCost ?? bnMults.cloud_server_cost ?? 1.0;
+      bnMults.CloudServerCost ?? bnMults.CloudServerCost ?? 1.0;
     const scriptMoneyMult =
-      bnMults.ScriptHackMoney ?? bnMults.script_hack_money ?? 1.0;
+      bnMults.ScriptHackMoney ?? bnMults.ScriptHackMoney ?? 1.0;
 
     // 📊 Effizienzfakor aus Kosten und Hacking-Ertragspotenzial
     // Wenn Hacking-Einnahmen im BN beschnitten sind, sinkt der Wert von Server-RAM leicht
