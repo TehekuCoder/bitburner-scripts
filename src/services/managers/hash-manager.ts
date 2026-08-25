@@ -43,7 +43,8 @@ function getTargetCompanyForFavor(ns: NS): CompanyName | null {
     // Falls Megacorp-Fraktion bereits freigeschaltet -> Überspringen
     if (
       correspondingFaction &&
-      (playerFactions.includes(correspondingFaction) || invites.includes(correspondingFaction))
+      (playerFactions.includes(correspondingFaction) ||
+        invites.includes(correspondingFaction))
     ) {
       continue;
     }

@@ -190,9 +190,8 @@ export class SystemStrategyEvaluator {
       },
     });
 
-    const factionTargets = ((currentState as Record<string, any> | null)?.factionTargets ?? {}) as Partial<
-      Record<FactionName, number>
-    >;
+    const factionTargets = ((currentState as Record<string, any> | null)
+      ?.factionTargets ?? {}) as Partial<Record<FactionName, number>>;
     if (nextRoadmapFaction) {
       factionTargets[nextRoadmapFaction.name as FactionName] =
         nextRoadmapFaction.targetRep;
@@ -318,7 +317,9 @@ export class SystemStrategyEvaluator {
     const targetStat: number | null =
       typeof rawTargetStat === "number"
         ? rawTargetStat
-        : rawTargetStat !== null && rawTargetStat !== undefined && !isNaN(Number(rawTargetStat))
+        : rawTargetStat !== null &&
+            rawTargetStat !== undefined &&
+            !isNaN(Number(rawTargetStat))
           ? Number(rawTargetStat)
           : null;
 

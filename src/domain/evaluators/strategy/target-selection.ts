@@ -1,5 +1,6 @@
 import { NS, Server } from "@ns";
 import { BatchStrategy } from "/shared/types/batcher";
+import { loadBnMults } from "/lib/utils";
 
 export interface TargetScore {
   hostname: string;
@@ -37,14 +38,18 @@ export function evaluateTargets(
   const allServers = getAllServers(ns);
   const targets: TargetScore[] = [];
 
-  let serverGrowthMult = 1;
-  let scriptHackMoneyGain = 1;
+  // BitNode Multiplier mit sicheren Fallbacks laden
+  let serverGrowthMult = 1.0;
+  let scriptHackMoney = 1.0;
+  let scriptHackMoneyGain = 1.0;
+
   try {
-    const mults = ns.getBitNodeMultipliers();
-    serverGrowthMult = mults.ServerGrowthRate;
-    scriptHackMoneyGain = mults.ScriptHackMoneyGain;
+    const bnMults = loadBnMults(ns);
+    serverGrowthMult = bnMults.ServerGrowthRate ?? 1.0;
+    scriptHackMoney = bnMults.ScriptHackMoney ?? 1.0;
+    scriptHackMoneyGain = bnMults.ScriptHackMoneyGain ?? 1.0;
   } catch {
-    // Fallback
+    // Fallback auf Standardwerte (BitNode 1) bei Fehlern
   }
 
   for (const host of allServers) {
@@ -63,6 +68,7 @@ export function evaluateTargets(
       hackDifficulty: minDiff,
     };
 
+    // Weaken-Zeit berücksichtigt bereits HackingSpeedMultiplier der Engine
     const weakenTime = ns.formulas?.hacking
       ? ns.formulas.hacking.weakenTime(simulatedServer, player)
       : ns.getWeakenTime(host);
@@ -74,12 +80,15 @@ export function evaluateTargets(
         ? ns.formulas.hacking.hackChance(simulatedServer, player)
         : ns.hackAnalyzeChance(host);
 
-      // Einbeziehen von ScriptHackMoneyGain für echten Konto-Zuwachs
-      score = (maxMoney * chance * scriptHackMoneyGain) / (weakenTime / 1000);
+      // Einbeziehen von ScriptHackMoney (Diebstahl-Menge) UND ScriptHackMoneyGain (Konto-Gutschrift)
+      const moneyFactor = maxMoney * scriptHackMoney * scriptHackMoneyGain;
+      score = (moneyFactor * chance) / (weakenTime / 1000);
     } else {
-      // Effektiv berechnete Growth Rate inkl. BitNode-Multiplier
+      // Effektiv berechnete Growth Rate inkl. ServerGrowthRate Multiplier
       const effectiveGrowth = (server.serverGrowth ?? 1) * serverGrowthMult;
-      score = (maxMoney * (effectiveGrowth / 100)) / (weakenTime / 1000);
+      score =
+        (maxMoney * (effectiveGrowth / 100) * scriptHackMoneyGain) /
+        (weakenTime / 1000);
     }
 
     targets.push({

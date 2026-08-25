@@ -7,6 +7,10 @@ import { evaluateHackingStrategy } from "/domain/evaluators/strategy/hacking-str
 import { evaluateTargets } from "/domain/evaluators/strategy/target-selection.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
 
+
+
+
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
@@ -97,13 +101,30 @@ export async function main(ns: NS): Promise<void> {
         stopAllEngines(ns, logger);
 
         // Top-Ziele ermitteln für Multi-Target-Verteilung
+        // 1. Gesamt-RAM aller gerooteten Server berechnen
+        const allServers = getAllRootedServersIncludingPurchased(ns);
+        const totalNetworkRam = allServers.reduce(
+          (sum, s) => sum + ns.getServerMaxRam(s),
+          0,
+        );
+
+        // 2. Maximale Ziel-Anzahl dynamisch ermitteln
+        let maxTargets = 1;
+        if (totalNetworkRam >= 2048) {
+          maxTargets = 5;
+        } else if (totalNetworkRam >= 512) {
+          maxTargets = 3;
+        } else if (totalNetworkRam >= 128) {
+          maxTargets = 2;
+        }
+
+        // 3. Nur die für die RAM-Stufe optimale Anzahl an Zielen übergeben
         const evalTargets = evaluateTargets(ns, activeStrategy);
         const topTargets =
           evalTargets.length > 0
-            ? evalTargets.slice(0, 5).map((t) => t.hostname)
+            ? evalTargets.slice(0, maxTargets).map((t) => t.hostname)
             : [activeTarget];
 
-        // Verteile work.ts netzwerkweit auf mehrere Ziele
         deployWorkerFleet(ns, topTargets, logger);
       } else {
         // Stoppe alte Netz-Worker, falls wir auf Batcher/Prep wechseln

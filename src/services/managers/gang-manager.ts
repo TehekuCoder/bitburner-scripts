@@ -1,7 +1,10 @@
 import { FactionName, NS } from "@ns";
 import { manageGang } from "../../domain/gang/gang-utils.js";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
-import { loadBatcherState, patchGangState } from "/infrastructure/state/state.js";
+import {
+  loadBatcherState,
+  patchGangState,
+} from "/infrastructure/state/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

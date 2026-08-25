@@ -1,6 +1,7 @@
 import { NS } from "@ns";
 import { BatchStrategy } from "/shared/types/batcher.js";
 import { evaluateTargets } from "./target-selection";
+import { loadBnMults } from "/lib/utils";
 
 export interface StrategyRecommendation {
   strategy: BatchStrategy;
@@ -13,32 +14,25 @@ export interface StrategyRecommendation {
 export function evaluateHackingStrategy(ns: NS): StrategyRecommendation {
   const playerSkill = ns.getHackingLevel();
 
-  let mults = {
-    ServerMaxMoney: 1,
-    ScriptHackMoney: 1,
-    ScriptHackMoneyGain: 1,
-    ServerGrowthRate: 1,
-    ServerStartingSecurity: 1,
-    HackingSpeedMultiplier: 1,
-    ServerWeakenRate: 1,
-  };
+  // Zentralisiertes Laden der Multiplikatoren über lib/utils
+  const mults = loadBnMults(ns);
 
-  try {
-    mults = ns.getBitNodeMultipliers();
-  } catch {
-    // Fallback ohne SF5
-  }
+  const serverMaxMoney = mults.ServerMaxMoney ?? 1.0;
+  const scriptHackMoney = mults.ScriptHackMoney ?? 1.0;
+  const scriptHackMoneyGain = mults.ScriptHackMoneyGain ?? 1.0;
+  const serverStartingSecurity = mults.ServerStartingSecurity ?? 1.0;
+  const hackingSpeedMultiplier = mults.HackingSpeedMultiplier ?? 1.0;
+  const serverWeakenRate = mults.ServerWeakenRate ?? 1.0;
 
   // Echtes Geld-Ertragspotenzial pro Hack
-  const yieldFactor =
-    mults.ServerMaxMoney * mults.ScriptHackMoney * mults.ScriptHackMoneyGain;
+  const yieldFactor = serverMaxMoney * scriptHackMoney * scriptHackMoneyGain;
 
   // Tatsächlich installierter RAM auf home
   const effectiveRam = ns.getServerMaxRam("home");
 
+  // Risiko von Desynchronisationen bei schwachen Weaken/Hacking-Werten
   const desyncRisk =
-    mults.ServerStartingSecurity /
-    (mults.HackingSpeedMultiplier * mults.ServerWeakenRate);
+    serverStartingSecurity / (hackingSpeedMultiplier * serverWeakenRate);
 
   let strategy: BatchStrategy = "SHOTGUN_HWGW";
   let reason = "";
