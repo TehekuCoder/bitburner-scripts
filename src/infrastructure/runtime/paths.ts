@@ -124,6 +124,7 @@ export const PATHS = {
       dnet: "services/managers/dnet-master.js",
       gang: "services/managers/gang-manager.js",
       hash: "services/managers/hash-manager.js",
+      ipvgo: "services/managers/ipvgo-manager.js",
       sleeve: "services/managers/sleeve-manager.js",
     },
     payloads: {

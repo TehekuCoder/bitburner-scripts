@@ -3,12 +3,7 @@ import { LoggerClient } from "/infrastructure/logging/logger-client";
 import { getAllServers } from "/infrastructure/network/network";
 import { PATHS } from "/infrastructure/runtime/paths";
 import { loadState } from "/infrastructure/state/state";
-import {
-  hasSingularity,
-  hasGang,
-  hasSleeve,
-  hasCorporation,
-} from "/lib/utils";
+import { hasSingularity, hasGang, hasSleeve, hasCorporation } from "/lib/utils";
 
 interface DaemonConfig {
   name: string;
@@ -92,6 +87,25 @@ export async function main(ns: NS): Promise<void> {
       },
     },
 
+    // 4b. IPvGo Manager (Passive Boni über Go-Spiele)
+    {
+      name: "IPvGo Manager",
+      path: PATHS.services.managers.ipvgo,
+      args: ["Netburners", 5], // Standard-Gegner & Boardgröße
+      minHomeRam: 64,
+      condition: (ns) => {
+        try {
+          // Prüft, ob die ns.go API vorhanden und aufrufbar ist
+          return (
+            typeof ns.go !== "undefined" &&
+            typeof ns.go.getBoardState === "function"
+          );
+        } catch {
+          return false;
+        }
+      },
+    },
+
     // 5. Network Crawler & Darknet Subsystem
     {
       name: "Network Crawler",
@@ -157,7 +171,8 @@ export async function main(ns: NS): Promise<void> {
       minHomeRam: 1024,
       condition: (ns) =>
         hasCorporation(ns) &&
-        (ns.corporation.hasCorporation() || ns.getServerMoneyAvailable("home") >= 150e9),
+        (ns.corporation.hasCorporation() ||
+          ns.getServerMoneyAvailable("home") >= 150e9),
     },
     {
       name: "Corporation UI",
