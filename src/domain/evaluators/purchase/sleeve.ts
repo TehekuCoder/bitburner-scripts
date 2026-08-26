@@ -64,8 +64,9 @@ export const SleeveEvaluator: PurchaseEvaluator = {
     if (!ns.sleeve) return [];
 
     const bnMults = loadBnMults(ns);
+    // Wenn Augmentationen für den Spieler teuer sind, werden Sleeve-Augs relativ wertvoller.
     const costMult = bnMults.AugmentationMoneyCost ?? 1.0;
-    const efficiencyMult = costMult > 0 ? 1 / costMult : 1.0;
+    const efficiencyMult = costMult; 
 
     const requests: PurchaseRequest[] = [];
     const numSleeves = ns.sleeve.getNumSleeves();
@@ -100,6 +101,7 @@ export const SleeveEvaluator: PurchaseEvaluator = {
             reason = "Hacking Efficiency Upgrade";
           }
 
+          // adjustPriorityByMult hebt die Priorität bei efficiencyMult >= 2.0 an
           const priority = adjustPriorityByMult(basePriority, efficiencyMult);
           const score = Math.max(
             1,
@@ -124,8 +126,9 @@ export const SleeveEvaluator: PurchaseEvaluator = {
       }
     }
 
-    // sleeve.ts (am Ende von getRequests)
-    return requests.sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 6); // Max 6 Augmentationen gleichzeitig anfragen
+    return requests
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+      .slice(0, 6); // Max 6 Augmentationen gleichzeitig anfragen
   },
 };
 

@@ -19,6 +19,13 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
     const { ns, log } = ctx;
     const corp = ns.corporation;
 
+    // Falls die Investmentrunde bereits abgeschlossen wurde (z.B. nach Skriptneustart)
+    const expectedRound = ctx.currentPhase === "INVESTOR_1" ? 1 : 2;
+    if (corp.getInvestmentOffer().round > expectedRound) {
+      log(`[CORP] Investment-Runde ${expectedRound} bereits erledigt. Überspringe...`);
+      return this.config.nextPhase;
+    }
+
     if (this.state === "IDLE") {
       log(`[CORP] Starte Profit-Spike für Investor (${this.config.nextPhase})...`);
       for (const div of this.config.divisionNames) {
@@ -30,7 +37,7 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
       }
       this.state = "ACCUMULATING";
       this.ticks = 0;
-      return ctx.currentPhase; // Bleibt in der aktuellen Investor-Phase
+      return ctx.currentPhase;
     }
 
     if (this.state === "ACCUMULATING") {
@@ -52,20 +59,18 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
 
     if (this.state === "SELLING") {
       const offer = corp.getInvestmentOffer();
-      log(`[CORP] Investor Angebot: $${ns.format.number(offer.funds)}`);
+      log(`[CORP] Investor Angebot: $${ns.format.number(offer.funds)} / Ziel: $${ns.format.number(this.config.targetOffer)}`);
 
-      if (offer.funds === 0 || offer.funds >= this.config.targetOffer) {
-        if (offer.funds >= this.config.targetOffer) {
-          corp.acceptInvestmentOffer();
-          log(`[CORP] Investment von $${ns.format.number(offer.funds)} angenommen!`);
-        } else {
-          log("[CORP] Kein/unzureichendes Angebot verfügbar. Überspringe...");
-        }
-
+      if (offer.funds >= this.config.targetOffer) {
+        corp.acceptInvestmentOffer();
+        log(`[CORP] Investment von $${ns.format.number(offer.funds)} angenommen!`);
         this.config.resetJobs(ns);
         this.state = "IDLE";
-        return this.config.nextPhase; // Wechselt zur nächsten Phase (z.B. INIT_CHEM oder INIT_TOBACCO)
+        return this.config.nextPhase;
       }
+
+      // Solange das Ziel nicht erreicht ist, in der Phase bleiben und weiter akkumulieren
+      return ctx.currentPhase;
     }
 
     return ctx.currentPhase;

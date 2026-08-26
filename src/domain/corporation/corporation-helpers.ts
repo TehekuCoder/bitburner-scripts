@@ -20,9 +20,6 @@ export const ALL_JOBS: CorpJobRole[] = [
   "Intern",
 ];
 
-/**
- * Kauft Booster-Materialien für eine Division gezielt bis zu den Target-Werten.
- */
 export async function purchaseBoosterMaterials(
   ns: NS,
   divisionName: string,
@@ -30,6 +27,10 @@ export async function purchaseBoosterMaterials(
   targets: MaterialTargets,
 ): Promise<boolean> {
   const corp = ns.corporation;
+  if (!corp.getCorporation().divisions.includes(divisionName)) return true;
+  if (!corp.getDivision(divisionName).cities.includes(cityName)) return true;
+  if (!corp.hasWarehouse(divisionName, cityName)) return true;
+
   const warehouse = corp.getWarehouse(divisionName, cityName);
   let allTargetsMet = true;
 
@@ -62,46 +63,55 @@ export async function purchaseBoosterMaterials(
   return allTargetsMet;
 }
 
-/**
- * Baut Büros aus, stellt Mitarbeiter ein und weist Jobs typ-sicher zu.
- */
 export function setupOfficeAndJobs(
   ns: NS,
   divisionName: string,
   cityName: CityName,
   targetSize: number,
-  jobs: JobAssignments,
-): void {
+  jobs: JobAssignments
+): boolean {
   const corp = ns.corporation;
-  let office = corp.getOffice(divisionName, cityName);
+  const office = corp.getOffice(divisionName, cityName);
 
+  // 1. Prüfen & Erhöhen der Bürokapazität
   if (office.size < targetSize) {
-    const upgradeCost = corp.getOfficeSizeUpgradeCost(
-      divisionName,
-      cityName,
-      targetSize - office.size,
-    );
-    if (corp.getCorporation().funds >= upgradeCost) {
-      corp.upgradeOfficeSize(divisionName, cityName, targetSize - office.size);
-      office = corp.getOffice(divisionName, cityName);
+    const sizeDiff = targetSize - office.size;
+    const upgradeCost = corp.getOfficeSizeUpgradeCost(divisionName, cityName, sizeDiff);
+
+    if (corp.getCorporation().funds < upgradeCost) {
+      // Nicht genügend Kapital für das Upgrade vorhanden
+      return false;
     }
+    corp.upgradeOfficeSize(divisionName, cityName, sizeDiff);
   }
 
-  while (office.numEmployees < office.size) {
-    if (!corp.hireEmployee(divisionName, cityName)) break;
-    office = corp.getOffice(divisionName, cityName);
+  // 2. Neue Mitarbeiter einstellen bis targetSize erreicht ist
+  let currentOffice = corp.getOffice(divisionName, cityName);
+  while (currentOffice.numEmployees < targetSize) {
+    if (!corp.hireEmployee(divisionName, cityName)) {
+      break;
+    }
+    currentOffice = corp.getOffice(divisionName, cityName);
   }
 
+  // Abbrechen, falls nicht genügend Mitarbeiter eingestellt werden konnten
+  if (currentOffice.numEmployees < targetSize) {
+    return false;
+  }
+
+  // 3. ALLE Jobzuweisungen zuerst auf 0 zurücksetzen (Verwendung von ALL_JOBS)
   for (const job of ALL_JOBS) {
     corp.setJobAssignment(divisionName, cityName, job, 0);
   }
 
-  const jobEntries = Object.entries(jobs) as [CorpJobRole, number][];
-  for (const [job, count] of jobEntries) {
+  // 4. Jobs neu zuweisen mit explizitem Cast auf CorpJobRole
+  for (const [job, count] of Object.entries(jobs) as [CorpJobRole, number][]) {
     if (count && count > 0) {
       corp.setJobAssignment(divisionName, cityName, job, count);
     }
   }
+
+  return true;
 }
 
 export function upgradeWarehouseToLevel(
@@ -111,6 +121,8 @@ export function upgradeWarehouseToLevel(
   targetLevel: number,
 ): void {
   const corp = ns.corporation;
+  if (!corp.getCorporation().divisions.includes(divisionName)) return;
+  if (!corp.getDivision(divisionName).cities.includes(cityName)) return;
   if (!corp.hasWarehouse(divisionName, cityName)) return;
 
   const warehouse = corp.getWarehouse(divisionName, cityName);
@@ -133,6 +145,9 @@ export function maintainEmployeeMorale(
   cityName: CityName,
 ): void {
   const corp = ns.corporation;
+  if (!corp.getCorporation().divisions.includes(divisionName)) return;
+  if (!corp.getDivision(divisionName).cities.includes(cityName)) return;
+
   const office = corp.getOffice(divisionName, cityName);
 
   if (office.avgMorale < 98 || office.avgEnergy < 98) {
@@ -141,11 +156,6 @@ export function maintainEmployeeMorale(
   }
 }
 
-/**
- * Kauft ausbalanciert allgemeine Corporation-Upgrades.
- * Nutzt maximal `maxBudgetRatio` des aktuellen Guthabens (Standard: 10%),
- * damit immer genug Kapital für andere Investitionen bleibt.
- */
 export function buyCorporationUpgrades(ns: NS, maxBudgetRatio = 0.1): void {
   const corp = ns.corporation;
   const funds = corp.getCorporation().funds;
@@ -191,10 +201,6 @@ export function buyCorporationUpgrades(ns: NS, maxBudgetRatio = 0.1): void {
   }
 }
 
-/**
- * Exportiert Materialien sicher zwischen zwei Sparten,
- * ohne doppelte Export-Routen mit identischem Wert anzulegen.
- */
 export function safeExportMaterial(
   ns: NS,
   sourceDiv: string,
@@ -205,6 +211,20 @@ export function safeExportMaterial(
   amount: string,
 ): void {
   const corp = ns.corporation;
+  if (
+    !corp.getCorporation().divisions.includes(sourceDiv) ||
+    !corp.getCorporation().divisions.includes(targetDiv)
+  ) {
+    return;
+  }
+
+  if (
+    !corp.getDivision(sourceDiv).cities.includes(sourceCity) ||
+    !corp.getDivision(targetDiv).cities.includes(targetCity)
+  ) {
+    return;
+  }
+
   const mat = corp.getMaterial(sourceDiv, sourceCity, material);
 
   const existing = mat.exports.find(
@@ -235,9 +255,6 @@ export function safeExportMaterial(
   );
 }
 
-/**
- * Kauft ein spezifisches Unlock, falls genug Guthaben vorhanden ist und es noch nicht erworben wurde.
- */
 export function ensureUnlock(ns: NS, unlockName: CorpUnlockName): boolean {
   const corp = ns.corporation;
   if (corp.hasUnlock(unlockName)) return true;
@@ -251,14 +268,9 @@ export function ensureUnlock(ns: NS, unlockName: CorpUnlockName): boolean {
   return false;
 }
 
-/**
- * Überprüft und kauft schrittweise alle sinnvollen Unlocks basierend auf der aktuellen Phase/Finanzlage.
- */
 export function buyPhaseUnlocks(ns: NS, currentPhase: string): void {
-  // Smart Supply sofort sichern
   ensureUnlock(ns, "Smart Supply");
 
-  // Export-Lizenz vor Chem / Export-Loop / Tobacco sichern
   if (
     currentPhase.includes("CHEM") ||
     currentPhase.includes("EXPORT") ||
