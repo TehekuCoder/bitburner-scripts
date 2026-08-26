@@ -14,7 +14,7 @@ export class InitChemPhaseHandler implements CorpPhaseHandler {
     const corp = ns.corporation;
     const { chem } = CORP_CONFIG.divisions;
 
-    log("[CORP] Gründe Chemical-Division...");
+    log("Gründe Chemical-Division...", "INFO");
 
     if (!corp.getCorporation().divisions.includes(chem.name)) {
       corp.expandIndustry(chem.type, chem.name);
@@ -43,17 +43,20 @@ export class InitChemPhaseHandler implements CorpPhaseHandler {
       corp.sellMaterial(chem.name, city, "Chemicals", "MAX", "MP");
     }
 
-    log("[CORP] Chem-Initialisierung abgeschlossen. Wechsle zu EXPORT_LOOP");
+    log(
+      "Chem-Initialisierung abgeschlossen. Wechsle zu EXPORT_LOOP",
+      "SUCCESS",
+    );
     return "EXPORT_LOOP";
   }
 }
 
 export class ExportLoopPhaseHandler implements CorpPhaseHandler {
   async execute(ctx: CorpPhaseContext): Promise<CorpPhase> {
-    const { ns, log } = ctx;
+    const { ns, log, logger } = ctx;
     const { agri, chem } = CORP_CONFIG.divisions;
 
-    log("[CORP] Richte Export-Routen mit IPROD * -1 ein...");
+    log("Richte Export-Routen mit IPROD * -1 ein...", "DEBUG");
 
     for (const city of CORP_CONFIG.cities) {
       safeExportMaterial(
@@ -79,9 +82,9 @@ export class ExportLoopPhaseHandler implements CorpPhaseHandler {
       maintainEmployeeMorale(ns, chem.name, city);
     }
 
-    buyCorporationUpgrades(ns, 0.05);
+    buyCorporationUpgrades(ns, 0.05, logger);
 
-    log("[CORP] Export-Loop aktiv! Wechsle zu INVESTOR_2.");
+    log("Export-Loop aktiv! Wechsle zu INVESTOR_2.", "SUCCESS");
     return "INVESTOR_2";
   }
 }

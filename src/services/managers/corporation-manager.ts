@@ -24,94 +24,62 @@ import {
   InitTobaccoPhaseHandler,
   TobaccoLoopPhaseHandler,
 } from "../../domain/corporation/phases/phase-tobacco";
+import { LoggerClient } from "/infrastructure/logging/logger-client";
+import { LogLevel } from "/shared/types/logger";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
 
+  const logger = new LoggerClient(ns, "CORP");
   const corp = ns.corporation;
   const bnMults = loadBnMults(ns);
 
-  // Multiplikatoren berechnen
+  // Multiplikatoren & Limits
   const divMult = bnMults.CorporationDivisions ?? 1.0;
   const valMult = bnMults.CorporationValuation ?? 1.0;
   const maxAllowedDivisions = Math.max(1, Math.floor(20 * divMult));
-
-  // Dynamisches Next-Phase Routing basierend auf Sparten-Limits
   const postInvestor1Phase: CorpPhase =
     maxAllowedDivisions >= 3 ? "INIT_CHEM" : "INIT_TOBACCO";
 
-  // Phasen-Wiederherstellung bei Skript-Neustart
-  const savedState = loadCorporationState(ns);
-  let currentPhase: CorpPhase = (savedState?.stage as CorpPhase) ?? "INIT_AGRI";
-
-  if (corp.hasCorporation()) {
-    const corpInfo = corp.getCorporation();
-    const existingDivs = corpInfo.divisions;
-    const currentRound = corp.getInvestmentOffer().round;
-
-    if (existingDivs.includes(CORP_CONFIG.divisions.tobacco.name)) {
-      const tobDiv = corp.getDivision(CORP_CONFIG.divisions.tobacco.name);
-      const isFullyExpanded = CORP_CONFIG.cities.every((c) =>
-        tobDiv.cities.includes(c),
-      );
-      currentPhase = isFullyExpanded ? "TOBACCO_LOOP" : "INIT_TOBACCO";
-    } else if (existingDivs.includes(CORP_CONFIG.divisions.chem.name)) {
-      const chemDiv = corp.getDivision(CORP_CONFIG.divisions.chem.name);
-      const isFullyExpanded = CORP_CONFIG.cities.every((c) =>
-        chemDiv.cities.includes(c),
-      );
-      if (currentRound > 2) {
-        currentPhase = "INIT_TOBACCO";
-      } else {
-        currentPhase = isFullyExpanded ? "EXPORT_LOOP" : "INIT_CHEM";
-      }
-    } else if (existingDivs.includes(CORP_CONFIG.divisions.agri.name)) {
-      if (currentRound > 1) {
-        currentPhase = postInvestor1Phase;
-      }
-    }
-  }
+  // Phasen-Bestimmung (Echter Spielzustand korrigiert fehlerhaften State)
+  let currentPhase = determinePhase(ns, postInvestor1Phase);
 
   const recentLogs: string[] = [];
-  const log = (msg: string) => {
-    ns.print(msg);
+  const log = (msg: string, level: LogLevel = "INFO") => {
+    const logMethod =
+      (logger[level.toLowerCase() as keyof LoggerClient] as Function) ??
+      logger.info;
+    logMethod.call(logger, msg);
+
     recentLogs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
     if (recentLogs.length > 5) recentLogs.shift();
   };
 
   log(
-    `[CORP] Start in Phase: ${currentPhase} | Max. erlaubte Divisionen: ${maxAllowedDivisions} | Valuation Mult: ${valMult.toFixed(2)}x`,
+    `Start in Phase: ${currentPhase} | Max. erlaubte Divisionen: ${maxAllowedDivisions} | Valuation Mult: ${valMult.toFixed(2)}x`,
   );
 
-  // Dynamische Skalierung der Investor-Ziele
+  // Dynamische Investor-Ziele
   const inv1Target = Math.max(20_000_000_000, 200_000_000_000 * valMult);
   const inv2Target = Math.max(200_000_000_000, 2_000_000_000_000 * valMult);
 
-  const handlers: Record<CorpPhase, CorpPhaseHandler> = {
+  const handlers: Record<string, CorpPhaseHandler> = {
     INIT_AGRI: new InitAgriPhaseHandler(),
     AGRI_BOOST: new AgriBoostPhaseHandler(),
-
     INVESTOR_1: new InvestorPhaseHandler({
       divisionNames: [CORP_CONFIG.divisions.agri.name],
       targetOffer: inv1Target,
       nextPhase: postInvestor1Phase,
-      resetJobs: (ns) => {
-        for (const city of CORP_CONFIG.cities) {
-          setupOfficeAndJobs(
-            ns,
-            CORP_CONFIG.divisions.agri.name,
-            city,
-            6,
-            CORP_CONFIG.jobDistribution.support6,
-          );
-        }
-      },
+      resetJobs: (ns) =>
+        resetDivisionJobs(
+          ns,
+          CORP_CONFIG.divisions.agri.name,
+          CORP_CONFIG.jobDistribution.support6,
+        ),
     }),
-
     INIT_CHEM: new InitChemPhaseHandler(),
     EXPORT_LOOP: new ExportLoopPhaseHandler(),
-
     INVESTOR_2: new InvestorPhaseHandler({
       divisionNames: [
         CORP_CONFIG.divisions.agri.name,
@@ -120,25 +88,18 @@ export async function main(ns: NS): Promise<void> {
       targetOffer: inv2Target,
       nextPhase: "INIT_TOBACCO",
       resetJobs: (ns) => {
-        for (const city of CORP_CONFIG.cities) {
-          setupOfficeAndJobs(
-            ns,
-            CORP_CONFIG.divisions.agri.name,
-            city,
-            6,
-            CORP_CONFIG.jobDistribution.support6,
-          );
-          setupOfficeAndJobs(
-            ns,
-            CORP_CONFIG.divisions.chem.name,
-            city,
-            6,
-            CORP_CONFIG.jobDistribution.chem6,
-          );
-        }
+        resetDivisionJobs(
+          ns,
+          CORP_CONFIG.divisions.agri.name,
+          CORP_CONFIG.jobDistribution.support6,
+        );
+        resetDivisionJobs(
+          ns,
+          CORP_CONFIG.divisions.chem.name,
+          CORP_CONFIG.jobDistribution.chem6,
+        );
       },
     }),
-
     INIT_TOBACCO: new InitTobaccoPhaseHandler(),
     TOBACCO_LOOP: new TobaccoLoopPhaseHandler(),
   };
@@ -155,18 +116,25 @@ export async function main(ns: NS): Promise<void> {
 
     buyPhaseUnlocks(ns, currentPhase);
 
-    const handler: CorpPhaseHandler | undefined = handlers[currentPhase];
+    const handler = handlers[currentPhase];
     if (handler) {
-      const nextPhase: CorpPhase = await handler.execute({
+      const nextPhase = await handler.execute({
         ns,
+        logger,
         log,
         currentPhase,
       });
 
-      if (nextPhase !== currentPhase) {
+      if (nextPhase && nextPhase !== currentPhase) {
         log(`[CORP] Phasenwechsel: ${currentPhase} ➔ ${nextPhase}`);
         currentPhase = nextPhase;
       }
+    } else {
+      log(
+        `[WARN] Unbekannte Phase '${currentPhase}'! Erzwinge Neu-Ermittlung...`,
+        "WARN",
+      );
+      currentPhase = determinePhase(ns, postInvestor1Phase, true);
     }
 
     const corpInfo = corp.getCorporation();
@@ -181,5 +149,74 @@ export async function main(ns: NS): Promise<void> {
       investmentOffer: corp.getInvestmentOffer().funds,
       corpRecentLogs: recentLogs,
     });
+  }
+}
+
+/** Ermittelt die Phase valide anhand des echten Bitburner-Konzernzustands */
+function determinePhase(
+  ns: NS,
+  postInvestor1Phase: CorpPhase,
+  forceReevaluate = false,
+): CorpPhase {
+  const savedState = loadCorporationState(ns);
+  const savedStage = savedState?.stage as CorpPhase | undefined;
+
+  // Nutze gespeicherten State nur, wenn er existiert und valide ist (nicht INACTIVE)
+  if (
+    !forceReevaluate &&
+    savedStage &&
+    savedStage !== ("INACTIVE" as CorpPhase)
+  ) {
+    return savedStage;
+  }
+
+  const corp = ns.corporation;
+  if (!corp.hasCorporation()) return "INIT_AGRI";
+
+  const existingDivs = corp.getCorporation().divisions;
+  const currentRound = corp.getInvestmentOffer().round;
+
+  if (existingDivs.includes(CORP_CONFIG.divisions.tobacco.name)) {
+    const tobDiv = corp.getDivision(CORP_CONFIG.divisions.tobacco.name);
+    const hasAllCities = CORP_CONFIG.cities.every((c) =>
+      tobDiv.cities.includes(c),
+    );
+    const mainOfficeSize = tobDiv.cities.includes(CORP_CONFIG.mainCity)
+      ? corp.getOffice(CORP_CONFIG.divisions.tobacco.name, CORP_CONFIG.mainCity)
+          .size
+      : 0;
+
+    return hasAllCities && mainOfficeSize >= 60
+      ? "TOBACCO_LOOP"
+      : "INIT_TOBACCO";
+  }
+
+  if (existingDivs.includes(CORP_CONFIG.divisions.chem.name)) {
+    const chemDiv = corp.getDivision(CORP_CONFIG.divisions.chem.name);
+    const isFullyExpanded = CORP_CONFIG.cities.every((c) =>
+      chemDiv.cities.includes(c),
+    );
+    return currentRound > 2
+      ? "INIT_TOBACCO"
+      : isFullyExpanded
+        ? "EXPORT_LOOP"
+        : "INIT_CHEM";
+  }
+
+  if (existingDivs.includes(CORP_CONFIG.divisions.agri.name)) {
+    return currentRound > 1 ? postInvestor1Phase : "INIT_AGRI";
+  }
+
+  return "INIT_AGRI";
+}
+
+/** Hilfsfunktion zum Setzen von Jobs in allen Städten einer Division */
+function resetDivisionJobs(
+  ns: NS,
+  divName: string,
+  jobs: Record<string, number>,
+): void {
+  for (const city of CORP_CONFIG.cities) {
+    setupOfficeAndJobs(ns, divName, city, 6, jobs);
   }
 }

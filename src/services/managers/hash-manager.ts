@@ -25,6 +25,14 @@ type HashUpgradeName =
   | "Generate Coding Contract"
   | "Company Favor";
 
+interface UpgradePriority {
+  name: HashUpgradeName;
+  requiresTarget?: boolean;
+  maxLevel?: number;
+  minReserveHashes?: number;
+  condition?: (ns: NS) => boolean;
+}
+
 // 2. Hilfsfunktion: Bestimme Ziel-Firma für Favor-Kauf
 function getTargetCompanyForFavor(ns: NS): CompanyName | null {
   if (!hasSingularity(ns)) return null;
@@ -33,14 +41,12 @@ function getTargetCompanyForFavor(ns: NS): CompanyName | null {
   const playerFactions = player.factions;
   const invites = ns.singularity.checkFactionInvitations();
 
-  // A. Prüfe, ob aktuell bei einer Megacorp gearbeitet wird
   const currentWork = player.jobs;
   const activeCompanies = Object.keys(currentWork) as CompanyName[];
 
   for (const company of activeCompanies) {
     const correspondingFaction = MEGACORP_COMPANY_TO_FACTION[company];
 
-    // Falls Megacorp-Fraktion bereits freigeschaltet -> Überspringen
     if (
       correspondingFaction &&
       (playerFactions.includes(correspondingFaction) ||
@@ -49,26 +55,16 @@ function getTargetCompanyForFavor(ns: NS): CompanyName | null {
       continue;
     }
 
-    // Falls Silhouette das Ziel ist und wir noch nicht drin sind -> Favor kaufen für C-Level Grind
     if (!playerFactions.includes("Silhouette" as FactionName)) {
       return company;
     }
 
-    // Wenn die Megacorp-Fraktion noch fehlt -> Favor kaufen!
     if (correspondingFaction) {
       return company;
     }
   }
 
   return null;
-}
-
-interface UpgradePriority {
-  name: HashUpgradeName;
-  requiresTarget?: boolean;
-  maxLevel?: number;
-  minReserveHashes?: number;
-  condition?: (ns: NS) => boolean;
 }
 
 function getHighestValueServer(ns: NS): string | null {
@@ -173,6 +169,9 @@ function tryAutoUpgradeHome(ns: NS, logger: Logger): void {
   }
 }
 
+/**
+ * Dynamische Prioritätenliste auf Basis von Strategie UND BitNodeMultipliers (bnMults)
+ */
 function getDynamicPriorityList(
   ns: NS,
   bnMults: ReturnType<typeof loadBnMults>,
@@ -181,10 +180,19 @@ function getDynamicPriorityList(
   sleeveGlobalMode?: string,
 ): UpgradePriority[] {
   const list: UpgradePriority[] = [];
-  const isAugmentationExpensive = bnMults.AugmentationMoneyCost > 2.0;
-  const canContractMoney = (bnMults.CodingContractMoney ?? 1) > 0;
-
   const reserveBuffer = Math.floor(ns.hacknet.hashCapacity() * 0.2);
+
+  // --- BITNODE MULTIPLIER ANALYSE ---
+  const bbRankNerfed = (bnMults.BladeburnerRank ?? 1) < 0.8;
+  const bbSkillExpensive = (bnMults.BladeburnerSkillCost ?? 1) > 1.2;
+  const corpValuationNerfed = (bnMults.CorporationValuation ?? 1) < 0.5;
+  const expGainSlow = (bnMults.ClassGymExpGain ?? 1) < 0.8;
+  const companyRepSlow = (bnMults.CompanyWorkRepGain ?? 1) < 0.8;
+  const scriptMoneyNerfed =
+    (bnMults.ScriptHackMoneyGain ?? 1) < 0.5 ||
+    (bnMults.ScriptHackMoney ?? 1) < 0.5;
+  const contractMoneyGood = (bnMults.CodingContractMoney ?? 1) > 0;
+  const augsExpensive = (bnMults.AugmentationMoneyCost ?? 1) > 1.5;
 
   const isDominion =
     strategy === "DOMINION" ||
@@ -193,73 +201,117 @@ function getDynamicPriorityList(
     sleeveGlobalMode === "DOMINION" ||
     sleeveGlobalMode === "UNI";
 
-  // 1️⃣ STRATEGIE-SPEZIFISCHE HIGH-PRIORITY UPGRADES
-  if (isDominion) {
-    list.push({ name: "Improve Studying" });
-  }
-
-  if (strategy === "TRAIN" || strategy === "KILLS") {
-    list.push({ name: "Improve Gym Training" });
-  }
-
+  // -------------------------------------------------------------
+  // 1️⃣ HIGH-PRIORITY: BLADEBURNER (BN-Multiplikatoren berücksichtigen)
+  // -------------------------------------------------------------
   if (strategy === "BLADEBURNER") {
+    // Wenn Bladeburner-Rank im BN generft ist, hat Rank-Kauf VORRANG vor SP!
+    if (bbRankNerfed) {
+      list.push({
+        name: "Exchange for Bladeburner Rank",
+        condition: (ns) => hasBladeburner(ns) && ns.bladeburner.inBladeburner(),
+      });
+    }
+
     list.push({
       name: "Exchange for Bladeburner SP",
       condition: (ns) => hasBladeburner(ns) && ns.bladeburner.inBladeburner(),
     });
-    list.push({
-      name: "Exchange for Bladeburner Rank",
-      condition: (ns) => hasBladeburner(ns) && ns.bladeburner.inBladeburner(),
-    });
+
+    if (!bbRankNerfed) {
+      list.push({
+        name: "Exchange for Bladeburner Rank",
+        condition: (ns) => hasBladeburner(ns) && ns.bladeburner.inBladeburner(),
+      });
+    }
   }
 
-  // 🏢 EIGENE CORPORATION (Unabhängig vom Bot-Strategiemodus)
+  // -------------------------------------------------------------
+  // 2️⃣ HIGH-PRIORITY: CORPORATION (BN-Multiplikatoren berücksichtigen)
+  // -------------------------------------------------------------
   if (hasCorporation(ns) && ns.corporation.hasCorporation()) {
     list.push({
       name: "Exchange for Corporation Research",
       condition: (ns) => hasCorporation(ns) && ns.corporation.hasCorporation(),
     });
-    list.push({
-      name: "Sell for Corporation Funds",
-      condition: (ns) =>
-        hasCorporation(ns) &&
-        ns.corporation.hasCorporation() &&
-        bnMults.CorporationValuation > 0.1,
-    });
-  }
 
-  // 💼 COMPANY-MODUS (Megacorp Job Rep/Favor Grind)
-  // Hacknet bietet kein 'Exchange for Company Rep/Favor'.
-  // 'Improve Studying' beschleunigt Stats-Grind für Beförderungen.
-  if (strategy === "COMPANY") {
-    list.push({ name: "Improve Studying", minReserveHashes: reserveBuffer });
-
-    // 🆕 Firmen-Favor kaufen für die aktuell bearbeitete Firma (sofern Fraktion/Silhouette noch fehlt)
-    const targetCompany = getTargetCompanyForFavor(ns);
-    if (targetCompany) {
+    // Wenn Corp-Valuation im BN krass generft ist, ist Corp-Funds-Kauf extrem wichtig für das Überleben
+    if (corpValuationNerfed || bnMults.CorporationValuation > 0.1) {
       list.push({
-        name: "Company Favor",
-        requiresTarget: true, // Nutzt targetCompany als Argument
+        name: "Sell for Corporation Funds",
+        condition: (ns) =>
+          hasCorporation(ns) && ns.corporation.hasCorporation(),
       });
     }
   }
 
-  // 2️⃣ GENERELLE HOCHWERTIGE UPGRADES
-  if (canContractMoney) {
+  // -------------------------------------------------------------
+  // 3️⃣ STRATEGIE & STAT-BUFFS (Studying / Gym)
+  // -------------------------------------------------------------
+  // Wenn XP-Gewinn im BN verlangsamt ist, priorisieren wir Buffs früher!
+  if (isDominion || expGainSlow) {
+    list.push({ name: "Improve Studying" });
+  }
+
+  if (
+    strategy === "TRAIN" ||
+    strategy === "KILLS" ||
+    (expGainSlow && strategy === "BLADEBURNER")
+  ) {
+    list.push({ name: "Improve Gym Training" });
+  }
+
+  // -------------------------------------------------------------
+  // 4️⃣ COMPANY / MEGACORP FAVOR
+  // -------------------------------------------------------------
+  if (strategy === "COMPANY" || companyRepSlow) {
+    const targetCompany = getTargetCompanyForFavor(ns);
+    if (targetCompany) {
+      list.push({
+        name: "Company Favor",
+        requiresTarget: true,
+      });
+    }
+    if (strategy === "COMPANY") {
+      list.push({ name: "Improve Studying", minReserveHashes: reserveBuffer });
+    }
+  }
+
+  // -------------------------------------------------------------
+  // 5️⃣ GELD-GENERIERUNG (Contracts vs. Liquidation vs. Server Buffs)
+  // -------------------------------------------------------------
+  // Wenn Hacking im BN stark generft ist -> Contracts & Hash-Liquidation priorisieren
+  if (scriptMoneyNerfed && contractMoneyGood) {
+    list.push({
+      name: "Generate Coding Contract",
+      minReserveHashes: reserveBuffer,
+    });
+    list.push({ name: "Sell for Money", minReserveHashes: reserveBuffer });
+  } else if (contractMoneyGood) {
     list.push({
       name: "Generate Coding Contract",
       minReserveHashes: reserveBuffer,
     });
   }
 
-  if (isAugmentationExpensive) {
+  if (augsExpensive) {
     list.push({ name: "Sell for Money", minReserveHashes: reserveBuffer });
   }
 
+  // -------------------------------------------------------------
+  // 6️⃣ BATCHER-TARGET BUFFS (Server Money & Security)
+  // -------------------------------------------------------------
+  // Bringt primär etwas, wenn Hacking-Geld im BN nicht völlig zerstört ist
+  if (!scriptMoneyNerfed) {
+    list.push({ name: "Increase Maximum Money", requiresTarget: true });
+    list.push({ name: "Reduce Minimum Security", requiresTarget: true });
+  }
+
+  // -------------------------------------------------------------
+  // 7️⃣ FALLBACKS & RESTLICHE BUFFS
+  // -------------------------------------------------------------
   list.push({ name: "Increase Maximum Money", requiresTarget: true });
   list.push({ name: "Reduce Minimum Security", requiresTarget: true });
-
-  // 3️⃣ FALLBACKS & RESTLICHE BUFFS (mit Sicherheitsreserve)
   list.push({ name: "Improve Studying", minReserveHashes: reserveBuffer });
   list.push({ name: "Improve Gym Training", minReserveHashes: reserveBuffer });
   list.push({ name: "Sell for Money", minReserveHashes: reserveBuffer });
@@ -284,7 +336,6 @@ function trySpendHashes(
     return false;
   }
 
-  // Type-Cast für Hacknet-Methoden
   const upgradeName = upgrade.name as HacknetServerHashUpgrade;
 
   if (upgrade.maxLevel !== undefined) {
@@ -339,6 +390,7 @@ function trySpendHashes(
 
   return false;
 }
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new Logger(ns, "Hash-Manager");
@@ -364,7 +416,6 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // 1. Home-Upgrades via Singularity versuchen
     tryAutoUpgradeHome(ns, logger);
 
     const botState = loadState(ns);
@@ -377,14 +428,12 @@ export async function main(ns: NS): Promise<void> {
       botState?.sleeveGlobalMode,
     );
 
-    // 2. ZUERST STRATEGIE-UPGRADES KAUFEN (z. B. Corp Research, Studying, etc.)
     for (const upgrade of priorityList) {
       while (trySpendHashes(ns, upgrade, activeTargets, logger)) {
         await ns.sleep(20);
       }
     }
 
-    // 3. ERST DANACH: Liquidation für verbleibende Hashes bei Geldbedarf
     const currentMoney = ns.getServerMoneyAvailable("home");
     const hardwareCost = getHardwareUpgradeCost(ns);
 

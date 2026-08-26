@@ -7,6 +7,8 @@ import {
   CorpUnlockName,
 } from "@ns";
 
+import { LoggerClient } from "../../infrastructure/logging/logger-client";
+
 export type CorpJobRole = Exclude<CorpEmployeePosition, "Unassigned">;
 export type MaterialTargets = Partial<Record<CorpMaterialName, number>>;
 export type JobAssignments = Partial<Record<CorpJobRole, number>>;
@@ -68,7 +70,7 @@ export function setupOfficeAndJobs(
   divisionName: string,
   cityName: CityName,
   targetSize: number,
-  jobs: JobAssignments
+  jobs: JobAssignments,
 ): boolean {
   const corp = ns.corporation;
   const office = corp.getOffice(divisionName, cityName);
@@ -76,7 +78,11 @@ export function setupOfficeAndJobs(
   // 1. Prüfen & Erhöhen der Bürokapazität
   if (office.size < targetSize) {
     const sizeDiff = targetSize - office.size;
-    const upgradeCost = corp.getOfficeSizeUpgradeCost(divisionName, cityName, sizeDiff);
+    const upgradeCost = corp.getOfficeSizeUpgradeCost(
+      divisionName,
+      cityName,
+      sizeDiff,
+    );
 
     if (corp.getCorporation().funds < upgradeCost) {
       // Nicht genügend Kapital für das Upgrade vorhanden
@@ -156,7 +162,11 @@ export function maintainEmployeeMorale(
   }
 }
 
-export function buyCorporationUpgrades(ns: NS, maxBudgetRatio = 0.1): void {
+export function buyCorporationUpgrades(
+  ns: NS,
+  maxBudgetRatio = 0.1,
+  logger?: LoggerClient,
+): void {
   const corp = ns.corporation;
   const funds = corp.getCorporation().funds;
   if (funds <= 0) return;
@@ -193,9 +203,12 @@ export function buyCorporationUpgrades(ns: NS, maxBudgetRatio = 0.1): void {
       minCost <= corp.getCorporation().funds
     ) {
       corp.levelUpgrade(cheapestUpgrade);
-      ns.print(
-        `[CORP] Upgrade gekauft: ${cheapestUpgrade} (Lvl ${corp.getUpgradeLevel(cheapestUpgrade)})`,
-      );
+      const msg = `Upgrade gekauft: ${cheapestUpgrade} (Lvl ${corp.getUpgradeLevel(cheapestUpgrade)})`;
+      if (logger) {
+        logger.success(msg);
+      } else {
+        ns.print(`[CORP] ${msg}`);
+      }
       bought = true;
     }
   }
@@ -255,19 +268,27 @@ export function safeExportMaterial(
   );
 }
 
-export function ensureUnlock(ns: NS, unlockName: CorpUnlockName): boolean {
+export function ensureUnlock(
+  ns: NS,
+  unlockName: CorpUnlockName,
+  logger?: LoggerClient,
+): boolean {
   const corp = ns.corporation;
   if (corp.hasUnlock(unlockName)) return true;
 
   const cost = corp.getUnlockCost(unlockName);
   if (corp.getCorporation().funds >= cost) {
     corp.purchaseUnlock(unlockName);
-    ns.print(`[CORP] Unlock erworben: ${unlockName}`);
+    const msg = `Unlock erworben: ${unlockName}`;
+    if (logger) {
+      logger.success(msg);
+    } else {
+      ns.print(`[CORP] ${msg}`);
+    }
     return true;
   }
   return false;
 }
-
 export function buyPhaseUnlocks(ns: NS, currentPhase: string): void {
   ensureUnlock(ns, "Smart Supply");
 

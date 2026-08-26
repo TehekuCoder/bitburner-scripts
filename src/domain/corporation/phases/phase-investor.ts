@@ -19,20 +19,26 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
     const { ns, log } = ctx;
     const corp = ns.corporation;
 
-    // Falls die Investmentrunde bereits abgeschlossen wurde (z.B. nach Skriptneustart)
     const expectedRound = ctx.currentPhase === "INVESTOR_1" ? 1 : 2;
     if (corp.getInvestmentOffer().round > expectedRound) {
-      log(`[CORP] Investment-Runde ${expectedRound} bereits erledigt. Überspringe...`);
+      log(
+        `Investment-Runde ${expectedRound} bereits erledigt. Überspringe...`,
+        "WARN",
+      );
       return this.config.nextPhase;
     }
 
     if (this.state === "IDLE") {
-      log(`[CORP] Starte Profit-Spike für Investor (${this.config.nextPhase})...`);
+      log(
+        `Starte Profit-Spike für Investor (${this.config.nextPhase})...`,
+        "INFO",
+      );
       for (const div of this.config.divisionNames) {
         for (const city of CORP_CONFIG.cities) {
           corp.sellMaterial(div, city, "Plants", "0", "MP");
           corp.sellMaterial(div, city, "Food", "0", "MP");
-          if (div === "Chemicals") corp.sellMaterial(div, city, "Chemicals", "0", "MP");
+          if (div === "Chemicals")
+            corp.sellMaterial(div, city, "Chemicals", "0", "MP");
         }
       }
       this.state = "ACCUMULATING";
@@ -44,13 +50,14 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
       this.ticks++;
       if (this.ticks < 2) return ctx.currentPhase;
 
-      log("[CORP] Öffne Ventile & verändere Job-Verteilung auf Spike...");
+      log("Öffne Ventile & verändere Job-Verteilung auf Spike...", "INFO");
       for (const div of this.config.divisionNames) {
         for (const city of CORP_CONFIG.cities) {
           setupOfficeAndJobs(ns, div, city, 6, { Business: 3, Operations: 3 });
           corp.sellMaterial(div, city, "Plants", "MAX", "MP");
           corp.sellMaterial(div, city, "Food", "MAX", "MP");
-          if (div === "Chemicals") corp.sellMaterial(div, city, "Chemicals", "MAX", "MP");
+          if (div === "Chemicals")
+            corp.sellMaterial(div, city, "Chemicals", "MAX", "MP");
         }
       }
       this.state = "SELLING";
@@ -59,17 +66,22 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
 
     if (this.state === "SELLING") {
       const offer = corp.getInvestmentOffer();
-      log(`[CORP] Investor Angebot: $${ns.format.number(offer.funds)} / Ziel: $${ns.format.number(this.config.targetOffer)}`);
+      log(
+        `Investor Angebot: $${ns.format.number(offer.funds)} / Ziel: $${ns.format.number(this.config.targetOffer)}`,
+        "INFO",
+      );
 
       if (offer.funds >= this.config.targetOffer) {
         corp.acceptInvestmentOffer();
-        log(`[CORP] Investment von $${ns.format.number(offer.funds)} angenommen!`);
+        log(
+          `Investment von $${ns.format.number(offer.funds)} angenommen!`,
+          "SUCCESS",
+        );
         this.config.resetJobs(ns);
         this.state = "IDLE";
         return this.config.nextPhase;
       }
 
-      // Solange das Ziel nicht erreicht ist, in der Phase bleiben und weiter akkumulieren
       return ctx.currentPhase;
     }
 
