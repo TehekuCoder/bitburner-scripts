@@ -52,23 +52,25 @@ export async function main(ns: NS): Promise<void> {
     );
   } catch (error) {
     ns.print(
-      "[WARN] Full network sweep failed. Falling back to cloud-only clear.",
+      "[WARN] Full network sweep failed. Falling back to purchased servers clear.",
     );
     try {
-      const Clouders = ns.cloud.getServerNames();
-      for (const server of Clouders) {
+      const purchasedServers = ns.cloud.getServerNames();
+      for (const server of purchasedServers) {
         ns.killall(server);
       }
-      ns.print("[ OK ] Cloud server fleet cleared.");
+      ns.print("[ OK ] Purchased server fleet cleared.");
     } catch {
-      ns.print("[WARN] Could not clear cloud servers during early boot stage.");
+      ns.print(
+        "[WARN] Could not clear purchased servers during early boot stage.",
+      );
     }
   }
 
   await ns.sleep(250);
 
   // --- 2. ENVIRONMENT LAYER ---
-  ns.print("[...] Initializing Environment Layer (Failsafe Check)...");
+  ns.print("[...] Initializing Environment Layer...");
   if (ns.fileExists(PATHS.app.orchestration.boot, "home")) {
     const initPid = ns.run(PATHS.app.orchestration.boot, 1);
     if (initPid > 0) {
@@ -81,7 +83,9 @@ export async function main(ns: NS): Promise<void> {
       ns.print("[WARN] Initializer failed to launch. RAM shortage?");
     }
   } else {
-    ns.print(`[WARN] ${PATHS.app.orchestration.boot} not found. Skipping init stage.`);
+    ns.print(
+      `[WARN] ${PATHS.app.orchestration.boot} not found. Skipping init stage.`,
+    );
   }
   await ns.sleep(250);
 
@@ -90,9 +94,13 @@ export async function main(ns: NS): Promise<void> {
   if (ns.fileExists(PATHS.app.orchestration.kernel, "home")) {
     const kernelPid = ns.run(PATHS.app.orchestration.kernel, 1);
     if (kernelPid > 0) {
-      ns.print(`[ OK ] ${PATHS.app.orchestration.kernel} successfully launched.`);
+      ns.print(
+        `[ OK ] ${PATHS.app.orchestration.kernel} successfully launched.`,
+      );
     } else {
-      ns.print(`[FAIL] CRITICAL ERROR: Could not launch ${PATHS.app.orchestration.kernel}!`);
+      ns.print(
+        `[FAIL] CRITICAL ERROR: Could not launch ${PATHS.app.orchestration.kernel}!`,
+      );
     }
   } else {
     ns.alert(`CRITICAL ERROR: ${PATHS.app.orchestration.kernel} not found!`);

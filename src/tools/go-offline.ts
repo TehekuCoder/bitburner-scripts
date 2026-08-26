@@ -1,249 +1,154 @@
 import { NS } from "@ns";
-import { provisionServer } from "../domain/hacking/provision";
-import { formatTime } from "/lib/utils";
-import { getAllServers } from "/infrastructure/network/network";
-import { PATHS } from "/infrastructure/runtime/paths";
-
-interface TargetScore {
-  name: string;
-  score: number;
-  maxMoney: number;
-  weakenTime: number;
-}
+import { PATHS } from "../infrastructure/runtime/paths.js";
+import { evaluateTargets, TargetScore } from "/domain/evaluators/strategy/target-selection.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  ns.tprint("💤 [BitOS] Leite Schlafmodus-Analyse ein...");
 
-  // ====================================================================
-  // SCHRITT 1: CLEANUP AUF HOME
-  // ====================================================================
-  ns.killall("home", true);
-  await ns.sleep(500);
+  ns.tprint("🌙 Bereite Netzwerk auf Offline-Phase vor...");
 
-  // ====================================================================
-  // SCHRITT 2: HACKNET-INCOME VS. HACK-TARGETS EVALUIERUNG
-  // ====================================================================
-  const hacknetIncome = calculateHacknetIncome(ns);
-
-  const playerHacking = ns.getPlayer().skills.hacking;
-  const allServers = getAllServers(ns);
-
-  const validTargets: TargetScore[] = allServers
-    .filter(
-      (s) =>
-        !s.startsWith("hacknet") &&
-        ns.hasRootAccess(s) &&
-        ns.getServerMaxMoney(s) > 0 &&
-        ns.getServerRequiredHackingLevel(s) <= playerHacking,
-    )
-    .map((s) => {
-      const maxMoney = ns.getServerMaxMoney(s);
-      const weakenTime = ns.getWeakenTime(s);
-      // Grobe Schätzung des maximalen theoretischen Ertrags/Sekunde
-      const score = maxMoney / Math.max(1, weakenTime / 1000);
-      return { name: s, score, maxMoney, weakenTime };
-    })
-    .sort((a, b) => b.score - a.score);
-
-  const TARGET_COUNT = Math.min(validTargets.length, 8);
-  const topTargets = validTargets.slice(0, TARGET_COUNT);
-  const estimatedMaxScriptIncome = topTargets.reduce((sum, t) => sum + t.score, 0);
-
-  ns.tprint(`📊 [WIRTSCHAFTS-CHECK]:`);
-  ns.tprint(` ├─ ⚡ Hacknet-Ertrag:   $${ns.format.number(hacknetIncome)} / Sekunde`);
-  ns.tprint(` └─ 💻 Skript-Potenzial: $${ns.format.number(estimatedMaxScriptIncome)} / Sekunde`);
-
-  // ENTSCHEIDUNG: Lohnt sich Skript-Hacking überhaupt?
-  const MIN_WORTHWHILE_RATIO = 0.10;
-  if (hacknetIncome > 0 && estimatedMaxScriptIncome < (hacknetIncome * MIN_WORTHWHILE_RATIO)) {
-    ns.tprint(`\n🛑 [BitOS] SKRIPT-DEPLOYMENT ÜBERSPRUNGEN!`);
-    ns.tprint(`💡 Hacknet ist in BN9 deutlich lukrativer als Hacking-Skripte.`);
-    ns.tprint(`   Alle Worker gestoppt. Das Netzwerk läuft im reinen Hacknet-Passivmodus.`);
-    
-    stopAllWorkers(ns, allServers);
+  const workScript = PATHS.services.payloads.work;
+  if (!ns.fileExists(workScript, "home")) {
+    ns.tprint(`❌ ERROR: Worker-Skript '${workScript}' wurde nicht auf 'home' gefunden!`);
     return;
   }
 
-  if (validTargets.length === 0) {
-    ns.tprint("❌ ERROR: Keine gültigen Hack-Ziele gefunden!");
+  // 1. Alle anderen Skripte auf 'home' beenden
+  const killedHomeCount = stopEverythingOnHome(ns);
+  ns.tprint(`🧹 Home bereinigt: ${killedHomeCount} Skript(e) beendet.`);
+
+  // 2. Erfasse alle nutzbaren Server im Netzwerk (inkl. Hacknet & Purchased)
+  const servers = getAllRootedServersWithRam(ns);
+  const totalNetworkRam = servers.reduce((sum, s) => sum + ns.getServerMaxRam(s), 0);
+
+  // 3. Evaluierung der besten Ziele für die WORKER-Strategie
+  const rankedTargets = evaluateTargets(ns, "WORKER");
+  if (rankedTargets.length === 0) {
+    ns.tprint("❌ ERROR: Keine gültigen Hacking-Ziele gefunden!");
     return;
   }
 
-  ns.tprint(
-    `🎯 [BitOS] Dynamische Lastverteilung gestartet (${topTargets.length} Ziele aktiv):`,
-  );
-  topTargets.forEach((t, i) => {
+  // 4. Ziel-Anzahl dynamisch anhand des Gesamt-RAMs skalieren
+  let maxTargets = 1;
+  if (totalNetworkRam >= 4096) maxTargets = 6;
+  else if (totalNetworkRam >= 2048) maxTargets = 4;
+  else if (totalNetworkRam >= 512) maxTargets = 3;
+  else if (totalNetworkRam >= 128) maxTargets = 2;
+
+  const selectedTargets = rankedTargets.slice(0, Math.min(maxTargets, rankedTargets.length));
+  const targetHostnames = selectedTargets.map((t) => t.hostname);
+
+  // 5. Remote-Server bereinigen und Worker auf allen Servern bereitstellen
+  const scriptRam = ns.getScriptRam(workScript, "home");
+  let totalThreadsDeployed = 0;
+  let serverCount = 0;
+
+  for (let i = 0; i < servers.length; i++) {
+    const server = servers[i];
+    const maxRam = ns.getServerMaxRam(server);
+    if (maxRam <= 0) continue;
+
+    // Auf Remote-Servern alle alten Altlasten beenden
+    if (server !== "home") {
+      ns.killall(server);
+    }
+
+    // Auf 'home' lassen wir einen kleinen Sicherheitspuffer für manuelle Befehle/Tools
+    let usableRam = maxRam;
+    if (server === "home") {
+      const reservedHomeRam = Math.min(32, maxRam * 0.1);
+      usableRam = Math.max(0, maxRam - reservedHomeRam);
+    }
+
+    const threads = Math.floor(usableRam / scriptRam);
+    if (threads <= 0) continue;
+
+    // Skript auf Remote-Server kopieren
+    if (server !== "home" && !ns.fileExists(workScript, server)) {
+      ns.scp(workScript, server, "home");
+    }
+
+    // Round-Robin Verteilung der Top-Ziele über alle Server
+    const assignedTarget = targetHostnames[i % targetHostnames.length];
+    const pid = ns.exec(workScript, server, threads, assignedTarget);
+
+    if (pid > 0) {
+      totalThreadsDeployed += threads;
+      serverCount++;
+    }
+  }
+
+  // 6. Zusammenfassenden Bericht im Terminal ausgeben
+  printSummaryReport(ns, selectedTargets, totalThreadsDeployed, serverCount, totalNetworkRam);
+}
+
+/**
+ * Stoppt JEDES laufende Skript auf 'home' – außer der eigenen PID.
+ */
+function stopEverythingOnHome(ns: NS): number {
+  const currentPid = ns.pid;
+  const runningProcs = ns.ps("home");
+
+  let stoppedCount = 0;
+  for (const proc of runningProcs) {
+    if (proc.pid !== currentPid) {
+      ns.kill(proc.pid);
+      stoppedCount++;
+    }
+  }
+
+  return stoppedCount;
+}
+
+/**
+ * Findet alle gerooteten Server im gesamten Netzwerk mit RAM > 0
+ */
+function getAllRootedServersWithRam(ns: NS): string[] {
+  const visited = new Set<string>();
+  const queue = ["home"];
+  const result: string[] = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    visited.add(current);
+
+    if (ns.hasRootAccess(current) && ns.getServerMaxRam(current) > 0) {
+      result.push(current);
+    }
+
+    for (const neighbor of ns.scan(current)) {
+      if (!visited.has(neighbor) && !queue.includes(neighbor)) {
+        queue.push(neighbor);
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Gibt den Abschlussbericht direkt per tprint im Terminal aus.
+ */
+function printSummaryReport(
+  ns: NS,
+  targets: TargetScore[],
+  totalThreads: number,
+  serverCount: number,
+  totalRam: number
+): void {
+  ns.tprint("==================================================");
+  ns.tprint(" 🌙 OFFLINE-SETTING ERFOLGREICH AKTIVIERT");
+  ns.tprint("==================================================");
+  ns.tprint(` Aktive Worker-Server : ${serverCount}`);
+  ns.tprint(` Gesamt-Threads       : ${ns.format.number(totalThreads, 0)}`);
+  ns.tprint(` Genutztes Net-RAM    : ${ns.format.ram(totalRam)}`);
+  ns.tprint("--------------------------------------------------");
+  ns.tprint(" ZUGEWIESENE ZIELE (WORKER-SCORE):");
+
+  targets.forEach((t, idx) => {
     ns.tprint(
-      `   [Rank ${i + 1}] ${t.name.padEnd(18)} -> Max: $${ns.format.number(t.maxMoney)} | Weaken: ${formatTime(t.weakenTime)}`,
+      `  [${idx + 1}] ${t.hostname.padEnd(18)} | Max: $${ns.format.number(t.maxMoney, 2).padStart(10)} | Score: ${ns.format.number(t.score, 2)}`
     );
   });
-
-  // ====================================================================
-  // SCHRITT 3: WORKER-VERTEILUNG NACH RAM-LEISTUNG
-  // ====================================================================
-  const Clouders = ns.cloud.getServerNames();
-  const workerScript = PATHS.services.payloads.work;
-  const workerRam = ns.getScriptRam(workerScript);
-
-  if (!Number.isFinite(workerRam) || workerRam <= 0) {
-    ns.tprint(`❌ ERROR: Worker-Skript '${workerScript}' nicht gefunden!`);
-    return;
-  }
-
-  const hacknetServers: string[] = [];
-  try {
-    const numHacknet = ns.hacknet.numNodes();
-    for (let i = 0; i < numHacknet; i++) {
-      const nodeName = ns.hacknet.getNodeStats(i).name;
-      if (ns.getServerMaxRam(nodeName) > 0) {
-        hacknetServers.push(nodeName);
-      }
-    }
-  } catch {
-    // API nicht verfügbar
-  }
-
-  // Set verhindert doppelte Server in der Host-Liste
-  const uniqueCandidates = Array.from(new Set([...allServers, ...hacknetServers]));
-
-  const hostServers = uniqueCandidates
-    .filter(
-      (s) =>
-        !s.startsWith("hacknet-node") &&
-        (s === "home" ||
-          Clouders.includes(s) ||
-          s.startsWith("hacknet-server") ||
-          (ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0)) &&
-        ns.getServerMaxRam(s) > 0,
-    )
-    .sort((a, b) => ns.getServerMaxRam(b) - ns.getServerMaxRam(a));
-
-  const activeTargets = new Set<string>();
-
-  for (let i = 0; i < hostServers.length; i++) {
-    const server = hostServers[i];
-
-    if (server !== "home") {
-      killWorkerScriptsOnServer(ns, server);
-      await ns.sleep(20);
-    }
-
-    await provisionServer(ns, server, "hgw");
-
-    const reserve = server === "home" ? 32 : 0;
-    const maxRam = Math.max(0, ns.getServerMaxRam(server) - reserve);
-    const freeRam = Math.max(0, ns.getServerMaxRam(server) - ns.getServerUsedRam(server));
-
-    const threads = Math.floor((server === "home" ? freeRam : maxRam) / workerRam);
-
-    if (Number.isFinite(threads) && threads > 0) {
-      const targetIndex = i % topTargets.length;
-      const assignedTarget = topTargets[targetIndex].name;
-
-      activeTargets.add(assignedTarget);
-
-      if (server !== "home") ns.scp(workerScript, server, "home");
-
-      const pid = ns.exec(workerScript, server, threads, assignedTarget);
-      if (pid === 0) {
-        ns.print(`⚠️ Exec fehlgeschlagen auf ${server} für ${assignedTarget}`);
-      }
-    }
-  }
-
-  if (activeTargets.size === 0) {
-    ns.tprint("❌ ERROR: Keine Worker gestartet (unzureichender RAM im Netz).");
-    return;
-  }
-
-  ns.tprint("⏳ [BitOS] Multi-Zyklen gestartet. Kalibrierung läuft...");
-  ns.ui.openTail();
-  ns.ui.setTailTitle("Offline-Modus");
-  ns.ui.resizeTail(600, 330);
-
-  // Status-Monitoring
-  let stableTicks = 0;
-  let lastTotalIncome = 0;
-  const startTime = Date.now();
-  const maxWaitTime = Math.max(...Array.from(activeTargets).map((t) => ns.getWeakenTime(t))) + 5000;
-
-  while (true) {
-    let currentTotalIncome = 0;
-    for (const server of hostServers) {
-      for (const target of activeTargets) {
-        const income = ns.getScriptIncome(workerScript, server, target);
-        if (!isNaN(income) && income > 0) currentTotalIncome += income;
-      }
-    }
-
-    ns.clearLog();
-    ns.print(`============================================================`);
-    ns.print(`🔥 BIT-OS CLUSTER-KALIBRIERUNG (${activeTargets.size} TARGETS)`);
-    ns.print(`============================================================`);
-    ns.print(`NETZWERK-PROD: $${ns.format.number(currentTotalIncome)} / Sekunde`);
-    ns.print(`HACKNET-PROD:  $${ns.format.number(hacknetIncome)} / Sekunde`);
-    ns.print(`============================================================`);
-
-    if (currentTotalIncome > 0 && Math.abs(currentTotalIncome - lastTotalIncome) < currentTotalIncome * 0.05) {
-      stableTicks++;
-    } else if (currentTotalIncome > 0) {
-      stableTicks = Math.max(1, stableTicks);
-    }
-
-    if (stableTicks >= 8 || Date.now() - startTime > maxWaitTime) break;
-
-    lastTotalIncome = currentTotalIncome;
-    await ns.sleep(3000);
-  }
-
-  ns.tprint(`🚀 [BitOS] NETZWERK STABILISIERT. Bereit für Offline-Phase.`);
-}
-
-// ====================================================================
-// HILFSFUNKTIONEN
-// ====================================================================
-
-function calculateHacknetIncome(ns: NS): number {
-  try {
-    const numNodes = ns.hacknet.numNodes();
-    if (numNodes === 0) return 0;
-
-    if ("getHashGainRate" in ns.hacknet) {
-      const hashRate = (ns.hacknet as unknown as { getHashGainRate: () => number }).getHashGainRate();
-      return hashRate * 250_000;
-    }
-
-    let totalProd = 0;
-    for (let i = 0; i < numNodes; i++) {
-      totalProd += ns.hacknet.getNodeStats(i).production;
-    }
-    return totalProd;
-  } catch {
-    return 0;
-  }
-}
-
-function killWorkerScriptsOnServer(ns: NS, server: string): void {
-  const activeProcesses = ns.ps(server);
-  for (const proc of activeProcesses) {
-    if (
-      proc.filename.includes("hack.js") ||
-      proc.filename.includes("grow.js") ||
-      proc.filename.includes("weaken.js") ||
-      proc.filename.includes("work.js")
-    ) {
-      ns.scriptKill(proc.filename, server);
-    }
-  }
-}
-
-function stopAllWorkers(ns: NS, allServers: string[]): void {
-  const Clouders = ns.cloud.getServerNames();
-  const targets = Array.from(new Set([...allServers, ...Clouders]));
-  for (const server of targets) {
-    if (ns.hasRootAccess(server)) {
-      killWorkerScriptsOnServer(ns, server);
-    }
-  }
+  ns.tprint("==================================================");
 }

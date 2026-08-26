@@ -8,7 +8,8 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  // ns.disableLog("ALL");
+  // Deaktiviere den unübersichtlichen Standard-Log von Bitburner
+  ns.disableLog("ALL");
 
   const maxMoney = ns.getServerMaxMoney(target);
   const minSecurity = ns.getServerMinSecurityLevel(target);
@@ -22,10 +23,15 @@ export async function main(ns: NS): Promise<void> {
   const moneyThresh = maxMoney * 0.90;
   const securityThresh = minSecurity + 2;
 
+  ns.print(`=== WORKER START: ${target} ===`);
+  ns.print(`Ziel-Security: <= ${minSecurity + 2} (Min: ${minSecurity})`);
+  ns.print(`Ziel-Geld:     >= $${ns.format.number(moneyThresh, 2)} (Max: $${ns.format.number(maxMoney, 2)})`);
+  ns.print(`--------------------------------------------------`);
+
   while (true) {
     try {
-      // Sicherheits-Check falls Root-Zugriff im Loop flöten geht (z.B. BN-Mechaniken)
       if (!ns.hasRootAccess(target)) {
+        ns.print(`[WARN] Kein Root-Zugriff auf ${target}. Warte 5s...`);
         await ns.sleep(5000);
         continue;
       }
@@ -33,14 +39,23 @@ export async function main(ns: NS): Promise<void> {
       const currentSecurity = ns.getServerSecurityLevel(target);
       const currentMoney = ns.getServerMoneyAvailable(target);
 
+      // Kompakte Status-Strings für saubere Logs
+      const secStr = `${currentSecurity.toFixed(2)}/${minSecurity}`;
+      const moneyPct = ((currentMoney / maxMoney) * 100).toFixed(1);
+      const moneyStr = `$${ns.format.number(currentMoney, 2)} (${moneyPct}%)`;
+
       if (currentSecurity > securityThresh) {
+        ns.print(`[WEAKEN] Sec: ${secStr} | Money: ${moneyStr}`);
         await ns.weaken(target);
       } else if (currentMoney < moneyThresh) {
+        ns.print(`[GROW]   Sec: ${secStr} | Money: ${moneyStr}`);
         await ns.grow(target);
       } else {
+        ns.print(`[HACK]   Sec: ${secStr} | Money: ${moneyStr}`);
         await ns.hack(target);
       }
     } catch (e: unknown) {
+      ns.print(`[ERROR] Unerwarteter Fehler: ${String(e)}`);
       await ns.sleep(5000);
     }
     await ns.sleep(1);

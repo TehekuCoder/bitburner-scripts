@@ -7,10 +7,6 @@ import { evaluateHackingStrategy } from "/domain/evaluators/strategy/hacking-str
 import { evaluateTargets } from "/domain/evaluators/strategy/target-selection.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
 
-
-
-
-
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 

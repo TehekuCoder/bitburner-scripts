@@ -15,10 +15,15 @@ export class InitAgriPhaseHandler implements CorpPhaseHandler {
 
     log("Initialisiere Agri-Sparte...", "INFO");
 
+    // 1. Division gründen falls nicht vorhanden
     if (!corp.getCorporation().divisions.includes(agri.name)) {
       corp.expandIndustry(agri.type, agri.name);
     }
 
+    // 2. Prüfen, ob Smart Supply freigeschaltet ist
+    const hasSmartSupply = corp.hasUnlock("Smart Supply");
+
+    // 3. Städte & Lagerhäuser einrichten
     for (const city of CORP_CONFIG.cities) {
       if (!corp.getDivision(agri.name).cities.includes(city)) {
         corp.expandCity(agri.name, city);
@@ -27,16 +32,20 @@ export class InitAgriPhaseHandler implements CorpPhaseHandler {
         corp.purchaseWarehouse(agri.name, city);
       }
 
-      corp.setSmartSupply(agri.name, city, true);
-      corp.setSmartSupplyOption(agri.name, city, "Water", "leftovers");
-      corp.setSmartSupplyOption(agri.name, city, "Chemicals", "leftovers");
+      // Smart Supply Fallback: Nur konfigurieren, wenn tatsächlich freigeschaltet
+      if (hasSmartSupply) {
+        corp.setSmartSupply(agri.name, city, true);
+        corp.setSmartSupplyOption(agri.name, city, "Water", "leftovers");
+        corp.setSmartSupplyOption(agri.name, city, "Chemicals", "leftovers");
+      }
 
+      // Verkaufs-Einstellungen immer setzen
       corp.sellMaterial(agri.name, city, "Plants", "MAX", "MP");
       corp.sellMaterial(agri.name, city, "Food", "MAX", "MP");
     }
 
     log(
-      "Agri-Initialisierung abgeschlossen. Wechsle zu AGRI_BOOST.",
+      `Agri-Initialisierung abgeschlossen ${!hasSmartSupply ? "(ohne Smart Supply)" : ""}. Wechsle zu AGRI_BOOST.`,
       "SUCCESS",
     );
     return "AGRI_BOOST";
