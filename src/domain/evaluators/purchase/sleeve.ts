@@ -1,4 +1,3 @@
-// lib/evaluators/sleeve.ts
 import { NS } from "@ns";
 import {
   PurchaseEvaluator,
@@ -19,9 +18,6 @@ export interface SleeveStateEvaluation {
   recommendedMode: SleeveMode;
 }
 
-/**
- * Bewertet den Zustand aller Sleeves.
- */
 export function evaluateSleeveStates(ns: NS): SleeveStateEvaluation[] {
   if (!ns.sleeve) return [];
 
@@ -53,10 +49,6 @@ export function evaluateSleeveStates(ns: NS): SleeveStateEvaluation[] {
   return evaluations;
 }
 
-/**
- * Evaluator für den finance-core.ts:
- * Generiert zentral gesteuerte Kaufanträge für Sleeve-Augmentations.
- */
 export const SleeveEvaluator: PurchaseEvaluator = {
   category: "SLEEVE_AUG" as PurchaseCategory,
 
@@ -64,9 +56,10 @@ export const SleeveEvaluator: PurchaseEvaluator = {
     if (!ns.sleeve) return [];
 
     const bnMults = loadBnMults(ns);
-    // Wenn Augmentationen für den Spieler teuer sind, werden Sleeve-Augs relativ wertvoller.
+    // Da Sleeve-Augs im Gegensatz zu Spieler-Augs im Preis STABIL bleiben, 
+    // sind sie bei hohem AugmentationMoneyCost-Multiplikator NOCH wertvoller!
     const costMult = bnMults.AugmentationMoneyCost ?? 1.0;
-    const efficiencyMult = costMult; 
+    const efficiencyMult = Math.max(1.0, costMult * 1.2);
 
     const requests: PurchaseRequest[] = [];
     const numSleeves = ns.sleeve.getNumSleeves();
@@ -75,37 +68,64 @@ export const SleeveEvaluator: PurchaseEvaluator = {
       try {
         const sleeveStats = ns.sleeve.getSleeve(sleeveId);
 
-        // Bei extrem hohem Shock (> 90%) Aug-Käufe zurückstellen
-        if (sleeveStats.shock > 90) continue;
+        // Bei extrem hohem Shock (> 95%) nur Speicher/Sync-Augs zulassen
+        if (sleeveStats.shock > 95) continue;
 
-        // Shock-Faktor: Effizienz von Augs steigt mit sinkendem Shock
         const shockFactor = (100 - sleeveStats.shock) / 100;
         const purchasableAugs = ns.sleeve.getSleevePurchasableAugs(sleeveId);
+        
+        // Bereits installierte Augmentationen abfragen
+        const installedAugs = ns.sleeve.getSleeveAugmentations(sleeveId);
+        const installedCount = installedAugs.length;
+
+        // Balance-Faktor: Reduziert Score leicht pro bereits installierter Augmentation,
+        // damit verwaiste Sleeves nachgezogen werden.
+        const balanceFactor = 1 / (1 + installedCount * 0.15);
+
+        // Sleeve 0 ist oft der wichtigste Akteur (z.B. Infiltration / Hacking)
+        const sleevePriorityBonus = sleeveId === 0 ? 1.2 : 1.0;
 
         for (const aug of purchasableAugs) {
           let basePriority = PurchasePriority.LOW;
-          let baseScore = 10;
-          let reason = "Stat Enhancement";
+          let baseScore = 15;
+          let reason = "General Stat Boost";
 
-          // Priorisierung nach Nutzen
+          // 1. Essentielle Meta-Augmentationen (Memory / Synchro)
           if (aug.name.includes("Memory") || aug.name.includes("Synchro")) {
             basePriority = PurchasePriority.HIGH;
-            baseScore = 90;
+            baseScore = 100;
             reason = "Essentielles Memory/Sync Upgrade";
-          } else if (
+          } 
+          // 2. Hacking & Combat Haupt-Augmentationen
+          else if (
             aug.name.includes("NeuroLink") ||
-            aug.name.includes("BitWire")
+            aug.name.includes("BitWire") ||
+            aug.name.includes("CRANial")
           ) {
             basePriority = PurchasePriority.MEDIUM;
-            baseScore = 60;
+            baseScore = 65;
             reason = "Hacking Efficiency Upgrade";
+          } else if (
+            aug.name.includes("Bionic") ||
+            aug.name.includes("Graphene")
+          ) {
+            basePriority = PurchasePriority.MEDIUM;
+            baseScore = 50;
+            reason = "Combat Multiplier Upgrade";
           }
 
-          // adjustPriorityByMult hebt die Priorität bei efficiencyMult >= 2.0 an
           const priority = adjustPriorityByMult(basePriority, efficiencyMult);
+          
+          // Berechneter Score unter Berücksichtigung von Shock, Balancierung und Sleeve-Rolle
           const score = Math.max(
             1,
-            Math.floor(baseScore * efficiencyMult * shockFactor),
+            Math.floor(
+              baseScore * 
+              efficiencyMult * 
+              shockFactor * 
+              balanceFactor * 
+              sleevePriorityBonus
+            )
           );
 
           requests.push({
@@ -114,7 +134,7 @@ export const SleeveEvaluator: PurchaseEvaluator = {
             priority,
             score,
             cost: aug.cost,
-            description: `Sleeve #${sleeveId}: Augmentation '${aug.name}' (${reason})`,
+            description: `Sleeve #${sleeveId} (${installedCount} Augs): '${aug.name}' (${reason})`,
             action: {
               script: PATHS.app.actions.sleeve,
               args: ["sleeve-purchase-aug", sleeveId, aug.name],
@@ -122,13 +142,14 @@ export const SleeveEvaluator: PurchaseEvaluator = {
           });
         }
       } catch {
-        /* Falls Sleeve-API noch eingeschränkt ist */
+        /* Falls API-Zugriff fehlschlägt */
       }
     }
 
+    // Sortierung nach Score; bei gleichem Score gewinnt der Sleeve mit WENIGER Augmentationen (Tie-Breaker)
     return requests
       .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-      .slice(0, 6); // Max 6 Augmentationen gleichzeitig anfragen
+      .slice(0, 8); // Max 8 Anträge gleichzeitig zulassen
   },
 };
 

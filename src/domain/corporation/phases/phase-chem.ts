@@ -1,6 +1,7 @@
 import {
   buyCorporationUpgrades,
   maintainEmployeeMorale,
+  purchaseBoosterMaterials,
   safeExportMaterial,
   setupOfficeAndJobs,
   upgradeWarehouseToLevel,
@@ -61,13 +62,12 @@ export class ExportLoopPhaseHandler implements CorpPhaseHandler {
     const { ns, log, logger } = ctx;
     const { agri, chem } = CORP_CONFIG.divisions;
 
-    log(
-      "Richte bidirektionale Export-Routen ein (Chemicals <-> Plants)...",
-      "DEBUG",
-    );
+    log("Führe Skalierung & Export-Loop für Investor 2 aus...", "DEBUG");
+
+    let allReady = true;
 
     for (const city of CORP_CONFIG.cities) {
-      // Chemikalien an Agriculture liefern (verbessert dort die Pflanzenproduktion)
+      // 1. Export-Routen sicherstellen
       safeExportMaterial(
         ns,
         chem.name,
@@ -77,8 +77,6 @@ export class ExportLoopPhaseHandler implements CorpPhaseHandler {
         "Chemicals",
         "IPROD * -1",
       );
-
-      // Pflanzen an Chemical liefern (wird als Rohstoff für Chemikalien benötigt)
       safeExportMaterial(
         ns,
         agri.name,
@@ -89,13 +87,65 @@ export class ExportLoopPhaseHandler implements CorpPhaseHandler {
         "IPROD * -1",
       );
 
+      // 2. Büros auf 9 Mitarbeiter aufstocken
+      const agriOffice = setupOfficeAndJobs(
+        ns,
+        agri.name,
+        city,
+        CORP_CONFIG.officeSizes.phase2,
+        CORP_CONFIG.jobDistribution.support9,
+      );
+      const chemOffice = setupOfficeAndJobs(
+        ns,
+        chem.name,
+        city,
+        CORP_CONFIG.officeSizes.phase2,
+        CORP_CONFIG.jobDistribution.chem9,
+      );
+
+      // 3. Lagerhäuser ausbauen
+      upgradeWarehouseToLevel(
+        ns,
+        agri.name,
+        city,
+        CORP_CONFIG.warehouseLevels.agriR2,
+      );
+      upgradeWarehouseToLevel(
+        ns,
+        chem.name,
+        city,
+        CORP_CONFIG.warehouseLevels.chemR2,
+      );
+
+      // 4. Booster-Materialien für R2 aufkaufen
+      const agriReady = await purchaseBoosterMaterials(
+        ns,
+        agri.name,
+        city,
+        CORP_CONFIG.AGRI_BOOST_R2,
+      );
+      const chemReady = await purchaseBoosterMaterials(
+        ns,
+        chem.name,
+        city,
+        CORP_CONFIG.CHEM_BOOST_R2,
+      );
+
       maintainEmployeeMorale(ns, agri.name, city);
       maintainEmployeeMorale(ns, chem.name, city);
+
+      if (!agriOffice || !chemOffice || !agriReady || !chemReady) {
+        allReady = false;
+      }
     }
 
     buyCorporationUpgrades(ns, 0.05, logger);
 
-    log("Export-Loop aktiv! Wechsle zu INVESTOR_2.", "SUCCESS");
-    return "INVESTOR_2";
+    if (allReady) {
+      log("Vorbereitung abgeschlossen! Wechsle zu INVESTOR_2.", "SUCCESS");
+      return "INVESTOR_2";
+    }
+
+    return ctx.currentPhase;
   }
 }

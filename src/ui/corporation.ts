@@ -1,4 +1,4 @@
-import { NS, CorporationInfo } from "@ns";
+import { CorporationInfo, NS } from "@ns";
 import { loadCorporationState } from "/infrastructure/state/state";
 import { CORP_CONFIG } from "/shared/constants/corporation";
 
@@ -14,7 +14,7 @@ export async function main(ns: NS): Promise<void> {
 
   ns.ui.openTail();
   ns.ui.setTailTitle("🏢 BitOS Corporation System");
-  ns.ui.resizeTail(820, 560);
+  ns.ui.resizeTail(840, 600);
 
   while (true) {
     const corp = ns.corporation.getCorporation();
@@ -64,7 +64,7 @@ function renderDashboard(
   );
   ns.print(
     ` Net Profit: ${profitStr} | ` +
-      `Investor Offer: $${ns.format.number(investOffer.funds)} (${investOffer.shares} Shares)`,
+      `Investor (R${investOffer.round}): $${ns.format.number(investOffer.funds)} (${ns.format.number(investOffer.shares)} Shares)`,
   );
 
   ns.print(dividerSub);
@@ -76,7 +76,7 @@ function renderDashboard(
   for (const divName of corp.divisions) {
     const div = ns.corporation.getDivision(divName);
     const divNameStr = div.name.padEnd(15);
-    const divType = ((div as { type?: string }).type ?? "N/A").padEnd(11);
+    const divType = (div.industry ?? "N/A").padEnd(11);
     const cityCount = `${div.cities.length}/6`.padEnd(6);
 
     let totalOfficeSize = 0;
@@ -142,48 +142,74 @@ function renderPhaseChecklist(
 
   switch (stage) {
     case "INIT_AGRI":
-    case "AGRI_BOOST":
+    case "AGRI_BOOST": {
+      const agriOfficeSize = hasAgri
+        ? ns.corporation.getOffice(agriName, CORP_CONFIG.mainCity).size
+        : 0;
       ns.print(
         `  [${hasAgri ? "X" : " "}] ${agriName} Sparte gegründet & 6 Städte freigeschaltet`,
       );
       ns.print(
-        `  [ ] Booster-Materialien (Hardware/AiCore/RealEstate) auf Zielbestand kaufen`,
+        `  [${agriOfficeSize >= CORP_CONFIG.officeSizes.phase1 ? "X" : " "}] Büros auf ${CORP_CONFIG.officeSizes.phase1} Mitarbeiter eingerichtet`,
       );
-      ns.print(`  [ ] Vorbereitung auf Investor 1`);
+      ns.print(
+        `  [ ] Booster-Materialien R1 (HW: 125, AI: 75, RE: 27k) kaufen`,
+      );
       break;
+    }
 
     case "INVESTOR_1":
-      ns.print(`  [X] ${agriName} Boost abgeschlossen`);
+      ns.print(`  [X] ${agriName} Booster R1 abgeschlossen`);
       ns.print(`  [ ] Profit-Spike auslösen (Lager füllen & entleeren)`);
       ns.print(
-        `  [${offer >= 200_000_000_000 ? "X" : " "}] Angebot >= $200B erzielen (Aktuell: $${ns.format.number(offer)})`,
+        `  [${offer > 0 ? "X" : " "}] Investor 1 Angebot abwarten (Aktuell: $${ns.format.number(offer)})`,
       );
       break;
 
     case "INIT_CHEM":
-    case "EXPORT_LOOP":
+    case "EXPORT_LOOP": {
+      const agriOffice = hasAgri
+        ? ns.corporation.getOffice(agriName, CORP_CONFIG.mainCity).size
+        : 0;
+      const chemOffice = hasChem
+        ? ns.corporation.getOffice(chemName, CORP_CONFIG.mainCity).size
+        : 0;
+      const isUpgraded =
+        agriOffice >= CORP_CONFIG.officeSizes.phase2 &&
+        chemOffice >= CORP_CONFIG.officeSizes.phase2;
+
       ns.print(`  [X] Investor 1 abgeschlossen`);
       ns.print(`  [${hasChem ? "X" : " "}] ${chemName} Sparte gegründet`);
       ns.print(
-        `  [ ] Exporte (${agriName} <-> ${chemName}) via 'IPROD * -1' aktiv`,
+        `  [${isUpgraded ? "X" : " "}] Büros auf ${CORP_CONFIG.officeSizes.phase2} Mitarbeiter skaliert (${agriOffice}/${CORP_CONFIG.officeSizes.phase2} Agri | ${chemOffice}/${CORP_CONFIG.officeSizes.phase2} Chem)`,
+      );
+      ns.print(
+        `  [ ] Exporte (Agri <-> Chem) & Booster R2 Einkäufe aktiv`,
       );
       break;
+    }
 
     case "INVESTOR_2":
-      ns.print(`  [X] Export-Loop etabliert`);
+      ns.print(`  [X] Export-Loop & R2-Skalierung abgeschlossen`);
       ns.print(`  [ ] Profit-Spike für ${agriName} & ${chemName} auslösen`);
       ns.print(
-        `  [${offer >= 2_000_000_000_000 ? "X" : " "}] Angebot >= $2T erzielen (Aktuell: $${ns.format.number(offer)})`,
+        `  [${offer > 0 ? "X" : " "}] Investor 2 Angebot abwarten (Aktuell: $${ns.format.number(offer)})`,
       );
       break;
 
-    case "INIT_TOBACCO":
+    case "INIT_TOBACCO": {
+      const mainOfficeSize = hasTobacco
+        ? ns.corporation.getOffice(tobaccoName, CORP_CONFIG.mainCity).size
+        : 0;
       ns.print(`  [X] Investor 2 Kapital erhalten`);
       ns.print(
         `  [${hasTobacco ? "X" : " "}] Endgame-Sparte ${tobaccoName} gegründet`,
       );
-      ns.print(`  [ ] Hauptsitz (Aevum) auf 60 Mitarbeiter aufgestockt`);
+      ns.print(
+        `  [${mainOfficeSize >= 60 ? "X" : " "}] Hauptsitz (${CORP_CONFIG.mainCity}) auf 60 Mitarbeiter ausgebaut (${mainOfficeSize}/60)`,
+      );
       break;
+    }
 
     case "TOBACCO_LOOP": {
       const hasTA2 = hasTobacco

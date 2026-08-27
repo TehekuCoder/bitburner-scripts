@@ -73,7 +73,7 @@ export class AgriBoostPhaseHandler implements CorpPhaseHandler {
         ns,
         agri.name,
         city,
-        CORP_CONFIG.agriBoosterR1,
+        CORP_CONFIG.AGRI_BOOST_R1,
       );
 
       maintainEmployeeMorale(ns, agri.name, city);

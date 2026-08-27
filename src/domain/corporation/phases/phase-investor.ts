@@ -46,18 +46,37 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
       return ctx.currentPhase;
     }
 
+    // phase-investor.ts (Auszug)
     if (this.state === "ACCUMULATING") {
       this.ticks++;
-      if (this.ticks < 2) return ctx.currentPhase;
 
-      log("Öffne Ventile & verändere Job-Verteilung auf Spike...", "INFO");
+      // Prüfe, ob die Lagerhäuser fast voll sind (z.B. > 90%), statt nur 2 Ticks zu warten
+      let isFull = true;
       for (const div of this.config.divisionNames) {
         for (const city of CORP_CONFIG.cities) {
-          setupOfficeAndJobs(ns, div, city, 6, { Business: 3, Operations: 3 });
+          const wh = corp.getWarehouse(div, city);
+          if (wh.sizeUsed / wh.size < 0.9) {
+            isFull = false;
+          }
+        }
+      }
+
+      // Fallback: Maximal 15 Ticks warten, falls die Produktion stagniert
+      if (!isFull && this.ticks < 15) return ctx.currentPhase;
+
+      log(
+        "Lager gefüllt. Öffne Ventile & verändere Job-Verteilung auf Spike...",
+        "INFO",
+      );
+      for (const div of this.config.divisionNames) {
+        for (const city of CORP_CONFIG.cities) {
+          // Setze Jobs für ein Büro der Größe 9 voll auf Produktion/Verkauf
+          setupOfficeAndJobs(ns, div, city, 9, { Business: 4, Operations: 5 });
           corp.sellMaterial(div, city, "Plants", "MAX", "MP");
           corp.sellMaterial(div, city, "Food", "MAX", "MP");
-          if (div === "Chemicals")
+          if (div === "Chemicals") {
             corp.sellMaterial(div, city, "Chemicals", "MAX", "MP");
+          }
         }
       }
       this.state = "SELLING";

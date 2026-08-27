@@ -75,6 +75,7 @@ export async function main(ns: NS): Promise<void> {
         resetDivisionJobs(
           ns,
           CORP_CONFIG.divisions.agri.name,
+          CORP_CONFIG.officeSizes.phase1,
           CORP_CONFIG.jobDistribution.support6,
         ),
     }),
@@ -88,15 +89,18 @@ export async function main(ns: NS): Promise<void> {
       targetOffer: inv2Target,
       nextPhase: "INIT_TOBACCO",
       resetJobs: (ns) => {
+        // Auf 9 Mitarbeiter anpassen (entsprechend der neuen Skalierung)
         resetDivisionJobs(
           ns,
           CORP_CONFIG.divisions.agri.name,
-          CORP_CONFIG.jobDistribution.support6,
+          CORP_CONFIG.officeSizes.phase2, // 9
+          CORP_CONFIG.jobDistribution.support9,
         );
         resetDivisionJobs(
           ns,
           CORP_CONFIG.divisions.chem.name,
-          CORP_CONFIG.jobDistribution.chem6,
+          CORP_CONFIG.officeSizes.phase2, // 9
+          CORP_CONFIG.jobDistribution.chem9,
         );
       },
     }),
@@ -161,7 +165,6 @@ function determinePhase(
   const savedState = loadCorporationState(ns);
   const savedStage = savedState?.stage as CorpPhase | undefined;
 
-  // Nutze gespeicherten State nur, wenn er existiert und valide ist (nicht INACTIVE)
   if (
     !forceReevaluate &&
     savedStage &&
@@ -176,14 +179,14 @@ function determinePhase(
   const existingDivs = corp.getCorporation().divisions;
   const currentRound = corp.getInvestmentOffer().round;
 
+  // 1. Tabak-Sparte existiert bereits
   if (existingDivs.includes(CORP_CONFIG.divisions.tobacco.name)) {
     const tobDiv = corp.getDivision(CORP_CONFIG.divisions.tobacco.name);
     const hasAllCities = CORP_CONFIG.cities.every((c) =>
       tobDiv.cities.includes(c),
     );
     const mainOfficeSize = tobDiv.cities.includes(CORP_CONFIG.mainCity)
-      ? corp.getOffice(CORP_CONFIG.divisions.tobacco.name, CORP_CONFIG.mainCity)
-          .size
+      ? corp.getOffice(CORP_CONFIG.divisions.tobacco.name, CORP_CONFIG.mainCity).size
       : 0;
 
     return hasAllCities && mainOfficeSize >= 60
@@ -191,20 +194,38 @@ function determinePhase(
       : "INIT_TOBACCO";
   }
 
-  if (existingDivs.includes(CORP_CONFIG.divisions.chem.name)) {
+  // 2. Chemie-Sparte existiert ODER Investor 1 ist erledigt (round > 1)
+  if (existingDivs.includes(CORP_CONFIG.divisions.chem.name) || currentRound === 2) {
+    if (currentRound > 2) {
+      return "INIT_TOBACCO"; // Investor 2 bereits kassiert
+    }
+    
+    if (!existingDivs.includes(CORP_CONFIG.divisions.chem.name)) {
+      return "INIT_CHEM";
+    }
+
     const chemDiv = corp.getDivision(CORP_CONFIG.divisions.chem.name);
     const isFullyExpanded = CORP_CONFIG.cities.every((c) =>
       chemDiv.cities.includes(c),
     );
-    return currentRound > 2
-      ? "INIT_TOBACCO"
-      : isFullyExpanded
-        ? "EXPORT_LOOP"
-        : "INIT_CHEM";
+
+    return isFullyExpanded ? "EXPORT_LOOP" : "INIT_CHEM";
   }
 
+  // 3. Agrar-Sparte existiert (Investor 1 noch nicht angenommen -> round === 1)
   if (existingDivs.includes(CORP_CONFIG.divisions.agri.name)) {
-    return currentRound > 1 ? postInvestor1Phase : "INIT_AGRI";
+    const agriDiv = corp.getDivision(CORP_CONFIG.divisions.agri.name);
+    const hasAllCities = CORP_CONFIG.cities.every((c) =>
+      agriDiv.cities.includes(c),
+    );
+
+    if (!hasAllCities) return "INIT_AGRI";
+
+    // Prüfen, ob erste Booster-Materialien bereits gekauft wurden
+    const firstCity = CORP_CONFIG.cities[0];
+    const hasHardware = corp.getMaterial(agriDiv.name, firstCity, "Hardware").stored >= 125;
+
+    return hasHardware ? "INVESTOR_1" : "AGRI_BOOST";
   }
 
   return "INIT_AGRI";
@@ -214,9 +235,10 @@ function determinePhase(
 function resetDivisionJobs(
   ns: NS,
   divName: string,
+  officeSize: number,
   jobs: Record<string, number>,
 ): void {
   for (const city of CORP_CONFIG.cities) {
-    setupOfficeAndJobs(ns, divName, city, 6, jobs);
+    setupOfficeAndJobs(ns, divName, city, officeSize, jobs);
   }
 }
