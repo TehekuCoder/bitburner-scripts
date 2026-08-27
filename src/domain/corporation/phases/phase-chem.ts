@@ -28,7 +28,10 @@ export class InitChemPhaseHandler implements CorpPhaseHandler {
         corp.purchaseWarehouse(chem.name, city);
       }
 
+      // Smart Supply aktivieren für den automatisieren Einkauf der Rohstoffe (Plants & Water)
       corp.setSmartSupply(chem.name, city, true);
+
+      // "leftovers": Kauft nur Pflanzen/Wasser nach, wenn Exporte nicht reichen
       corp.setSmartSupplyOption(chem.name, city, "Plants", "leftovers");
       corp.setSmartSupplyOption(chem.name, city, "Water", "leftovers");
 
@@ -40,6 +43,8 @@ export class InitChemPhaseHandler implements CorpPhaseHandler {
         CORP_CONFIG.jobDistribution.chem6,
       );
       upgradeWarehouseToLevel(ns, chem.name, city, 3);
+
+      // Verkaufe das hergestellte Hauptprodukt: Chemicals
       corp.sellMaterial(chem.name, city, "Chemicals", "MAX", "MP");
     }
 
@@ -56,9 +61,13 @@ export class ExportLoopPhaseHandler implements CorpPhaseHandler {
     const { ns, log, logger } = ctx;
     const { agri, chem } = CORP_CONFIG.divisions;
 
-    log("Richte Export-Routen mit IPROD * -1 ein...", "DEBUG");
+    log(
+      "Richte bidirektionale Export-Routen ein (Chemicals <-> Plants)...",
+      "DEBUG",
+    );
 
     for (const city of CORP_CONFIG.cities) {
+      // Chemikalien an Agriculture liefern (verbessert dort die Pflanzenproduktion)
       safeExportMaterial(
         ns,
         chem.name,
@@ -68,6 +77,8 @@ export class ExportLoopPhaseHandler implements CorpPhaseHandler {
         "Chemicals",
         "IPROD * -1",
       );
+
+      // Pflanzen an Chemical liefern (wird als Rohstoff für Chemikalien benötigt)
       safeExportMaterial(
         ns,
         agri.name,

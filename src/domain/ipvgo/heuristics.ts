@@ -1,13 +1,10 @@
 import { GoPoint } from "/shared/types/ipvgo.js";
 
 export class NetburnerHeuristics {
-  /**
-   * Evaluiert das Spielfeld basierend auf den Rohdaten und gibt den besten Zug zurück.
-   */
   public static getBestMove(
     validMoves: boolean[][],
     board: string[],
-    liberties: number[][]
+    liberties: number[][],
   ): GoPoint | null {
     const size = validMoves.length;
     let bestMove: GoPoint | null = null;
@@ -25,8 +22,8 @@ export class NetburnerHeuristics {
       }
     }
 
-    // Wenn alle Züge negativ bewertet wurden, ist Passen (null) die beste Wahl
-    if (highestScore < 0) return null;
+    // Passen (null), wenn kein Zug einen positiven Wert liefert
+    if (highestScore <= 0) return null;
 
     return bestMove;
   }
@@ -36,20 +33,21 @@ export class NetburnerHeuristics {
     y: number,
     size: number,
     board: string[],
-    liberties: number[][]
+    liberties: number[][],
   ): number {
     let score = 0;
 
-    // 1. Zentrumskontrolle (Mitte auf 5x5 präferieren)
+    // 1. Zentrumskontrolle (auf 5x5 besonders wichtig)
     const center = Math.floor(size / 2);
     const distToCenter = Math.abs(x - center) + Math.abs(y - center);
-    score += (size - distToCenter) * 15;
+    score += (size - distToCenter) * 20;
 
     const neighbors = this.getNeighbors(x, y, size);
     let emptyCount = 0;
     let enemyAtariCount = 0;
     let ownAtariCount = 0;
     let ownNeighbors = 0;
+    let routerNeighbors = 0;
 
     for (const [nx, ny] of neighbors) {
       const cell = board[nx]?.[ny];
@@ -57,30 +55,38 @@ export class NetburnerHeuristics {
 
       if (cell === ".") {
         emptyCount++;
+      } else if (cell === "#") {
+        routerNeighbors++;
       } else if (cell === "X") {
-        if (lib === 1) enemyAtariCount++; // Gegnerischer Stein in Atari
+        // "X" ist in Bitburner meist der gegnerische Stein (bzw. abweichend nach Farbe)
+        if (lib === 1) enemyAtariCount++;
       } else if (cell === "O") {
         ownNeighbors++;
-        if (lib === 1) ownAtariCount++;   // Eigener Stein in Atari
+        if (lib === 1) ownAtariCount++;
       }
     }
 
-    // 2. Taktische Prioritäten
-    if (enemyAtariCount > 0) score += 1000; // Gegner schlagen
-    if (ownAtariCount > 0) score += 800;    // Eigene Steine retten
+    // 2. Taktische Prioritäten (Töten > Retten)
+    if (enemyAtariCount > 0) score += 2000; // Gegnerischen Stein schlagen
+    if (ownAtariCount > 0) score += 1200; // Eigene Steine in Atari retten
 
     // 3. Freiheiten belohnen
-    score += emptyCount * 25;
+    score += emptyCount * 30;
 
-    // 4. Eigene Augen nicht zusetzen
-    if (emptyCount === 0 && ownNeighbors === neighbors.length) {
-      score -= 500;
+    // 4. Schutz vor Augen-Zusetzen (Eigenes Auge nicht füllen)
+    const playableNeighbors = neighbors.length - routerNeighbors;
+    if (emptyCount === 0 && ownNeighbors === playableNeighbors) {
+      score -= 2000; // Starker Abzug: Niemals eigene Augen zusetzen!
     }
 
     return score;
   }
 
-  private static getNeighbors(x: number, y: number, size: number): [number, number][] {
+  private static getNeighbors(
+    x: number,
+    y: number,
+    size: number,
+  ): [number, number][] {
     const res: [number, number][] = [];
     if (x > 0) res.push([x - 1, y]);
     if (x < size - 1) res.push([x + 1, y]);
