@@ -91,7 +91,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "IPvGo Manager",
       path: PATHS.services.managers.ipvgo,
-      args: ["Netburners", 5], // Standard-Gegner & Boardgröße
       minHomeRam: 64,
       condition: (ns) => {
         try {
@@ -168,7 +167,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Corporation Manager",
       path: PATHS.services.managers.corporation,
-      minHomeRam: 1024,
+      minHomeRam: 2048,
       condition: (ns) =>
         hasCorporation(ns) &&
         (ns.corporation.hasCorporation() ||
@@ -177,7 +176,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Corporation UI",
       path: PATHS.ui.corporation,
-      minHomeRam: 1024,
+      minHomeRam: 2048,
       condition: (ns) => hasCorporation(ns) && ns.corporation.hasCorporation(),
     },
 
