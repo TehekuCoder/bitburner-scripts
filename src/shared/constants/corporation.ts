@@ -41,30 +41,7 @@ export const CORP_CONFIG = {
     chemR2: 4,
   },
 
-  // R1 Booster (Investor 1)
-  AGRI_BOOST_R1: {
-    Hardware: 125,
-    Robots: 0,
-    "AI Cores": 75,
-    "Real Estate": 27000,
-  },
-
-  // R2 Booster (Investor 2 - Vorbereiten für $2T+ Spike)
-  AGRI_BOOST_R2: {
-    Hardware: 2800,
-    Robots: 96,
-    "AI Cores": 2520,
-    "Real Estate": 146400,
-  },
-
-  CHEM_BOOST_R2: {
-    Hardware: 300,
-    Robots: 300,
-    "AI Cores": 600,
-    "Real Estate": 3000,
-  },
-
-  // Job-Verteilungen (6 Mitarbeiter)
+  // Job-Verteilungen
   jobDistribution: {
     support6: {
       Operations: 1,
@@ -119,13 +96,34 @@ export type CorpPhase =
   | "TOBACCO_LOOP";
 
 export const CORP_RESEARCH_PRIORITY = [
-  "Hi-Tech R&D Laboratory", // Prerequisite für fast alles
-  "Market-TA.I", // Prerequisite für TA.II
-  "Market-TA.II", // Automatischer Preis-Manager (extrem stark!)
-  "uPgrade: Fulcrum", // Booster + Prerequisite für Capacity.I
-  "uPgrade: Capacity.I", // Erhöht max. Produkte auf 4
-  "uPgrade: Capacity.II", // Erhöht max. Produkte auf 5
+  "Hi-Tech R&D Laboratory",
+  "Market-TA.I",
+  "Market-TA.II",
+  "uPgrade: Fulcrum",
+  "uPgrade: Capacity.I",
+  "uPgrade: Capacity.II",
   "Self-Correcting Assemblers",
   "AutoBrew",
   "AutoPartyManager",
 ] as const;
+
+export const MATERIAL_VOLUMES = {
+  Hardware: 0.06,
+  Robots: 0.5,
+  "AI Cores": 0.1,
+  "Real Estate": 0.005,
+} as const;
+
+export const AGRI_BOOST_RATIOS = {
+  R1: { "Real Estate": 0.75, Hardware: 0.125, "AI Cores": 0.125, Robots: 0 },
+  R2: { "Real Estate": 0.65, Hardware: 0.1, "AI Cores": 0.15, Robots: 0.1 },
+} as const;
+
+export const CHEM_BOOST_RATIOS = {
+  R2: {
+    Hardware: 0.25,
+    "AI Cores": 0.3,
+    "Real Estate": 0.25,
+    Robots: 0.2,
+  },
+} as const;

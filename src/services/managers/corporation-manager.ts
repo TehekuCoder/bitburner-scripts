@@ -29,20 +29,22 @@ import { LogLevel } from "/shared/types/logger";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  ns.ui.openTail();
+  ns.ui.openTail(); // Bitburner v3 Standard für Tail-Fenster
 
   const logger = new LoggerClient(ns, "CORP");
   const corp = ns.corporation;
   const bnMults = loadBnMults(ns);
 
-  // Multiplikatoren & Limits
+  // Multiplikatoren & Limits (Bitburner v2 / v3 kompatibel)
   const divMult = bnMults.CorporationDivisions ?? 1.0;
   const valMult = bnMults.CorporationValuation ?? 1.0;
   const maxAllowedDivisions = Math.max(1, Math.floor(20 * divMult));
+
+  // Wenn weniger als 3 Divisionen erlaubt sind, skippen wir Chem und gehen direkt zu Tobacco
   const postInvestor1Phase: CorpPhase =
     maxAllowedDivisions >= 3 ? "INIT_CHEM" : "INIT_TOBACCO";
 
-  // Phasen-Bestimmung (Echter Spielzustand korrigiert fehlerhaften State)
+  // Phasen-Bestimmung anhand des echten Spielzustands
   let currentPhase = determinePhase(ns, postInvestor1Phase);
 
   const recentLogs: string[] = [];
@@ -60,7 +62,7 @@ export async function main(ns: NS): Promise<void> {
     `Start in Phase: ${currentPhase} | Max. erlaubte Divisionen: ${maxAllowedDivisions} | Valuation Mult: ${valMult.toFixed(2)}x`,
   );
 
-  // Dynamische Investor-Ziele
+  // Dynamische Investor-Ziele basierend auf BN-Valuation-Multiplikator
   const inv1Target = Math.max(20_000_000_000, 200_000_000_000 * valMult);
   const inv2Target = Math.max(200_000_000_000, 2_000_000_000_000 * valMult);
 
@@ -71,7 +73,7 @@ export async function main(ns: NS): Promise<void> {
       divisionNames: [CORP_CONFIG.divisions.agri.name],
       targetOffer: inv1Target,
       nextPhase: postInvestor1Phase,
-      resetJobs: (ns) =>
+      resetJobs: (ns: NS) =>
         resetDivisionJobs(
           ns,
           CORP_CONFIG.divisions.agri.name,
@@ -88,18 +90,17 @@ export async function main(ns: NS): Promise<void> {
       ],
       targetOffer: inv2Target,
       nextPhase: "INIT_TOBACCO",
-      resetJobs: (ns) => {
-        // Auf 9 Mitarbeiter anpassen (entsprechend der neuen Skalierung)
+      resetJobs: (ns: NS) => {
         resetDivisionJobs(
           ns,
           CORP_CONFIG.divisions.agri.name,
-          CORP_CONFIG.officeSizes.phase2, // 9
+          CORP_CONFIG.officeSizes.phase2,
           CORP_CONFIG.jobDistribution.support9,
         );
         resetDivisionJobs(
           ns,
           CORP_CONFIG.divisions.chem.name,
-          CORP_CONFIG.officeSizes.phase2, // 9
+          CORP_CONFIG.officeSizes.phase2,
           CORP_CONFIG.jobDistribution.chem9,
         );
       },
@@ -111,6 +112,7 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     await corp.nextUpdate();
 
+    // 1. Corporation gründen, falls noch nicht geschehen
     if (!corp.hasCorporation()) {
       if (!corp.createCorporation(CORP_CONFIG.corpName, true)) {
         log("[CORP] Warten auf Kapital für Gründung...");
@@ -118,8 +120,10 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    // 2. Automatisches Kaufen wichtiger Unlocks je nach Phase (z.B. Smart Supply)
     buyPhaseUnlocks(ns, currentPhase);
 
+    // 3. Phasen-Handler ausführen
     const handler = handlers[currentPhase];
     if (handler) {
       const nextPhase = await handler.execute({
@@ -141,7 +145,10 @@ export async function main(ns: NS): Promise<void> {
       currentPhase = determinePhase(ns, postInvestor1Phase, true);
     }
 
+    // 4. State persistent aktualisieren
     const corpInfo = corp.getCorporation();
+    const offer = corp.getInvestmentOffer();
+
     patchCorporationState(ns, {
       hasCorp: true,
       corpName: corpInfo.name,
@@ -150,7 +157,7 @@ export async function main(ns: NS): Promise<void> {
       expenses: corpInfo.expenses,
       divisions: corpInfo.divisions,
       stage: currentPhase,
-      investmentOffer: corp.getInvestmentOffer().funds,
+      investmentOffer: offer ? offer.funds : 0,
       corpRecentLogs: recentLogs,
     });
   }
@@ -177,7 +184,9 @@ function determinePhase(
   if (!corp.hasCorporation()) return "INIT_AGRI";
 
   const existingDivs = corp.getCorporation().divisions;
-  const currentRound = corp.getInvestmentOffer().round;
+  // Null-Safety für das Investment-Angebot
+  const offer = corp.getInvestmentOffer();
+  const currentRound = offer ? offer.round : 1;
 
   // 1. Tabak-Sparte existiert bereits
   if (existingDivs.includes(CORP_CONFIG.divisions.tobacco.name)) {
@@ -186,7 +195,8 @@ function determinePhase(
       tobDiv.cities.includes(c),
     );
     const mainOfficeSize = tobDiv.cities.includes(CORP_CONFIG.mainCity)
-      ? corp.getOffice(CORP_CONFIG.divisions.tobacco.name, CORP_CONFIG.mainCity).size
+      ? corp.getOffice(CORP_CONFIG.divisions.tobacco.name, CORP_CONFIG.mainCity)
+          .size
       : 0;
 
     return hasAllCities && mainOfficeSize >= 60
@@ -194,12 +204,12 @@ function determinePhase(
       : "INIT_TOBACCO";
   }
 
-  // 2. Chemie-Sparte existiert ODER Investor 1 ist erledigt (round > 1)
-  if (existingDivs.includes(CORP_CONFIG.divisions.chem.name) || currentRound === 2) {
-    if (currentRound > 2) {
-      return "INIT_TOBACCO"; // Investor 2 bereits kassiert
+  // 2. Investor 1 wurde bereits kassiert (round >= 2)
+  if (currentRound >= 2) {
+    if (postInvestor1Phase === "INIT_TOBACCO" || currentRound > 2) {
+      return "INIT_TOBACCO";
     }
-    
+
     if (!existingDivs.includes(CORP_CONFIG.divisions.chem.name)) {
       return "INIT_CHEM";
     }
@@ -221,9 +231,9 @@ function determinePhase(
 
     if (!hasAllCities) return "INIT_AGRI";
 
-    // Prüfen, ob erste Booster-Materialien bereits gekauft wurden
     const firstCity = CORP_CONFIG.cities[0];
-    const hasHardware = corp.getMaterial(agriDiv.name, firstCity, "Hardware").stored >= 125;
+    const hasHardware =
+      corp.getMaterial(agriDiv.name, firstCity, "Hardware").stored >= 125;
 
     return hasHardware ? "INVESTOR_1" : "AGRI_BOOST";
   }

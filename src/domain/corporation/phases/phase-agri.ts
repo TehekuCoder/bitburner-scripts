@@ -1,4 +1,4 @@
-import { CorpPhase, CORP_CONFIG } from "../../../shared/constants/corporation";
+import { CorpPhase, CORP_CONFIG, AGRI_BOOST_RATIOS } from "../../../shared/constants/corporation";
 import {
   setupOfficeAndJobs,
   upgradeWarehouseToLevel,
@@ -15,15 +15,12 @@ export class InitAgriPhaseHandler implements CorpPhaseHandler {
 
     log("Initialisiere Agri-Sparte...", "INFO");
 
-    // 1. Division gründen falls nicht vorhanden
     if (!corp.getCorporation().divisions.includes(agri.name)) {
       corp.expandIndustry(agri.type, agri.name);
     }
 
-    // 2. Prüfen, ob Smart Supply freigeschaltet ist
     const hasSmartSupply = corp.hasUnlock("Smart Supply");
 
-    // 3. Städte & Lagerhäuser einrichten
     for (const city of CORP_CONFIG.cities) {
       if (!corp.getDivision(agri.name).cities.includes(city)) {
         corp.expandCity(agri.name, city);
@@ -32,21 +29,19 @@ export class InitAgriPhaseHandler implements CorpPhaseHandler {
         corp.purchaseWarehouse(agri.name, city);
       }
 
-      // Smart Supply Fallback: Nur konfigurieren, wenn tatsächlich freigeschaltet
       if (hasSmartSupply) {
         corp.setSmartSupply(agri.name, city, true);
         corp.setSmartSupplyOption(agri.name, city, "Water", "leftovers");
         corp.setSmartSupplyOption(agri.name, city, "Chemicals", "leftovers");
       }
 
-      // Verkaufs-Einstellungen immer setzen
       corp.sellMaterial(agri.name, city, "Plants", "MAX", "MP");
       corp.sellMaterial(agri.name, city, "Food", "MAX", "MP");
     }
 
     log(
       `Agri-Initialisierung abgeschlossen ${!hasSmartSupply ? "(ohne Smart Supply)" : ""}. Wechsle zu AGRI_BOOST.`,
-      "SUCCESS",
+      "SUCCESS"
     );
     return "AGRI_BOOST";
   }
@@ -64,16 +59,17 @@ export class AgriBoostPhaseHandler implements CorpPhaseHandler {
         agri.name,
         city,
         6,
-        CORP_CONFIG.jobDistribution.support6,
+        CORP_CONFIG.jobDistribution.support6
       );
 
-      upgradeWarehouseToLevel(ns, agri.name, city, 3);
+      upgradeWarehouseToLevel(ns, agri.name, city, CORP_CONFIG.warehouseLevels.agriR1);
 
+      // Dynamischer Einkauf basierend auf R1 Ratios
       const ready = await purchaseBoosterMaterials(
         ns,
         agri.name,
         city,
-        CORP_CONFIG.AGRI_BOOST_R1,
+        AGRI_BOOST_RATIOS.R1
       );
 
       maintainEmployeeMorale(ns, agri.name, city);

@@ -22,7 +22,7 @@ export class InitTobaccoPhaseHandler implements CorpPhaseHandler {
       const requiredCost = 20_000_000_000;
       if (corp.getCorporation().funds < requiredCost) {
         log(
-          `Warten auf Kapital für Tobacco-Gründung ($${ns.format.number(corp.getCorporation().funds)} / $${ns.format.number(requiredCost)})`,
+          `Warten auf Kapital für Tobacco-Gründung ($${ns.format.number(corp.getCorporation().funds, 2)} / $${ns.format.number(requiredCost, 2)})`,
           "DEBUG",
         );
         return ctx.currentPhase;
@@ -35,14 +35,10 @@ export class InitTobaccoPhaseHandler implements CorpPhaseHandler {
       if (!corp.getDivision(tobacco.name).cities.includes(city)) {
         const cityCost = 4_000_000_000;
         if (corp.getCorporation().funds < cityCost) {
-          log(
-            `Warten auf Kapital für Expansion nach ${city} ($${ns.format.number(corp.getCorporation().funds)} / $${ns.format.number(cityCost)})`,
-            "DEBUG",
-          );
+          log(`Warten auf Kapital für Expansion nach ${city}...`, "DEBUG");
           return ctx.currentPhase;
         }
         corp.expandCity(tobacco.name, city);
-        log(`Tobacco nach ${city} erweitert.`, "SUCCESS");
       }
     }
 
@@ -50,19 +46,22 @@ export class InitTobaccoPhaseHandler implements CorpPhaseHandler {
       if (!corp.hasWarehouse(tobacco.name, city)) {
         const whCost = 5_000_000_000;
         if (corp.getCorporation().funds < whCost) {
-          log(
-            `Warten auf Kapital für Lagerhalle in ${city} ($${ns.format.number(corp.getCorporation().funds)} / $${ns.format.number(whCost)})`,
-            "DEBUG",
-          );
+          log(`Warten auf Kapital für Lagerhalle in ${city}...`, "DEBUG");
           return ctx.currentPhase;
         }
         corp.purchaseWarehouse(tobacco.name, city);
       }
 
-      corp.setSmartSupply(tobacco.name, city, true);
+      if (corp.hasUnlock("Smart Supply")) {
+        corp.setSmartSupply(tobacco.name, city, true);
+      }
+
       upgradeWarehouseToLevel(ns, tobacco.name, city, 10);
 
-      if (corp.getDivision(agri.name).cities.includes(city)) {
+      if (
+        corp.getCorporation().divisions.includes(agri.name) &&
+        corp.getDivision(agri.name).cities.includes(city)
+      ) {
         safeExportMaterial(
           ns,
           agri.name,
@@ -85,7 +84,7 @@ export class InitTobaccoPhaseHandler implements CorpPhaseHandler {
         );
         if (corp.getCorporation().funds < upgradeCost) {
           log(
-            `Warten auf Kapital für Büro-Erweiterung in ${city} auf ${targetSize} Mitarbeiter (Kostet: $${ns.format.number(upgradeCost)})`,
+            `Warten auf Kapital für Büro-Erweiterung in ${city} auf ${targetSize}...`,
             "DEBUG",
           );
           return ctx.currentPhase;
@@ -110,14 +109,11 @@ export class InitTobaccoPhaseHandler implements CorpPhaseHandler {
         jobSpec,
       );
 
-      if (!setupSuccess) {
-        log(`Warten auf Mitarbeiter-Zuweisung in ${city}...`, "DEBUG");
-        return ctx.currentPhase;
-      }
+      if (!setupSuccess) return ctx.currentPhase;
     }
 
     log(
-      "Tobacco-Initialisierung abgeschlossen. Wechsle zu TOBACCO_LOOP",
+      "Tobacco-Initialisierung abgeschlossen. Wechsle zu TOBACCO_LOOP.",
       "SUCCESS",
     );
     return "TOBACCO_LOOP";
@@ -140,15 +136,13 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
 
     if (!hasMainCity || mainOfficeSize < 60) {
       log(
-        `Tobacco noch nicht vollständig initialisiert (Bürogröße: ${mainOfficeSize}/60). Wechsle zu INIT_TOBACCO...`,
+        `HQ-Bürogröße unzureichend (${mainOfficeSize}/60). Zurück zu INIT_TOBACCO...`,
         "WARN",
       );
       return "INIT_TOBACCO";
     }
 
-    const divCities = divInfo.cities;
-
-    for (const city of divCities) {
+    for (const city of divInfo.cities) {
       maintainEmployeeMorale(ns, tobacco.name, city);
     }
 
@@ -158,9 +152,9 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
         if (divInfo.researchPoints >= cost) {
           try {
             corp.research(tobacco.name, tech);
-            log(`Erforscht: ${tech}`, "SUCCESS");
+            log(`[Tobacco] Erforscht: ${tech}`, "SUCCESS");
           } catch {
-            // Prerequisites fehlen noch
+            // Voraussetzungen fehlen eventuell noch
           }
         }
       }
@@ -172,32 +166,34 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
     for (const prodName of products) {
       const prod = corp.getProduct(tobacco.name, mainCity, prodName);
       if (prod.developmentProgress === 100) {
-        const price = hasTA2 ? "MP" : "MP * 2";
-        corp.sellProduct(tobacco.name, mainCity, prodName, "MAX", price, true);
+        for (const city of divInfo.cities) {
+          const price = hasTA2 ? "MP" : "MP * 2";
+          corp.sellProduct(tobacco.name, city, prodName, "MAX", price, true);
 
-        if (hasTA2) {
-          corp.setProductMarketTA2(tobacco.name, prodName, true);
+          if (hasTA2) {
+            corp.setProductMarketTA2(tobacco.name, prodName, true);
+          }
         }
       }
     }
+
+    let maxProducts = 3;
+    if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.I")) maxProducts++;
+    if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.II")) maxProducts++;
 
     const isDeveloping = products.some(
       (p) =>
         corp.getProduct(tobacco.name, mainCity, p).developmentProgress < 100,
     );
 
-    let maxProducts = 3;
-    if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.I")) maxProducts++;
-    if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.II")) maxProducts++;
-
     if (!isDeveloping) {
       if (products.length >= maxProducts) {
         const oldestProduct = products[0];
         corp.discontinueProduct(tobacco.name, oldestProduct);
-        log(`Ältestes Produkt ${oldestProduct} eingestellt.`, "INFO");
-
-        const idx = products.indexOf(oldestProduct);
-        if (idx !== -1) products.splice(idx, 1);
+        log(
+          `[Tobacco] Ältester Artikel '${oldestProduct}' eingestellt.`,
+          "INFO",
+        );
       }
 
       let prodIndex = 1;
@@ -208,13 +204,12 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
 
       const availableFunds = corp.getCorporation().funds;
       const totalInvestment = Math.min(
-        1_000_000_000,
+        2_000_000_000,
         Math.max(2_000_000, availableFunds * 0.1),
       );
 
       if (totalInvestment >= 2_000_000) {
         const halfInvestment = totalInvestment / 2;
-
         corp.makeProduct(
           tobacco.name,
           mainCity,
@@ -223,7 +218,7 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
           halfInvestment,
         );
         log(
-          `Neues Produkt gestartet: ${newProdName} (Budget: $${ns.format.number(totalInvestment)})`,
+          `[Tobacco] Neues Produkt gestartet: ${newProdName} (Budget: $${ns.format.number(totalInvestment, 2)})`,
           "SUCCESS",
         );
       }
@@ -236,7 +231,7 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       if (corp.getCorporation().funds >= wilsonCost) {
         corp.levelUpgrade("Wilson Analytics");
         log(
-          `Wilson Analytics auf Lvl ${corp.getUpgradeLevel("Wilson Analytics")} erhöht!`,
+          `Wilson Analytics auf Level ${corp.getUpgradeLevel("Wilson Analytics")} erhöht!`,
           "SUCCESS",
         );
       } else {
@@ -257,6 +252,6 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       corp.issueDividends(0.5);
     }
 
-    return "TOBACCO_LOOP";
+    return ctx.currentPhase;
   }
 }

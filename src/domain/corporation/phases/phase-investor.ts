@@ -1,3 +1,4 @@
+import { NS } from "@ns";
 import { CorpPhase, CORP_CONFIG } from "../../../shared/constants/corporation";
 import { setupOfficeAndJobs } from "../corporation-helpers";
 import { CorpPhaseContext, CorpPhaseHandler } from "../types";
@@ -6,7 +7,7 @@ export interface InvestorConfig {
   divisionNames: string[];
   targetOffer: number;
   nextPhase: CorpPhase;
-  resetJobs: (ns: any) => void;
+  resetJobs: (ns: NS) => void;
 }
 
 export class InvestorPhaseHandler implements CorpPhaseHandler {
@@ -20,25 +21,29 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
     const corp = ns.corporation;
 
     const expectedRound = ctx.currentPhase === "INVESTOR_1" ? 1 : 2;
-    if (corp.getInvestmentOffer().round > expectedRound) {
+    const offer = corp.getInvestmentOffer();
+
+    if (!offer || offer.round > expectedRound) {
       log(
-        `Investment-Runde ${expectedRound} bereits erledigt. Überspringe...`,
-        "WARN",
+        `Investment-Runde ${expectedRound} bereits erledigt oder nicht verfügbar. Überspringe...`,
+        "WARN"
       );
       return this.config.nextPhase;
     }
 
+    // STATE 1: Stoppe Verkäufe, um Rohstoffe/Produkte aufzustauen
     if (this.state === "IDLE") {
       log(
-        `Starte Profit-Spike für Investor (${this.config.nextPhase})...`,
-        "INFO",
+        `Starte Profit-Spike für Investor (${this.config.nextPhase}). Stoppe Verkäufe...`,
+        "INFO"
       );
       for (const div of this.config.divisionNames) {
         for (const city of CORP_CONFIG.cities) {
           corp.sellMaterial(div, city, "Plants", "0", "MP");
           corp.sellMaterial(div, city, "Food", "0", "MP");
-          if (div === "Chemicals")
+          if (div === CORP_CONFIG.divisions.chem.name) {
             corp.sellMaterial(div, city, "Chemicals", "0", "MP");
+          }
         }
       }
       this.state = "ACCUMULATING";
@@ -46,11 +51,10 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
       return ctx.currentPhase;
     }
 
-    // phase-investor.ts (Auszug)
+    // STATE 2: Warten, bis Lagerhäuser gefüllt sind (oder Timeout)
     if (this.state === "ACCUMULATING") {
       this.ticks++;
 
-      // Prüfe, ob die Lagerhäuser fast voll sind (z.B. > 90%), statt nur 2 Ticks zu warten
       let isFull = true;
       for (const div of this.config.divisionNames) {
         for (const city of CORP_CONFIG.cities) {
@@ -61,20 +65,18 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
         }
       }
 
-      // Fallback: Maximal 15 Ticks warten, falls die Produktion stagniert
       if (!isFull && this.ticks < 15) return ctx.currentPhase;
 
       log(
-        "Lager gefüllt. Öffne Ventile & verändere Job-Verteilung auf Spike...",
-        "INFO",
+        "Lager gefüllt. Öffne Ventile & passe Jobs für Maximal-Profit an...",
+        "INFO"
       );
       for (const div of this.config.divisionNames) {
         for (const city of CORP_CONFIG.cities) {
-          // Setze Jobs für ein Büro der Größe 9 voll auf Produktion/Verkauf
-          setupOfficeAndJobs(ns, div, city, 9, { Business: 4, Operations: 5 });
+          setupOfficeAndJobs(ns, div, city, 9, CORP_CONFIG.jobDistribution.spike9);
           corp.sellMaterial(div, city, "Plants", "MAX", "MP");
           corp.sellMaterial(div, city, "Food", "MAX", "MP");
-          if (div === "Chemicals") {
+          if (div === CORP_CONFIG.divisions.chem.name) {
             corp.sellMaterial(div, city, "Chemicals", "MAX", "MP");
           }
         }
@@ -83,22 +85,26 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
       return ctx.currentPhase;
     }
 
+    // STATE 3: Abwarten, bis das Angebot das Ziel erreicht
     if (this.state === "SELLING") {
-      const offer = corp.getInvestmentOffer();
+      const currentOffer = corp.getInvestmentOffer();
+      const funds = currentOffer ? currentOffer.funds : 0;
+
       log(
-        `Investor Angebot: $${ns.format.number(offer.funds)} / Ziel: $${ns.format.number(this.config.targetOffer)}`,
-        "INFO",
+        `Investor Angebot: $${ns.format.number(funds)} / Ziel: $${ns.format.number(this.config.targetOffer)}`,
+        "INFO"
       );
 
-      if (offer.funds >= this.config.targetOffer) {
-        corp.acceptInvestmentOffer();
-        log(
-          `Investment von $${ns.format.number(offer.funds)} angenommen!`,
-          "SUCCESS",
-        );
-        this.config.resetJobs(ns);
-        this.state = "IDLE";
-        return this.config.nextPhase;
+      if (funds >= this.config.targetOffer) {
+        if (corp.acceptInvestmentOffer()) {
+          log(
+            `Investment von $${ns.format.number(funds)} erfolgreich angenommen!`,
+            "SUCCESS"
+          );
+          this.config.resetJobs(ns);
+          this.state = "IDLE";
+          return this.config.nextPhase;
+        }
       }
 
       return ctx.currentPhase;

@@ -300,3 +300,16 @@ export function buyPhaseUnlocks(ns: NS, currentPhase: string): void {
     ensureUnlock(ns, "Export");
   }
 }
+
+export function exportMaterialSafely(
+  ns: NS, 
+  sourceDiv: string, 
+  sourceCity: CityName, 
+  targetDiv: string, 
+  targetCity: CityName, 
+  material: CorpMaterialName
+) {
+  // Statt "IPROD * -1" nutzen wir "IPROD" (gesamte Produktion) oder "EPROD" (Überschuss)
+  ns.corporation.cancelExportMaterial(sourceDiv, sourceCity, targetDiv, targetCity, material);
+  ns.corporation.exportMaterial(sourceDiv, sourceCity, targetDiv, targetCity, material, "IPROD");
+}
