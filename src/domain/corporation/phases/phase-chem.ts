@@ -7,7 +7,12 @@ import {
   upgradeWarehouseToLevel,
 } from "../corporation-helpers";
 import { CorpPhaseContext, CorpPhaseHandler } from "../types";
-import { CORP_CONFIG, CorpPhase, AGRI_BOOST_RATIOS, CHEM_BOOST_RATIOS } from "/shared/constants/corporation";
+import {
+  CORP_CONFIG,
+  CorpPhase,
+  AGRI_BOOST_RATIOS,
+  CHEM_BOOST_RATIOS,
+} from "../../../shared/constants/corporation";
 
 export class InitChemPhaseHandler implements CorpPhaseHandler {
   async execute(ctx: CorpPhaseContext): Promise<CorpPhase> {
@@ -21,6 +26,8 @@ export class InitChemPhaseHandler implements CorpPhaseHandler {
       corp.expandIndustry(chem.type, chem.name);
     }
 
+    const hasSmartSupply = corp.hasUnlock("Smart Supply");
+
     for (const city of CORP_CONFIG.cities) {
       if (!corp.getDivision(chem.name).cities.includes(city)) {
         corp.expandCity(chem.name, city);
@@ -29,25 +36,32 @@ export class InitChemPhaseHandler implements CorpPhaseHandler {
         corp.purchaseWarehouse(chem.name, city);
       }
 
-      corp.setSmartSupply(chem.name, city, true);
-      corp.setSmartSupplyOption(chem.name, city, "Plants", "leftovers");
-      corp.setSmartSupplyOption(chem.name, city, "Water", "leftovers");
+      if (hasSmartSupply) {
+        corp.setSmartSupply(chem.name, city, true);
+        corp.setSmartSupplyOption(chem.name, city, "Plants", "leftovers");
+        corp.setSmartSupplyOption(chem.name, city, "Water", "leftovers");
+      }
 
       setupOfficeAndJobs(
         ns,
         chem.name,
         city,
         6,
-        CORP_CONFIG.jobDistribution.chem6
+        CORP_CONFIG.jobDistribution.chem6,
       );
-      upgradeWarehouseToLevel(ns, chem.name, city, CORP_CONFIG.warehouseLevels.chemR1);
+      upgradeWarehouseToLevel(
+        ns,
+        chem.name,
+        city,
+        CORP_CONFIG.warehouseLevels.chemR1,
+      );
 
       corp.sellMaterial(chem.name, city, "Chemicals", "MAX", "MP");
     }
 
     log(
-      "Chem-Initialisierung abgeschlossen. Wechsle zu EXPORT_LOOP",
-      "SUCCESS"
+      `Chem-Initialisierung abgeschlossen ${!hasSmartSupply ? "(ohne Smart Supply)" : ""}. Wechsle zu EXPORT_LOOP`,
+      "SUCCESS",
     );
     return "EXPORT_LOOP";
   }
@@ -71,7 +85,7 @@ export class ExportLoopPhaseHandler implements CorpPhaseHandler {
         agri.name,
         city,
         "Chemicals",
-        "IPROD * -1"
+        "IPROD * -1",
       );
       safeExportMaterial(
         ns,
@@ -80,7 +94,7 @@ export class ExportLoopPhaseHandler implements CorpPhaseHandler {
         chem.name,
         city,
         "Plants",
-        "IPROD * -1"
+        "IPROD * -1",
       );
 
       // 2. Büros auf 9 Mitarbeiter aufstocken
@@ -89,14 +103,14 @@ export class ExportLoopPhaseHandler implements CorpPhaseHandler {
         agri.name,
         city,
         CORP_CONFIG.officeSizes.phase2,
-        CORP_CONFIG.jobDistribution.support9
+        CORP_CONFIG.jobDistribution.support9,
       );
       const chemOffice = setupOfficeAndJobs(
         ns,
         chem.name,
         city,
         CORP_CONFIG.officeSizes.phase2,
-        CORP_CONFIG.jobDistribution.chem9
+        CORP_CONFIG.jobDistribution.chem9,
       );
 
       // 3. Lagerhäuser ausbauen
@@ -104,13 +118,13 @@ export class ExportLoopPhaseHandler implements CorpPhaseHandler {
         ns,
         agri.name,
         city,
-        CORP_CONFIG.warehouseLevels.agriR2
+        CORP_CONFIG.warehouseLevels.agriR2,
       );
       upgradeWarehouseToLevel(
         ns,
         chem.name,
         city,
-        CORP_CONFIG.warehouseLevels.chemR2
+        CORP_CONFIG.warehouseLevels.chemR2,
       );
 
       // 4. Dynamischer Booster-Einkauf für R2
@@ -118,13 +132,13 @@ export class ExportLoopPhaseHandler implements CorpPhaseHandler {
         ns,
         agri.name,
         city,
-        AGRI_BOOST_RATIOS.R2
+        AGRI_BOOST_RATIOS.R2,
       );
       const chemReady = await purchaseBoosterMaterials(
         ns,
         chem.name,
         city,
-        CHEM_BOOST_RATIOS.R2
+        CHEM_BOOST_RATIOS.R2,
       );
 
       maintainEmployeeMorale(ns, agri.name, city);

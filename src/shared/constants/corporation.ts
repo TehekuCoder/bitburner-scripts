@@ -37,8 +37,8 @@ export const CORP_CONFIG = {
   warehouseLevels: {
     agriR1: 3,
     chemR1: 3,
-    agriR2: 5,
-    chemR2: 4,
+    agriR2: 10,
+    chemR2: 9,
   },
 
   // Job-Verteilungen

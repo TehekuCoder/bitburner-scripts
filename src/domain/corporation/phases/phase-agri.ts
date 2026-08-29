@@ -1,4 +1,8 @@
-import { CorpPhase, CORP_CONFIG, AGRI_BOOST_RATIOS } from "../../../shared/constants/corporation";
+import {
+  CorpPhase,
+  CORP_CONFIG,
+  AGRI_BOOST_RATIOS,
+} from "../../../shared/constants/corporation";
 import {
   setupOfficeAndJobs,
   upgradeWarehouseToLevel,
@@ -41,7 +45,7 @@ export class InitAgriPhaseHandler implements CorpPhaseHandler {
 
     log(
       `Agri-Initialisierung abgeschlossen ${!hasSmartSupply ? "(ohne Smart Supply)" : ""}. Wechsle zu AGRI_BOOST.`,
-      "SUCCESS"
+      "SUCCESS",
     );
     return "AGRI_BOOST";
   }
@@ -59,17 +63,22 @@ export class AgriBoostPhaseHandler implements CorpPhaseHandler {
         agri.name,
         city,
         6,
-        CORP_CONFIG.jobDistribution.support6
+        CORP_CONFIG.jobDistribution.support6,
       );
 
-      upgradeWarehouseToLevel(ns, agri.name, city, CORP_CONFIG.warehouseLevels.agriR1);
+      upgradeWarehouseToLevel(
+        ns,
+        agri.name,
+        city,
+        CORP_CONFIG.warehouseLevels.agriR1,
+      );
 
       // Dynamischer Einkauf basierend auf R1 Ratios
       const ready = await purchaseBoosterMaterials(
         ns,
         agri.name,
         city,
-        AGRI_BOOST_RATIOS.R1
+        AGRI_BOOST_RATIOS.R1,
       );
 
       maintainEmployeeMorale(ns, agri.name, city);

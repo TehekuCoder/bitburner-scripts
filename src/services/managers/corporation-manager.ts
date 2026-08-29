@@ -1,5 +1,5 @@
-import { NS } from "@ns";
-import { CORP_CONFIG, CorpPhase } from "../../shared/constants/corporation";
+import { CityName, CorpMaterialName, NS } from "@ns";
+import { AGRI_BOOST_RATIOS, CHEM_BOOST_RATIOS, CORP_CONFIG, CorpPhase } from "../../shared/constants/corporation";
 import {
   patchCorporationState,
   loadCorporationState,
@@ -163,7 +163,6 @@ export async function main(ns: NS): Promise<void> {
   }
 }
 
-/** Ermittelt die Phase valide anhand des echten Bitburner-Konzernzustands */
 function determinePhase(
   ns: NS,
   postInvestor1Phase: CorpPhase,
@@ -184,61 +183,58 @@ function determinePhase(
   if (!corp.hasCorporation()) return "INIT_AGRI";
 
   const existingDivs = corp.getCorporation().divisions;
-  // Null-Safety für das Investment-Angebot
   const offer = corp.getInvestmentOffer();
   const currentRound = offer ? offer.round : 1;
 
-  // 1. Tabak-Sparte existiert bereits
-  if (existingDivs.includes(CORP_CONFIG.divisions.tobacco.name)) {
-    const tobDiv = corp.getDivision(CORP_CONFIG.divisions.tobacco.name);
-    const hasAllCities = CORP_CONFIG.cities.every((c) =>
-      tobDiv.cities.includes(c),
-    );
-    const mainOfficeSize = tobDiv.cities.includes(CORP_CONFIG.mainCity)
-      ? corp.getOffice(CORP_CONFIG.divisions.tobacco.name, CORP_CONFIG.mainCity)
-          .size
-      : 0;
+  const agriName = CORP_CONFIG.divisions.agri.name;
+  const chemName = CORP_CONFIG.divisions.chem.name;
+  const tobaccoName = CORP_CONFIG.divisions.tobacco.name;
 
-    return hasAllCities && mainOfficeSize >= 60
-      ? "TOBACCO_LOOP"
-      : "INIT_TOBACCO";
+  // 1. Investor 1 noch offen (Round 1)
+  if (currentRound === 1) {
+    if (!existingDivs.includes(agriName)) return "INIT_AGRI";
+    const agriWarehouseReady = CORP_CONFIG.cities.every(
+      (c) =>
+        corp.hasWarehouse(agriName, c) &&
+        corp.getWarehouse(agriName, c).level >= CORP_CONFIG.warehouseLevels.agriR1,
+    );
+    const hasHardware = corp.getMaterial(agriName, CORP_CONFIG.cities[0], "Hardware").stored >= 125;
+    return agriWarehouseReady && hasHardware ? "INVESTOR_1" : "AGRI_BOOST";
   }
 
-  // 2. Investor 1 wurde bereits kassiert (round >= 2)
-  if (currentRound >= 2) {
-    if (postInvestor1Phase === "INIT_TOBACCO" || currentRound > 2) {
-      return "INIT_TOBACCO";
-    }
+  // 2. Investor 2 noch offen (Round 2)
+  if (currentRound === 2 && postInvestor1Phase !== "INIT_TOBACCO") {
+    if (!existingDivs.includes(chemName)) return "INIT_CHEM";
 
-    if (!existingDivs.includes(CORP_CONFIG.divisions.chem.name)) {
-      return "INIT_CHEM";
-    }
+    const hasAllChemCities = CORP_CONFIG.cities.every(
+      (c) => chemDivHasWarehouse(corp, chemName, c),
+    );
+    if (!hasAllChemCities) return "INIT_CHEM";
 
-    const chemDiv = corp.getDivision(CORP_CONFIG.divisions.chem.name);
-    const isFullyExpanded = CORP_CONFIG.cities.every((c) =>
-      chemDiv.cities.includes(c),
+    const agriR2Ready = CORP_CONFIG.cities.every(
+      (c) => corp.getWarehouse(agriName, c).level >= CORP_CONFIG.warehouseLevels.agriR2,
+    );
+    const chemR2Ready = CORP_CONFIG.cities.every(
+      (c) => corp.getWarehouse(chemName, c).level >= CORP_CONFIG.warehouseLevels.chemR2,
     );
 
-    return isFullyExpanded ? "EXPORT_LOOP" : "INIT_CHEM";
+    return agriR2Ready && chemR2Ready ? "INVESTOR_2" : "EXPORT_LOOP";
   }
 
-  // 3. Agrar-Sparte existiert (Investor 1 noch nicht angenommen -> round === 1)
-  if (existingDivs.includes(CORP_CONFIG.divisions.agri.name)) {
-    const agriDiv = corp.getDivision(CORP_CONFIG.divisions.agri.name);
-    const hasAllCities = CORP_CONFIG.cities.every((c) =>
-      agriDiv.cities.includes(c),
-    );
+  // 3. Nach Investor 2 / Round >= 3 -> Tobacco Phase
+  if (!existingDivs.includes(tobaccoName)) return "INIT_TOBACCO";
 
-    if (!hasAllCities) return "INIT_AGRI";
+  const tobDiv = corp.getDivision(tobaccoName);
+  const hasAllCities = CORP_CONFIG.cities.every((c) => tobDiv.cities.includes(c));
+  const mainOfficeSize = tobDiv.cities.includes(CORP_CONFIG.mainCity)
+    ? corp.getOffice(tobaccoName, CORP_CONFIG.mainCity).size
+    : 0;
 
-    const firstCity = CORP_CONFIG.cities[0];
-    const hasHardware =
-      corp.getMaterial(agriDiv.name, firstCity, "Hardware").stored >= 125;
+  return hasAllCities && mainOfficeSize >= 60 ? "TOBACCO_LOOP" : "INIT_TOBACCO";
+}
 
-    return hasHardware ? "INVESTOR_1" : "AGRI_BOOST";
-  }
-
-  return "INIT_AGRI";
+function chemDivHasWarehouse(corp: any, chemName: string, city: CityName): boolean {
+  return corp.getDivision(chemName).cities.includes(city) && corp.hasWarehouse(chemName, city);
 }
 
 /** Hilfsfunktion zum Setzen von Jobs in allen Städten einer Division */
@@ -251,4 +247,28 @@ function resetDivisionJobs(
   for (const city of CORP_CONFIG.cities) {
     setupOfficeAndJobs(ns, divName, city, officeSize, jobs);
   }
+}
+
+function hasBoosterMaterials(
+  ns: NS,
+  divName: string,
+  targets: Partial<Record<CorpMaterialName, number>>
+): boolean {
+  const corp = ns.corporation;
+  if (!corp.getCorporation().divisions.includes(divName)) return false;
+
+  for (const city of CORP_CONFIG.cities) {
+    if (!corp.hasWarehouse(divName, city)) return false;
+    
+    for (const [matName, targetQty] of Object.entries(targets)) {
+      if (targetQty && targetQty > 0) {
+        const stored = corp.getMaterial(divName, city, matName as CorpMaterialName).stored;
+        // Mindestens 95% des Ziels müssen vorhanden sein
+        if (stored < targetQty * 0.95) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
 }

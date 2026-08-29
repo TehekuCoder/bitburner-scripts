@@ -27,15 +27,23 @@ export async function purchaseBoosterMaterials(
   divisionName: string,
   cityName: CityName,
   targets: MaterialTargets,
+  isSpiking = false,
 ): Promise<boolean> {
   const corp = ns.corporation;
   if (!corp.getCorporation().divisions.includes(divisionName)) return true;
   if (!corp.getDivision(divisionName).cities.includes(cityName)) return true;
   if (!corp.hasWarehouse(divisionName, cityName)) return true;
 
+  // Während des Profit-Spikes NIEMALS Materialien kaufen (Kosten senken Netto-Profit!)
+  if (isSpiking) {
+    for (const matName of Object.keys(targets) as CorpMaterialName[]) {
+      corp.buyMaterial(divisionName, cityName, matName, 0);
+    }
+    return true;
+  }
+
   const warehouse = corp.getWarehouse(divisionName, cityName);
   let allTargetsMet = true;
-
   const entries = Object.entries(targets) as [CorpMaterialName, number][];
 
   for (const [matName, targetQty] of entries) {
@@ -50,7 +58,7 @@ export async function purchaseBoosterMaterials(
       const buyRate = Math.ceil(needed / 10);
 
       const freeSpace = warehouse.size - warehouse.sizeUsed;
-      const safeSpacePuffer = warehouse.size * 0.2;
+      const safeSpacePuffer = warehouse.size * 0.05;
 
       if (freeSpace > safeSpacePuffer) {
         corp.buyMaterial(divisionName, cityName, matName, buyRate);
@@ -75,7 +83,6 @@ export function setupOfficeAndJobs(
   const corp = ns.corporation;
   const office = corp.getOffice(divisionName, cityName);
 
-  // 1. Prüfen & Erhöhen der Bürokapazität
   if (office.size < targetSize) {
     const sizeDiff = targetSize - office.size;
     const upgradeCost = corp.getOfficeSizeUpgradeCost(
@@ -85,13 +92,11 @@ export function setupOfficeAndJobs(
     );
 
     if (corp.getCorporation().funds < upgradeCost) {
-      // Nicht genügend Kapital für das Upgrade vorhanden
       return false;
     }
     corp.upgradeOfficeSize(divisionName, cityName, sizeDiff);
   }
 
-  // 2. Neue Mitarbeiter einstellen bis targetSize erreicht ist
   let currentOffice = corp.getOffice(divisionName, cityName);
   while (currentOffice.numEmployees < targetSize) {
     if (!corp.hireEmployee(divisionName, cityName)) {
@@ -100,17 +105,18 @@ export function setupOfficeAndJobs(
     currentOffice = corp.getOffice(divisionName, cityName);
   }
 
-  // Abbrechen, falls nicht genügend Mitarbeiter eingestellt werden konnten
   if (currentOffice.numEmployees < targetSize) {
     return false;
   }
 
-  // 3. ALLE Jobzuweisungen zuerst auf 0 zurücksetzen (Verwendung von ALL_JOBS)
+  // Setze Zuweisungen nur zurück, wenn sich die Soll-Zahlen tatsächlich unterscheiden
   for (const job of ALL_JOBS) {
-    corp.setJobAssignment(divisionName, cityName, job, 0);
+    const targetCount = jobs[job] ?? 0;
+    if (office.employeeJobs[job] !== targetCount) {
+      corp.setJobAssignment(divisionName, cityName, job, 0);
+    }
   }
 
-  // 4. Jobs neu zuweisen mit explizitem Cast auf CorpJobRole
   for (const [job, count] of Object.entries(jobs) as [CorpJobRole, number][]) {
     if (count && count > 0) {
       corp.setJobAssignment(divisionName, cityName, job, count);
@@ -149,29 +155,42 @@ export function maintainEmployeeMorale(
   ns: NS,
   divisionName: string,
   cityName: CityName,
+  isSpiking = false,
 ): void {
   const corp = ns.corporation;
   if (!corp.getCorporation().divisions.includes(divisionName)) return;
   if (!corp.getDivision(divisionName).cities.includes(cityName)) return;
 
-  const office = corp.getOffice(divisionName, cityName);
+  // WÄHREND DES SPIKES: Keinen Tee/Partys kaufen! (Ausgaben senken Profit)
+  if (isSpiking) return;
 
-  if (office.avgMorale < 98 || office.avgEnergy < 98) {
-    corp.buyTea(divisionName, cityName);
-    corp.throwParty(divisionName, cityName, 500_000);
+  const office = corp.getOffice(divisionName, cityName);
+  const funds = corp.getCorporation().funds;
+
+  if (office.avgMorale < 99 || office.avgEnergy < 99) {
+    const teaCost = 500_000 * office.numEmployees;
+    const partyCostPerEmp = 100_000;
+    const totalPartyCost = partyCostPerEmp * office.numEmployees;
+
+    if (funds >= teaCost && office.avgEnergy < 99) {
+      corp.buyTea(divisionName, cityName);
+    }
+    if (funds >= totalPartyCost && office.avgMorale < 99) {
+      corp.throwParty(divisionName, cityName, partyCostPerEmp);
+    }
   }
 }
 
 export function buyCorporationUpgrades(
   ns: NS,
-  maxBudgetRatio = 0.1,
+  maxBudgetRatio = 0.05,
   logger?: LoggerClient,
 ): void {
   const corp = ns.corporation;
   const funds = corp.getCorporation().funds;
   if (funds <= 0) return;
 
-  const budget = funds * maxBudgetRatio;
+  let budget = funds * maxBudgetRatio;
   const upgrades: CorpUpgradeName[] = [
     "Smart Storage",
     "Smart Factories",
@@ -184,7 +203,7 @@ export function buyCorporationUpgrades(
   ];
 
   let bought = true;
-  while (bought) {
+  while (bought && budget > 0) {
     bought = false;
     let cheapestUpgrade: CorpUpgradeName | null = null;
     let minCost = Infinity;
@@ -203,6 +222,8 @@ export function buyCorporationUpgrades(
       minCost <= corp.getCorporation().funds
     ) {
       corp.levelUpgrade(cheapestUpgrade);
+      budget -= minCost;
+
       const msg = `Upgrade gekauft: ${cheapestUpgrade} (Lvl ${corp.getUpgradeLevel(cheapestUpgrade)})`;
       if (logger) {
         logger.success(msg);
@@ -239,7 +260,6 @@ export function safeExportMaterial(
   }
 
   const mat = corp.getMaterial(sourceDiv, sourceCity, material);
-
   const existing = mat.exports.find(
     (e) => e.division === targetDiv && e.city === targetCity,
   );
@@ -289,6 +309,7 @@ export function ensureUnlock(
   }
   return false;
 }
+
 export function buyPhaseUnlocks(ns: NS, currentPhase: string): void {
   ensureUnlock(ns, "Smart Supply");
 
@@ -299,17 +320,4 @@ export function buyPhaseUnlocks(ns: NS, currentPhase: string): void {
   ) {
     ensureUnlock(ns, "Export");
   }
-}
-
-export function exportMaterialSafely(
-  ns: NS, 
-  sourceDiv: string, 
-  sourceCity: CityName, 
-  targetDiv: string, 
-  targetCity: CityName, 
-  material: CorpMaterialName
-) {
-  // Statt "IPROD * -1" nutzen wir "IPROD" (gesamte Produktion) oder "EPROD" (Überschuss)
-  ns.corporation.cancelExportMaterial(sourceDiv, sourceCity, targetDiv, targetCity, material);
-  ns.corporation.exportMaterial(sourceDiv, sourceCity, targetDiv, targetCity, material, "IPROD");
 }

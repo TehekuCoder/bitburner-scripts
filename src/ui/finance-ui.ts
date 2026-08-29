@@ -33,14 +33,77 @@ export interface FinanceDashboardData {
   lastWarnings: string[];
 }
 
+const ANSI_REGEX = /\u001b\[[0-9;]*m/g;
+
 /**
- * Berechnet das Padding unter Berücksichtigung von nicht-druckbaren ANSI-Escape-Sequenzen.
+ * Bereinigt unknackige Textmonster und verhindert doppelte Akronyme.
  */
-function padANSI(text: string, visibleWidth: number, alignRight = false): string {
-  const visibleLength = text.replace(/\u001b\[[0-9;]*m/g, "").length;
-  const missing = Math.max(0, visibleWidth - visibleLength);
+function cleanupDescription(desc: string): string {
+  return desc
+    .replace(/^Software:\s*/i, "")
+    .replace(/^Gang '[^']+':\s*/i, "")
+    .replace(/\s*\(Börsen-Automatisierung\)/i, ""); // Entfernt den Klammerinhalt komplett
+}
+
+/**
+ * Filtert doppelte Log-Einträge heraus, selbst wenn sich Beträge leicht unterscheiden.
+ */
+function filterUniqueLogs(logs: string[]): string[] {
+  const seenKeys = new Set<string>();
+  const result: string[] = [];
+
+  // Von neu nach alt durchlaufen, um nur den neuesten Stand zu behalten
+  for (let i = logs.length - 1; i >= 0; i--) {
+    const rawLog = logs[i];
+    // Normiert den Log-String: Entfernt Beträge in Klammern für den Vergleich
+    const normalizedKey = rawLog
+      .replace(/\(\$\d+(\.\d+)?[a-z]?\s*\/\s*\$\d+(\.\d+)?[a-z]?\)/i, "")
+      .trim();
+
+    if (!seenKeys.has(normalizedKey)) {
+      seenKeys.add(normalizedKey);
+      result.unshift(rawLog);
+    }
+  }
+
+  return result;
+}
+
+function getVisibleLength(text: string): number {
+  return text.replace(ANSI_REGEX, "").length;
+}
+
+function padANSI(
+  text: string,
+  visibleWidth: number,
+  alignRight = false,
+): string {
+  const missing = Math.max(0, visibleWidth - getVisibleLength(text));
   const padding = " ".repeat(missing);
   return alignRight ? padding + text : text + padding;
+}
+
+function truncateANSI(text: string, maxWidth: number): string {
+  if (getVisibleLength(text) <= maxWidth) return text;
+
+  let visibleCount = 0;
+  let result = "";
+  let i = 0;
+
+  while (i < text.length && visibleCount < maxWidth - 3) {
+    if (text[i] === "\u001b") {
+      const match = text.slice(i).match(/^(\u001b\[[0-9;]*m)/);
+      if (match) {
+        result += match[0];
+        i += match[0].length;
+        continue;
+      }
+    }
+    result += text[i];
+    visibleCount++;
+    i++;
+  }
+  return result + "...\u001b[0m";
 }
 
 function makeProgressBar(value: number, max: number, width = 20): string {
@@ -58,8 +121,8 @@ function formatPercent(value: number, max: number): string {
 
 export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   ns.clearLog();
+  const buffer: string[] = [];
 
-  // ANSI-Farbcodes für Bitburner Tail-Fenster
   const CLR = {
     RESET: "\u001b[0m",
     CYAN: "\u001b[36m",
@@ -75,59 +138,58 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   const D_LINE = `${CLR.GRAY}${"-".repeat(W)}${CLR.RESET}`;
 
   // ------------------------------------------------------------
-  // HEADER (BIT-OS DESIGN)
+  // HEADER
   // ------------------------------------------------------------
   const queueStr = `Queue: ${data.pendingCount} Anfragen`;
   const headerTitle = `⚡ BIT-OS FINANCE CORE v1.0`;
-  const headerContent = `${CLR.WHITE_BOLD}${padANSI(headerTitle, 34)}${CLR.RESET}|  ${CLR.CYAN}${queueStr}${CLR.RESET}`;
+  const headerContent = `${CLR.WHITE_BOLD}${padANSI(headerTitle, 36)}${CLR.RESET}| ${CLR.CYAN}${padANSI(queueStr, 24, true)}${CLR.RESET}`;
 
-  ns.print(H_LINE);
-  ns.print(headerContent);
-  ns.print(H_LINE);
+  buffer.push(H_LINE);
+  buffer.push(headerContent);
+  buffer.push(H_LINE);
 
   // ------------------------------------------------------------
   // 1. FINANZ- & SYSTEM-ÜBERSICHT
   // ------------------------------------------------------------
   const cashStr = `${CLR.GREEN}$${ns.format.number(data.currentMoney)}${CLR.RESET}`;
   const budgetStr = `${CLR.CYAN}$${ns.format.number(data.availableMoney)}${CLR.RESET}`;
-  ns.print(`${CLR.WHITE_BOLD}FINANZ- & SYSTEM-ÜBERSICHT:${CLR.RESET}`);
-  ns.print(`Cash:        ${cashStr}  |  Budget: ${budgetStr}`);
+  buffer.push(`${CLR.WHITE_BOLD}FINANZ- & SYSTEM-ÜBERSICHT:${CLR.RESET}`);
+  buffer.push(`Cash:        ${padANSI(cashStr, 18)} | Budget: ${budgetStr}`);
 
   const ramUsedStr = ns.format.ram(data.homeRamUsed);
   const ramTotStr = ns.format.ram(data.homeRamTotal);
   const ramPct = formatPercent(data.homeRamUsed, data.homeRamTotal);
   const ramBar = makeProgressBar(data.homeRamUsed, data.homeRamTotal, 20);
-  ns.print(`Home RAM:    ${ramUsedStr} / ${ramTotStr} (${ramPct})`);
-  ns.print(`             [${CLR.CYAN}${ramBar}${CLR.RESET}]`);
+  buffer.push(`Home RAM:    ${ramUsedStr} / ${ramTotStr} (${ramPct})`);
+  buffer.push(`             [${CLR.CYAN}${ramBar}${CLR.RESET}]`);
 
   const cloudStr = `${data.purchasedServerCount} / ${data.purchasedServerLimit}`;
   const cloudBar = makeProgressBar(
     data.purchasedServerCount,
     data.purchasedServerLimit,
-    12
+    12,
   );
   const maxRamStr =
     data.largestPurchasedServerRam > 0
       ? ns.format.ram(data.largestPurchasedServerRam)
       : "–";
-  ns.print(
-    `Cloud Pool:  ${padANSI(cloudStr, 8)} [${CLR.CYAN}${cloudBar}${CLR.RESET}] (Max: ${maxRamStr})`
+  buffer.push(
+    `Cloud Pool:  ${padANSI(cloudStr, 8)} [${CLR.CYAN}${cloudBar}${CLR.RESET}] (Max: ${maxRamStr})`,
   );
 
   if (data.hacknetLimit > 0) {
     const hnetStr = `${data.hacknetCount} / ${data.hacknetLimit}`;
     const hnetBar = makeProgressBar(data.hacknetCount, data.hacknetLimit, 12);
     const modeLabel = data.isHacknetServer ? "Servers" : "Nodes";
-    ns.print(
-      `Hacknet Pool:${padANSI(hnetStr, 8)} [${CLR.CYAN}${hnetBar}${CLR.RESET}] (${modeLabel})`
+    buffer.push(
+      `Hacknet Pool:${padANSI(hnetStr, 8)} [${CLR.CYAN}${hnetBar}${CLR.RESET}] (${modeLabel})`,
     );
   }
 
-  ns.print(
-    `Home Cores:  ${data.homeCores} Core${data.homeCores > 1 ? "s" : ""}`
+  buffer.push(
+    `Home Cores:  ${data.homeCores} Core${data.homeCores > 1 ? "s" : ""}`,
   );
-
-  ns.print(D_LINE);
+  buffer.push(D_LINE);
 
   // ------------------------------------------------------------
   // 2. SUPERVISOR & EVALUATOREN STATUS
@@ -139,27 +201,17 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     ? `${CLR.GREEN}[ONLINE]${CLR.RESET}`
     : `${CLR.RED}[OFFLINE]${CLR.RESET}`;
 
-  ns.print(`${CLR.WHITE_BOLD}SUPERVISOR & EVALUATOREN STATUS:${CLR.RESET}`);
-  ns.print(
-    `Manager:     ${padANSI(fMgrStatus, 10)} |  Orchestrator: ${sMgrStatus}`
+  buffer.push(`${CLR.WHITE_BOLD}SUPERVISOR & EVALUATOREN STATUS:${CLR.RESET}`);
+  buffer.push(
+    `Manager:     ${padANSI(fMgrStatus, 18)} | Orchestrator: ${sMgrStatus}`,
   );
 
-  // Alle 9 Evaluatoren aus finance-core (inkl. corporation)
-  const knownEvaluators = [
-    "home",
-    "hacknet",
-    "stock",
-    "cloud",
-    "programs",
-    "gang",
-    "sleeve",
-    "player",
-    "corporation",
-  ];
   const activeSet = new Set(data.activeEvaluators);
+  const allEvaluators = Array.from(
+    new Set([...data.activeEvaluators, ...data.inactiveEvaluators]),
+  ).sort();
 
-  // 3x3 Grid (Spaltenbreite 16 sichtbare Zeichen)
-  const badges = knownEvaluators.map((name) => {
+  const badges = allEvaluators.map((name) => {
     const isActive = activeSet.has(name);
     const icon = isActive
       ? `${CLR.GREEN}[✓]${CLR.RESET}`
@@ -167,91 +219,94 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     return padANSI(`${icon} ${name}`, 16);
   });
 
-  ns.print(`Evaluatoren: ${badges.slice(0, 3).join("")}`);
-  ns.print(`             ${badges.slice(3, 6).join("")}`);
-  ns.print(`             ${badges.slice(6, 9).join("")}`);
+  for (let i = 0; i < badges.length; i += 3) {
+    const row = badges.slice(i, i + 3).join("");
+    const prefix = i === 0 ? "Evaluatoren: " : "             ";
+    buffer.push(`${prefix}${row}`);
+  }
 
-  ns.print(D_LINE);
+  buffer.push(D_LINE);
 
   // ------------------------------------------------------------
   // 3. NÄCHSTER GEPLANTER KAUF
   // ------------------------------------------------------------
-  ns.print(`${CLR.WHITE_BOLD}NÄCHSTER GEPLANTER KAUF:${CLR.RESET}`);
+  buffer.push(`${CLR.WHITE_BOLD}NÄCHSTER GEPLANTER KAUF:${CLR.RESET}`);
   if (data.nextPurchaseRequest) {
     const req = data.nextPurchaseRequest;
     const reqCostStr = `$${ns.format.number(req.cost)}`;
     const progressPct =
       req.cost > 0 ? Math.min(100, (data.currentMoney / req.cost) * 100) : 100;
     const progressBar = makeProgressBar(data.currentMoney, req.cost, 20);
-    const shortDesc =
-      req.description.length > 44
-        ? req.description.substring(0, 41) + "..."
-        : req.description;
-
+    const shortDesc = truncateANSI(cleanupDescription(req.description), 44);
     const statusStr =
       progressPct >= 100
         ? `${CLR.GREEN}Bereit!${CLR.RESET}`
         : `${CLR.YELLOW}Sparen...${CLR.RESET}`;
 
-    ns.print(`Ziel:        ${shortDesc}`);
-    ns.print(`Kosten:      ${reqCostStr} (${progressPct.toFixed(1)}%)`);
-    ns.print(
-      `Status:      [${CLR.CYAN}${progressBar}${CLR.RESET}] ${statusStr}`
+    buffer.push(`Ziel:        ${shortDesc}`);
+    buffer.push(`Kosten:      ${reqCostStr} (${progressPct.toFixed(1)}%)`);
+    buffer.push(
+      `Status:      [${CLR.CYAN}${progressBar}${CLR.RESET}] ${statusStr}`,
     );
   } else {
-    ns.print(`Ziel:        Keine offenen Anfragen im Port`);
-    ns.print(
-      `Status:      [${CLR.GREEN}${makeProgressBar(1, 1, 20)}${CLR.RESET}] Bereit`
+    buffer.push(`Ziel:        Keine offenen Anfragen im Port`);
+    buffer.push(
+      `Status:      [${CLR.GREEN}${makeProgressBar(1, 1, 20)}${CLR.RESET}] Bereit`,
     );
   }
 
-  ns.print(D_LINE);
+  buffer.push(D_LINE);
+
+  const CATEGORY_TAGS: Record<string, string> = {
+    STOCK_LICENSE: "STK",
+    DARKNET_PROGRAM: "DRK",
+    GANG_EQUIPMENT: "GNG",
+    SERVER_BUY: "SRV",
+    HACKNET: "HNK",
+  };
 
   // ------------------------------------------------------------
   // 4. TOP ANFRAGEN IN WARTESCHLANGE
   // ------------------------------------------------------------
-  ns.print(`${CLR.WHITE_BOLD}TOP ANFRAGEN IN WARTESCHLANGE:${CLR.RESET}`);
+  buffer.push(`${CLR.WHITE_BOLD}TOP ANFRAGEN IN WARTESCHLANGE:${CLR.RESET}`);
   if (data.topPendingRequests.length === 0) {
-    ns.print(`> ${CLR.GRAY}Keine wartenden Anfragen.${CLR.RESET}`);
+    buffer.push(`> ${CLR.GRAY}Keine wartenden Anfragen.${CLR.RESET}`);
   } else {
     for (const req of data.topPendingRequests) {
-      const prio = req.priorityLabel.substring(0, 4).padEnd(4);
-      const cat = req.category.substring(0, 14).padEnd(14);
-      const cost = `$${ns.format.number(req.cost)}`;
-      const desc =
-        req.description.length > 22
-          ? req.description.substring(0, 19) + "..."
-          : req.description;
-      ns.print(
-        `> [${CLR.CYAN}${prio}${CLR.RESET}] ${cat} | ${desc.padEnd(22)} ${padANSI(cost, 9, true)}`
+      const prio = req.priorityLabel.substring(0, 4);
+      const catTag =
+        CATEGORY_TAGS[req.category] ?? req.category.substring(0, 3);
+      const cleanDesc = cleanupDescription(req.description);
+      const costStr = `$${ns.format.number(req.cost)}`;
+      const shortDesc = truncateANSI(cleanDesc, 36);
+
+      buffer.push(
+        `> [${CLR.CYAN}${prio}${CLR.RESET}] [${CLR.YELLOW}${catTag}${CLR.RESET}] ${padANSI(shortDesc, 36)} ${padANSI(costStr, 9, true)}`,
       );
     }
   }
 
-  ns.print(D_LINE);
+  buffer.push(D_LINE);
 
   // ------------------------------------------------------------
   // 5. EREIGNIS-PROTOKOLL
   // ------------------------------------------------------------
-  ns.print(`${CLR.WHITE_BOLD}EREIGNIS-PROTOKOLL:${CLR.RESET}`);
-  const recentLogs: string[] = [];
+  buffer.push(`${CLR.WHITE_BOLD}EREIGNIS-PROTOKOLL:${CLR.RESET}`);
 
-  for (const p of data.lastPurchases.slice(-3)) {
-    recentLogs.push(p);
-  }
-  for (const w of data.lastWarnings.slice(-2)) {
-    recentLogs.push(w);
-  }
+  // Kombinieren und Entdoppeln
+  const combinedLogs = [...data.lastPurchases, ...data.lastWarnings];
+  const uniqueLogs = filterUniqueLogs(combinedLogs).slice(-4);
 
-  if (recentLogs.length === 0) {
-    ns.print(`> ${CLR.GRAY}Keine aktuellen Ereignisse.${CLR.RESET}`);
+  if (uniqueLogs.length === 0) {
+    buffer.push(`> ${CLR.GRAY}Keine aktuellen Ereignisse.${CLR.RESET}`);
   } else {
-    for (const logLine of recentLogs.slice(-4)) {
-      const truncated =
-        logLine.length > 58 ? logLine.substring(0, 55) + "..." : logLine;
-      ns.print(`> ${truncated}`);
+    for (const logLine of uniqueLogs) {
+      const cleanedLog = cleanupDescription(logLine);
+      buffer.push(`> ${truncateANSI(cleanedLog, 58)}`);
     }
   }
 
-  ns.print(H_LINE);
+  buffer.push(H_LINE);
+
+  ns.print(buffer.join("\n"));
 }
