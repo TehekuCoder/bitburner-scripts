@@ -1,15 +1,19 @@
 import {
   buyCorporationUpgrades,
   maintainEmployeeMorale,
+  maintainRatios,
   safeExportMaterial,
   setupOfficeAndJobs,
   upgradeWarehouseToLevel,
 } from "../corporation-helpers";
 import { CorpPhaseContext, CorpPhaseHandler } from "../types";
 import {
+  AGRI_BOOST_RATIOS,
+  CHEM_BOOST_RATIOS,
   CORP_CONFIG,
   CORP_RESEARCH_PRIORITY,
   CorpPhase,
+  TOBACCO_BOOST_RATIOS,
 } from "/shared/constants/corporation";
 
 export class InitTobaccoPhaseHandler implements CorpPhaseHandler {
@@ -142,11 +146,37 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       return "INIT_TOBACCO";
     }
 
+    // 1. Mitarbeiter-Moral pflegen
     for (const city of divInfo.cities) {
       maintainEmployeeMorale(ns, tobacco.name, city);
     }
 
-    // 1. Forschungen streng nach Priorität durchführen
+    // 2. Booster-Materialien im Lager auf Ziel-Verhältnis halten
+    // a. Tobacco-Booster im neuen Lager nachkaufen
+    maintainRatios(
+      ns,
+      CORP_CONFIG.divisions.tobacco.name,
+      TOBACCO_BOOST_RATIOS,
+      0.7,
+    );
+
+    // b. Agrar-Booster im ebenfalls gewachsenen Lager nachkaufen
+    maintainRatios(
+      ns,
+      CORP_CONFIG.divisions.agri.name,
+      AGRI_BOOST_RATIOS.R2,
+      0.7,
+    );
+
+    // c. Chemie-Booster im ebenfalls gewachsenen Lager nachkaufen
+    maintainRatios(
+      ns,
+      CORP_CONFIG.divisions.chem.name,
+      CHEM_BOOST_RATIOS.R2,
+      0.7,
+    );
+
+    // 3. Forschungen streng nach Priorität durchführen
     for (const tech of CORP_RESEARCH_PRIORITY) {
       if (!corp.hasResearched(tobacco.name, tech)) {
         // Frische Research Points direkt von der API abfragen
@@ -169,7 +199,7 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       }
     }
 
-    // 2. Produkte verwalten & Verkaufen (KORREKTUR PUNKT 3: TA.II Optimierung)
+    // 4. Produkte verwalten & Verkaufen (KORREKTUR PUNKT 3: TA.II Optimierung)
     let products = corp.getDivision(tobacco.name).products;
     const hasTA2 = corp.hasResearched(tobacco.name, "Market-TA.II");
 
@@ -190,7 +220,7 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       }
     }
 
-    // 3. Maximale Produktkapazität ermitteln
+    // 5. Maximale Produktkapazität ermitteln
     let maxProducts = 3;
     if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.I")) maxProducts++;
     if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.II")) maxProducts++;
@@ -249,7 +279,7 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       }
     }
 
-    // 4. Upgrades kaufen & Reinvestition
+    // 6. Upgrades kaufen & Reinvestition
     if (corp.getCorporation().funds > 1_000_000_000) {
       buyCorporationUpgrades(ns, 0.1, logger);
 
@@ -268,7 +298,7 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       }
     }
 
-    // 5. Börsengang / Dividenden
+    // 7. Börsengang / Dividenden
     const corpData = corp.getCorporation();
     if (!corpData.public) {
       if (corpData.revenue > 100_000_000_000) {

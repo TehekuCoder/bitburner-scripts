@@ -173,6 +173,10 @@ function runFallbackWorkers(
 
   for (const server of servers) {
     if (server === "home") continue;
+
+    // NEU: Hacknet-Server im Fallback-Modus grundsätzlich überspringen
+    if (server.startsWith("hacknet-")) continue;
+
     if (!ns.serverExists(server) || !ns.hasRootAccess(server)) continue;
 
     const srvMax = ns.getServerMaxRam(server);

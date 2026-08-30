@@ -127,3 +127,10 @@ export const CHEM_BOOST_RATIOS = {
     Robots: 0.2,
   },
 } as const;
+
+export const TOBACCO_BOOST_RATIOS = {
+  Hardware: 0.2,
+  Robots: 0.4,
+  "AI Cores": 0.2,
+  "Real Estate": 0.2,
+} as const;
