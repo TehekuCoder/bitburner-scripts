@@ -17,7 +17,7 @@ export async function main(ns: NS): Promise<void> {
   const killedHomeCount = stopEverythingOnHome(ns);
   ns.tprint(`🧹 Home bereinigt: ${killedHomeCount} Skript(e) beendet.`);
 
-  // 2. Erfasse alle nutzbaren Server im Netzwerk (inkl. Hacknet & Purchased)
+  // 2. Erfasse alle nutzbaren Server im Netzwerk (inkl. Hacknet & Cloud)
   const servers = getAllRootedServersWithRam(ns);
   const totalNetworkRam = servers.reduce((sum, s) => sum + ns.getServerMaxRam(s), 0);
 

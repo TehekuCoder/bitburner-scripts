@@ -140,6 +140,7 @@ export async function main(ns: NS): Promise<void> {
 
 /**
  * Verteilt work.ts auf ALLE gerooteten Server im Netzwerk verteilt über mehrere Ziele.
+ * (Exkludiert Hacknet-Server, um maximale Hash-Generierung zu gewährleisten)
  */
 function deployWorkerFleet(
   ns: NS,
@@ -159,6 +160,16 @@ function deployWorkerFleet(
 
   for (let i = 0; i < servers.length; i++) {
     const server = servers[i];
+
+    // Neu: Hacknet-Server (hacknet-node-* oder hacknet-server-*) komplett überspringen
+    if (server.startsWith("hacknet-")) {
+      // Falls noch alte Work-Skripte darauf laufen, diese beenden, um das RAM freizugeben
+      if (ns.isRunning(workScript, server)) {
+        ns.scriptKill(workScript, server);
+      }
+      continue;
+    }
+
     const maxRam = ns.getServerMaxRam(server);
     if (maxRam <= 0) continue;
 
@@ -180,6 +191,10 @@ function deployWorkerFleet(
         }
       } catch {
         // Gang-API noch nicht freigeschaltet/verfügbar
+      }
+
+      if (ns.scriptRunning(PATHS.app.orchestration.financeCore)) {
+        reservedHomeRam += 100;
       }
 
       const usedRamExcludingWork =
@@ -216,7 +231,6 @@ function deployWorkerFleet(
     }
   }
 }
-
 function manageWorkerOnServer(
   ns: NS,
   server: string,

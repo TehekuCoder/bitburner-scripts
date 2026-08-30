@@ -146,37 +146,51 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       maintainEmployeeMorale(ns, tobacco.name, city);
     }
 
+    // 1. Forschungen streng nach Priorität durchführen
     for (const tech of CORP_RESEARCH_PRIORITY) {
       if (!corp.hasResearched(tobacco.name, tech)) {
+        // Frische Research Points direkt von der API abfragen
+        const currentRP = corp.getDivision(tobacco.name).researchPoints;
         const cost = corp.getResearchCost(tobacco.name, tech);
-        if (divInfo.researchPoints >= cost) {
+
+        if (currentRP >= cost) {
           try {
             corp.research(tobacco.name, tech);
             log(`[Tobacco] Erforscht: ${tech}`, "SUCCESS");
           } catch {
-            // Voraussetzungen fehlen eventuell noch
+            // Falls Voraussetzungen fehlen -> Abbrechen, um die Priorität zu wahren
+            break;
           }
+        } else {
+          // Nicht genug RP für die NÄCHSTE Forschung in der Liste:
+          // Schleife ABBRECHEN, um RP für dieses Prioritätsziel zu sparen!
+          break;
         }
       }
     }
 
-    const products = divInfo.products;
+    // 2. Produkte verwalten & Verkaufen (KORREKTUR PUNKT 3: TA.II Optimierung)
+    let products = corp.getDivision(tobacco.name).products;
     const hasTA2 = corp.hasResearched(tobacco.name, "Market-TA.II");
 
     for (const prodName of products) {
       const prod = corp.getProduct(tobacco.name, mainCity, prodName);
       if (prod.developmentProgress === 100) {
+        // Market-TA.II ist eine globale Produkteinstellung (einmalig pro Produkt, nicht pro Stadt)
+        if (hasTA2) {
+          corp.setProductMarketTA2(tobacco.name, prodName, true);
+        }
+
         for (const city of divInfo.cities) {
+          // Solange kein Market-TA.II vorhanden ist, verkaufen wir manuell zum 2x Marktpreis.
+          // Sobald TA.II aktiv ist, reicht "MP", da das Spiel die Preise dynamisch regelt.
           const price = hasTA2 ? "MP" : "MP * 2";
           corp.sellProduct(tobacco.name, city, prodName, "MAX", price, true);
-
-          if (hasTA2) {
-            corp.setProductMarketTA2(tobacco.name, prodName, true);
-          }
         }
       }
     }
 
+    // 3. Maximale Produktkapazität ermitteln
     let maxProducts = 3;
     if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.I")) maxProducts++;
     if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.II")) maxProducts++;
@@ -187,6 +201,7 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
     );
 
     if (!isDeveloping) {
+      // (KORREKTUR PUNKT 1: Array-Synchronisation nach discontinuing)
       if (products.length >= maxProducts) {
         const oldestProduct = products[0];
         corp.discontinueProduct(tobacco.name, oldestProduct);
@@ -194,28 +209,38 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
           `[Tobacco] Ältester Artikel '${oldestProduct}' eingestellt.`,
           "INFO",
         );
+        // Nach dem Einstellen das Produkt-Array aus der API neu laden:
+        products = corp.getDivision(tobacco.name).products;
       }
 
+      // Freie Produktnummer ermitteln
       let prodIndex = 1;
       while (products.includes(`Tobacco-${prodIndex}`)) {
         prodIndex++;
       }
       const newProdName = `Tobacco-${prodIndex}`;
 
+      // (KORREKTUR PUNKT 2: Sauberer Budget-Split & Maximum-Check)
+      // Bitburner erlaubt maximal $1.000.000.000 je Kategorie (Design & Marketing),
+      // also insgesamt max. $2.000.000.000 pro Produkt.
       const availableFunds = corp.getCorporation().funds;
-      const totalInvestment = Math.min(
-        2_000_000_000,
-        Math.max(2_000_000, availableFunds * 0.1),
-      );
+      const minRequired = 2_000_000;
+      const maxPerCategory = 1_000_000_000; // Maximum laut Bitburner-API
 
-      if (totalInvestment >= 2_000_000) {
-        const halfInvestment = totalInvestment / 2;
+      // Wir investieren 5% der verfügbaren Mittel pro Kategorie (10% insgesamt), gedeckelt auf $1 Mrd.
+      const categoryInvestment = Math.min(
+        maxPerCategory,
+        Math.max(minRequired / 2, availableFunds * 0.05),
+      );
+      const totalInvestment = categoryInvestment * 2;
+
+      if (totalInvestment >= minRequired) {
         corp.makeProduct(
           tobacco.name,
           mainCity,
           newProdName,
-          halfInvestment,
-          halfInvestment,
+          categoryInvestment,
+          categoryInvestment,
         );
         log(
           `[Tobacco] Neues Produkt gestartet: ${newProdName} (Budget: $${ns.format.number(totalInvestment, 2)})`,
@@ -224,6 +249,7 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       }
     }
 
+    // 4. Upgrades kaufen & Reinvestition
     if (corp.getCorporation().funds > 1_000_000_000) {
       buyCorporationUpgrades(ns, 0.1, logger);
 
@@ -242,6 +268,7 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       }
     }
 
+    // 5. Börsengang / Dividenden
     const corpData = corp.getCorporation();
     if (!corpData.public) {
       if (corpData.revenue > 100_000_000_000) {

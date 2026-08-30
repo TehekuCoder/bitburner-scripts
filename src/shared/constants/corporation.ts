@@ -1,4 +1,4 @@
-import { CityName } from "@ns";
+import { CityName, CorpMaterialName } from "@ns";
 
 export const CORP_CONFIG = {
   corpName: "Philip Matrix",
@@ -107,12 +107,12 @@ export const CORP_RESEARCH_PRIORITY = [
   "AutoPartyManager",
 ] as const;
 
-export const MATERIAL_VOLUMES = {
+export const MATERIAL_VOLUMES: Partial<Record<CorpMaterialName, number>> = {
   Hardware: 0.06,
   Robots: 0.5,
   "AI Cores": 0.1,
   "Real Estate": 0.005,
-} as const;
+};
 
 export const AGRI_BOOST_RATIOS = {
   R1: { "Real Estate": 0.75, Hardware: 0.125, "AI Cores": 0.125, Robots: 0 },

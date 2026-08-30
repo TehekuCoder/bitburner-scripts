@@ -8,6 +8,7 @@ import {
 } from "@ns";
 
 import { LoggerClient } from "../../infrastructure/logging/logger-client";
+import { CORP_CONFIG, MATERIAL_VOLUMES } from "/shared/constants/corporation";
 
 export type CorpJobRole = Exclude<CorpEmployeePosition, "Unassigned">;
 export type MaterialTargets = Partial<Record<CorpMaterialName, number>>;
@@ -319,5 +320,55 @@ export function buyPhaseUnlocks(ns: NS, currentPhase: string): void {
     currentPhase.includes("TOBACCO")
   ) {
     ensureUnlock(ns, "Export");
+  }
+}
+
+/**
+ * Hält die Booster-Materialien einer Division auf dem Ziel-Prozentwert des Lagerraums.
+ * 
+ * @param ns Bitburner NS-Instanz
+ * @param divName Name der Division (z. B. "GreenPill Organics")
+ * @param targetRatios Prozentualer Anteil am Speicherplatz je Material (z. B. Hardware: 0.1)
+ * @param targetStorageUsage Wie viel % des Gesamtlagers für Booster genutzt werden soll (Standard: 70%)
+ */
+export function maintainRatios(
+  ns: NS,
+  divName: string,
+  targetRatios: Partial<Record<CorpMaterialName, number>>,
+  targetStorageUsage = 0.7,
+): void {
+  const corp = ns.corporation;
+  if (!corp.getCorporation().divisions.includes(divName)) return;
+
+  for (const city of CORP_CONFIG.cities) {
+    if (!corp.hasWarehouse(divName, city)) continue;
+
+    const warehouse = corp.getWarehouse(divName, city);
+    const maxCapacity = warehouse.size;
+    const availableBoostSpace = maxCapacity * targetStorageUsage;
+
+    for (const [matName, ratio] of Object.entries(targetRatios)) {
+      if (!ratio || ratio <= 0) continue;
+
+      const material = matName as CorpMaterialName;
+      const volPerUnit = MATERIAL_VOLUMES[material];
+      if (!volPerUnit) continue;
+
+      // Zielmenge in Einheiten berechnen
+      const allocatedSpace = availableBoostSpace * ratio;
+      const targetQty = Math.floor(allocatedSpace / volPerUnit);
+
+      const currentStored = corp.getMaterial(divName, city, material).stored;
+      const missing = targetQty - currentStored;
+
+      if (missing > 5) {
+        // Kaufrate pro Sekunde setzen (Bitburner Ticks dauern ca. 10s)
+        const buyAmount = Math.ceil(missing / 10);
+        corp.buyMaterial(divName, city, material, buyAmount);
+      } else {
+        // Ziel erreicht -> Kauf stoppen
+        corp.buyMaterial(divName, city, material, 0);
+      }
+    }
   }
 }
