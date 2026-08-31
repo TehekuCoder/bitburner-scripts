@@ -66,6 +66,9 @@ export async function main(ns: NS): Promise<void> {
     // ✉️ Automatische Fraktionseinladungen verarbeiten
     handleFactionInvitations(ns, logger);
 
+    // ⚔️ Bladeburner Division & Faction Auto-Join prüfen
+    handleBladeburnerAutoJoin(ns, logger);
+
     // 📝 State-Patching
     patchState(ns, {
       strategy: mode,
@@ -142,12 +145,17 @@ function manageMicroservices(
     }
   }
 
-  // 🛡️ 2. Bladeburner Override (Bladeburner nutzt Player-Focus)
+  // 🛡️ 2. Bladeburner Override (Prüft Simulacrum)
   const isBladeburnerActive =
     typeof ns.bladeburner !== "undefined" && ns.bladeburner.inBladeburner();
 
-  if (isBladeburnerActive && currentMode !== "TRAIN") {
-    // Falls keine explizite Trainings-Phase vorgegeben ist, überlassen wir dem Bladeburner-Manager die Aktionen
+  // Prüfe, ob Simulacrum bereits installiert ist
+  const hasSimulacrum = ns.singularity
+    .getOwnedAugmentations(false)
+    .includes("The Blade's Simulacrum");
+
+  // Ohne Simulacrum muss Bladeburner den exklusiven Focus haben (außer im TRAIN-Modus)
+  if (isBladeburnerActive && !hasSimulacrum && currentMode !== "TRAIN") {
     targetScript = undefined;
   }
 
@@ -240,6 +248,48 @@ function handleFactionInvitations(ns: NS, logger: LoggerClient): void {
         `🎉 Einladung zu Fraktion [${invite}] automatisch angenommen!`,
       );
       ns.toast(`Beigetreten: ${invite}`, "success");
+    }
+  }
+}
+
+/**
+ * Prüft und übernimmt das automatische Beitreten zur Bladeburner Division
+ * (Stats >= 100) sowie zur Bladeburner-Fraktion (Rank >= 25).
+ */
+function handleBladeburnerAutoJoin(ns: NS, logger: LoggerClient): void {
+  // 1. Prüfen, ob die Bladeburner-API verfügbar ist (SF7 / BN6 / BN7)
+  if (ns.bladeburner === undefined) return;
+
+  const player = ns.getPlayer();
+  const minCombatStat = Math.min(
+    player.skills.strength,
+    player.skills.defense,
+    player.skills.dexterity,
+    player.skills.agility,
+  );
+
+  // 2. Stufe 1: Der Bladeburner Division beitreten (Voraussetzung: Stats >= 100)
+  if (!ns.bladeburner.inBladeburner()) {
+    if (minCombatStat >= 100) {
+      const joined = ns.bladeburner.joinBladeburnerDivision();
+      if (joined) {
+        logger.success("⚔️ Erfolgreich der Bladeburner Division beigetreten!");
+        ns.toast("Bladeburner Division beigetreten!", "success");
+      }
+    }
+    return; // Noch nicht in der Division -> Faction-Join erst im nächsten Schritt möglich
+  }
+
+  // 3. Stufe 2: Der Bladeburner-Fraktion beitreten (Voraussetzung: Rank >= 25)
+  if (!player.factions.includes("Bladeburners")) {
+    const currentRank = ns.bladeburner.getRank();
+    if (currentRank >= 25) {
+      if (ns.singularity.joinFaction("Bladeburners")) {
+        logger.success(
+          `🎉 Der Bladeburner-Fraktion beigetreten! (Rang: ${Math.floor(currentRank)})`,
+        );
+        ns.toast("Bladeburner Fraktion beigetreten!", "success");
+      }
     }
   }
 }

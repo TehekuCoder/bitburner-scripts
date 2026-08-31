@@ -230,8 +230,7 @@ export function determineStrategy(
   const daedalusRep = player.factions.includes("Daedalus")
     ? ns.singularity.getFactionRep("Daedalus")
     : 0;
-  
-  // Korrektur: AugmentationRepCost statt AugmentationMoneyCost
+
   const daedalusDone =
     redPillOwned ||
     daedalusRep >= 2_500_000 * (bnMults.AugmentationRepCost ?? 1);
@@ -243,7 +242,7 @@ export function determineStrategy(
     return { mode: "UNI", targetStat: targetHackLevel };
   }
 
-  // 2️⃣ DAEDALUS SOFORT-REP (Red Pill Ziel)
+  // 2️⃣ DAEDALUS SOFORT-REP (Red Pill Ziel hat immer Höchstpriorität)
   if (player.factions.includes("Daedalus") && !daedalusDone) {
     const daedalusTargetRep =
       factionTargets["Daedalus"] ??
@@ -256,7 +255,7 @@ export function determineStrategy(
     }
   }
 
-  // 3️⃣ PHASE 1: Early-Game Fraktionen
+  // 3️⃣ PHASE 1: Early-Game Fraktionen (CyberSec, etc.)
   if (
     factionToWorkFor &&
     EARLY_FACTIONS.includes(factionToWorkFor.name as FactionName) &&
@@ -296,7 +295,6 @@ export function determineStrategy(
     !factionToWorkFor
   ) {
     const installedAugs = ns.singularity.getOwnedAugmentations(false).length;
-    // Korrektur: reqDaedalusAugs mit DaedalusAugsRequirement
     if (installedAugs >= reqDaedalusAugs || player.money >= 100e9) {
       const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
       const hasCombatReq = minCombat >= 1500;
@@ -317,7 +315,26 @@ export function determineStrategy(
     }
   }
 
-  // 6️⃣ PHASE 4: Roadmap-Fraktionen oder Firmen-Grind
+  // 6️⃣ PHASE 4: BLADEBURNER (Vorgezogen vor Roadmap-Fraktionen)
+  try {
+    if (typeof ns.bladeburner !== "undefined") {
+      if (!ns.bladeburner.inBladeburner()) {
+        const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
+        if (minCombat >= 100) {
+          if (ns.bladeburner.joinBladeburnerDivision()) {
+            logger?.info("⚔️ Bladeburner Division erfolgreich beigetreten!");
+          }
+        }
+      }
+
+      if (ns.bladeburner.inBladeburner()) {
+        logger?.debug(`[Strategie] Bladeburner System Aktiv ➔ BLADEBURNER`);
+        return { mode: "BLADEBURNER" };
+      }
+    }
+  } catch {}
+
+  // 7️⃣ PHASE 5: Roadmap-Fraktionen oder Firmen-Grind
   if (factionToWorkFor && isReadyForFactionGrind) {
     if (factionToWorkFor.isCompany && factionToWorkFor.companyName) {
       logger?.debug(
@@ -340,32 +357,11 @@ export function determineStrategy(
     }
   }
 
-  // 7️⃣ PHASE 5: CHURCH OF THE MACHINE GOD / STANEK (SF13)
+  // 8️⃣ PHASE 6: CHURCH OF THE MACHINE GOD / STANEK (SF13)
   try {
     if (ns.serverExists("church") && ns.stanek?.activeFragments().length > 0) {
       logger?.debug(`[Strategie] Stanek Fragment Charge/Church Grind ➔ CHURCH`);
       return { mode: "CHURCH" };
-    }
-  } catch {}
-
-// 8️⃣ PHASE 6: BLADEBURNER (SF7)
-  try {
-    if (typeof ns.bladeburner !== "undefined") {
-      // Auto-Join versuchen, falls noch nicht beigetreten
-      if (!ns.bladeburner.inBladeburner()) {
-        const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
-        if (minCombat >= 100) {
-          if (ns.bladeburner.joinBladeburnerDivision()) {
-            logger?.info("⚔️ Bladeburner Division erfolgreich beigetreten!");
-          }
-        }
-      }
-
-      // Wenn aktiv in Bladeburner, schalte Strategie auf BLADEBURNER
-      if (ns.bladeburner.inBladeburner()) {
-        logger?.debug(`[Strategie] Bladeburner System Aktiv ➔ BLADEBURNER`);
-        return { mode: "BLADEBURNER" };
-      }
     }
   } catch {}
 
@@ -376,7 +372,6 @@ export function determineStrategy(
     (daedalusDone && isDominionEtaReady);
 
   if (isDominionActive) {
-    // Korrektur: Skalierung für Fallback-Ziel
     let worldDaemonReq = Math.floor(
       3000 * (bnMults.WorldDaemonDifficulty ?? 1),
     );

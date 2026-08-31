@@ -88,6 +88,15 @@ export class SystemStrategyEvaluator {
     const p = ns.getPlayer();
     const bnMults = loadBnMults(ns);
 
+    const player = ns.getPlayer();
+    const combatStats = [
+      "strength",
+      "defense",
+      "dexterity",
+      "agility",
+    ] as const;
+    const minCombatStat = Math.min(...combatStats.map((s) => player.skills[s]));
+
     const gangState = loadGangState(ns);
     const gangFaction = gangState?.hasGang ? gangState.gangFaction : null;
 
@@ -273,7 +282,7 @@ export class SystemStrategyEvaluator {
         threshold: effectiveThreshold,
         isReadyForFactionGrind,
         factionRepMult,
-        factionToWorkFor: factionToWorkFor?.name ?? "null (Gefiltert)",
+        factionToWorkFor: factionToWorkFor?.name ?? "null (Gefiltered)",
       },
     });
 
@@ -291,6 +300,25 @@ export class SystemStrategyEvaluator {
       isReadyForFactionGrind,
       isDominionEtaReady,
     );
+
+    // ⚔️ Bladeburner-Prerequisite Override (BN6 & BN7)
+    // Wenn wir in BN6/7 sind und noch nicht in Bladeburner: Combat-Stats auf 100 bringen
+    const inBladeburner = ns.bladeburner?.inBladeburner() ?? false;
+    const currentBN = ns.getResetInfo().currentNode;
+
+    if (
+      !inBladeburner &&
+      (currentBN === 6 || currentBN === 7) &&
+      minCombatStat < 100
+    ) {
+      logger.debug(
+        `Bladeburner Prep: Combat Stats (${minCombatStat}/100) noch nicht erreicht. Modus TRAIN erzwungen.`,
+      );
+      strategy = {
+        mode: "TRAIN",
+        targetStat: 100,
+      };
+    }
 
     // Fallback: Wenn Company-Modus ermittelt wurde, aber Hacking < 250 ist -> MONEY
     if (strategy.mode === "COMPANY" && p.skills.hacking < 250) {
