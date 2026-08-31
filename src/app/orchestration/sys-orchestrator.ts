@@ -177,7 +177,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Gang Manager",
       path: PATHS.services.managers.gang,
-      minHomeRam: 256,
+      minHomeRam: 1024,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, "gang")) return false;
@@ -187,7 +187,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Gang UI",
       path: PATHS.ui.gang,
-      minHomeRam: 256,
+      minHomeRam: 1024,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["gang", "ui"])) return false;
@@ -199,7 +199,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Sleeve Manager",
       path: PATHS.services.managers.sleeve,
-      minHomeRam: 512,
+      minHomeRam: 1024,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, "sleeve")) return false;
@@ -209,7 +209,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Sleeve UI",
       path: PATHS.ui.sleeve,
-      minHomeRam: 512,
+      minHomeRam: 1024,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["sleeve", "ui"])) return false;

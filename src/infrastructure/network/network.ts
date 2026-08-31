@@ -235,15 +235,14 @@ export function findBestTarget(
   blacklistTarget: string | null = null,
   maxCycleTimeMs: number = Infinity,
 ): string {
-  let best = "n00dles";
-  let maxWeight = 0;
+  let best = "";
+  let maxWeight = -1;
 
   const serverMaxMoneyMult = bnMults?.ServerMaxMoney ?? 1.0;
   const growthMult = bnMults?.ServerGrowthRate ?? 1.0;
   const isNoMoneyNode = serverMaxMoneyMult === 0;
 
   for (const node of nodes) {
-    // 1. System-, Hacknet- & Infrastruktur-Server aussortieren
     if (
       node === "home" ||
       node === "darkweb" ||
@@ -254,18 +253,15 @@ export function findBestTarget(
       continue;
     }
 
-    // 2. Hacking-Level Prüfung
     const reqSkill = ns.getServerRequiredHackingLevel(node);
     if (reqSkill > playerHackingLevel) continue;
 
     const cycleTime = ns.getWeakenTime(node);
 
-    // 3. Optionaler Laufzeit-Filter (z. B. max 5 Minuten im Early/Mid-Game)
-    if (maxCycleTimeMs < Infinity && cycleTime > maxCycleTimeMs) {
-      continue;
-    }
+    // Falls maxCycleTimeMs versehentlich in Sekunden übergeben wurde (< 10000), in ms umrechnen
+    const effectiveMaxTime = maxCycleTimeMs < 10000 ? maxCycleTimeMs * 1000 : maxCycleTimeMs;
+    if (cycleTime > effectiveMaxTime) continue;
 
-    // 4. Spezialfall: BitNodes ohne Geld (XP-Grind Fokus)
     if (isNoMoneyNode) {
       const weight = reqSkill / (Math.max(1, cycleTime) / 1000);
       if (weight > maxWeight) {
@@ -275,12 +271,10 @@ export function findBestTarget(
       continue;
     }
 
-    // 5. Standard Geld-Gewichtung
     const maxMoney = ns.getServerMaxMoney(node);
     if (maxMoney <= 0) continue;
 
-    const weight =
-      (maxMoney / (cycleTime / 1000)) * (reqSkill / 100) * growthMult;
+    const weight = (maxMoney / (cycleTime / 1000)) * (reqSkill / 100) * growthMult;
 
     if (weight > maxWeight) {
       maxWeight = weight;
@@ -288,5 +282,6 @@ export function findBestTarget(
     }
   }
 
-  return best;
+  // Falls kein Ziel die Kriterien erfüllt, nimm n00dles oder joesguns als Fallback
+  return best !== "" ? best : (ns.hasRootAccess("joesguns") ? "joesguns" : "n00dles");
 }

@@ -1,24 +1,23 @@
 import { NS, FactionName, CompanyName } from "@ns";
-import { generateProgressBar } from "/ui/ui-helper.js";
-import { MetricTracker } from "/lib/metrics.js";
+import { generateProgressBar } from "/ui/ui-helper";
+import { MetricTracker } from "/lib/metrics";
 
 import {
   findNextRoadmapFaction,
   applyToAllMegacorps,
   determineStrategy,
   isGangOfferingAllAugs,
-} from "../../strategy/player.js";
-import { loadBnMults } from "/lib/utils.js";
-import { PATHS } from "../../../infrastructure/runtime/paths.js";
-import { BotStrategy } from "/shared/types/strategy.js";
-import { TargetFactionResult } from "/shared/types/factions.js";
+} from "../../strategy/player";
+import { loadBnMults } from "/lib/utils";
+import { PATHS } from "../../../infrastructure/runtime/paths";
+import { BotStrategy } from "/shared/types/strategy";
+import { TargetFactionResult } from "/shared/types/factions";
 import { CITY_FACTIONS } from "../../../shared/constants/factions";
 import { COMBAT_STATS } from "/shared/types/game";
 import { REFRESH_INTERVALS } from "/shared/constants/game-defaults";
-import { getAllServers } from "./target-selection.js";
-import { findBestTarget } from "/infrastructure/network/network.js";
-import { loadState, loadGangState } from "/infrastructure/state/state.js";
-import { LoggerClient } from "/infrastructure/logging/logger-client.js";
+import { getAllServers, evaluateTargets } from "./target-selection";
+import { loadState, loadGangState } from "/infrastructure/state/state";
+import { LoggerClient } from "/infrastructure/logging/logger-client";
 
 const MEGACORP_FACTIONS: string[] = [
   "ECorp",
@@ -61,7 +60,7 @@ export interface SystemEvaluationResult {
 
 export class SystemStrategyEvaluator {
   private metricTracker = new MetricTracker();
-  private cachedFallbackTarget = "n00dles";
+  private cachedFallbackTarget: string = "n00dles";
   private lastFallbackUpdate = 0;
   private lastNetworkScan = 0;
   private lastCorpApplication = 0;
@@ -119,7 +118,7 @@ export class SystemStrategyEvaluator {
     this.lastHackExp = currentExp;
     this.lastHackTime = now;
 
-    let worldDaemonReq = 3000;
+    let worldDaemonReq = 3000 * bnMults.WorldDaemonDifficulty;
     try {
       if (ns.serverExists("w0r1d_d43m0n")) {
         worldDaemonReq = ns.getServerRequiredHackingLevel("w0r1d_d43m0n");
@@ -302,7 +301,6 @@ export class SystemStrategyEvaluator {
     );
 
     // ⚔️ Bladeburner-Prerequisite Override (BN6 & BN7)
-    // Wenn wir in BN6/7 sind und noch nicht in Bladeburner: Combat-Stats auf 100 bringen
     const inBladeburner = ns.bladeburner?.inBladeburner() ?? false;
     const currentBN = ns.getResetInfo().currentNode;
 
@@ -351,18 +349,10 @@ export class SystemStrategyEvaluator {
           ? Number(rawTargetStat)
           : null;
 
-    // 7️⃣ Fallback Target Caching
-    if (
-      now - this.lastFallbackUpdate > REFRESH_INTERVALS.FALLBACK_TARGET ||
-      this.cachedFallbackTarget === "n00dles"
-    ) {
-      this.cachedFallbackTarget = findBestTarget(
-        ns,
-        this.allNetworkServers,
-        p.skills.hacking,
-        bnMults,
-        currentState?.batcherTarget ?? null,
-      );
+    // 7️⃣ Fallback Target Caching (Intervallgesteuert via evaluateTargets)
+    if (now - this.lastFallbackUpdate > REFRESH_INTERVALS.FALLBACK_TARGET) {
+      const targets = evaluateTargets(ns, "WORKER");
+      this.cachedFallbackTarget = targets[0]?.hostname ?? "n00dles";
       this.lastFallbackUpdate = now;
     }
 
@@ -400,7 +390,7 @@ export class SystemStrategyEvaluator {
       const staminaPct = Math.round((stamina[0] / stamina[1]) * 100);
 
       currentVal = Math.round(rank);
-      targetVal = 0; // Endlos/Dynamisch über BlackOps
+      targetVal = 0;
       label = `⚔️ Bladeburner (Rank: ${Math.round(rank).toLocaleString()} | Stamina: ${staminaPct}%)`;
     } else if (mode === "DOMINION") {
       currentVal = p.skills.hacking;
@@ -466,7 +456,7 @@ export class SystemStrategyEvaluator {
             : mode === "CHURCH"
               ? 0.8
               : mode === "BLADEBURNER"
-                ? 0.2 // 👈 Moderares Sharing (z. B. für Hacking-XP im Hintergrund)
+                ? 0.2
                 : mode === "MONEY"
                   ? 0.1
                   : 0.0;
