@@ -367,9 +367,13 @@ export class SystemStrategyEvaluator {
       targetVal = 54_000;
       label = `😈 Karma Rush (-54k)`;
     } else if (mode === "BLADEBURNER") {
-      currentVal = ns.bladeburner?.getRank() ?? 0;
-      targetVal = 0;
-      label = `⚔️ Bladeburner Ops`;
+      const rank = ns.bladeburner?.getRank() ?? 0;
+      const stamina = ns.bladeburner?.getStamina() ?? [0, 1];
+      const staminaPct = Math.round((stamina[0] / stamina[1]) * 100);
+
+      currentVal = Math.round(rank);
+      targetVal = 0; // Endlos/Dynamisch über BlackOps
+      label = `⚔️ Bladeburner (Rank: ${Math.round(rank).toLocaleString()} | Stamina: ${staminaPct}%)`;
     } else if (mode === "DOMINION") {
       currentVal = p.skills.hacking;
       targetVal = targetStat ?? worldDaemonReq;
@@ -433,9 +437,11 @@ export class SystemStrategyEvaluator {
             ? 0.9
             : mode === "CHURCH"
               ? 0.8
-              : mode === "MONEY"
-                ? 0.1
-                : 0.0;
+              : mode === "BLADEBURNER"
+                ? 0.2 // 👈 Moderares Sharing (z. B. für Hacking-XP im Hintergrund)
+                : mode === "MONEY"
+                  ? 0.1
+                  : 0.0;
 
     const dynamicMaxXp =
       mode === "CRIME" || mode === "KARMA"

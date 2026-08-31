@@ -180,14 +180,33 @@ export async function main(ns: NS): Promise<void> {
       condition: (ns) => hasCorporation(ns) && ns.corporation.hasCorporation(),
     },
 
-    // 10. Batch Orchestrator
+    // 10. Bladeburner Manager (SF7)
+    {
+      name: "Bladeburner Manager",
+      path: PATHS.services.managers.bladeburner,
+      minHomeRam: 128, // Schwellenwert für das Host-RAM
+      condition: (ns) => {
+        try {
+          // Prüft, ob die API verfügbar ist und ob der Spieler beigetreten ist / beitreten kann
+          return (
+            typeof ns.bladeburner !== "undefined" &&
+            (ns.bladeburner.inBladeburner() ||
+              ns.getPlayer().skills.strength >= 100)
+          );
+        } catch {
+          return false;
+        }
+      },
+    },
+
+    // 11. Batch Orchestrator
     {
       name: "Batch Orchestrator",
       path: PATHS.services.daemons.hackingOrchestrator,
       minHomeRam: 64,
     },
 
-    // 11. Background Share Filler
+    // 12. Background Share Filler
     {
       name: "Share Filler",
       path: PATHS.services.daemons.fillShare,

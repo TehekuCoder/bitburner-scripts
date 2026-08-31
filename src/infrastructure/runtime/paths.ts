@@ -120,6 +120,7 @@ export const PATHS = {
       perfMonitor: "services/daemons/perf-monitor.js",
     },
     managers: {
+      bladeburner:"services/managers/bladeburner-manager.js",
       corporation: "services/managers/corporation-manager.js",
       dnet: "services/managers/dnet-master.js",
       gang: "services/managers/gang-manager.js",

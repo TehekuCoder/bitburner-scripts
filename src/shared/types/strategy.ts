@@ -21,7 +21,7 @@ export type BotStrategy =
   | "DOMINION";
 
 export interface StrategyState {
-  strategy?: BotStrategy; // 👈 Optional gemacht für Typgleichheit mit FactionState & SleeveState
+  strategy?: BotStrategy;
   targetFaction?: FactionName | string | null;
   targetCompany?: CompanyName | string | null;
   targetStat?: string | number | null;

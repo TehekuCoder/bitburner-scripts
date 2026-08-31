@@ -133,18 +133,25 @@ function manageMicroservices(
 
   let targetScript: string | undefined = modeToScript[currentMode];
 
+  // 🛡️ 1. Gang & Batcher Override
   if (currentMode === "MONEY") {
     if (hasGang && isBatcherActive) {
-      logger.debug(
-        `[MONEY] Gang & HWGW-Batcher aktiv. Pausiere manuelle Tasks.`,
-      );
       targetScript = undefined;
     } else {
-      logger.debug(`[MONEY] Führe Crime-Task für zusätzliches Einkommen aus.`);
       targetScript = PATHS.domain.tasks.crime;
     }
   }
 
+  // 🛡️ 2. Bladeburner Override (Bladeburner nutzt Player-Focus)
+  const isBladeburnerActive =
+    typeof ns.bladeburner !== "undefined" && ns.bladeburner.inBladeburner();
+
+  if (isBladeburnerActive && currentMode !== "TRAIN") {
+    // Falls keine explizite Trainings-Phase vorgegeben ist, überlassen wir dem Bladeburner-Manager die Aktionen
+    targetScript = undefined;
+  }
+
+  // Stoppe alle nicht mehr benötigten Microservices
   const activeScriptsToStop = new Set(
     Object.values(modeToScript).filter(
       (script) => script !== targetScript && ns.isRunning(script, "home"),
@@ -154,7 +161,7 @@ function manageMicroservices(
   for (const script of activeScriptsToStop) {
     ns.scriptKill(script, "home");
     logger.info(`⏹️ Microservice beendet: ${script}`, undefined, {
-      context: { reason: "ModeMismatch", currentMode },
+      context: { reason: "ModeMismatchOrBladeburnerOverride", currentMode },
     });
   }
 

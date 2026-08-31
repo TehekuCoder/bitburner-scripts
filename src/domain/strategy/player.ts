@@ -348,11 +348,24 @@ export function determineStrategy(
     }
   } catch {}
 
-  // 8️⃣ PHASE 6: BLADEBURNER (SF7)
+// 8️⃣ PHASE 6: BLADEBURNER (SF7)
   try {
-    if (ns.bladeburner?.inBladeburner()) {
-      logger?.debug(`[Strategie] Bladeburner System Aktiv ➔ BLADEBURNER`);
-      return { mode: "BLADEBURNER" };
+    if (typeof ns.bladeburner !== "undefined") {
+      // Auto-Join versuchen, falls noch nicht beigetreten
+      if (!ns.bladeburner.inBladeburner()) {
+        const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
+        if (minCombat >= 100) {
+          if (ns.bladeburner.joinBladeburnerDivision()) {
+            logger?.info("⚔️ Bladeburner Division erfolgreich beigetreten!");
+          }
+        }
+      }
+
+      // Wenn aktiv in Bladeburner, schalte Strategie auf BLADEBURNER
+      if (ns.bladeburner.inBladeburner()) {
+        logger?.debug(`[Strategie] Bladeburner System Aktiv ➔ BLADEBURNER`);
+        return { mode: "BLADEBURNER" };
+      }
     }
   } catch {}
 
