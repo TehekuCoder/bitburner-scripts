@@ -15,7 +15,7 @@ export const PAYLOADS = {
     PATHS.domain.tasks.phish,
 
     // Utilities & Logging
-    PATHS.lib.utils.provision,
+    PATHS.domain.hacking.provision,
     PATHS.infrastructure.logging.loggerClient,
     PATHS.shared.constants.logger,
     PATHS.shared.types.logger,
