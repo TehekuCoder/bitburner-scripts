@@ -1,4 +1,5 @@
 import { NS, Server } from "@ns";
+import { loadBnMults } from "/lib/utils";
 
 interface TargetAnalysis {
   server: string;
@@ -17,10 +18,16 @@ interface TargetAnalysis {
 }
 
 export async function main(ns: NS): Promise<void> {
-  const topCount = typeof ns.args[0] === "number" ? ns.args[0] : 10;
+  const topCount = typeof ns.args[0] === "number" ? ns.args[0] : 20;
   const player = ns.getPlayer();
   const playerSkill = player.skills.hacking;
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
+
+  // BitNode-Multiplikatoren laden
+  const bnMults = loadBnMults(ns);
+  const serverGrowthMult = bnMults.ServerGrowthRate ?? 1.0;
+  const scriptHackMoney = bnMults.ScriptHackMoney ?? 1.0;
+  const scriptHackMoneyGain = bnMults.ScriptHackMoneyGain ?? 1.0;
 
   const servers = getAllServers(ns);
   const candidates: TargetAnalysis[] = [];
@@ -68,8 +75,13 @@ export async function main(ns: NS): Promise<void> {
       if (secDelta > 0.05 || moneyRatio < 0.98) {
         const currentWeakenTime = ns.formulas.hacking.weakenTime(sObj, player);
         const secCycles = secDelta > 0.05 ? Math.ceil(secDelta / 5) : 0;
-        const growCycles =
-          moneyRatio < 0.98 ? Math.ceil(Math.log2(1 / Math.max(0.001, moneyRatio))) : 0;
+        const rawGrowCycles =
+          moneyRatio < 0.98
+            ? Math.ceil(Math.log2(1 / Math.max(0.001, moneyRatio)))
+            : 0;
+        const growCycles = Math.ceil(
+          rawGrowCycles / Math.max(0.01, serverGrowthMult),
+        );
         prepTimeMs = (secCycles + growCycles) * currentWeakenTime;
       }
     } else {
@@ -80,23 +92,35 @@ export async function main(ns: NS): Promise<void> {
 
       const skillMult = Math.max(
         0,
-        (1.75 * playerSkill - reqHacking) / (1.75 * playerSkill)
+        (1.75 * playerSkill - reqHacking) / (1.75 * playerSkill),
       );
       const secMult = (100 - minSec) / 100;
       chance = Math.min(1.0, Math.max(0.01, skillMult * secMult));
 
       if (secDelta > 0.05 || moneyRatio < 0.98) {
         const secCycles = secDelta > 0.05 ? Math.ceil(secDelta / 5) : 0;
-        const growCycles =
-          moneyRatio < 0.98 ? Math.ceil(Math.log2(1 / Math.max(0.001, moneyRatio))) : 0;
+        const rawGrowCycles =
+          moneyRatio < 0.98
+            ? Math.ceil(Math.log2(1 / Math.max(0.001, moneyRatio)))
+            : 0;
+        const growCycles = Math.ceil(
+          rawGrowCycles / Math.max(0.01, serverGrowthMult),
+        );
         prepTimeMs = (secCycles + growCycles) * currentWeakenTime;
       }
     }
 
     // Amortisation der Prep-Zeit über 50 Zyklen für fairen Score
     const AMORTIZATION_CYCLES = 50;
-    const effectiveCycleTimeMs = minSecWeakenTime + prepTimeMs / AMORTIZATION_CYCLES;
-    const score = (maxMoney * chance) / Math.max(1, effectiveCycleTimeMs / 1000);
+    const effectiveCycleTimeMs =
+      minSecWeakenTime + prepTimeMs / AMORTIZATION_CYCLES;
+
+    // Einberechnung von ScriptHackMoney und ScriptHackMoneyGain auf das Ertragspotenzial
+    const effectiveMoneyFactor =
+      maxMoney * scriptHackMoney * scriptHackMoneyGain;
+    const score =
+      (effectiveMoneyFactor * chance) /
+      Math.max(1, effectiveCycleTimeMs / 1000);
 
     const isPrepped = secDelta <= 0.05 && moneyRatio >= 0.98;
 
@@ -122,13 +146,23 @@ export async function main(ns: NS): Promise<void> {
 
   // Output
   const calcMode = hasFormulas ? "Formulas.exe" : "Estimation (kein Formulas)";
-  ns.tprint(`\n========================================================================================`);
-  ns.tprint(`🎯 ZIEL-ANALYSE RANGLISTE (Top ${Math.min(topCount, candidates.length)} von ${candidates.length} Servern)`);
-  ns.tprint(`   Berechnungsmethode: ${calcMode} | Dein Hacking-Level: ${playerSkill}`);
-  ns.tprint(`========================================================================================\n`);
+  ns.tprint(
+    `\n========================================================================================`,
+  );
+  ns.tprint(
+    `🎯 ZIEL-ANALYSE RANGLISTE (Top ${Math.min(topCount, candidates.length)} von ${candidates.length} Servern)`,
+  );
+  ns.tprint(
+    `   Berechnungsmethode: ${calcMode} | BN-Mults aktiv | Hacking-Level: ${playerSkill}`,
+  );
+  ns.tprint(
+    `========================================================================================\n`,
+  );
 
   if (candidates.length === 0) {
-    ns.tprint("❌ Keine geeigneten Ziele gefunden (alle außerhalb deiner Reichweite oder ohne Geld).");
+    ns.tprint(
+      "❌ Keine geeigneten Ziele gefunden (alle außerhalb deiner Reichweite oder ohne Geld).",
+    );
     return;
   }
 
@@ -146,14 +180,22 @@ export async function main(ns: NS): Promise<void> {
       ? "🟢 PREPPED"
       : `🟡 PREP BENÖTIGT (~${formatTime(c.prepTimeMs)}, Sec: +${c.secDelta.toFixed(1)}, Cash: ${(c.moneyRatio * 100).toFixed(0)}%)`;
 
-    ns.tprint(`${rank} ${name} | Score: ${scoreStr} | Max$: ${maxMoneyStr} | Req: ${reqHackStr} | Chance: ${chanceStr} | Cycle: ${weakenTimeStr}`);
-    ns.tprint(`     └ Status: ${statusStr}\n`);
+    ns.tprint(
+      `${rank} ${name} | Score: ${scoreStr} | Max$: ${maxMoneyStr} | Req: ${reqHackStr} | Chance: ${chanceStr} | Cycle: ${weakenTimeStr}`,
+    );
+    ns.tprint(`    └ Status: ${statusStr}\n`);
   }
 
   const best = candidates[0];
-  ns.tprint(`----------------------------------------------------------------------------------------`);
-  ns.tprint(`🏆 EMPFEHLUNG: '${best.server}' hat aktuell den höchsten Ertrags-Score ($${ns.format.number(best.score, 2)}/s).`);
-  ns.tprint(`----------------------------------------------------------------------------------------\n`);
+  ns.tprint(
+    `----------------------------------------------------------------------------------------`,
+  );
+  ns.tprint(
+    `🏆 EMPFEHLUNG: '${best.server}' hat aktuell den höchsten Ertrags-Score ($${ns.format.number(best.score, 2)}/s).`,
+  );
+  ns.tprint(
+    `----------------------------------------------------------------------------------------\n`,
+  );
 }
 
 function getAllServers(ns: NS): string[] {

@@ -35,6 +35,7 @@ export function evaluateTargets(
   strategy: BatchStrategy,
 ): TargetScore[] {
   const player = ns.getPlayer();
+  const playerSkill = player.skills.hacking;
   const allServers = getAllServers(ns);
   const targets: TargetScore[] = [];
 
@@ -53,42 +54,59 @@ export function evaluateTargets(
   }
 
   for (const host of allServers) {
-    if (host === "home" || host.startsWith("cloud-")) continue;
+    if (
+      host === "home" ||
+      host.startsWith("cloud-") ||
+      host.startsWith("hacknet-")
+    )
+      continue;
     if (!ns.hasRootAccess(host)) continue;
 
     const server = ns.getServer(host);
     const maxMoney = server.moneyMax ?? 0;
     const reqLevel = server.requiredHackingSkill ?? 1;
 
-    if (maxMoney <= 0 || reqLevel > player.skills.hacking) continue;
+    if (maxMoney <= 0 || reqLevel > playerSkill) continue;
 
     const minDiff = server.minDifficulty ?? 1;
-    const simulatedServer: Server = {
-      ...server,
-      hackDifficulty: minDiff,
-    };
+    const curDiff = server.hackDifficulty ?? 100;
 
-    // Weaken-Zeit berücksichtigt bereits HackingSpeedMultiplier der Engine
-    const weakenTime = ns.formulas?.hacking
-      ? ns.formulas.hacking.weakenTime(simulatedServer, player)
-      : ns.getWeakenTime(host);
+    let weakenTime = 0;
+    let chance = 0;
+
+    if (ns.formulas?.hacking) {
+      // 🟢 Exakte Berechnung via Formulas API
+      const simulatedServer: Server = {
+        ...server,
+        hackDifficulty: minDiff,
+        moneyAvailable: maxMoney,
+      };
+      weakenTime = ns.formulas.hacking.weakenTime(simulatedServer, player);
+      chance = ns.formulas.hacking.hackChance(simulatedServer, player);
+    } else {
+      // 🟡 Fallback ohne Formulas.exe: Weaken-Zeit & Chance auf Min-Security umrechnen
+      const currentWeakenTime = ns.getWeakenTime(host);
+      weakenTime = currentWeakenTime * ((minDiff + 50) / (curDiff + 50));
+
+      const reqHacking = Math.max(1, reqLevel);
+      const skillMult = Math.max(
+        0,
+        (1.75 * playerSkill - reqHacking) / (1.75 * playerSkill),
+      );
+      const secMult = (100 - minDiff) / 100;
+      chance = Math.min(1.0, Math.max(0.01, skillMult * secMult));
+    }
 
     let score = 0;
 
     if (strategy === "WORKER") {
-      const chance = ns.formulas?.hacking
-        ? ns.formulas.hacking.hackChance(simulatedServer, player)
-        : ns.hackAnalyzeChance(host);
-
-      // Einbeziehen von ScriptHackMoney (Diebstahl-Menge) UND ScriptHackMoneyGain (Konto-Gutschrift)
       const moneyFactor = maxMoney * scriptHackMoney * scriptHackMoneyGain;
-      score = (moneyFactor * chance) / (weakenTime / 1000);
+      score = (moneyFactor * chance) / Math.max(1, weakenTime / 1000);
     } else {
-      // Effektiv berechnete Growth Rate inkl. ServerGrowthRate Multiplier
       const effectiveGrowth = (server.serverGrowth ?? 1) * serverGrowthMult;
       score =
         (maxMoney * (effectiveGrowth / 100) * scriptHackMoneyGain) /
-        (weakenTime / 1000);
+        Math.max(1, weakenTime / 1000);
     }
 
     targets.push({
