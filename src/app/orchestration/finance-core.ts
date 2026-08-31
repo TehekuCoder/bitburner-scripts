@@ -21,10 +21,9 @@ interface EvaluatorCacheEntry {
   requests: Map<string, PurchaseRequest>;
 }
 
-// Persistenten Speicher außerhalb der Hauptschleife anlegen
 const evaluatorRequestCache = new Map<string, EvaluatorCacheEntry>();
-const CACHE_TTL_MS = 45000; // 45s TTL für Anfragen (ausreichend Puffer für sequenzielle Zyklen)
-const BATCH_GAP_MS = 3000; // Daten nach >3s als neuen Evaluator-Durchlauf werten & alte Einträge ersetzen
+const CACHE_TTL_MS = 45000; // 45s TTL für Anfragen
+const BATCH_GAP_MS = 3000;  // Nach 3s Inaktivität alten Lauf als neu betrachten
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -79,7 +78,6 @@ export async function main(ns: NS): Promise<void> {
 
               let cacheEntry = evaluatorRequestCache.get(reqCat);
 
-              // Bei neuer Kategorie oder neuem Evaluator-Lauf (>3s Pause) alte Daten ersetzen
               if (!cacheEntry || now - cacheEntry.timestamp > BATCH_GAP_MS) {
                 cacheEntry = {
                   timestamp: now,
@@ -112,14 +110,14 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // Veraltete Kategorien entfernen (TTL Check)
+    // Veraltete Kategorien entfernen
     for (const [cat, cache] of evaluatorRequestCache.entries()) {
       if (now - cache.timestamp > CACHE_TTL_MS) {
         evaluatorRequestCache.delete(cat);
       }
     }
 
-    // Aktive Anfragen aus allen Caches aggregieren
+    // Aktive Anfragen aggregieren
     const allRequests: PurchaseRequest[] = [];
     for (const cache of evaluatorRequestCache.values()) {
       allRequests.push(...cache.requests.values());
@@ -169,6 +167,7 @@ export async function main(ns: NS): Promise<void> {
       "sleeve",
       "player",
       "corporation",
+      "bladeburner",
     ];
     const activeEvaluators: string[] = [];
     const inactiveEvaluators: string[] = [];
@@ -233,7 +232,6 @@ export async function main(ns: NS): Promise<void> {
             lastPurchases.push(purchaseMsg);
             if (lastPurchases.length > 6) lastPurchases.shift();
 
-            // Nach erfolgreichem Kauf sofort aus dem Cache entfernen
             const cacheEntry = evaluatorRequestCache.get(req.category);
             if (cacheEntry && req.id) {
               cacheEntry.requests.delete(req.id);

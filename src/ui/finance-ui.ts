@@ -1,4 +1,3 @@
-// ui/finance-ui.ts
 import { NS } from "@ns";
 
 export interface PendingRequestSummary {
@@ -36,13 +35,32 @@ export interface FinanceDashboardData {
 const ANSI_REGEX = /\u001b\[[0-9;]*m/g;
 
 /**
+ * Tag-Mapping für prägnante UI-Kategorie-Kürzel.
+ */
+const CATEGORY_TAGS: Record<string, string> = {
+  HOME_RAM: "RAM",
+  HOME_CORES: "COR",
+  SERVER_BUY: "SRV",
+  SERVER_UPGRADE: "SRV",
+  HACKNET: "HNK",
+  DARKNET_PROGRAM: "DRK",
+  STOCK_LICENSE: "STK",
+  GANG_EQUIPMENT: "GNG",
+  GANG_AUG: "GAUG",
+  SLEEVE_AUG: "SLV",
+  PLAYER_AUG: "AUG",
+  CORP_FOUND: "CRP",
+  BLADEBURNER: "BLD",
+};
+
+/**
  * Bereinigt unknackige Textmonster und verhindert doppelte Akronyme.
  */
 function cleanupDescription(desc: string): string {
   return desc
     .replace(/^Software:\s*/i, "")
     .replace(/^Gang '[^']+':\s*/i, "")
-    .replace(/\s*\(Börsen-Automatisierung\)/i, ""); // Entfernt den Klammerinhalt komplett
+    .replace(/\s*\(Börsen-Automatisierung\)/i, "");
 }
 
 /**
@@ -52,10 +70,8 @@ function filterUniqueLogs(logs: string[]): string[] {
   const seenKeys = new Set<string>();
   const result: string[] = [];
 
-  // Von neu nach alt durchlaufen, um nur den neuesten Stand zu behalten
   for (let i = logs.length - 1; i >= 0; i--) {
     const rawLog = logs[i];
-    // Normiert den Log-String: Entfernt Beträge in Klammern für den Vergleich
     const normalizedKey = rawLog
       .replace(/\(\$\d+(\.\d+)?[a-z]?\s*\/\s*\$\d+(\.\d+)?[a-z]?\)/i, "")
       .trim();
@@ -257,14 +273,6 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
 
   buffer.push(D_LINE);
 
-  const CATEGORY_TAGS: Record<string, string> = {
-    STOCK_LICENSE: "STK",
-    DARKNET_PROGRAM: "DRK",
-    GANG_EQUIPMENT: "GNG",
-    SERVER_BUY: "SRV",
-    HACKNET: "HNK",
-  };
-
   // ------------------------------------------------------------
   // 4. TOP ANFRAGEN IN WARTESCHLANGE
   // ------------------------------------------------------------
@@ -293,7 +301,6 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   // ------------------------------------------------------------
   buffer.push(`${CLR.WHITE_BOLD}EREIGNIS-PROTOKOLL:${CLR.RESET}`);
 
-  // Kombinieren und Entdoppeln
   const combinedLogs = [...data.lastPurchases, ...data.lastWarnings];
   const uniqueLogs = filterUniqueLogs(combinedLogs).slice(-4);
 

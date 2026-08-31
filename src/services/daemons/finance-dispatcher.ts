@@ -6,6 +6,7 @@ import {
   hasSingularity,
   loadBnMults,
   hasCorporation,
+  hasBladeburner,
 } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
@@ -92,6 +93,11 @@ export async function main(ns: NS): Promise<void> {
     // 7. Corporation Evaluator (nur ausführen, wenn API da ist & noch keine Corp existiert)
     if (hasCorporation(ns) && !ns.corporation.hasCorporation()) {
       await runAndWait(PATHS.domain.evaluators.purchase.corporation);
+    }
+
+    // 8. Bladeburner Evaluator
+    if (hasBladeburner(ns)) {
+      await runAndWait(PATHS.domain.evaluators.purchase.bladeburner);
     }
 
     // Pause zwischen den Evaluations-Zyklen

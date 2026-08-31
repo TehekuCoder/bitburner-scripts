@@ -30,6 +30,7 @@ export const PATHS = {
     corporation: { helper: "domain/corporation/corporation-helper.js" },
     evaluators: {
       purchase: {
+        bladeburner: "domain/evaluators/purchase/bladeburner.js",
         corporation: "domain/evaluators/purchase/corporation.js",
         cloud: "domain/evaluators/purchase/cloud.js",
         gang: "domain/evaluators/purchase/gang.js",
