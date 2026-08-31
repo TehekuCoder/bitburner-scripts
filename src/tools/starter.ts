@@ -31,13 +31,19 @@ function printHelp(ns: NS): void {
   ns.print(" ⚡ BitOS Starter - Argumente & Optionen ");
   ns.print("=================================================");
   ns.print("BOOT-PHASEN:");
-  ns.print("  --no-sweep          Überspringt das Beenden von Prozessen & Network Sweep");
-  ns.print("  --no-boot           Überspringt die Ausführung der Boot-Init-Phase");
+  ns.print(
+    "  --no-sweep          Überspringt das Beenden von Prozessen & Network Sweep",
+  );
+  ns.print(
+    "  --no-boot           Überspringt die Ausführung der Boot-Init-Phase",
+  );
   ns.print("  --no-kernel         Überspringt das Starten des Core-Kernels");
   ns.print("");
   ns.print("STRATEGIE & MODUS:");
   ns.print("  --manual            Aktiviert den manuellen Steuerungsmodus");
-  ns.print("  --strategy <MODE>   Setzt Start-Strategie (MONEY, REP, KARMA, etc.)");
+  ns.print(
+    "  --strategy <MODE>   Setzt Start-Strategie (MONEY, REP, KARMA, etc.)",
+  );
   ns.print("");
   ns.print("MODULE DEAKTIVIEREN:");
   ns.print("  --disable-gang      Deaktiviert das Gang-Management");
@@ -90,7 +96,10 @@ export async function main(ns: NS): Promise<void> {
     strategyPatch.manualMode = true;
     strategyPatch.strategy = "MANUAL" as BotStrategy;
     ns.print("[CONFIG] Manueller Modus erzwungen.");
-  } else if (typeof flags.strategy === "string" && flags.strategy.trim() !== "") {
+  } else if (
+    typeof flags.strategy === "string" &&
+    flags.strategy.trim() !== ""
+  ) {
     strategyPatch.strategy = flags.strategy.toUpperCase() as BotStrategy;
     ns.print(`[CONFIG] Strategie gesetzt auf: ${strategyPatch.strategy}`);
   }
@@ -114,7 +123,9 @@ export async function main(ns: NS): Promise<void> {
       }
     }
     if (killedHomeCount > 0) {
-      ns.print(`[ OK ] Terminated ${killedHomeCount} active processes on 'home'.`);
+      ns.print(
+        `[ OK ] Terminated ${killedHomeCount} active processes on 'home'.`,
+      );
     }
 
     try {
@@ -128,9 +139,13 @@ export async function main(ns: NS): Promise<void> {
           }
         }
       }
-      ns.print(`[ OK ] Network swept clean (${clearedHostsCount} active servers stopped).`);
+      ns.print(
+        `[ OK ] Network swept clean (${clearedHostsCount} active servers stopped).`,
+      );
     } catch {
-      ns.print("[WARN] Full network sweep failed. Falling back to purchased servers clear.");
+      ns.print(
+        "[WARN] Full network sweep failed. Falling back to purchased servers clear.",
+      );
       try {
         const purchasedServers = ns.cloud.getServerNames();
         for (const server of purchasedServers) {
@@ -138,7 +153,9 @@ export async function main(ns: NS): Promise<void> {
         }
         ns.print("[ OK ] Purchased server fleet cleared.");
       } catch {
-        ns.print("[WARN] Could not clear purchased servers during early boot stage.");
+        ns.print(
+          "[WARN] Could not clear purchased servers during early boot stage.",
+        );
       }
     }
   } else {
@@ -161,7 +178,9 @@ export async function main(ns: NS): Promise<void> {
         ns.print("[WARN] Initializer failed to launch. RAM shortage?");
       }
     } else {
-      ns.print(`[WARN] ${PATHS.app.orchestration.boot} not found. Skipping init stage.`);
+      ns.print(
+        `[WARN] ${PATHS.app.orchestration.boot} not found. Skipping init stage.`,
+      );
     }
   } else {
     ns.print("[SKIP] Environment Layer übersprungen.");
@@ -175,9 +194,13 @@ export async function main(ns: NS): Promise<void> {
     if (ns.fileExists(PATHS.app.orchestration.kernel, "home")) {
       const kernelPid = ns.run(PATHS.app.orchestration.kernel, 1);
       if (kernelPid > 0) {
-        ns.print(`[ OK ] ${PATHS.app.orchestration.kernel} successfully launched.`);
+        ns.print(
+          `[ OK ] ${PATHS.app.orchestration.kernel} successfully launched.`,
+        );
       } else {
-        ns.print(`[FAIL] CRITICAL ERROR: Could not launch ${PATHS.app.orchestration.kernel}!`);
+        ns.print(
+          `[FAIL] CRITICAL ERROR: Could not launch ${PATHS.app.orchestration.kernel}!`,
+        );
       }
     } else {
       ns.alert(`CRITICAL ERROR: ${PATHS.app.orchestration.kernel} not found!`);

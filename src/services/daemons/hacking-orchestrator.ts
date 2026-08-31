@@ -16,6 +16,9 @@ export async function main(ns: NS): Promise<void> {
   let lastStrategy: BatchStrategy | null = null;
   let lastTarget: string | null = null;
 
+  const JIT_DASHBOARD = PATHS.infrastructure.monitoring.jitDashboard;
+  const ENGINE_DASHBOARD = PATHS.infrastructure.monitoring.dashboard;
+
   while (true) {
     const evalRec = evaluateHackingStrategy(ns);
 
@@ -61,7 +64,7 @@ export async function main(ns: NS): Promise<void> {
       const isMaxMoney =
         (server.moneyAvailable ?? 0) >= (server.moneyMax ?? 1) * 0.99;
       const isMinSec =
-        (server.hackDifficulty ?? 99) <= (server.minDifficulty ?? 1) + 0.01;
+        (server.hackDifficulty ?? 99) <= (server.minDifficulty ?? 1) + 0.05;
 
       if (!isMaxMoney || !isMinSec) {
         activeStrategy = "PREP";
@@ -93,18 +96,14 @@ export async function main(ns: NS): Promise<void> {
     // 5️⃣ Engine starten ODER Multi-Target Worker im Netzwerk verteilen
     if (ns.hasRootAccess(activeTarget)) {
       if (activeStrategy === "BOOTSTRAP" || activeStrategy === "WORKER") {
-        // Stoppe evtl. laufende Batcher-Engines auf home
         stopAllEngines(ns, logger);
 
-        // Top-Ziele ermitteln für Multi-Target-Verteilung
-        // 1. Gesamt-RAM aller gerooteten Server berechnen
         const allServers = getAllRootedServersIncludingPurchased(ns);
         const totalNetworkRam = allServers.reduce(
           (sum, s) => sum + ns.getServerMaxRam(s),
           0,
         );
 
-        // 2. Maximale Ziel-Anzahl dynamisch ermitteln
         let maxTargets = 1;
         if (totalNetworkRam >= 2048) {
           maxTargets = 5;
@@ -114,7 +113,6 @@ export async function main(ns: NS): Promise<void> {
           maxTargets = 2;
         }
 
-        // 3. Nur die für die RAM-Stufe optimale Anzahl an Zielen übergeben
         const evalTargets = evaluateTargets(ns, activeStrategy);
         const topTargets =
           evalTargets.length > 0
@@ -123,7 +121,6 @@ export async function main(ns: NS): Promise<void> {
 
         deployWorkerFleet(ns, topTargets, logger);
       } else {
-        // Stoppe alte Netz-Worker, falls wir auf Batcher/Prep wechseln
         stopNetworkWorkers(ns);
         ensureEngineRunning(ns, activeStrategy, activeTarget, logger);
       }
@@ -134,14 +131,67 @@ export async function main(ns: NS): Promise<void> {
       );
     }
 
+    // 6️⃣ Dashboards verwalten
+    manageDashboards(
+      ns,
+      activeStrategy,
+      JIT_DASHBOARD,
+      ENGINE_DASHBOARD,
+      logger,
+    );
+
     await ns.sleep(5000);
   }
 }
 
-/**
- * Verteilt work.ts auf ALLE gerooteten Server im Netzwerk verteilt über mehrere Ziele.
- * (Exkludiert Hacknet-Server, um maximale Hash-Generierung zu gewährleisten)
- */
+function manageDashboards(
+  ns: NS,
+  activeStrategy: BatchStrategy | null,
+  jitDash: string,
+  engineDash: string,
+  logger: LoggerClient,
+): void {
+  // BOOTSTRAP und WORKER nutzen keine Engine-Dashboards
+  const isWorkerPhase =
+    activeStrategy === "BOOTSTRAP" || activeStrategy === "WORKER";
+
+  const activeDashboardScript =
+    activeStrategy === "JIT_HWGW"
+      ? jitDash
+      : activeStrategy !== null && !isWorkerPhase
+        ? engineDash
+        : null;
+
+  for (const dashScript of [jitDash, engineDash]) {
+    if (!dashScript) continue;
+
+    if (dashScript === activeDashboardScript) {
+      if (
+        ns.fileExists(dashScript, "home") &&
+        !ns.isRunning(dashScript, "home")
+      ) {
+        const freeRam =
+          ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+        const requiredRam = ns.getScriptRam(dashScript, "home");
+
+        if (freeRam >= requiredRam) {
+          const pid = ns.run(dashScript, 1);
+          if (pid > 0) {
+            logger.info(`📊 Dashboard gestartet: ${dashScript}`, undefined, {
+              context: { pid, dashScript },
+            });
+          }
+        }
+      }
+    } else if (ns.isRunning(dashScript, "home")) {
+      ns.scriptKill(dashScript, "home");
+      logger.info(`⏹️ Dashboard beendet: ${dashScript}`, undefined, {
+        context: { dashScript },
+      });
+    }
+  }
+}
+
 function deployWorkerFleet(
   ns: NS,
   targets: string[],
@@ -161,9 +211,7 @@ function deployWorkerFleet(
   for (let i = 0; i < servers.length; i++) {
     const server = servers[i];
 
-    // Neu: Hacknet-Server (hacknet-node-* oder hacknet-server-*) komplett überspringen
     if (server.startsWith("hacknet-")) {
-      // Falls noch alte Work-Skripte darauf laufen, diese beenden, um das RAM freizugeben
       if (ns.isRunning(workScript, server)) {
         ns.scriptKill(workScript, server);
       }
@@ -176,7 +224,6 @@ function deployWorkerFleet(
     let availableRam = maxRam;
 
     if (server === "home") {
-      // 1. Basispuffer basierend auf der Gesamtgröße von 'home'
       let reservedHomeRam = 32;
       if (maxRam >= 512) {
         reservedHomeRam = 128;
@@ -184,13 +231,12 @@ function deployWorkerFleet(
         reservedHomeRam = 64;
       }
 
-      // 2. Dynamischer Zusatzpuffer für Gang-Dienste (Manager ~14GB + UI ~16GB)
       try {
         if (ns.gang.inGang()) {
           reservedHomeRam += 32;
         }
       } catch {
-        // Gang-API noch nicht freigeschaltet/verfügbar
+        // Gang-API noch nicht freigeschaltet
       }
 
       if (ns.scriptRunning(PATHS.app.orchestration.financeCore)) {
@@ -210,7 +256,6 @@ function deployWorkerFleet(
     }
 
     const targetThreads = Math.floor(availableRam / scriptRam);
-    // Round-Robin Zuordnung der Top-Ziele über das Server-Array
     const assignedTarget = targets[i % targets.length];
 
     if (targetThreads > 0) {
@@ -231,6 +276,7 @@ function deployWorkerFleet(
     }
   }
 }
+
 function manageWorkerOnServer(
   ns: NS,
   server: string,
@@ -238,7 +284,9 @@ function manageWorkerOnServer(
   target: string,
   desiredThreads: number,
 ): void {
-  const procs = ns.ps(server).filter((p) => p.filename === script);
+  const scriptName = script.replace(/^.*[\\/]/, "");
+  const procs = ns.ps(server).filter((p) => p.filename.endsWith(scriptName));
+
   const isCorrect =
     procs.length === 1 &&
     procs[0].args[0] === target &&
@@ -247,7 +295,9 @@ function manageWorkerOnServer(
   if (isCorrect) return;
 
   if (procs.length > 0) {
-    ns.scriptKill(script, server);
+    for (const proc of procs) {
+      ns.kill(proc.pid);
+    }
   }
 
   if (desiredThreads > 0) {
@@ -264,10 +314,14 @@ function getScriptUsedRam(ns: NS, server: string, script: string): number {
 
 function stopNetworkWorkers(ns: NS): void {
   const workScript = PATHS.services.payloads.work;
+  const scriptName = workScript.replace(/^.*[\\/]/, "");
   const servers = getAllRootedServersIncludingPurchased(ns);
+
   for (const server of servers) {
-    if (server !== "home" && ns.isRunning(workScript, server)) {
-      ns.scriptKill(workScript, server);
+    for (const proc of ns.ps(server)) {
+      if (proc.filename.endsWith(scriptName)) {
+        ns.kill(proc.pid);
+      }
     }
   }
 }
@@ -345,7 +399,7 @@ function ensureEngineRunning(
   const engineMap: Partial<Record<BatchStrategy, string>> = {
     XP_GRIND: PATHS.app.engines.proto,
     PREP: PATHS.app.engines.prep,
-    PROTO_BATCH: PATHS.app.engines.prep,
+    PROTO_BATCH: PATHS.app.engines.proto,
     SHOTGUN_HWGW: PATHS.app.engines.shotgun,
     JIT_HWGW: PATHS.app.engines.jitBatcher,
   };

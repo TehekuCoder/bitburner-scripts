@@ -5,7 +5,6 @@ import { HOME_RAM_RESERVE } from "../../infrastructure/runtime/batcher.js";
 import { getAllServers } from "/infrastructure/network/network.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
 
-
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new Logger(ns, "PrepEngine");
@@ -16,7 +15,19 @@ export async function main(ns: NS): Promise<void> {
 
   logger.info(`🔥 Engine-Prep gestartet für Ziel: [${target}]`);
 
+  // 🧹 Einmalige Bereinigung alter Worker beim Start der Engine:
+  const workScriptName = PATHS.services.payloads.work.replace(/^.*[\\/]/, "");
+  const initialNodes = getAllServers(ns).filter((s) => ns.hasRootAccess(s));
+  for (const node of initialNodes) {
+    for (const proc of ns.ps(node)) {
+      if (proc.filename.endsWith(workScriptName)) {
+        ns.kill(proc.pid);
+      }
+    }
+  }
+
   let execCounter = 0;
+  let hasLoggedPrepped = false;
 
   while (true) {
     if (!ns.serverExists(target)) {
@@ -42,7 +53,10 @@ export async function main(ns: NS): Promise<void> {
 
     // 🟢 ZIEL IST BEREITS PREPPED
     if (isSecMin && isMoneyMax) {
-      logger.success(`✅ Ziel [${target}] ist vollständig PREPPED!`);
+      if (!hasLoggedPrepped) {
+        logger.success(`✅ Ziel [${target}] ist vollständig PREPPED!`);
+        hasLoggedPrepped = true;
+      }
 
       patchBatcherState(ns, {
         batchStrategy: "PREP",
@@ -56,13 +70,16 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // 3. IN-FLIGHT-ANALYSE (Nur 3 Argumente)
+    // Zurücksetzen, falls das Ziel wieder ent-prepped wird
+    hasLoggedPrepped = false;
+
+    // 3. IN-FLIGHT-ANALYSE
     const { inFlightGrowThreads, inFlightWeakenThreads } = getInFlightThreads(
       ns,
       workerNodes,
       target,
       growScript,
-      weakenScript
+      weakenScript,
     );
 
     const inFlightSecEffect =
@@ -153,9 +170,15 @@ function getInFlightThreads(
   for (const node of workerNodes) {
     for (const proc of ns.ps(node)) {
       if (proc.args[0] === target) {
-        if (proc.filename === growScript || proc.filename.endsWith(growScript)) {
+        if (
+          proc.filename === growScript ||
+          proc.filename.endsWith(growScript)
+        ) {
           inFlightGrowThreads += proc.threads;
-        } else if (proc.filename === weakenScript || proc.filename.endsWith(weakenScript)) {
+        } else if (
+          proc.filename === weakenScript ||
+          proc.filename.endsWith(weakenScript)
+        ) {
           inFlightWeakenThreads += proc.threads;
         }
       }
@@ -214,37 +237,37 @@ function deployPrepWorkers(
         remainingWeakenCap -= threadsToRun;
       }
     } else {
-      // Exakte Ratio: 25 Grow zu 2 Weaken (12.5 : 1)
-      const unitCost = 25 * growCost + 2 * weakenCost;
-      const unitsPossible = Math.floor(freeRam / unitCost);
+      let remainingRam = freeRam;
+      let gThreads = 0;
 
-      const maxUnitsByCap = Math.min(
-        Math.floor(remainingGrowCap / 25),
-        Math.floor(remainingWeakenCap / 2),
+      // 1. Grows unter Berücksichtigung des Weaken-Puffers (ca. 1 Weaken pro 12.5 Grows) berechnen
+      if (remainingGrowCap > 0) {
+        const targetGrows = Math.min(
+          Math.floor(remainingRam / growCost),
+          remainingGrowCap,
+        );
+
+        let possibleGrows = targetGrows;
+        while (
+          possibleGrows > 0 &&
+          possibleGrows * growCost +
+            Math.ceil(possibleGrows * 0.08) * weakenCost >
+            remainingRam
+        ) {
+          possibleGrows--;
+        }
+
+        gThreads = possibleGrows;
+        remainingRam -= gThreads * growCost;
+      }
+
+      // 2. Weaken-Threads zur Ausgleichung der Grows + verbleibender Kapazität einplanen
+      const requiredWeakenForGrows = Math.ceil(gThreads * 0.08);
+      const maxWeakensPossible = Math.floor(remainingRam / weakenCost);
+      const wThreads = Math.min(
+        maxWeakensPossible,
+        Math.max(requiredWeakenForGrows, remainingWeakenCap),
       );
-
-      const units = Math.max(0, Math.min(unitsPossible, maxUnitsByCap));
-
-      let gThreads = units * 25;
-      let wThreads = units * 2;
-      let remainingRam =
-        freeRam - (gThreads * growCost + wThreads * weakenCost);
-
-      // Rest-RAM feingranular mit Grow auffüllen
-      while (remainingRam >= growCost && remainingGrowCap - gThreads > 0) {
-        gThreads++;
-        remainingRam -= growCost;
-      }
-
-      // Weaken auffüllen, um Sec-Increase durch Grow zu kompensieren
-      const requiredWeakenForGrows = Math.ceil(gThreads * 0.08); // 0.004 / 0.05
-      while (
-        remainingRam >= weakenCost &&
-        (wThreads < requiredWeakenForGrows || remainingWeakenCap - wThreads > 0)
-      ) {
-        wThreads++;
-        remainingRam -= weakenCost;
-      }
 
       if (gThreads > 0) {
         ns.exec(
@@ -257,6 +280,7 @@ function deployPrepWorkers(
         );
         remainingGrowCap -= gThreads;
       }
+
       if (wThreads > 0) {
         ns.exec(
           weakenScript,
