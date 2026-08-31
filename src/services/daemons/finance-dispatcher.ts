@@ -6,7 +6,6 @@ import {
   hasSingularity,
   loadBnMults,
   hasCorporation,
-  hasBladeburner,
 } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
@@ -45,7 +44,14 @@ export async function main(ns: NS): Promise<void> {
       ns.fileExists(PATHS.app.orchestration.financeCore, "home") &&
       !ns.isRunning(PATHS.app.orchestration.financeCore, "home")
     ) {
-      ns.run(PATHS.app.orchestration.financeCore, 1);
+      const coreRam = ns.getScriptRam(
+        PATHS.app.orchestration.financeCore,
+        "home",
+      );
+      const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+      if (freeRam >= coreRam) {
+        ns.run(PATHS.app.orchestration.financeCore, 1);
+      }
     }
 
     // 1. Purchased Servers (cloud.js - ~6.05 GB)
@@ -93,11 +99,6 @@ export async function main(ns: NS): Promise<void> {
     // 7. Corporation Evaluator (nur ausführen, wenn API da ist & noch keine Corp existiert)
     if (hasCorporation(ns) && !ns.corporation.hasCorporation()) {
       await runAndWait(PATHS.domain.evaluators.purchase.corporation);
-    }
-
-    // 8. Bladeburner Evaluator
-    if (hasBladeburner(ns)) {
-      await runAndWait(PATHS.domain.evaluators.purchase.bladeburner);
     }
 
     // Pause zwischen den Evaluations-Zyklen

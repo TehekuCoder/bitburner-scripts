@@ -1,3 +1,5 @@
+// infrastructure/runtime/paths.ts
+
 export const PATHS = {
   app: {
     actions: {
@@ -27,12 +29,20 @@ export const PATHS = {
   },
 
   domain: {
-    corporation: { helper: "domain/corporation/corporation-helper.js" },
+    corporation: {
+      helpers: "domain/corporation/corporation-helpers.js",
+      types: "domain/corporation/types.js",
+      phases: {
+        agri: "domain/corporation/phases/phase-agri.js",
+        chem: "domain/corporation/phases/phase-chem.js",
+        investor: "domain/corporation/phases/phase-investor.js",
+        tobacco: "domain/corporation/phases/phase-tobacco.js",
+      },
+    },
     evaluators: {
       purchase: {
-        bladeburner: "domain/evaluators/purchase/bladeburner.js",
-        corporation: "domain/evaluators/purchase/corporation.js",
         cloud: "domain/evaluators/purchase/cloud.js",
+        corporation: "domain/evaluators/purchase/corporation.js",
         gang: "domain/evaluators/purchase/gang.js",
         hacknet: "domain/evaluators/purchase/hacknet.js",
         home: "domain/evaluators/purchase/home.js",
@@ -47,13 +57,19 @@ export const PATHS = {
         target: "domain/evaluators/strategy/target-selection.js",
       },
     },
-    faction: { helper: "domain/faction/faction-helper.js" },
+    faction: { helpers: "domain/faction/faction-helpers.js" },
     gang: { utils: "domain/gang/gang-utils.js" },
     hacking: {
       batchCalculator: "domain/hacking/batch-calculator.js",
+      batcherHelpers: "domain/hacking/batcher-helpers.js",
       deployment: "domain/hacking/deployment.js",
       planner: "domain/hacking/internal-planner.js",
       provision: "domain/hacking/provision.js",
+    },
+    ipvgo: {
+      boardEvaluator: "domain/ipvgo/board-evaluator.js",
+      heuristics: "domain/ipvgo/heuristics.js",
+      targetSelector: "domain/ipvgo/target-selector.js",
     },
     sleeve: { utils: "domain/sleeve/sleeve-utils.js" },
     solvers: {
@@ -74,7 +90,9 @@ export const PATHS = {
       roman: "domain/solvers/solveRoman.js",
       zeroLogon: "domain/solvers/solveZeroLogon.js",
     },
-    strategy: {},
+    strategy: {
+      player: "domain/strategy/player.js",
+    },
     tasks: {
       analyzeAug: "domain/tasks/analyze-augmentations.js",
       cctSolver: "domain/tasks/cct-solver.js",
@@ -98,17 +116,26 @@ export const PATHS = {
       dashboard: "infrastructure/monitoring/sys-engine-dashboard.js",
       jitDashboard: "infrastructure/monitoring/sys-jit-batcher-dashboard.js",
     },
+    network: {
+      network: "infrastructure/network/network.js",
+    },
     runtime: {
+      batcher: "infrastructure/runtime/batcher.js",
       workerExecutor: "infrastructure/runtime/worker-executor.js",
       paths: "infrastructure/runtime/paths.js",
       system: "infrastructure/runtime/system.js",
     },
+    state: {
+      state: "infrastructure/state/state.js",
+    },
   },
 
   lib: {
-    utils: {
-      provision: "lib/utils/provision.js",
-    },
+    format: "lib/format.js",
+    metrics: "lib/metrics.js",
+    progress: "lib/progress.js",
+    react: "lib/react.js",
+    utils: "lib/utils.js",
   },
 
   services: {
@@ -121,7 +148,7 @@ export const PATHS = {
       perfMonitor: "services/daemons/perf-monitor.js",
     },
     managers: {
-      bladeburner:"services/managers/bladeburner-manager.js",
+      bladeburner: "services/managers/bladeburner-manager.js",
       corporation: "services/managers/corporation-manager.js",
       dnet: "services/managers/dnet-master.js",
       gang: "services/managers/gang-manager.js",
@@ -140,23 +167,62 @@ export const PATHS = {
 
   shared: {
     constants: {
+      bladeburner: "shared/constants/bladeburner.js",
+      charts: "shared/constants/charts.js",
       colors: "shared/constants/colors.js",
       corporation: "shared/constants/corporation.js",
       darknet: "shared/constants/darknet.js",
+      factions: "shared/constants/factions.js",
+      finance: "shared/constants/finance.js",
+      gameDefaults: "shared/constants/game-defaults.js",
       logger: "shared/constants/logger.js",
       payloads: "shared/constants/payloads.js",
+      programs: "shared/constants/programs.js",
     },
     types: {
+      batcher: "shared/types/batcher.js",
+      bladeburner: "shared/types/bladeburner.js",
+      corporation: "shared/types/corporation.js",
+      factions: "shared/types/factions.js",
+      finance: "shared/types/finance.js",
+      game: "shared/types/game.js",
+      gang: "shared/types/gang.js",
+      ipvgo: "shared/types/ipvgo.js",
       logger: "shared/types/logger.js",
+      network: "shared/types/network.js",
+      sleeves: "shared/types/sleeves.js",
+      strategy: "shared/types/strategy.js",
     },
     settings: {
-      bnMultipliers: "shared/settings/bn-multipliers.txt"
-    }
+      bnMultipliers: "shared/settings/bn-multipliers.txt",
+    },
   },
+
+  tools: {
+    allocateDarknetRam: "tools/allocate-darknet-ram.js",
+    augScanNonGang: "tools/aug-scan-non-gang.js",
+    augScan: "tools/aug-scan.js",
+    bitnodeAnalyze: "tools/bitnode-analyze.js",
+    cctFinder: "tools/cct-finder.js",
+    findDarknetPath: "tools/find-darknet-path.js",
+    findPath: "tools/find-path.js",
+    goOffline: "tools/go-offline.js",
+    karma: "tools/karma.js",
+    lootDarknetServer: "tools/loot-darknet-server.js",
+    manualDarknetCrawler: "tools/manual-darknet-crawler.js",
+    runIpvgo: "tools/run-ipvgo.js",
+    starter: "tools/starter.js",
+    targetAnalyzer: "tools/target-analyzer.js",
+  },
+
   ui: {
+    batcher: "ui/batcher-ui.js",
     corporation: "ui/corporation.js",
-    roadmap: "ui/roadmap.js",
+    engine: "ui/engine-ui.js",
+    finance: "ui/finance-ui.js",
     gang: "ui/gang.js",
+    infra: "ui/infra-ui.js",
+    roadmap: "ui/roadmap.js",
     sleeve: "ui/sleeve.js",
   },
 } as const;

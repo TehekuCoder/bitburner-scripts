@@ -50,7 +50,6 @@ const CATEGORY_TAGS: Record<string, string> = {
   SLEEVE_AUG: "SLV",
   PLAYER_AUG: "AUG",
   CORP_FOUND: "CRP",
-  BLADEBURNER: "BLD",
 };
 
 /**

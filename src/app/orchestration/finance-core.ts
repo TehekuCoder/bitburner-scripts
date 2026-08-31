@@ -25,6 +25,13 @@ const evaluatorRequestCache = new Map<string, EvaluatorCacheEntry>();
 const CACHE_TTL_MS = 45000; // 45s TTL für Anfragen
 const BATCH_GAP_MS = 3000;  // Nach 3s Inaktivität alten Lauf als neu betrachten
 
+function pushBounded<T>(array: T[], item: T, maxSize: number = 6): void {
+  array.push(item);
+  while (array.length > maxSize) {
+    array.shift();
+  }
+}
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new LoggerClient(ns, "FINANCE");
@@ -157,18 +164,7 @@ export async function main(ns: NS): Promise<void> {
       "home",
     );
 
-    const evaluators = [
-      "home",
-      "hacknet",
-      "stock",
-      "cloud",
-      "programs",
-      "gang",
-      "sleeve",
-      "player",
-      "corporation",
-      "bladeburner",
-    ];
+    const evaluators = Object.keys(PATHS.domain.evaluators.purchase);
     const activeEvaluators: string[] = [];
     const inactiveEvaluators: string[] = [];
 
@@ -229,8 +225,7 @@ export async function main(ns: NS): Promise<void> {
           if (pid > 0) {
             const purchaseMsg = `🛒 KAUF: ${req.description} ($${ns.format.number(req.cost)})`;
             logger.success(purchaseMsg);
-            lastPurchases.push(purchaseMsg);
-            if (lastPurchases.length > 6) lastPurchases.shift();
+            pushBounded(lastPurchases, purchaseMsg, 6);
 
             const cacheEntry = evaluatorRequestCache.get(req.category);
             if (cacheEntry && req.id) {
@@ -242,13 +237,11 @@ export async function main(ns: NS): Promise<void> {
           } else {
             const errorMsg = `⚠️ Script-Start fehlgeschlagen: ${req.action.script}`;
             logger.warn(errorMsg);
-            lastWarnings.push(errorMsg);
-            if (lastWarnings.length > 6) lastWarnings.shift();
+            pushBounded(lastWarnings, errorMsg, 6);
           }
         } else {
           const savingMsg = `⏳ SPARZIEL: ${req.description} ($${ns.format.number(availableMoney)} / $${ns.format.number(req.cost)})`;
-          lastWarnings.push(savingMsg);
-          if (lastWarnings.length > 6) lastWarnings.shift();
+          pushBounded(lastWarnings, savingMsg, 6);
 
           blockedCategories.add(req.category);
 

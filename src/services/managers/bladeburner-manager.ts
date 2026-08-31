@@ -5,6 +5,7 @@ import {
   BladeburnerActionName,
   CityName,
 } from "@ns";
+import { BLADEBURNER_SKILL_PRIORITIES } from "/shared/constants/bladeburner";
 
 // Schwellenwerte für Entscheidungslogik
 const STAMINA_RECOVERY_THRESHOLD = 0.5; // Unter 50% Stamina ➔ Regeneration
@@ -36,6 +37,8 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    autoUpgradeSkills(ns);
+    
     // 🟢 2. Chaos Management in der aktuellen Stadt
     manageCityAndChaos(ns);
 
@@ -191,4 +194,23 @@ async function sleepNextCycle(ns: NS): Promise<void> {
   );
 
   await ns.sleep(Math.max(1000, time + 100));
+}
+
+function autoUpgradeSkills(ns: NS): void {
+  let availableSp = ns.bladeburner.getSkillPoints();
+  if (availableSp <= 0) return;
+
+  for (const item of BLADEBURNER_SKILL_PRIORITIES) {
+    if (availableSp <= 0) break;
+    const currentLevel = ns.bladeburner.getSkillLevel(item.name);
+    if (item.maxLevel && currentLevel >= item.maxLevel) continue;
+
+    const cost = ns.bladeburner.getSkillUpgradeCost(item.name);
+    if (cost > 0 && availableSp >= cost) {
+      if (ns.bladeburner.upgradeSkill(item.name, 1)) {
+        ns.print(`🆙 Skill aufgerüstet: ${item.name} (Lvl ${currentLevel + 1})`);
+        availableSp -= cost;
+      }
+    }
+  }
 }

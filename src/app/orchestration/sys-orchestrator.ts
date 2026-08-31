@@ -244,7 +244,7 @@ export async function main(ns: NS): Promise<void> {
       },
     },
 
-    // 10. Bladeburner Manager
+    // 10. Bladeburner Manager & Daemon
     {
       name: "Bladeburner Manager",
       path: PATHS.services.managers.bladeburner,
