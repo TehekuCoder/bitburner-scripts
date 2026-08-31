@@ -29,6 +29,8 @@ export interface StrategyState {
   manualMode?: boolean;
   isGrindingNFG?: boolean;
   isDominionActive?: boolean;
+  /** Liste der aktuell deaktivierten Subsysteme/Module (z. B. ["gang", "sleeve"]) */
+  disabledModules?: string[];
 }
 
 export interface StrategyResult {

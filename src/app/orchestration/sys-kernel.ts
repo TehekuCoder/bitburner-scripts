@@ -49,10 +49,14 @@ export async function main(ns: NS): Promise<void> {
 
   const defaultTarget = resolveFallbackTarget(ns);
   const existingState = (loadState(ns) || {}) as Record<string, any>;
+
+  // Übernehme übergebene Konfigurationen (manualMode & disabledModules) aus dem Starter
   patchState(ns, {
     currentBitNode: currentBitnode.node,
     currentBitNodeLevel: currentBitnode.level,
     strategy: existingState.strategy || "MONEY",
+    manualMode: existingState.manualMode ?? false,
+    disabledModules: existingState.disabledModules || [],
     progressBar: "Kernel operativ. Warte auf Subsysteme.",
     allServers: existingState.allServers || [],
     kernelTarget: defaultTarget,
@@ -103,10 +107,14 @@ export async function main(ns: NS): Promise<void> {
       ? currentState.allServers
       : getAllServers(ns);
 
-    if (isHackingOrchestratorRunning) {
+    const isHackingDisabled = currentState?.disabledModules?.some(
+      (m: string) => m === "batcher" || m === "hacking",
+    );
+
+    if (isHackingOrchestratorRunning || isHackingDisabled) {
       if (fallbackActive) {
         logger.info(
-          "Hacking-Orchestrator aktiv! Übergebe Hacking-Steuerung & beende Kernel-Fallback-Worker...",
+          "Beende Kernel-Fallback-Worker (Batcher aktiv oder Hacking deaktiviert)...",
         );
         stopFallbackWorkers(ns, allServersList, workExecPath);
         fallbackActive = false;
@@ -173,10 +181,7 @@ function runFallbackWorkers(
 
   for (const server of servers) {
     if (server === "home") continue;
-
-    // NEU: Hacknet-Server im Fallback-Modus grundsätzlich überspringen
     if (server.startsWith("hacknet-")) continue;
-
     if (!ns.serverExists(server) || !ns.hasRootAccess(server)) continue;
 
     const srvMax = ns.getServerMaxRam(server);

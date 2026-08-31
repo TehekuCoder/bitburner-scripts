@@ -13,6 +13,17 @@ interface DaemonConfig {
   condition?: (ns: NS) => boolean;
 }
 
+function isModuleDisabled(state: any, moduleName: string | string[]): boolean {
+  if (!state?.disabledModules || !Array.isArray(state.disabledModules))
+    return false;
+  const names = Array.isArray(moduleName) ? moduleName : [moduleName];
+  return names.some((name) => state.disabledModules.includes(name));
+}
+
+function isManualMode(state: any): boolean {
+  return Boolean(state?.manualMode || state?.strategy === "MANUAL");
+}
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new LoggerClient(ns, "SysOrchestrator");
@@ -25,6 +36,7 @@ export async function main(ns: NS): Promise<void> {
       path: PATHS.domain.tasks.cctSolver,
       condition: (ns) => {
         const state = loadState(ns);
+        if (isModuleDisabled(state, ["cct", "solver"])) return false;
         const nodes = state?.allServers?.length
           ? state.allServers
           : getAllServers(ns);
@@ -40,8 +52,10 @@ export async function main(ns: NS): Promise<void> {
       name: "Backdoor Service",
       path: PATHS.services.daemons.backdoor,
       condition: (ns) => {
-        if (!hasSingularity(ns)) return false;
         const state = loadState(ns);
+        if (isModuleDisabled(state, ["backdoor", "singularity"])) return false;
+        if (!hasSingularity(ns)) return false;
+
         const nodes = state?.allServers?.length
           ? state.allServers
           : getAllServers(ns);
@@ -71,6 +85,10 @@ export async function main(ns: NS): Promise<void> {
       name: "Finance Manager",
       path: PATHS.services.daemons.financeDispatcher,
       minHomeRam: 128,
+      condition: (ns) => {
+        const state = loadState(ns);
+        return !isModuleDisabled(state, ["finance", "stock"]);
+      },
     },
 
     // 4. Hash Manager
@@ -79,6 +97,8 @@ export async function main(ns: NS): Promise<void> {
       path: PATHS.services.managers.hash,
       minHomeRam: 32,
       condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, "hacknet")) return false;
         try {
           return ns.hacknet.hashCapacity() > 0;
         } catch {
@@ -87,14 +107,15 @@ export async function main(ns: NS): Promise<void> {
       },
     },
 
-    // 4b. IPvGo Manager (Passive Boni über Go-Spiele)
+    // 4b. IPvGo Manager
     {
       name: "IPvGo Manager",
       path: PATHS.services.managers.ipvgo,
       minHomeRam: 64,
       condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["ipvgo", "go"])) return false;
         try {
-          // Prüft, ob die ns.go API vorhanden und aufrufbar ist
           return (
             typeof ns.go !== "undefined" &&
             typeof ns.go.getBoardState === "function"
@@ -110,21 +131,35 @@ export async function main(ns: NS): Promise<void> {
       name: "Network Crawler",
       path: PATHS.services.daemons.crawler,
       minHomeRam: 512,
-      condition: (ns) => ns.fileExists("DarkscapeNavigator.exe", "home"),
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["crawler", "darknet"])) return false;
+        return ns.fileExists("DarkscapeNavigator.exe", "home");
+      },
     },
     {
       name: "Darknet Subsystem",
       path: PATHS.services.managers.dnet,
       minHomeRam: 512,
-      condition: (ns) => ns.fileExists("DarkscapeNavigator.exe", "home"),
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["dnet", "darknet", "stock"])) return false;
+        return ns.fileExists("DarkscapeNavigator.exe", "home");
+      },
     },
 
-    // 6. Singularity Dispatcher (SF4)
+    // 6. Singularity Dispatcher (im Manual Mode automatisch inaktiv)
     {
       name: "Singularity Dispatcher",
       path: PATHS.app.orchestration.dispatcher,
       minHomeRam: 512,
-      condition: (ns) => hasSingularity(ns),
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isManualMode(state)) return false;
+        if (isModuleDisabled(state, ["dispatcher", "singularity"]))
+          return false;
+        return hasSingularity(ns);
+      },
     },
 
     // Roadmap UI
@@ -132,62 +167,92 @@ export async function main(ns: NS): Promise<void> {
       name: "Roadmap UI",
       path: PATHS.ui.roadmap,
       minHomeRam: 32,
-      condition: () => true,
+      condition: (ns) => {
+        const state = loadState(ns);
+        return !isModuleDisabled(state, ["ui", "roadmap"]);
+      },
     },
 
-    // 7. Gang Manager & UI (SF2)
+    // 7. Gang Manager & UI
     {
       name: "Gang Manager",
       path: PATHS.services.managers.gang,
       minHomeRam: 256,
-      condition: (ns) => hasGang(ns) && ns.gang.inGang(),
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, "gang")) return false;
+        return hasGang(ns) && ns.gang.inGang();
+      },
     },
     {
       name: "Gang UI",
       path: PATHS.ui.gang,
       minHomeRam: 256,
-      condition: (ns) => hasGang(ns) && ns.gang.inGang(),
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["gang", "ui"])) return false;
+        return hasGang(ns) && ns.gang.inGang();
+      },
     },
 
-    // 8. Sleeve Manager & UI (SF10)
+    // 8. Sleeve Manager & UI
     {
       name: "Sleeve Manager",
       path: PATHS.services.managers.sleeve,
       minHomeRam: 512,
-      condition: (ns) => hasSleeve(ns),
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, "sleeve")) return false;
+        return hasSleeve(ns);
+      },
     },
     {
       name: "Sleeve UI",
       path: PATHS.ui.sleeve,
       minHomeRam: 512,
-      condition: (ns) => hasSleeve(ns),
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["sleeve", "ui"])) return false;
+        return hasSleeve(ns);
+      },
     },
 
-    // 9. Corporation Manager & UI (SF3)
+    // 9. Corporation Manager & UI
     {
       name: "Corporation Manager",
       path: PATHS.services.managers.corporation,
       minHomeRam: 2048,
-      condition: (ns) =>
-        hasCorporation(ns) &&
-        (ns.corporation.hasCorporation() ||
-          ns.getServerMoneyAvailable("home") >= 150e9),
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["corporation", "corp"])) return false;
+        return (
+          hasCorporation(ns) &&
+          (ns.corporation.hasCorporation() ||
+            ns.getServerMoneyAvailable("home") >= 150e9)
+        );
+      },
     },
     {
       name: "Corporation UI",
       path: PATHS.ui.corporation,
       minHomeRam: 2048,
-      condition: (ns) => hasCorporation(ns) && ns.corporation.hasCorporation(),
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["corporation", "corp", "ui"]))
+          return false;
+        return hasCorporation(ns) && ns.corporation.hasCorporation();
+      },
     },
 
-    // 10. Bladeburner Manager (SF7)
+    // 10. Bladeburner Manager
     {
       name: "Bladeburner Manager",
       path: PATHS.services.managers.bladeburner,
-      minHomeRam: 128, // Schwellenwert für das Host-RAM
+      minHomeRam: 128,
       condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, "bladeburner")) return false;
         try {
-          // Prüft, ob die API verfügbar ist und ob der Spieler beigetreten ist / beitreten kann
           return (
             typeof ns.bladeburner !== "undefined" &&
             (ns.bladeburner.inBladeburner() ||
@@ -204,6 +269,10 @@ export async function main(ns: NS): Promise<void> {
       name: "Batch Orchestrator",
       path: PATHS.services.daemons.hackingOrchestrator,
       minHomeRam: 64,
+      condition: (ns) => {
+        const state = loadState(ns);
+        return !isModuleDisabled(state, ["batcher", "hacking"]);
+      },
     },
 
     // 12. Background Share Filler
@@ -211,6 +280,10 @@ export async function main(ns: NS): Promise<void> {
       name: "Share Filler",
       path: PATHS.services.daemons.fillShare,
       minHomeRam: 512,
+      condition: (ns) => {
+        const state = loadState(ns);
+        return !isModuleDisabled(state, ["share", "filler"]);
+      },
     },
   ];
 
@@ -229,11 +302,21 @@ export async function main(ns: NS): Promise<void> {
       if (!ns.fileExists(execPath, "home")) continue;
 
       const args = daemon.args ?? [];
-      if (ns.isRunning(execPath, "home", ...args)) continue;
+      const isRunning = ns.isRunning(execPath, "home", ...args);
 
+      // Falls die Bedinung/Sperre greift, aber das Skript bereits läuft -> automatisch beenden
+      if (daemon.condition && !daemon.condition(ns)) {
+        if (isRunning) {
+          logger.warn(
+            `🛑 Modus/Deaktivierung erkannt: Beende Daemon ${daemon.name}...`,
+          );
+          ns.scriptKill(execPath, "home");
+        }
+        continue;
+      }
+
+      if (isRunning) continue;
       if (daemon.minHomeRam && maxRam < daemon.minHomeRam) continue;
-
-      if (daemon.condition && !daemon.condition(ns)) continue;
 
       const reqRam = ns.getScriptRam(execPath, "home");
 
