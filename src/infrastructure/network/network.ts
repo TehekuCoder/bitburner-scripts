@@ -285,3 +285,19 @@ export function findBestTarget(
   // Falls kein Ziel die Kriterien erfüllt, nimm n00dles oder joesguns als Fallback
   return best !== "" ? best : (ns.hasRootAccess("joesguns") ? "joesguns" : "n00dles");
 }
+
+/**
+ * Liefert alle gepatchten/gehackten Server inklusive erworbenen Servern (purchased-servers).
+ */
+export function getAllRootedServersIncludingPurchased(ns: NS): string[] {
+  return getAllServers(ns).filter((server) => ns.hasRootAccess(server));
+}
+
+/**
+ * Liefert nur gehackte Ziel-Server im Netzwerk (ohne home, purchased-servers, hacknet).
+ */
+export function getAllRootedServers(ns: NS): string[] {
+  return getAllRootedServersIncludingPurchased(ns).filter(
+    (s) => !s.startsWith("cloud-") && !s.startsWith("hacknet") && s !== "home",
+  );
+}

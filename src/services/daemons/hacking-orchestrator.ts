@@ -6,6 +6,10 @@ import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import { evaluateHackingStrategy } from "/domain/evaluators/strategy/hacking-strategy.js";
 import { evaluateTargets } from "/domain/evaluators/strategy/target-selection.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
+import {
+  getAllRootedServers,
+  getAllRootedServersIncludingPurchased,
+} from "/infrastructure/network/network.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -119,7 +123,7 @@ export async function main(ns: NS): Promise<void> {
             ? evalTargets.slice(0, maxTargets).map((t) => t.hostname)
             : [activeTarget];
 
-        deployWorkerFleet(ns, topTargets, logger);
+        deployWorkerFleet(ns, logger, allServers, topTargets);
       } else {
         stopNetworkWorkers(ns);
         ensureEngineRunning(ns, activeStrategy, activeTarget, logger);
@@ -151,7 +155,6 @@ function manageDashboards(
   engineDash: string,
   logger: LoggerClient,
 ): void {
-  // BOOTSTRAP und WORKER nutzen keine Engine-Dashboards
   const isWorkerPhase =
     activeStrategy === "BOOTSTRAP" || activeStrategy === "WORKER";
 
@@ -192,123 +195,81 @@ function manageDashboards(
   }
 }
 
-function deployWorkerFleet(
+interface FleetNode {
+  host: string;
+  freeRam: number;
+}
+
+export function deployWorkerFleet(
   ns: NS,
-  targets: string[],
   logger: LoggerClient,
+  servers: string[],
+  targets: string[],
+  workerScript: string = PATHS.services.payloads.work,
 ): void {
-  const workScript = PATHS.services.payloads.work;
-  if (!ns.fileExists(workScript, "home")) {
-    logger.error(`Worker-Skript '${workScript}' auf home nicht gefunden!`);
+  if (targets.length === 0 || servers.length === 0) {
+    logger.warn("Keine Targets oder Server für Fleet-Deployment übergeben.");
     return;
   }
 
-  const scriptRam = ns.getScriptRam(workScript, "home");
-  if (scriptRam <= 0) return;
+  const scriptRam = ns.getScriptRam(workerScript);
 
-  const servers = getAllRootedServersIncludingPurchased(ns);
+  // 1. Freien RAM im gesamten Netzwerk aggregieren
+  const pool: FleetNode[] = servers
+    .map((host) => {
+      const maxRam = ns.getServerMaxRam(host);
+      const usedRam = getScriptUsedRam(ns, host, workerScript);
+      const reserved = host === "home" ? 32 : 0;
+      return { host, freeRam: Math.max(0, maxRam - usedRam - reserved) };
+    })
+    .filter((node) => node.freeRam >= scriptRam)
+    .sort((a, b) => b.freeRam - a.freeRam);
 
-  for (let i = 0; i < servers.length; i++) {
-    const server = servers[i];
+  const totalFleetRam = pool.reduce((sum, node) => sum + node.freeRam, 0);
+  if (totalFleetRam <= 0) return;
 
-    if (server.startsWith("hacknet-")) {
-      if (ns.isRunning(workScript, server)) {
-        ns.scriptKill(workScript, server);
-      }
-      continue;
-    }
+  // 2. RAM-Verteilung auf die besten Targets definieren (60% / 25% / 15%)
+  const weights = [0.6, 0.25, 0.15];
+  const targetBudgets = targets.slice(0, weights.length).map((target, idx) => ({
+    target,
+    remainingBudget: totalFleetRam * weights[idx],
+  }));
 
-    const maxRam = ns.getServerMaxRam(server);
-    if (maxRam <= 0) continue;
+  logger.info(
+    `Fleet-Pool: ${ns.format.number(totalFleetRam, 0)} GB RAM verfügbar für ${targetBudgets.length} Targets.`,
+  );
 
-    let availableRam = maxRam;
+  // 3. Budgets sequenziell über den Server-Pool abarbeiten
+  let targetIndex = 0;
 
-    if (server === "home") {
-      let reservedHomeRam = 32;
-      if (maxRam >= 512) {
-        reservedHomeRam = 128;
-      } else if (maxRam >= 256) {
-        reservedHomeRam = 64;
-      }
-
-      try {
-        if (ns.gang.inGang()) {
-          reservedHomeRam += 32;
-        }
-      } catch {
-        // Gang-API noch nicht freigeschaltet
-      }
-
-      if (ns.scriptRunning(PATHS.app.orchestration.financeCore)) {
-        reservedHomeRam += 100;
-      }
-
-      const usedRamExcludingWork =
-        ns.getServerUsedRam("home") - getScriptUsedRam(ns, "home", workScript);
-      availableRam = Math.max(
-        0,
-        maxRam - usedRamExcludingWork - reservedHomeRam,
+  for (const node of pool) {
+    while (node.freeRam >= scriptRam && targetIndex < targetBudgets.length) {
+      const currentTarget = targetBudgets[targetIndex];
+      const allocatableRam = Math.min(
+        node.freeRam,
+        currentTarget.remainingBudget,
       );
-    } else {
-      const usedRamExcludingWork =
-        ns.getServerUsedRam(server) - getScriptUsedRam(ns, server, workScript);
-      availableRam = maxRam - usedRamExcludingWork;
-    }
+      const threads = Math.floor(allocatableRam / scriptRam);
 
-    const targetThreads = Math.floor(availableRam / scriptRam);
-    const assignedTarget = targets[i % targets.length];
-
-    if (targetThreads > 0) {
-      if (server !== "home" && !ns.fileExists(workScript, server)) {
-        ns.scp(workScript, server, "home");
+      if (threads > 0) {
+        ns.exec(workerScript, node.host, threads, currentTarget.target);
+        const used = threads * scriptRam;
+        node.freeRam -= used;
+        currentTarget.remainingBudget -= used;
       }
-      manageWorkerOnServer(
-        ns,
-        server,
-        workScript,
-        assignedTarget,
-        targetThreads,
-      );
-    } else {
-      if (ns.isRunning(workScript, server)) {
-        ns.scriptKill(workScript, server);
+
+      if (currentTarget.remainingBudget < scriptRam) {
+        targetIndex++;
       }
     }
-  }
-}
-
-function manageWorkerOnServer(
-  ns: NS,
-  server: string,
-  script: string,
-  target: string,
-  desiredThreads: number,
-): void {
-  const scriptName = script.replace(/^.*[\\/]/, "");
-  const procs = ns.ps(server).filter((p) => p.filename.endsWith(scriptName));
-
-  const isCorrect =
-    procs.length === 1 &&
-    procs[0].args[0] === target &&
-    procs[0].threads === desiredThreads;
-
-  if (isCorrect) return;
-
-  if (procs.length > 0) {
-    for (const proc of procs) {
-      ns.kill(proc.pid);
-    }
-  }
-
-  if (desiredThreads > 0) {
-    ns.exec(script, server, desiredThreads, target);
   }
 }
 
 function getScriptUsedRam(ns: NS, server: string, script: string): number {
+  const scriptName = script.replace(/^.*[\\/]/, "");
   return ns
     .ps(server)
-    .filter((p) => p.filename === script)
+    .filter((p) => p.filename.endsWith(scriptName))
     .reduce((acc, p) => acc + p.threads * ns.getScriptRam(script, server), 0);
 }
 
@@ -359,35 +320,6 @@ function resolveXpTarget(ns: NS): string {
     .sort((a, b) => (a.minDifficulty ?? 99) - (b.minDifficulty ?? 99));
 
   return validTargets.length > 0 ? validTargets[0].hostname : "n00dles";
-}
-
-function getAllRootedServers(ns: NS): string[] {
-  return getAllRootedServersIncludingPurchased(ns).filter(
-    (s) => !s.startsWith("cloud-") && s !== "home",
-  );
-}
-
-function getAllRootedServersIncludingPurchased(ns: NS): string[] {
-  const visited = new Set<string>();
-  const queue = ["home"];
-  const rootedTargets: string[] = [];
-
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    visited.add(current);
-
-    if (ns.hasRootAccess(current)) {
-      rootedTargets.push(current);
-    }
-
-    for (const neighbor of ns.scan(current)) {
-      if (!visited.has(neighbor) && !queue.includes(neighbor)) {
-        queue.push(neighbor);
-      }
-    }
-  }
-
-  return rootedTargets;
 }
 
 function ensureEngineRunning(

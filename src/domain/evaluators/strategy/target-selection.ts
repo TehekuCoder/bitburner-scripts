@@ -105,8 +105,9 @@ export function evaluateTargets(
     } else {
       const effectiveGrowth = (server.serverGrowth ?? 1) * serverGrowthMult;
       score =
-        (maxMoney * (effectiveGrowth / 100) * scriptHackMoneyGain) /
-        Math.max(1, weakenTime / 1000);
+        ((maxMoney * (effectiveGrowth / 100) * scriptHackMoneyGain) /
+          Math.max(1, weakenTime / 1000)) *
+        Math.pow(chance, 2);
     }
 
     targets.push({
