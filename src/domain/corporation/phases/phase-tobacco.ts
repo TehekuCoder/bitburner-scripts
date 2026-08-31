@@ -176,10 +176,12 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       0.7,
     );
 
-    // 3. Forschungen streng nach Priorität durchführen
+// 3. Forschungen streng nach Priorität durchführen & R&D Reallokation
+    let allResearched = true;
+
     for (const tech of CORP_RESEARCH_PRIORITY) {
       if (!corp.hasResearched(tobacco.name, tech)) {
-        // Frische Research Points direkt von der API abfragen
+        allResearched = false;
         const currentRP = corp.getDivision(tobacco.name).researchPoints;
         const cost = corp.getResearchCost(tobacco.name, tech);
 
@@ -188,13 +190,37 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
             corp.research(tobacco.name, tech);
             log(`[Tobacco] Erforscht: ${tech}`, "SUCCESS");
           } catch {
-            // Falls Voraussetzungen fehlen -> Abbrechen, um die Priorität zu wahren
             break;
           }
         } else {
-          // Nicht genug RP für die NÄCHSTE Forschung in der Liste:
-          // Schleife ABBRECHEN, um RP für dieses Prioritätsziel zu sparen!
           break;
+        }
+      }
+    }
+
+    // Falls ALLE Forschungen abgeschlossen sind: R&D-Stellen komplett auflösen!
+    if (allResearched) {
+      for (const city of divInfo.cities) {
+        const isHQ = city === mainCity;
+        const currentOffice = corp.getOffice(tobacco.name, city);
+
+        // Nur anpassen, wenn noch R&D-Mitarbeiter vorhanden sind
+        if (currentOffice.employeeJobs["Research & Development"] > 0) {
+          const targetJobs = isHQ
+            ? CORP_CONFIG.jobDistribution.tobaccoHQ60Maxed
+            : CORP_CONFIG.jobDistribution.support12Maxed;
+
+          setupOfficeAndJobs(
+            ns,
+            tobacco.name,
+            city,
+            currentOffice.size,
+            targetJobs,
+          );
+          log(
+            `[Tobacco] Forschung abgeschlossen! R&D-Personal in ${city} umverteilt.`,
+            "INFO",
+          );
         }
       }
     }

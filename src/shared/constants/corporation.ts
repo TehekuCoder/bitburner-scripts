@@ -82,6 +82,21 @@ export const CORP_CONFIG = {
       Operations: 4,
       Business: 5,
     },
+    // Late-Game Job-Verteilung ohne R&D (z. B. für 60 oder mehr Mitarbeiter)
+    tobaccoHQ60Maxed: {
+      Operations: 15,
+      Engineer: 18,
+      Business: 12,
+      Management: 15,
+      "Research & Development": 0, // <-- Komplett auf 0 gesetzt
+    },
+    support12Maxed: {
+      Operations: 3,
+      Engineer: 3,
+      Business: 3,
+      Management: 3,
+      "Research & Development": 0,
+    },
   },
 } as const;
 
