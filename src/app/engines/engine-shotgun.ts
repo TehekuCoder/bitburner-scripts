@@ -3,6 +3,7 @@ import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js
 import { PATHS } from "../../infrastructure/runtime/paths.js";
 import { getAllServers } from "/infrastructure/network/network.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
+import { formatPercent } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -41,7 +42,7 @@ export async function main(ns: NS): Promise<void> {
     const maxMoney = ns.getServerMaxMoney(target);
 
     const moneyPctVal = maxMoney > 0 ? (curMoney / maxMoney) * 100 : 100;
-    const moneyPct = moneyPctVal.toFixed(1);
+    const moneyPct = formatPercent(moneyPctVal, 100, 1);
     const secDeltaVal = curSec - minSec;
     const secDelta = secDeltaVal.toFixed(2);
 

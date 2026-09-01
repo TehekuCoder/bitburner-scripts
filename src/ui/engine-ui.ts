@@ -1,4 +1,5 @@
 import { NS } from "@ns";
+import { formatPercent } from "/lib/utils.js";
 
 export interface EngineDashboardData {
   engineName: string; // "PREP" | "PROTO" | "SHOTGUN" | "XP-GRIND" | "STANDBY"

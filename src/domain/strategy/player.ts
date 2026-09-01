@@ -4,7 +4,7 @@ import { AugmentTarget, TargetFactionResult } from "/shared/types/factions.js";
 import { COMBAT_STATS } from "/shared/types/game.js";
 import { BotState, StrategyResult } from "/shared/types/strategy.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
-import { loadBnMults } from "/lib/utils.js";
+import { loadBnMults, hasSingularity } from "/lib/utils.js";
 
 const MEGACORP_FACTION_TO_COMPANY: Record<string, CompanyName> = {
   ECorp: "ECorp" as CompanyName,
@@ -315,7 +315,7 @@ export function determineStrategy(
     }
   }
 
-  // 6️⃣ PHASE 4: BLADEBURNER (Vorgezogen vor Roadmap-Fraktionen)
+  // 6️⃣ PHASE 4: BLADEBURNER (Nur ohne Simulacrum als eigenständiger Mode)
   try {
     if (typeof ns.bladeburner !== "undefined") {
       if (!ns.bladeburner.inBladeburner()) {
@@ -327,9 +327,25 @@ export function determineStrategy(
         }
       }
 
+      // Mit The Blade's Simulacrum läuft Bladeburner als Parallel-System (kein Mode-Override).
+      // Ohne Simulacrum wird Bladeburner zum alleinigen Focus-Mode.
       if (ns.bladeburner.inBladeburner()) {
-        logger?.debug(`[Strategie] Bladeburner System Aktiv ➔ BLADEBURNER`);
-        return { mode: "BLADEBURNER" };
+        const hasSimulacrum =
+          hasSingularity(ns) &&
+          ns.singularity
+            .getOwnedAugmentations(false)
+            .includes("The Blade's Simulacrum");
+
+        if (!hasSimulacrum) {
+          logger?.debug(
+            `[Strategie] Bladeburner System Aktiv (ohne Simulacrum) ➔ BLADEBURNER (exklusiv)`,
+          );
+          return { mode: "BLADEBURNER" };
+        } else {
+          logger?.debug(
+            `[Strategie] Bladeburner aktiv mit Simulacrum ➔ Läuft parallel zu anderen Strategien`,
+          );
+        }
       }
     }
   } catch {}

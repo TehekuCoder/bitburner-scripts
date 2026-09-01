@@ -3,6 +3,7 @@ import { NS } from "@ns";
 import { BatchStrategy } from "/shared/types/batcher.js";
 import { PATHS } from "../../infrastructure/runtime/paths.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
+import { formatRam } from "/lib/utils.js";
 import { evaluateHackingStrategy } from "/domain/evaluators/strategy/hacking-strategy.js";
 import {
   evaluateTargets,
@@ -499,7 +500,7 @@ function ensureEngineRunning(
       }
     } else {
       logger.warn(
-        `Zu wenig RAM auf 'home' für ${scriptPath} (${requiredRam} GB benötigt, ${freeRam.toFixed(2)} GB frei)`,
+        `Zu wenig RAM auf 'home' für ${scriptPath} (${formatRam(requiredRam)} benötigt, ${formatRam(freeRam)} frei)`,
         target,
         { context: { requiredRam, freeRam } },
       );

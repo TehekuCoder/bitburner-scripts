@@ -6,17 +6,17 @@ import { PATHS } from "/infrastructure/runtime/paths";
 import { loadState, patchState } from "/infrastructure/state/state";
 import { CITY_FACTIONS } from "/shared/constants/factions";
 import { REFRESH_INTERVALS } from "/shared/constants/game-defaults";
+import { hasSingularity, hasBladeburner } from "/lib/utils";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   const logger = new LoggerClient(ns, "Dispatcher");
+  const singularityAvailable = hasSingularity(ns);
 
-  if (ns.singularity === undefined) {
-    logger.error("Kritischer Systemfehler: Singularity-API (SF4) fehlt!");
-    ns.tprint(
-      "🛑 [Dispatcher] Kritischer Fehler: Singularity-API (SF4) fehlt!",
+  if (!singularityAvailable) {
+    logger.warn(
+      "Singularity-API (SF4) fehlt. Bladeburner-Only-Modus aktiv.",
     );
-    return;
   }
 
   logger.info("🚀 Sys-Dispatcher gestartet.");
@@ -64,7 +64,9 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // ✉️ Automatische Fraktionseinladungen verarbeiten
-    handleFactionInvitations(ns, logger);
+    if (singularityAvailable) {
+      handleFactionInvitations(ns, logger);
+    }
 
     // ⚔️ Bladeburner Division & Faction Auto-Join prüfen
     handleBladeburnerAutoJoin(ns, logger);
@@ -73,6 +75,7 @@ export async function main(ns: NS): Promise<void> {
     patchState(ns, {
       strategy: mode,
       isDominionActive: evalRes.isDominionActive,
+      isBladeburnerParallel: evalRes.isBladeburnerParallel,
       isBN2GangMode: evalRes.isBN2GangMode,
       hasGang: evalRes.hasGang,
       gangFaction: evalRes.gangFaction ?? undefined,
@@ -147,17 +150,23 @@ function manageMicroservices(
 
   // 🛡️ 2. Bladeburner Override (Prüft Simulacrum)
   const isBladeburnerActive =
-    typeof ns.bladeburner !== "undefined" && ns.bladeburner.inBladeburner();
+    hasBladeburner(ns) && ns.bladeburner.inBladeburner();
 
   // Prüfe, ob Simulacrum bereits installiert ist
-  const hasSimulacrum = ns.singularity
-    .getOwnedAugmentations(false)
-    .includes("The Blade's Simulacrum");
+  const hasSimulacrum =
+    hasSingularity(ns) &&
+    ns.singularity
+      .getOwnedAugmentations(false)
+      .includes("The Blade's Simulacrum");
 
-  // Ohne Simulacrum muss Bladeburner den exklusiven Focus haben (außer im TRAIN-Modus)
+  // ⚔️ Drei Modi:
+  // 1. OHNE Bladeburner: Normale Task-Strategie
+  // 2. MIT Bladeburner + OHNE Simulacrum: Bladeburner exklusiv (außer TRAIN)
+  // 3. MIT Bladeburner + MIT Simulacrum: Beide parallel, normale Task-Strategie läuft daneben
   if (isBladeburnerActive && !hasSimulacrum && currentMode !== "TRAIN") {
     targetScript = undefined;
   }
+  // Mit Simulacrum: Lasse targetScript normal laufen (wird parallel zu Bladeburner ausgeführt)
 
   // Stoppe alle nicht mehr benötigten Microservices
   const activeScriptsToStop = new Set(
@@ -233,6 +242,8 @@ function manageMicroservices(
  */
 function handleFactionInvitations(ns: NS, logger: LoggerClient): void {
   const sing = ns.singularity;
+  if (!sing) return;
+
   const player = ns.getPlayer();
   const invites = sing.checkFactionInvitations();
   if (invites.length === 0) return;
@@ -281,7 +292,7 @@ function handleBladeburnerAutoJoin(ns: NS, logger: LoggerClient): void {
   }
 
   // 3. Stufe 2: Der Bladeburner-Fraktion beitreten (Voraussetzung: Rank >= 25)
-  if (!player.factions.includes("Bladeburners")) {
+  if (!player.factions.includes("Bladeburners") && ns.singularity) {
     const currentRank = ns.bladeburner.getRank();
     if (currentRank >= 25) {
       if (ns.singularity.joinFaction("Bladeburners")) {

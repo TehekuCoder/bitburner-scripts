@@ -1,3 +1,6 @@
 node_modules/
 dist/
 NetscriptDefinitions.d.ts
+CONSISTENCY_AUDIT_FIXES.md
+CONSISTENCY_AUDIT_REPORT.md
+TIER3_LOGGER_MIGRATION.md

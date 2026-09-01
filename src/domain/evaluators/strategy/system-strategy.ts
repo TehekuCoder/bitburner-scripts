@@ -8,7 +8,7 @@ import {
   determineStrategy,
   isGangOfferingAllAugs,
 } from "../../strategy/player";
-import { loadBnMults } from "/lib/utils";
+import { loadBnMults, hasSingularity, hasBladeburner } from "/lib/utils";
 import { PATHS } from "../../../infrastructure/runtime/paths";
 import { BotStrategy } from "/shared/types/strategy";
 import { TargetFactionResult } from "/shared/types/factions";
@@ -52,6 +52,7 @@ export interface SystemEvaluationResult {
   isReadyForFactionGrind: boolean;
   cachedFallbackTarget: string;
   isDominionActive: boolean;
+  isBladeburnerParallel: boolean;
   fillerConfig: {
     shareMaxRamPercent: number;
     maxXpLevel: number;
@@ -461,6 +462,16 @@ export class SystemStrategyEvaluator {
                   ? 0.1
                   : 0.0;
 
+    // 🛡️ Prüfe, ob Bladeburner parallel mit Simulacrum läuft
+    const isBladeburnerActive =
+      hasBladeburner(ns) && ns.bladeburner.inBladeburner();
+    const isBladeburnerParallel =
+      isBladeburnerActive &&
+      hasSingularity(ns) &&
+      ns.singularity
+        .getOwnedAugmentations(false)
+        .includes("The Blade's Simulacrum");
+
     const dynamicMaxXp =
       mode === "CRIME" || mode === "KARMA"
         ? 100
@@ -484,6 +495,7 @@ export class SystemStrategyEvaluator {
       isReadyForFactionGrind,
       cachedFallbackTarget: this.cachedFallbackTarget,
       isDominionActive,
+      isBladeburnerParallel,
       fillerConfig: {
         shareMaxRamPercent: sharePercent,
         maxXpLevel: dynamicMaxXp,

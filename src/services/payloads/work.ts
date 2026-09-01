@@ -1,4 +1,5 @@
 import { NS } from "@ns";
+import { formatPercent } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
   const target = ns.args[0] as string;

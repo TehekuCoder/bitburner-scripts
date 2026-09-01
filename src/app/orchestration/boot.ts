@@ -3,6 +3,7 @@ import { LoggerClient } from "/infrastructure/logging/logger-client";
 import { PATHS } from "/infrastructure/runtime/paths";
 import { loadState, patchState } from "/infrastructure/state/state";
 import { DEFAULT_MULTIPLIERS } from "/shared/constants/game-defaults";
+import { formatRam } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
   // AST-Parser Referenz für RAM-Kalkulation
@@ -70,7 +71,7 @@ async function ensureFactionRoadmap(ns: NS, logger: LoggerClient): Promise<void>
   const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
 
   if (freeRam < analyzeRam) {
-    logger.warn(`Zu wenig RAM auf 'home' (${freeRam.toFixed(1)} GB frei, ${analyzeRam} GB benötigt).`);
+    logger.warn(`Zu wenig RAM auf 'home' (${formatRam(freeRam)} frei, ${formatRam(analyzeRam)} benötigt).`);
     return;
   }
 

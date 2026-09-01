@@ -4,6 +4,7 @@ import { PATHS } from "../../infrastructure/runtime/paths.js";
 import { HOME_RAM_RESERVE } from "../../infrastructure/runtime/batcher.js";
 import { getAllServers } from "/infrastructure/network/network.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
+import { formatPercent } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -123,14 +124,13 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    const moneyPct =
-      maxMoney > 0 ? ((curMoney / maxMoney) * 100).toFixed(1) : "100";
+    const moneyPct = formatPercent(curMoney, maxMoney, 1);
     const secStatus = `+${secDelta.toFixed(2)}`;
     patchBatcherState(ns, {
       batchStrategy: "PREP",
       batcherActive: true,
       batcherTarget: target,
-      batcherProgress: `PREP ($: ${moneyPct}% | Sec: ${secStatus})`,
+      batcherProgress: `PREP ($: ${moneyPct} | Sec: ${secStatus})`,
     });
 
     // 4. Modus bestimmen & Worker deployen

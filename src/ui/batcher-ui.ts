@@ -1,5 +1,6 @@
 import { NS } from "@ns";
 import { DashboardData } from "/shared/types/batcher.js";
+import { formatPercent } from "/lib/utils.js";
 
 function makeProgressBar(progress: number, width = 20): string {
   const filledLength = Math.round(Math.max(0, Math.min(1, progress)) * width);
@@ -45,8 +46,7 @@ export function drawBatcherDashboard(ns: NS, data: DashboardData): void {
 
       const secDiff = curSec - minSec;
       const secStr = secDiff <= 0.05 ? "MIN" : `+${secDiff.toFixed(1)}`;
-      const moneyPct =
-        maxMoney > 0 ? ((curMoney / maxMoney) * 100).toFixed(0) + "%" : "0%";
+      const moneyPct = formatPercent(curMoney, maxMoney, 0);
 
       const namePadded = t.target.padEnd(16, " ").slice(0, 16);
       const modePadded = t.mode.padEnd(6, " ");
@@ -79,7 +79,7 @@ export function drawBatcherDashboard(ns: NS, data: DashboardData): void {
     ns.print(`ZIELSERVER-ZUSTAND (${statsTarget || "Keins"}):`);
     ns.print(`Sicherheit:  ${curSec.toFixed(2)} / ${minSec.toFixed(2)} (Min)`);
     ns.print(
-      `Finanzen:    $${ns.format.number(curMoney)} / $${ns.format.number(maxMoney)} (${moneyPercent.toFixed(1)}%)`,
+      `Finanzen:    $${ns.format.number(curMoney)} / $${ns.format.number(maxMoney)} (${formatPercent(curMoney, maxMoney, 1)})`,
     );
   }
 

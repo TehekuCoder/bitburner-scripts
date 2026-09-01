@@ -1,4 +1,5 @@
 import { NS } from "@ns";
+import { formatPercent } from "/lib/utils.js";
 
 export interface PendingRequestSummary {
   description: string;
@@ -126,12 +127,6 @@ function makeProgressBar(value: number, max: number, width = 20): string {
   const ratio = Math.max(0, Math.min(value, max)) / max;
   const filled = Math.round(ratio * width);
   return "█".repeat(filled) + "░".repeat(width - filled);
-}
-
-function formatPercent(value: number, max: number): string {
-  if (max <= 0) return "0.0%";
-  const pct = (Math.max(0, Math.min(value, max)) / max) * 100;
-  return `${pct.toFixed(1)}%`;
 }
 
 export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {

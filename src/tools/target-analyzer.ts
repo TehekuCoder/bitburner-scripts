@@ -1,5 +1,5 @@
 import { NS, Server } from "@ns";
-import { loadBnMults } from "/lib/utils";
+import { loadBnMults, formatPercent } from "/lib/utils";
 
 interface TargetAnalysis {
   server: string;
@@ -173,12 +173,12 @@ export async function main(ns: NS): Promise<void> {
     const scoreStr = `$${ns.format.number(c.score, 2)}/s`.padEnd(12);
     const maxMoneyStr = `$${ns.format.number(c.maxMoney, 2)}`.padEnd(10);
     const reqHackStr = `Lvl ${c.reqHack}`.padEnd(8);
-    const chanceStr = `${(c.chance * 100).toFixed(0)}%`.padEnd(5);
+    const chanceStr = `${formatPercent(c.chance, undefined, 0)}`.padEnd(5);
     const weakenTimeStr = `${(c.weakenTimeMs / 1000).toFixed(1)}s`.padEnd(7);
 
     const statusStr = c.isPrepped
       ? "🟢 PREPPED"
-      : `🟡 PREP BENÖTIGT (~${formatTime(c.prepTimeMs)}, Sec: +${c.secDelta.toFixed(1)}, Cash: ${(c.moneyRatio * 100).toFixed(0)}%)`;
+      : `🟡 PREP BENÖTIGT (~${formatTime(c.prepTimeMs)}, Sec: +${c.secDelta.toFixed(1)}, Cash: ${formatPercent(c.moneyRatio, undefined, 0)})`;
 
     ns.tprint(
       `${rank} ${name} | Score: ${scoreStr} | Max$: ${maxMoneyStr} | Req: ${reqHackStr} | Chance: ${chanceStr} | Cycle: ${weakenTimeStr}`,

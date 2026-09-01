@@ -1,6 +1,7 @@
 import { NS } from "@ns";
 import { patchState } from "/infrastructure/state/state";
 import { PATHS } from "/infrastructure/runtime/paths";
+import { formatRam } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -147,7 +148,7 @@ export async function main(ns: NS): Promise<void> {
 
               if (freeRam < reqRam) {
                 ns.tprint(
-                  `🛑 [RAM-ERR] Zu wenig RAM auf 'home'! Benötigt: ${reqRam.toFixed(2)} GB | Frei: ${freeRam.toFixed(2)} GB.`,
+                  `🛑 [RAM-ERR] Zu wenig RAM auf 'home'! Benötigt: ${formatRam(reqRam)} | Frei: ${formatRam(freeRam)}.`,
                 );
                 if (statusEl) statusEl.innerText = "OUT OF RAM";
               } else {

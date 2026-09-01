@@ -5,8 +5,7 @@ import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js
 import { PATHS } from "../../infrastructure/runtime/paths.js";
 import { EngineMode } from "/shared/types/batcher";
 import { getAllServers } from "/infrastructure/network/network.js";
-import { patchBatcherState } from "/infrastructure/state/state.js";
-
+import { patchBatcherState } from "/infrastructure/state/state.js";import { formatPercent } from "/lib/utils.js";
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
@@ -116,10 +115,10 @@ export async function main(ns: NS): Promise<void> {
       decisionReason = `Sicherheit zu hoch (+${secDelta.toFixed(2)} über Min-Sec ${minSecLevel}). Schwächung priorisiert.`;
     } else if (moneyRatio < 0.7) {
       newMode = "GROW";
-      decisionReason = `Geldbestand niedrig (${(moneyRatio * 100).toFixed(1)}% von Max $${ns.format.number(maxMoneyLevel)}). Wachstum priorisiert.`;
+      decisionReason = `Geldbestand niedrig (${formatPercent(moneyRatio, undefined, 1)} von Max $${ns.format.number(maxMoneyLevel)}). Wachstum priorisiert.`;
     } else {
       newMode = "HARVEST";
-      decisionReason = `Ziel optimal konditioniert (Sec: +${secDelta.toFixed(2)}, Money: ${(moneyRatio * 100).toFixed(1)}%). Ernte gestartet.`;
+      decisionReason = `Ziel optimal konditioniert (Sec: +${secDelta.toFixed(2)}, Money: ${formatPercent(moneyRatio, undefined, 1)}). Ernte gestartet.`;
     }
 
     // Protokollierung bei Zustandswechsel

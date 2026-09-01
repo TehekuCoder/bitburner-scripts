@@ -16,6 +16,7 @@ import {
   SPACER,
 } from "../../infrastructure/runtime/batcher.js";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
+import { formatRam } from "/lib/utils.js";
 
 import { ActiveBatch, JitEvent, TargetContext } from "/shared/types/batcher.js";
 
@@ -228,7 +229,7 @@ export async function main(ns: NS): Promise<void> {
       const targetNames =
         Array.from(activeTargets.keys()).join(", ") || "Keine";
       logger.debug(
-        `💓 Ziele: [${targetNames}] | Queue: ${eventQueue.length} (${queueRam.toFixed(0)}GB) | Lag: ${rollingLag.toFixed(1)}ms | Freier RAM: ${virtualFreeRam.toFixed(0)}GB`,
+        `💓 Ziele: [${targetNames}] | Queue: ${eventQueue.length} (${formatRam(queueRam)}) | Lag: ${rollingLag.toFixed(1)}ms | Freier RAM: ${formatRam(virtualFreeRam)}`,
       );
     }
 

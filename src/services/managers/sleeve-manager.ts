@@ -19,12 +19,13 @@ import {
 } from "../../domain/sleeve/sleeve-utils.js";
 import { MEGACORPS } from "../../shared/constants/factions.js";
 import { loadSleeveState, patchSleeveState } from "/infrastructure/state/state.js";
+import { hasSleeve, hasGang } from "/lib/utils.js";
 
 type ExtendedGangStatus = SleeveGangUnlockStatus & { gangFaction?: string };
 
 function checkSleeveGangStatus(ns: NS): ExtendedGangStatus {
-  const hasSleeves = ns.sleeve !== undefined && ns.sleeve.getNumSleeves() > 0;
-  const hasGangApi = ns.gang !== undefined;
+  const hasSleevesApi = hasSleeve(ns) && ns.sleeve.getNumSleeves() > 0;
+  const hasGangApi = hasGang(ns);
   let inGang = false;
   let gangFaction: string | undefined = undefined;
 
@@ -43,7 +44,7 @@ function checkSleeveGangStatus(ns: NS): ExtendedGangStatus {
   const shouldGrindKarma = !inGang && karma > -54000;
 
   return {
-    hasSleeves,
+    hasSleeves: hasSleevesApi,
     hasGangApi,
     inGang,
     gangFaction,

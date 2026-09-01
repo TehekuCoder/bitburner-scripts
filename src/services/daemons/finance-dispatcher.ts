@@ -6,6 +6,7 @@ import {
   hasSingularity,
   loadBnMults,
   hasCorporation,
+  formatRam,
 } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
@@ -22,7 +23,7 @@ export async function main(ns: NS): Promise<void> {
     // Falls nicht genug freier RAM da ist, überspringen
     if (freeRam < reqRam) {
       ns.print(
-        `[FINANCE-MGR] Nicht genug RAM für ${scriptPath} (Benötigt: ${reqRam}GB, Frei: ${freeRam.toFixed(1)}GB)`,
+        `[FINANCE-MGR] Nicht genug RAM für ${scriptPath} (Benötigt: ${formatRam(reqRam)}, Frei: ${formatRam(freeRam)})`,
       );
       return;
     }

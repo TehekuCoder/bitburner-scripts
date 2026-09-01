@@ -29,6 +29,7 @@ export interface StrategyState {
   manualMode?: boolean;
   isGrindingNFG?: boolean;
   isDominionActive?: boolean;
+  isBladeburnerParallel?: boolean;
   /** Liste der aktuell deaktivierten Subsysteme/Module (z. B. ["gang", "sleeve"]) */
   disabledModules?: string[];
 }

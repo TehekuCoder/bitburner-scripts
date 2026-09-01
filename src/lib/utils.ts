@@ -116,6 +116,37 @@ export function formatTime(ms: number): string {
   return `${pad(minutes)}:${pad(seconds)}`;
 }
 
+/**
+ * Formatiert Prozentwerte (z.B. 0.75 -> "75.0%", oder (50, 200) -> "25.0%").
+ * @param value - Der Wert (entweder 0-1 als Dezimal oder Zahlwert)
+ * @param maxValue - Optional: wenn vorhanden, wird (value/maxValue)*100 berechnet
+ * @param decimals - Dezimalstellen (Standard: 1)
+ * @returns Formatierter Prozentsatz als String (z.B. "45.5%", "100%")
+ */
+export function formatPercent(
+  value: number,
+  maxValue?: number,
+  decimals: number = 1,
+): string {
+  if (isNaN(value)) return "0%";
+
+  let pct: number;
+  if (maxValue !== undefined) {
+    pct = maxValue > 0 ? (value / maxValue) * 100 : 0;
+  } else {
+    // Wenn maxValue nicht definiert, als Dezimal interpretieren (0-1)
+    pct = value * 100;
+  }
+
+  // Sichere Grenzen setzen
+  pct = Math.max(0, Math.min(100, pct));
+
+  if (decimals === 0) {
+    return `${Math.round(pct)}%`;
+  }
+  return `${pct.toFixed(decimals)}%`;
+}
+
 // ============================================================================
 // 3. Math & Logic Helpers
 // ============================================================================

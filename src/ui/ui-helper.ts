@@ -1,6 +1,7 @@
 import { FactionName, NS} from "@ns";
 import { BotStrategy } from "/shared/types/strategy";
 import { PATHS } from "/infrastructure/runtime/paths";
+import { formatPercent } from "/lib/utils.js";
 
 
 interface UIProgressBarParams {
@@ -79,8 +80,8 @@ export function generateProgressBar(ns: NS, params: UIProgressBarParams): string
       if (isReadyForFactionGrind) {
         generatedBar = `⏳ Bereit für ${factionToWorkFor.name} | Warte auf Beitritt/Einladung`;
       } else {
-        const progressPct = ((playerMoney / effectiveThreshold) * 100).toFixed(1);
-        generatedBar = `💰 Spare für ${factionToWorkFor.name}: ${ns.format.number(playerMoney, 1)} / ${ns.format.number(effectiveThreshold, 0)} $ (${progressPct}%)`;
+        const progressPct = formatPercent(playerMoney, effectiveThreshold, 1);
+        generatedBar = `💰 Spare für ${factionToWorkFor.name}: ${ns.format.number(playerMoney, 1)} / ${ns.format.number(effectiveThreshold, 0)} $ (${progressPct})`;
       }
     } else {
       generatedBar = "💰 Maximiere Profit (Batcher)";
