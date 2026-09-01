@@ -18,8 +18,21 @@ import {
   setSleeveTask,
 } from "../../domain/sleeve/sleeve-utils.js";
 import { MEGACORPS } from "../../shared/constants/factions.js";
-import { loadSleeveState, patchSleeveState } from "/infrastructure/state/state.js";
+import {
+  loadSleeveState,
+  patchSleeveState,
+} from "/infrastructure/state/state.js";
 import { hasSleeve, hasGang } from "/lib/utils.js";
+
+// Helper-Funktion oben einfügen
+function isBladeburnerActive(ns: NS): boolean {
+  if (!ns.bladeburner) return false;
+  try {
+    return ns.bladeburner.inBladeburner();
+  } catch {
+    return false;
+  }
+}
 
 type ExtendedGangStatus = SleeveGangUnlockStatus & { gangFaction?: string };
 
@@ -95,14 +108,13 @@ function resolveSleeveAssignment(
   gangStatus: ExtendedGangStatus,
   factionsNeedingRep: FactionName[],
   assignedFactions: Set<string>,
-  companiesNeedingRep: CompanyName[], 
-  assignedCompanies: Set<string>       
+  companiesNeedingRep: CompanyName[],
+  assignedCompanies: Set<string>,
+  hasBladeburner: boolean,
 ): SleeveTaskAssignment {
-  // 1️⃣ NOTFALL: Schock abbauen & Synchronisieren
   if (sleeveShock > 0) return { mode: "RECOVERY" };
   if (sleeveSync < 100) return { mode: "SYNCHRO" };
 
-  // 2️⃣ DOMINION / XP-RUSH
   const isDominion =
     options.strategy === "DOMINION" ||
     options.isDominionActive === true ||
@@ -117,11 +129,11 @@ function resolveSleeveAssignment(
   }
 
   const availableFactions = factionsNeedingRep.filter(
-    (f) => !assignedFactions.has(f)
+    (f) => !assignedFactions.has(f),
   );
 
   const availableCompanies = companiesNeedingRep.filter(
-    (c) => !assignedCompanies.has(c)
+    (c) => !assignedCompanies.has(c),
   );
 
   // 3️⃣ EXPLIZITER OVERRIDE (sleeveGlobalMode)
@@ -130,6 +142,13 @@ function resolveSleeveAssignment(
     options.globalMode !== "RECOVERY" &&
     options.globalMode !== "SYNCHRO"
   ) {
+    type SleeveBladeburnerType = "General" | "Contracts";
+
+    const VALID_BLADEBURNER_TYPES: SleeveBladeburnerType[] = [
+      "General",
+      "Contracts",
+    ];
+
     switch (options.globalMode) {
       case "CRIME":
         return { mode: "CRIME", target: "Homicide" };
@@ -139,7 +158,7 @@ function resolveSleeveAssignment(
 
         if (gangStatus.gangFaction && fac === gangStatus.gangFaction) {
           fac = availableFactions.find(
-            (f) => f !== gangStatus.gangFaction
+            (f) => f !== gangStatus.gangFaction,
           ) as FactionName;
         }
 
@@ -157,25 +176,53 @@ function resolveSleeveAssignment(
         };
       case "COMPANY": {
         const primaryTarget = options.targetCompany
-          ? (MEGACORPS[options.targetCompany] ?? (options.targetCompany as CompanyName))
+          ? (MEGACORPS[options.targetCompany] ??
+            (options.targetCompany as CompanyName))
           : undefined;
 
         if (primaryTarget && !assignedCompanies.has(primaryTarget)) {
-          return { mode: "COMPANY", target: primaryTarget };
+          return { mode: "COMPANY", target: primaryTarget ?? undefined };
         }
         if (availableCompanies.length > 0) {
           return { mode: "COMPANY", target: availableCompanies[0] };
         }
         break;
       }
+
+      case "FACTION": {
+        let fac =
+          (options.targetFaction as FactionName) ?? availableFactions[0];
+
+        if (gangStatus.gangFaction && fac === gangStatus.gangFaction) {
+          fac = availableFactions.find(
+            (f) => f !== gangStatus.gangFaction,
+          ) as FactionName;
+        }
+
+        if (fac && !assignedFactions.has(fac)) {
+          return {
+            mode: "FACTION",
+            target: fac ?? undefined,
+            subType: "hacking",
+          };
+        }
+        break;
+      }
     }
   }
 
-  // 4️⃣ STRATEGIE-REAKTION: COMPANY
+  // 4️⃣ STRATEGIE-REAKTION: BLADEBURNER
+  if ((options.strategy as string) === "BLADEBURNER" && hasBladeburner) {
+    const bType = options.targetBladeburnerType ?? "General";
+    const bAction = options.targetBladeburnerAction ?? "Field Analysis";
+    return { mode: "BLADEBURNER", target: bType, subType: bAction };
+  }
+
+  // 5️⃣ STRATEGIE-REAKTION: COMPANY
   if (options.strategy === "COMPANY") {
-    // 1. Primäres Roadmap-Ziel zuweisen (falls noch frei & benötigt)
     const primaryTarget = options.targetCompany
-      ? (MEGACORPS[options.targetCompany] ?? (options.targetCompany as CompanyName))
+      ? (MEGACORPS[options.targetCompany] ??
+        (options.targetCompany as CompanyName))
       : undefined;
 
     if (
@@ -186,12 +233,10 @@ function resolveSleeveAssignment(
       return { mode: "COMPANY", target: primaryTarget };
     }
 
-    // 2. Andere Sleeves auf verbleibende Megacorps verteilen
     if (availableCompanies.length > 0) {
       return { mode: "COMPANY", target: availableCompanies[0] };
     }
 
-    // 3. Fallback: Fraktions-Reputation farmen
     if (availableFactions.length > 0) {
       return {
         mode: "FACTION",
@@ -242,6 +287,7 @@ function manageAllSleeves(
 ): string {
   const statuses = getSleeveStatuses(ns);
   const gangStatus = checkSleeveGangStatus(ns);
+  const hasBladeburner = isBladeburnerActive(ns);
 
   const assignedFactions = new Set<string>();
   const assignedCompanies = new Set<string>();
@@ -304,6 +350,7 @@ function manageAllSleeves(
       assignedFactions,
       companiesNeedingRep,
       assignedCompanies,
+      hasBladeburner,
     );
 
     if (assignment.mode === "FACTION" && assignment.target) {
@@ -375,10 +422,8 @@ function getCompaniesNeedingRep(
   for (const [_, companyName] of Object.entries(MEGACORPS)) {
     const company = companyName as CompanyName;
 
-    // 1. Ist der Spieler überhaupt bei der Firma angestellt? (Pflicht für Sleeves)
     if (!playerJobs.includes(company)) continue;
 
-    // 2. Hat der Spieler die Fraktion schon beigetreten & alle Augs gekauft?
     const factionName =
       company === "Fulcrum Technologies"
         ? ("Fulcrum Secret Technologies" as FactionName)
@@ -388,11 +433,10 @@ function getCompaniesNeedingRep(
       if (ns.singularity) {
         const augs = ns.singularity.getAugmentationsFromFaction(factionName);
         const unowned = augs.filter((aug) => !ownedAugs.includes(aug));
-        if (unowned.length === 0) continue; // Fraktion erledigt
+        if (unowned.length === 0) continue;
       }
     }
 
-    // 3. Prüfen, ob der Firmen-Ruf schon das Limit erreicht hat (200k / 250k)
     const currentRep = ns.singularity
       ? ns.singularity.getCompanyRep(company)
       : 0;
@@ -405,7 +449,6 @@ function getCompaniesNeedingRep(
 
   return result;
 }
-
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -458,6 +501,8 @@ export async function main(ns: NS): Promise<void> {
       targetFaction: botState?.targetFaction,
       targetCompany: botState?.targetCompany,
       targetStat: botState?.targetStat,
+      targetBladeburnerAction: botState?.targetBladeburnerAction,
+      targetBladeburnerType: botState?.targetBladeburnerType,
       strategy: botState?.strategy,
       autoBuyAugs: botState?.autoBuyAugs,
       isDominionActive: botState?.isDominionActive,
@@ -498,4 +543,3 @@ export async function main(ns: NS): Promise<void> {
     await ns.sleep(2000);
   }
 }
-

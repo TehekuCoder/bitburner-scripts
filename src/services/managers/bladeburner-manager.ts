@@ -1,17 +1,22 @@
-// services/managers/bladeburner-manager.ts
 import {
   NS,
   BladeburnerActionType,
   BladeburnerActionName,
   CityName,
+  BladeburnerSkillName,
 } from "@ns";
 import { BLADEBURNER_SKILL_PRIORITIES } from "/shared/constants/bladeburner";
 
-// Schwellenwerte für Entscheidungslogik
-const STAMINA_RECOVERY_THRESHOLD = 0.5; // Unter 50% Stamina ➔ Regeneration
-const STAMINA_FULL_THRESHOLD = 0.95; // Bis 95% Stamina regenerieren
-const MIN_SUCCESS_CHANCE = 0.85; // Min. 85% durchschnittliche Chance für Aktionen
-const BLACKOP_SUCCESS_CHANCE = 0.9; // Min. 90% Chance für BlackOps
+// Zentrale Konfiguration aller Schwellenwerte
+const CONFIG = {
+  STAMINA_RECOVERY_THRESHOLD: 0.5, // Unter 50% Stamina ➔ Regeneration
+  STAMINA_FULL_THRESHOLD: 0.95, // Bis 95% Stamina regenerieren
+  MIN_CHANCE_BLACKOP: 0.9, // Min. 90% Chance für BlackOps
+  MIN_CHANCE_OPERATION: 0.8, // Min. 80% Chance für Operations
+  MIN_CHANCE_CONTRACT_HIGH: 0.75, // Min. 75% Chance für Bounty Hunter / Retirement
+  MIN_CHANCE_TRACKING: 0.65, // Min. 65% Chance für Tracking
+  MAX_CHAOS: 20, // Ab 20 Chaos ➔ Stadtwechsel oder Diplomacy
+};
 
 const CITIES: CityName[] = [
   "Aevum",
@@ -44,17 +49,17 @@ export async function main(ns: NS): Promise<void> {
     const staminaRatio = maxStamina > 0 ? currentStamina / maxStamina : 0;
     const currentAction = ns.bladeburner.getCurrentAction();
 
-    // Wenn wir uns gerade in der Regenerationsphase befinden
+    // Regenerationsphase aktiv
     if (
       currentAction?.name === "Hyperbolic Regeneration Chamber" &&
-      staminaRatio < STAMINA_FULL_THRESHOLD
+      staminaRatio < CONFIG.STAMINA_FULL_THRESHOLD
     ) {
       await sleepNextCycle(ns);
       continue;
     }
 
     // Stamina zu niedrig ➔ Hyperbolic Regeneration starten
-    if (staminaRatio < STAMINA_RECOVERY_THRESHOLD) {
+    if (staminaRatio < CONFIG.STAMINA_RECOVERY_THRESHOLD) {
       if (currentAction?.name !== "Hyperbolic Regeneration Chamber") {
         setAction(ns, "General", "Hyperbolic Regeneration Chamber");
       }
@@ -62,18 +67,25 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // 🟢 3. Stadt- & Chaos-Management (wechselt auch, wenn Stadt leergemacht wurde)
+    // 🟢 3. Stadt- & Chaos-Management
     manageCityAndChaos(ns);
 
-    // 🟢 4. Aktionsauswahl (Priorität: BlackOps > Operations > Contracts > Field Analysis)
+    // 🟢 4. Aktionsauswahl & Chaos-Erste-Hilfe
     const bestAction = findBestAction(ns);
+    const currentCity = ns.bladeburner.getCity();
+    const currentChaos = ns.bladeburner.getCityChaos(currentCity);
+
     if (bestAction) {
       if (currentAction?.name !== bestAction.name) {
         setAction(ns, bestAction.type, bestAction.name);
       }
     } else {
-      // Fallback: Field Analysis nur starten, wenn es nicht bereits läuft
-      if (currentAction?.name !== "Field Analysis") {
+      // Fallback: Hohes Chaos mit Diplomacy senken oder Aufklären mit Field Analysis
+      if (currentChaos > CONFIG.MAX_CHAOS) {
+        if (currentAction?.name !== "Diplomacy") {
+          setAction(ns, "General", "Diplomacy");
+        }
+      } else if (currentAction?.name !== "Field Analysis") {
         setAction(ns, "General", "Field Analysis");
       }
     }
@@ -83,61 +95,74 @@ export async function main(ns: NS): Promise<void> {
 }
 
 /**
- * Findet die beste verfügbare Aktion basierend auf Durchschnittschance und Priorität.
+ * Evaluiert die beste Aktion mit absteigender Wertigkeit und gestaffelten Chancen.
  */
 function findBestAction(
   ns: NS,
-): { type: BladeburnerActionType; name: string } | null {
+): { type: BladeburnerActionType; name: BladeburnerActionName } | null {
   // 1. BlackOps prüfen
   const nextBlackOp = ns.bladeburner.getNextBlackOp();
   if (nextBlackOp && nextBlackOp.name) {
     const reqRank = ns.bladeburner.getBlackOpRank(nextBlackOp.name);
-    const currentRank = ns.bladeburner.getRank();
-
-    if (currentRank >= reqRank) {
-      const blackOpType = "BlackOp" as BladeburnerActionType;
+    if (ns.bladeburner.getRank() >= reqRank) {
       const [minChance, maxChance] =
         ns.bladeburner.getActionEstimatedSuccessChance(
-          blackOpType,
+          "Black Operations",
           nextBlackOp.name as BladeburnerActionName,
         );
-      if ((minChance + maxChance) / 2 >= BLACKOP_SUCCESS_CHANCE) {
-        return { type: blackOpType, name: nextBlackOp.name };
+      if ((minChance + maxChance) / 2 >= CONFIG.MIN_CHANCE_BLACKOP) {
+        return {
+          type: "Black Operations",
+          name: nextBlackOp.name as BladeburnerActionName,
+        };
       }
     }
   }
 
-  // 2. Operations prüfen (Durchschnittschance nutzen)
-  const operations = ns.bladeburner.getOperationNames();
+  // 2. Operations prüfen (von wertvoll zu einfach)
+  const operations = ns.bladeburner.getOperationNames().slice().reverse();
   for (const op of operations) {
-    const count = ns.bladeburner.getActionCountRemaining("Operations", op);
-    if (count <= 0) continue;
+    if (ns.bladeburner.getActionCountRemaining("Operations", op) <= 0) continue;
 
+    const actionName = op as BladeburnerActionName;
     const [minChance, maxChance] =
-      ns.bladeburner.getActionEstimatedSuccessChance(
-        "Operations",
-        op as BladeburnerActionName,
-      );
+      ns.bladeburner.getActionEstimatedSuccessChance("Operations", actionName);
     const avgChance = (minChance + maxChance) / 2;
-    if (avgChance >= MIN_SUCCESS_CHANCE) {
-      return { type: "Operations", name: op };
+
+    // Bei zu hoher Schätzspanne (> 20%) zuerst Informationen sammeln
+    if (
+      maxChance - minChance > 0.2 &&
+      avgChance < CONFIG.MIN_CHANCE_OPERATION
+    ) {
+      return {
+        type: "General",
+        name: "Field Analysis" as BladeburnerActionName,
+      };
+    }
+
+    if (avgChance >= CONFIG.MIN_CHANCE_OPERATION) {
+      return { type: "Operations", name: actionName };
     }
   }
 
-  // 3. Contracts prüfen (Durchschnittschance nutzen)
-  const contracts = ns.bladeburner.getContractNames();
+  // 3. Contracts prüfen (von wertvoll zu einfach)
+  const contracts = ns.bladeburner.getContractNames().slice().reverse();
   for (const contract of contracts) {
-    const count = ns.bladeburner.getActionCountRemaining("Contracts", contract);
-    if (count <= 0) continue;
+    if (ns.bladeburner.getActionCountRemaining("Contracts", contract) <= 0)
+      continue;
 
+    const actionName = contract as BladeburnerActionName;
     const [minChance, maxChance] =
-      ns.bladeburner.getActionEstimatedSuccessChance(
-        "Contracts",
-        contract as BladeburnerActionName,
-      );
+      ns.bladeburner.getActionEstimatedSuccessChance("Contracts", actionName);
     const avgChance = (minChance + maxChance) / 2;
-    if (avgChance >= MIN_SUCCESS_CHANCE) {
-      return { type: "Contracts", name: contract };
+
+    const reqChance =
+      contract === "Tracking"
+        ? CONFIG.MIN_CHANCE_TRACKING
+        : CONFIG.MIN_CHANCE_CONTRACT_HIGH;
+
+    if (avgChance >= reqChance) {
+      return { type: "Contracts", name: actionName };
     }
   }
 
@@ -145,75 +170,60 @@ function findBestAction(
 }
 
 /**
- * Überprüft Chaos in Städten UND wechselt die Stadt, falls in der aktuellen Stadt keine Aktionen übrig sind.
+ * Bewertet alle Städte nach Synth-Population und Chaos und wechselt zur optimalen Stadt.
  */
 function manageCityAndChaos(ns: NS): void {
   const currentCity = ns.bladeburner.getCity();
   const currentChaos = ns.bladeburner.getCityChaos(currentCity);
+  const currentPop = ns.bladeburner.getCityEstimatedPopulation(currentCity);
 
-  // 1. Priorität: Chaos reduzieren (> 50)
-  if (currentChaos > 50) {
-    let bestCity: CityName = currentCity;
-    let lowestChaos = currentChaos;
+  let bestCity: CityName = currentCity;
+  let bestScore = calculateCityScore(currentPop, currentChaos);
 
-    for (const city of CITIES) {
-      const chaos = ns.bladeburner.getCityChaos(city);
-      if (chaos < lowestChaos) {
-        lowestChaos = chaos;
-        bestCity = city;
-      }
-    }
+  for (const city of CITIES) {
+    if (city === currentCity) continue;
 
-    if (bestCity !== currentCity) {
-      ns.bladeburner.switchCity(bestCity);
-      ns.print(
-        `🌆 Stadt gewechselt nach ${bestCity} (Chaos zu hoch: ${lowestChaos.toFixed(1)})`,
-      );
-      return;
+    const chaos = ns.bladeburner.getCityChaos(city);
+    const pop = ns.bladeburner.getCityEstimatedPopulation(city);
+    const score = calculateCityScore(pop, chaos);
+
+    // Wechsel erzwingen bei Chaos über MAX_CHAOS oder bei >15% höherem Score
+    if (currentChaos > CONFIG.MAX_CHAOS || score > bestScore * 1.15) {
+      bestScore = score;
+      bestCity = city;
     }
   }
 
-  // 2. Priorität: Wechseln, wenn in der aktuellen Stadt alle Verträge/Operationen 0 sind
-  if (!hasAvailableActionsInCity(ns)) {
-    for (const city of CITIES) {
-      if (city === currentCity) continue;
-      ns.bladeburner.switchCity(city);
-      if (hasAvailableActionsInCity(ns)) {
-        ns.print(
-          `🌆 Stadt gewechselt nach ${city} (Keine Verträge mehr in vorheriger Stadt)`,
-        );
-        return;
-      }
-    }
-    // Falls nirgendwo Verträge frei sind, zurück in Ausgangsstadt
-    ns.bladeburner.switchCity(currentCity);
+  if (bestCity !== currentCity) {
+    ns.bladeburner.switchCity(bestCity);
+    const newPop = ns.format.number(
+      ns.bladeburner.getCityEstimatedPopulation(bestCity),
+      1,
+    );
+    const newChaos = ns.bladeburner.getCityChaos(bestCity).toFixed(1);
+    ns.print(
+      `🌆 Stadt gewechselt: ${currentCity} ➔ ${bestCity} (Pop: ${newPop}, Chaos: ${newChaos})`,
+    );
   }
 }
 
 /**
- * Hilfsfunktion: Prüft, ob in der aktuellen Stadt noch Verträge/Operationen übrig sind.
+ * Berechnet einen Rating-Score für Städte.
  */
-function hasAvailableActionsInCity(ns: NS): boolean {
-  const contracts = ns.bladeburner.getContractNames();
-  for (const c of contracts) {
-    if (ns.bladeburner.getActionCountRemaining("Contracts", c) > 0) return true;
-  }
-  const operations = ns.bladeburner.getOperationNames();
-  for (const op of operations) {
-    if (ns.bladeburner.getActionCountRemaining("Operations", op) > 0)
-      return true;
-  }
-  return false;
+function calculateCityScore(pop: number, chaos: number): number {
+  if (pop <= 0) return 0;
+  return pop / (chaos + 1);
 }
 
 /**
  * Helper zum Starten einer Aktion mit Logging.
  */
-function setAction(ns: NS, type: BladeburnerActionType, name: string): void {
-  const success = ns.bladeburner.startAction(
-    type,
-    name as BladeburnerActionName,
-  );
+function setAction(
+  ns: NS,
+  type: BladeburnerActionType,
+  name: BladeburnerActionName,
+): void {
+  const success = ns.bladeburner.startAction(type, name);
   if (success) {
     ns.print(`▶️ Aktion gestartet: [${type}] ${name}`);
   }
@@ -221,7 +231,6 @@ function setAction(ns: NS, type: BladeburnerActionType, name: string): void {
 
 /**
  * Pollt dynamisch in kurzen Abständen (200ms), bis die aktuelle Aktion fertig ist.
- * Funktioniert perfekt mit Bonus Time, Overclock & normalen Geschwindigkeiten!
  */
 async function sleepNextCycle(ns: NS): Promise<void> {
   const initialAction = ns.bladeburner.getCurrentAction();
@@ -247,19 +256,72 @@ function autoUpgradeSkills(ns: NS): void {
   let availableSp = ns.bladeburner.getSkillPoints();
   if (availableSp <= 0) return;
 
-  for (const item of BLADEBURNER_SKILL_PRIORITIES) {
-    if (availableSp <= 0) break;
-    const currentLevel = ns.bladeburner.getSkillLevel(item.name);
-    if (item.maxLevel && currentLevel >= item.maxLevel) continue;
+  // 1. Prüfen, ob ein freigeschaltetes BlackOp durch zu geringe Erfolgschance blockiert ist
+  const nextBlackOp = ns.bladeburner.getNextBlackOp();
+  let isBlackOpBlocked = false;
 
-    const cost = ns.bladeburner.getSkillUpgradeCost(item.name);
-    if (cost > 0 && availableSp >= cost) {
-      if (ns.bladeburner.upgradeSkill(item.name, 1)) {
-        ns.print(
-          `🆙 Skill aufgerüstet: ${item.name} (Lvl ${currentLevel + 1})`,
+  if (nextBlackOp && nextBlackOp.name) {
+    const reqRank = ns.bladeburner.getBlackOpRank(nextBlackOp.name);
+    if (ns.bladeburner.getRank() >= reqRank) {
+      const [minChance, maxChance] =
+        ns.bladeburner.getActionEstimatedSuccessChance(
+          "Black Operations",
+          nextBlackOp.name as BladeburnerActionName,
         );
-        availableSp -= cost;
+      if ((minChance + maxChance) / 2 < CONFIG.MIN_CHANCE_BLACKOP) {
+        isBlackOpBlocked = true;
       }
+    }
+  }
+
+  // Fokus-Filter für BlackOp-Erfolgschancen
+  const BLACKOP_BOOST_SKILLS: BladeburnerSkillName[] = [
+    "Blade's Intuition",
+    "Digital Observer",
+    "Reaper",
+    "Evasive System",
+  ];
+
+  while (availableSp > 0) {
+    let bestSkill: BladeburnerSkillName | null = null;
+    let bestScore = -1;
+    let bestCost = Infinity;
+
+    for (const item of BLADEBURNER_SKILL_PRIORITIES) {
+      const skillName = item.name as BladeburnerSkillName;
+
+      // Im BlackOp-Push-Modus ausschließlich direkte Erfolgs-Skills aufrüsten
+      if (isBlackOpBlocked && !BLACKOP_BOOST_SKILLS.includes(skillName)) {
+        continue;
+      }
+
+      const currentLevel = ns.bladeburner.getSkillLevel(skillName);
+      if (item.maxLevel && currentLevel >= item.maxLevel) continue;
+
+      const cost = ns.bladeburner.getSkillUpgradeCost(skillName);
+      if (cost <= 0 || cost > availableSp) continue;
+
+      // ROI-Berechnung: (Gewichtung^2) / Kosten
+      const score = Math.pow(item.weight, 2) / cost;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestSkill = skillName;
+        bestCost = cost;
+      }
+    }
+
+    if (!bestSkill) break;
+
+    if (ns.bladeburner.upgradeSkill(bestSkill, 1)) {
+      const newLevel = ns.bladeburner.getSkillLevel(bestSkill);
+      const tag = isBlackOpBlocked ? " 🎯 [BlackOp Push]" : "";
+      ns.print(
+        `🆙 Skill aufgerüstet${tag}: ${bestSkill} (Lvl ${newLevel}) [-${bestCost} SP]`,
+      );
+      availableSp -= bestCost;
+    } else {
+      break;
     }
   }
 }
