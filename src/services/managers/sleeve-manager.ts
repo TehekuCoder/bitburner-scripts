@@ -111,9 +111,18 @@ function resolveSleeveAssignment(
   companiesNeedingRep: CompanyName[],
   assignedCompanies: Set<string>,
   hasBladeburner: boolean,
+  isBlackOpsActive: boolean,
 ): SleeveTaskAssignment {
   if (sleeveShock > 0) return { mode: "RECOVERY" };
   if (sleeveSync < 100) return { mode: "SYNCHRO" };
+
+  // 🚨 BLACK OPS OVERRIDE: Höchste Priorität bei aktiven BlackOps
+  if (hasBladeburner && isBlackOpsActive) {
+    return {
+      mode: "BLADEBURNER",
+      subType: "Support main sleeve",
+    };
+  }
 
   const isDominion =
     options.strategy === "DOMINION" ||
@@ -288,6 +297,7 @@ function manageAllSleeves(
   const statuses = getSleeveStatuses(ns);
   const gangStatus = checkSleeveGangStatus(ns);
   const hasBladeburner = isBladeburnerActive(ns);
+  const isBlackOpsActive = isPlayerDoingBlackOps(ns);
 
   const assignedFactions = new Set<string>();
   const assignedCompanies = new Set<string>();
@@ -351,6 +361,7 @@ function manageAllSleeves(
       companiesNeedingRep,
       assignedCompanies,
       hasBladeburner,
+      isBlackOpsActive,
     );
 
     if (assignment.mode === "FACTION" && assignment.target) {
@@ -541,5 +552,15 @@ export async function main(ns: NS): Promise<void> {
     }
 
     await ns.sleep(2000);
+  }
+}
+
+function isPlayerDoingBlackOps(ns: NS): boolean {
+  if (!ns.bladeburner || !ns.bladeburner.inBladeburner()) return false;
+  try {
+    const currentAction = ns.bladeburner.getCurrentAction();
+    return currentAction?.type === "BlackOp";
+  } catch {
+    return false;
   }
 }

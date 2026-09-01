@@ -90,6 +90,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    // Warten bis zur nächsten Evaluierung nach Ablauf des Zyklus
     await sleepNextCycle(ns);
   }
 }
@@ -128,17 +129,6 @@ function findBestAction(
     const [minChance, maxChance] =
       ns.bladeburner.getActionEstimatedSuccessChance("Operations", actionName);
     const avgChance = (minChance + maxChance) / 2;
-
-    // Bei zu hoher Schätzspanne (> 20%) zuerst Informationen sammeln
-    if (
-      maxChance - minChance > 0.2 &&
-      avgChance < CONFIG.MIN_CHANCE_OPERATION
-    ) {
-      return {
-        type: "General",
-        name: "Field Analysis" as BladeburnerActionName,
-      };
-    }
 
     if (avgChance >= CONFIG.MIN_CHANCE_OPERATION) {
       return { type: "Operations", name: actionName };
@@ -187,7 +177,6 @@ function manageCityAndChaos(ns: NS): void {
     const pop = ns.bladeburner.getCityEstimatedPopulation(city);
     const score = calculateCityScore(pop, chaos);
 
-    // Wechsel erzwingen bei Chaos über MAX_CHAOS oder bei >15% höherem Score
     if (currentChaos > CONFIG.MAX_CHAOS || score > bestScore * 1.15) {
       bestScore = score;
       bestCity = city;
@@ -207,17 +196,11 @@ function manageCityAndChaos(ns: NS): void {
   }
 }
 
-/**
- * Berechnet einen Rating-Score für Städte.
- */
 function calculateCityScore(pop: number, chaos: number): number {
   if (pop <= 0) return 0;
   return pop / (chaos + 1);
 }
 
-/**
- * Helper zum Starten einer Aktion mit Logging.
- */
 function setAction(
   ns: NS,
   type: BladeburnerActionType,
@@ -230,33 +213,29 @@ function setAction(
 }
 
 /**
- * Pollt dynamisch in kurzen Abständen (200ms), bis die aktuelle Aktion fertig ist.
+ * Wartet exakt die Dauer eines Aktionszyklus ab, damit danach im Haupt-Loop
+ * die Erfolgschancen, Stamina und Stadt-Bedingungen neu bewertet werden.
  */
 async function sleepNextCycle(ns: NS): Promise<void> {
-  const initialAction = ns.bladeburner.getCurrentAction();
-  if (!initialAction || initialAction.type === "Idle") {
-    await ns.sleep(200);
+  const current = ns.bladeburner.getCurrentAction();
+  if (!current || current.type === "Idle") {
+    await ns.sleep(1000);
     return;
   }
 
-  while (true) {
-    await ns.sleep(200);
-    const current = ns.bladeburner.getCurrentAction();
-    if (
-      !current ||
-      current.type === "Idle" ||
-      current.name !== initialAction.name
-    ) {
-      break;
-    }
-  }
+  const duration = ns.bladeburner.getActionTime(
+    current.type as BladeburnerActionType,
+    current.name as BladeburnerActionName,
+  );
+
+  // Mindestens 1 Sekunde Warten zur Absicherung
+  await ns.sleep(Math.max(duration, 1000));
 }
 
 function autoUpgradeSkills(ns: NS): void {
   let availableSp = ns.bladeburner.getSkillPoints();
   if (availableSp <= 0) return;
 
-  // 1. Prüfen, ob ein freigeschaltetes BlackOp durch zu geringe Erfolgschance blockiert ist
   const nextBlackOp = ns.bladeburner.getNextBlackOp();
   let isBlackOpBlocked = false;
 
@@ -274,7 +253,6 @@ function autoUpgradeSkills(ns: NS): void {
     }
   }
 
-  // Fokus-Filter für BlackOp-Erfolgschancen
   const BLACKOP_BOOST_SKILLS: BladeburnerSkillName[] = [
     "Blade's Intuition",
     "Digital Observer",
@@ -290,7 +268,6 @@ function autoUpgradeSkills(ns: NS): void {
     for (const item of BLADEBURNER_SKILL_PRIORITIES) {
       const skillName = item.name as BladeburnerSkillName;
 
-      // Im BlackOp-Push-Modus ausschließlich direkte Erfolgs-Skills aufrüsten
       if (isBlackOpBlocked && !BLACKOP_BOOST_SKILLS.includes(skillName)) {
         continue;
       }
@@ -301,7 +278,6 @@ function autoUpgradeSkills(ns: NS): void {
       const cost = ns.bladeburner.getSkillUpgradeCost(skillName);
       if (cost <= 0 || cost > availableSp) continue;
 
-      // ROI-Berechnung: (Gewichtung^2) / Kosten
       const score = Math.pow(item.weight, 2) / cost;
 
       if (score > bestScore) {
