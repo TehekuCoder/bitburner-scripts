@@ -39,7 +39,6 @@ export function evaluateTargets(
   const allServers = getAllServers(ns);
   const targets: TargetScore[] = [];
 
-  // BitNode Multiplier mit sicheren Fallbacks laden
   let serverGrowthMult = 1.0;
   let scriptHackMoney = 1.0;
   let scriptHackMoneyGain = 1.0;
@@ -50,7 +49,7 @@ export function evaluateTargets(
     scriptHackMoney = bnMults.ScriptHackMoney ?? 1.0;
     scriptHackMoneyGain = bnMults.ScriptHackMoneyGain ?? 1.0;
   } catch {
-    // Fallback auf Standardwerte (BitNode 1) bei Fehlern
+    // Fallback BitNode 1
   }
 
   for (const host of allServers) {
@@ -75,7 +74,6 @@ export function evaluateTargets(
     let chance = 0;
 
     if (ns.formulas?.hacking) {
-      // 🟢 Exakte Berechnung via Formulas API
       const simulatedServer: Server = {
         ...server,
         hackDifficulty: minDiff,
@@ -84,7 +82,6 @@ export function evaluateTargets(
       weakenTime = ns.formulas.hacking.weakenTime(simulatedServer, player);
       chance = ns.formulas.hacking.hackChance(simulatedServer, player);
     } else {
-      // 🟡 Fallback ohne Formulas.exe: Weaken-Zeit & Chance auf Min-Security umrechnen
       const currentWeakenTime = ns.getWeakenTime(host);
       weakenTime = currentWeakenTime * ((minDiff + 50) / (curDiff + 50));
 
@@ -124,9 +121,7 @@ export function evaluateTargets(
 }
 
 export interface TargetSelectionOptions {
-  /** Wie viel % besser der Score des neuen Ziels sein muss (z. B. 1.15 = 15% besser). Default: 1.15 */
   switchMargin?: number;
-  /** Mindesthaltedauer in ms auf einem Ziel, bevor gewechselt werden darf. Default: 60000 (60s) */
   minHoldMs?: number;
 }
 
@@ -136,10 +131,6 @@ export interface TargetSelectionResult {
   reason: string;
 }
 
-/**
- * Wählt das optimale Ziel aus der Liste der TargetScores aus und verhindert Target-Flapping
- * durch Hysterese (Score-Puffer) und eine Mindesthaltedauer.
- */
 export function selectBestTarget(
   ns: NS,
   targets: TargetScore[],
@@ -147,89 +138,73 @@ export function selectBestTarget(
   lastTargetChangeTime: number,
   options: TargetSelectionOptions = {},
 ): TargetSelectionResult {
-  const switchMargin = options.switchMargin ?? 1.15;
-  const minHoldMs = options.minHoldMs ?? 60_000;
-  const now = Date.now();
+  if (targets.length === 0)
+    return { target: null, hasChanged: false, reason: "Keine Ziele" };
 
-  // Keine Ziele vorhanden
-  if (targets.length === 0) {
-    return {
-      target: null,
-      hasChanged: currentTarget !== null,
-      reason: "Keine gültigen Ziele verfügbar.",
-    };
-  }
-
-  const topTarget = targets[0]; // Höchster absoluter Score
-
-  // 1. Erststart: Noch kein Ziel gewählt
-  if (!currentTarget) {
+  const topTarget = targets[0];
+  if (!currentTarget)
     return {
       target: topTarget.hostname,
       hasChanged: true,
-      reason: `Initiales Ziel gewählt: ${topTarget.hostname} (Score: ${topTarget.score.toFixed(2)})`,
+      reason: "Initiales Ziel",
     };
-  }
-
-  // 2. Das beste Ziel ist bereits aktiv
-  if (topTarget.hostname === currentTarget) {
+  if (topTarget.hostname === currentTarget)
     return {
       target: currentTarget,
       hasChanged: false,
-      reason: "Aktuelles Ziel ist weiterhin auf Platz 1.",
+      reason: "Bestes Ziel aktiv",
     };
-  }
 
-  // 3. Notfall: Hat das aktuelle Ziel Root-Rechte verloren?
-  if (!ns.hasRootAccess(currentTarget)) {
-    return {
-      target: topTarget.hostname,
-      hasChanged: true,
-      reason: `Root-Zugriff auf ${currentTarget} verloren! Notfall-Wechsel zu ${topTarget.hostname}`,
-    };
-  }
-
-  // 4. Mindesthaltedauer prüfen
-  const timeOnCurrentTarget = now - lastTargetChangeTime;
-  if (timeOnCurrentTarget < minHoldMs) {
-    const remainingSec = ((minHoldMs - timeOnCurrentTarget) / 1000).toFixed(1);
-    return {
-      target: currentTarget,
-      hasChanged: false,
-      reason: `Sperrfrist aktiv (${remainingSec}s verbleibend). Behalte ${currentTarget}.`,
-    };
-  }
-
-  // 5. Hysterese-Score-Vergleich
   const currentTargetEntry = targets.find((t) => t.hostname === currentTarget);
-  const currentScore = currentTargetEntry?.score ?? 0;
-
-  // Wenn das aktuelle Ziel gar nicht mehr in den qualifizierten Targets ist (z. B. Hacking-Req zu hoch), sofort wechseln
-  if (!currentTargetEntry) {
+  if (!currentTargetEntry)
     return {
       target: topTarget.hostname,
       hasChanged: true,
-      reason: `Aktuelles Ziel ${currentTarget} qualifiziert sich nicht mehr. Wechsel zu ${topTarget.hostname}`,
+      reason: "Ziel nicht mehr qualifiziert",
+    };
+
+  // 1. Dynamische Sperrfrist basierend auf der Weaken-Zeit des AKTUELLEN Targets
+  const currentWeakenTime = currentTargetEntry.weakenTimeMs;
+  const dynamicMinHoldMs = Math.max(
+    options.minHoldMs ?? 60_000,
+    currentWeakenTime * 2.5,
+  );
+  const timeOnCurrentTarget =
+    lastTargetChangeTime > 0 ? Date.now() - lastTargetChangeTime : 0;
+
+  if (timeOnCurrentTarget < dynamicMinHoldMs) {
+    const remainingSec = (
+      (dynamicMinHoldMs - timeOnCurrentTarget) /
+      1000
+    ).toFixed(0);
+    return {
+      target: currentTarget,
+      hasChanged: false,
+      reason: `Pipeline läuft: Sperrfrist aktiv (noch ${remainingSec}s / 2.5x weakenTime).`,
     };
   }
 
-  // Besser als der Score * Margin?
-  if (topTarget.score > currentScore * switchMargin) {
-    const gainPercent = (
-      ((topTarget.score - currentScore) / currentScore) *
-      100
-    ).toFixed(1);
+  // 2. PREP-Penalty Check
+  const newServer = ns.getServer(topTarget.hostname);
+  const needsPrep =
+    (newServer.moneyAvailable ?? 0) < (newServer.moneyMax ?? 1) * 0.99 ||
+    (newServer.hackDifficulty ?? 99) > (newServer.minDifficulty ?? 1) + 0.05;
+
+  const effectiveMargin = needsPrep
+    ? (options.switchMargin ?? 1.15) + 0.25
+    : (options.switchMargin ?? 1.15);
+
+  if (topTarget.score > currentTargetEntry.score * effectiveMargin) {
     return {
       target: topTarget.hostname,
       hasChanged: true,
-      reason: `Ziel ${topTarget.hostname} ist ${gainPercent}% lukrativer als ${currentTarget} (übersteigt Margin von ${((switchMargin - 1) * 100).toFixed(0)}%).`,
+      reason: `Wechsel zu ${topTarget.hostname} lohnt sich trotz ${needsPrep ? "PREP-Phase" : "Wechselkosten"} (Score +${((topTarget.score / currentTargetEntry.score - 1) * 100).toFixed(0)}%).`,
     };
   }
 
-  // Wenn die Abweichung zu gering ist, beim aktuellen Ziel bleiben
   return {
     target: currentTarget,
     hasChanged: false,
-    reason: `Ziel ${topTarget.hostname} zwar besser als ${currentTarget}, aber unter der Wechsel-Schwelle von ${((switchMargin - 1) * 100).toFixed(0)}%.`,
+    reason: `Vorteil von ${topTarget.hostname} kompensiert die Pipeline-Unterbrechung noch nicht.`,
   };
 }

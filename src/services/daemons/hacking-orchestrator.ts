@@ -4,7 +4,10 @@ import { BatchStrategy } from "/shared/types/batcher.js";
 import { PATHS } from "../../infrastructure/runtime/paths.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import { evaluateHackingStrategy } from "/domain/evaluators/strategy/hacking-strategy.js";
-import { evaluateTargets, selectBestTarget } from "/domain/evaluators/strategy/target-selection.js";
+import {
+  evaluateTargets,
+  selectBestTarget,
+} from "/domain/evaluators/strategy/target-selection.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
 import {
   getAllRootedServers,
@@ -24,8 +27,12 @@ export async function main(ns: NS): Promise<void> {
   let lastStrategyChangeTime = 0;
   const STRATEGY_COOLDOWN_MS = 30_000;
 
-  // 🚨 Strategien, die den Cooldown ohne Verzögerung umgehen
-  const EMERGENCY_STRATEGIES: BatchStrategy[] = ["PREP", "XP_GRIND", "WORKER"];
+  const EMERGENCY_STRATEGIES: BatchStrategy[] = [
+    "PREP",
+    "XP_GRIND",
+    "BOOTSTRAP",
+    "WORKER",
+  ];
 
   const JIT_DASHBOARD = PATHS.infrastructure.monitoring.jitDashboard;
   const ENGINE_DASHBOARD = PATHS.infrastructure.monitoring.dashboard;
@@ -35,173 +42,148 @@ export async function main(ns: NS): Promise<void> {
     const proposedStrategy: BatchStrategy = evalRec.strategy;
     const now = Date.now();
 
+    let strategyCandidate = proposedStrategy;
     let activeStrategy = proposedStrategy;
 
-    if (lastStrategy !== null && proposedStrategy !== lastStrategy) {
-      const timeSinceLastChange = now - lastStrategyChangeTime;
-      const isEmergencySwitch = EMERGENCY_STRATEGIES.includes(proposedStrategy);
+    // 1️⃣ PREP hat Vorrang, damit kein JIT/Shotgun-Flip im selben Tick sofort wieder gedrückt wird.
+    const prepTarget = resolveTargetForStrategy(
+      ns,
+      strategyCandidate,
+      lastTarget,
+      lastTargetChangeTime,
+    );
 
-      // Cooldown greift nur, wenn es KEIN Notfall-Wechsel ist
-      if (!isEmergencySwitch && timeSinceLastChange < STRATEGY_COOLDOWN_MS) {
+    if (
+      prepTarget &&
+      strategyCandidate !== "XP_GRIND" &&
+      strategyCandidate !== "WORKER" &&
+      strategyCandidate !== "BOOTSTRAP" &&
+      shouldForcePrep(ns, prepTarget)
+    ) {
+      strategyCandidate = "PREP";
+    }
+
+    // 2️⃣ Strategie-Cooldown prüfen mit stabilerer JIT/Shotgun-Logik
+    if (lastStrategy !== null && strategyCandidate !== lastStrategy) {
+      const timeSinceLastChange = now - lastStrategyChangeTime;
+      const isEmergencySwitch = EMERGENCY_STRATEGIES.includes(strategyCandidate);
+      const isJitShotgunFlip =
+        (lastStrategy === "JIT_HWGW" && strategyCandidate === "SHOTGUN_HWGW") ||
+        (lastStrategy === "SHOTGUN_HWGW" && strategyCandidate === "JIT_HWGW");
+
+      const stabilityHoldMs = isJitShotgunFlip ? 60_000 : STRATEGY_COOLDOWN_MS;
+
+      if (!isEmergencySwitch && timeSinceLastChange < stabilityHoldMs) {
         const remainingSec = (
-          (STRATEGY_COOLDOWN_MS - timeSinceLastChange) /
+          (stabilityHoldMs - timeSinceLastChange) /
           1000
         ).toFixed(1);
-
         activeStrategy = lastStrategy;
 
         logger.debug(
-          `Strategiewechsel zu ${proposedStrategy} blockiert (Cooldown: noch ${remainingSec}s)`,
+          `Strategiewechsel zu ${strategyCandidate} blockiert (Stabilitätsfenster: noch ${remainingSec}s)`,
           undefined,
           {
             context: {
-              proposedStrategy,
+              proposedStrategy: strategyCandidate,
               currentStrategy: lastStrategy,
               remainingSec,
+              stabilityHoldMs,
             },
           },
         );
       } else {
-        // Wechsel wird durchgeführt (Cooldown abgelaufen ODER Notfall)
         if (isEmergencySwitch) {
           logger.warn(
-            `🚨 Sofortiger Notfall-Strategiewechsel zu ${proposedStrategy} (Cooldown umgangen)`,
+            `🚨 Sofortiger Notfall-Strategiewechsel zu ${strategyCandidate} (Cooldown umgangen)`,
             undefined,
-            { context: { proposedStrategy, previousStrategy: lastStrategy } },
+            {
+              context: {
+                proposedStrategy: strategyCandidate,
+                previousStrategy: lastStrategy,
+              },
+            },
           );
         }
-
         lastStrategyChangeTime = now;
       }
     } else if (lastStrategy === null) {
       lastStrategyChangeTime = now;
     }
 
-    // 2️⃣ Target-Ermittlung
-    let candidateTarget = evalRec.preferredTarget ?? resolveXpTarget(ns);
-
-    if (activeStrategy === "XP_GRIND") {
-      const daemon = "w0r1d_d43m0n";
-      const hasDaemonRoot = ns.serverExists(daemon) && ns.hasRootAccess(daemon);
-      const reqSkill = hasDaemonRoot
-        ? (ns.getServer(daemon).requiredHackingSkill ?? 9999)
-        : 9999;
-      const playerSkill = ns.getHackingLevel();
-
-      if (hasDaemonRoot && playerSkill >= reqSkill) {
-        candidateTarget = daemon;
-      } else if (!evalRec.preferredTarget) {
-        candidateTarget = resolveXpTarget(ns);
-      }
-    }
-
-    // 🛡️ Absicherung bei fehlendem Root
-    if (!ns.hasRootAccess(candidateTarget)) {
-      const fallbackTarget = resolveXpTarget(ns);
-      logger.warn(
-        `Target '${candidateTarget}' hat keinen Root-Zugriff. Fallback auf '${fallbackTarget}'`,
-        candidateTarget,
-      );
-      candidateTarget = fallbackTarget;
-    }
-
-    const targets = evaluateTargets(ns, activeStrategy);
-
-    const targetSelection = selectBestTarget(
+    // 3️⃣ Finalen Target nach der stabilen Strategie auflösen.
+    let finalTarget = resolveTargetForStrategy(
       ns,
-      targets,
+      activeStrategy,
       lastTarget,
       lastTargetChangeTime,
-      {
-        switchMargin: 1.15, // Neuer Server muss 15% besser sein
-        minHoldMs: 60_000, // Mindestens 60s auf einem Ziel bleiben
-      },
     );
 
-    if (targetSelection.hasChanged) {
-      logger.info(`🎯 Target-Wechsel: ${targetSelection.reason}`);
-      lastTargetChangeTime = Date.now();
+    if (!finalTarget || !ns.hasRootAccess(finalTarget)) {
+      const fallbackTarget = resolveXpTarget(ns);
+      logger.warn(
+        `Target '${finalTarget}' hat keinen Root-Zugriff. Fallback auf '${fallbackTarget}'`,
+        finalTarget ?? undefined,
+      );
+      finalTarget = fallbackTarget;
     }
 
-    const activeTarget = targetSelection.target;
-    lastTarget = candidateTarget;
-
-    // 3️⃣ PREP-Check: Server muss erst vorbereitet werden, bevor HWGW/PROTO laufen kann
     if (
-      ns.hasRootAccess(candidateTarget) &&
       activeStrategy !== "XP_GRIND" &&
       activeStrategy !== "WORKER" &&
-      activeStrategy !== "BOOTSTRAP"
+      activeStrategy !== "BOOTSTRAP" &&
+      shouldForcePrep(ns, finalTarget)
     ) {
-      const server = ns.getServer(candidateTarget);
-      const isMaxMoney =
-        (server.moneyAvailable ?? 0) >= (server.moneyMax ?? 1) * 0.99;
-      const isMinSec =
-        (server.hackDifficulty ?? 99) <= (server.minDifficulty ?? 1) + 0.05;
-
-      if (!isMaxMoney || !isMinSec) {
-        activeStrategy = "PREP";
-      }
+      activeStrategy = "PREP";
     }
 
     // 📊 Statusänderungen protokollieren
-    if (activeStrategy !== lastStrategy || candidateTarget !== lastTarget) {
+    if (activeStrategy !== lastStrategy || finalTarget !== lastTarget) {
       logger.info(
-        `Strategie-Wechsel: ${activeStrategy} | Target: ${candidateTarget}`,
-        candidateTarget,
-        { context: { strategy: activeStrategy, target: candidateTarget } },
+        `Strategie-Wechsel: ${activeStrategy} | Target: ${finalTarget}`,
+        finalTarget,
+        { context: { strategy: activeStrategy, target: finalTarget } },
       );
       lastStrategy = activeStrategy;
-      lastTarget = candidateTarget;
+      lastTarget = finalTarget;
     }
 
     // 4️⃣ State aktualisieren
     patchBatcherState(ns, {
       batchStrategy: activeStrategy,
-      batcherTarget: candidateTarget,
+      batcherTarget: finalTarget,
       batcherActive: true,
       batcherProgress:
         activeStrategy === "XP_GRIND"
-          ? `XP-Grind aktiv auf ${candidateTarget}`
+          ? `XP-Grind aktiv auf ${finalTarget}`
           : `Laufende Strategie: ${activeStrategy}`,
     });
 
-    // 5️⃣ Engine starten ODER Multi-Target Worker im Netzwerk verteilen
-    if (ns.hasRootAccess(candidateTarget)) {
-      if (activeStrategy === "BOOTSTRAP" || activeStrategy === "WORKER") {
-        stopAllEngines(ns, logger);
+    // 5️⃣ Engine starten ODER Multi-Target Worker verteilen
+    if (activeStrategy === "BOOTSTRAP" || activeStrategy === "WORKER") {
+      stopAllEngines(ns, logger);
 
-        const allServers = getAllRootedServersIncludingPurchased(ns);
-        const totalNetworkRam = allServers.reduce(
-          (sum, s) => sum + ns.getServerMaxRam(s),
-          0,
-        );
-
-        let maxTargets = 1;
-        if (totalNetworkRam >= 2048) {
-          maxTargets = 5;
-        } else if (totalNetworkRam >= 512) {
-          maxTargets = 3;
-        } else if (totalNetworkRam >= 128) {
-          maxTargets = 2;
-        }
-
-        const evalTargets = evaluateTargets(ns, activeStrategy);
-        const topTargets =
-          evalTargets.length > 0
-            ? evalTargets.slice(0, maxTargets).map((t) => t.hostname)
-            : [candidateTarget];
-
-        deployWorkerFleet(ns, logger, allServers, topTargets);
-      } else {
-        stopNetworkWorkers(ns);
-        ensureEngineRunning(ns, activeStrategy, candidateTarget, logger);
-      }
-    } else {
-      logger.error(
-        `Kein Root-Zugriff auf ${candidateTarget} vorhanden! Engine gestoppt.`,
-        candidateTarget,
+      const allServers = getAllRootedServersIncludingPurchased(ns);
+      const totalNetworkRam = allServers.reduce(
+        (sum, s) => sum + ns.getServerMaxRam(s),
+        0,
       );
+
+      let maxTargets = 1;
+      if (totalNetworkRam >= 2048) maxTargets = 5;
+      else if (totalNetworkRam >= 512) maxTargets = 3;
+      else if (totalNetworkRam >= 128) maxTargets = 2;
+
+      const evalTargets = evaluateTargets(ns, activeStrategy);
+      const topTargets =
+        evalTargets.length > 0
+          ? evalTargets.slice(0, maxTargets).map((t) => t.hostname)
+          : [finalTarget];
+
+      deployWorkerFleet(ns, logger, allServers, topTargets);
+    } else {
+      stopNetworkWorkers(ns);
+      ensureEngineRunning(ns, activeStrategy, finalTarget, logger);
     }
 
     // 6️⃣ Dashboards verwalten
@@ -217,6 +199,54 @@ export async function main(ns: NS): Promise<void> {
   }
 }
 
+function resolveTargetForStrategy(
+  ns: NS,
+  strategy: BatchStrategy,
+  currentTarget: string | null,
+  lastTargetChangeTime: number,
+): string | null {
+  if (strategy === "XP_GRIND") {
+    const daemon = "w0r1d_d43m0n";
+    const hasDaemonRoot = ns.serverExists(daemon) && ns.hasRootAccess(daemon);
+    const reqSkill = hasDaemonRoot
+      ? (ns.getServer(daemon).requiredHackingSkill ?? 9999)
+      : 9999;
+    const playerSkill = ns.getHackingLevel();
+
+    return hasDaemonRoot && playerSkill >= reqSkill
+      ? daemon
+      : resolveXpTarget(ns);
+  }
+
+  const targets = evaluateTargets(ns, strategy);
+  const targetSelection = selectBestTarget(
+    ns,
+    targets,
+    currentTarget,
+    lastTargetChangeTime,
+    {
+      switchMargin: 1.15,
+      minHoldMs: 60_000,
+    },
+  );
+
+  if (targetSelection.hasChanged) {
+    return targetSelection.target ?? resolveXpTarget(ns);
+  }
+
+  return targetSelection.target ?? resolveXpTarget(ns);
+}
+
+function shouldForcePrep(ns: NS, target: string): boolean {
+  const server = ns.getServer(target);
+  const isMaxMoney =
+    (server.moneyAvailable ?? 0) >= (server.moneyMax ?? 1) * 0.99;
+  const isMinSec =
+    (server.hackDifficulty ?? 99) <= (server.minDifficulty ?? 1) + 0.05;
+
+  return !isMaxMoney || !isMinSec;
+}
+
 function manageDashboards(
   ns: NS,
   activeStrategy: BatchStrategy | null,
@@ -226,7 +256,6 @@ function manageDashboards(
 ): void {
   const isWorkerPhase =
     activeStrategy === "BOOTSTRAP" || activeStrategy === "WORKER";
-
   const activeDashboardScript =
     activeStrategy === "JIT_HWGW"
       ? jitDash
@@ -283,7 +312,6 @@ export function deployWorkerFleet(
 
   const scriptRam = ns.getScriptRam(workerScript);
 
-  // 1. Freien RAM im gesamten Netzwerk aggregieren
   const pool: FleetNode[] = servers
     .map((host) => {
       const maxRam = ns.getServerMaxRam(host);
@@ -297,18 +325,36 @@ export function deployWorkerFleet(
   const totalFleetRam = pool.reduce((sum, node) => sum + node.freeRam, 0);
   if (totalFleetRam <= 0) return;
 
-  // 2. RAM-Verteilung auf die besten Targets definieren (60% / 25% / 15%)
-  const weights = [0.6, 0.25, 0.15];
-  const targetBudgets = targets.slice(0, weights.length).map((target, idx) => ({
-    target,
-    remainingBudget: totalFleetRam * weights[idx],
-  }));
+  const weights = [0.5, 0.25, 0.15, 0.05, 0.05];
+  const targetBudgets = targets
+    .slice(0, Math.min(targets.length, weights.length))
+    .map((target, idx) => ({
+      target,
+      remainingBudget: totalFleetRam * weights[idx],
+    }));
+
+  const assignedBudget = targetBudgets.reduce(
+    (sum, item) => sum + item.remainingBudget,
+    0,
+  );
+  if (assignedBudget < totalFleetRam) {
+    const remainderTargets = targets.length - targetBudgets.length;
+    if (remainderTargets > 0) {
+      const remainderBudget = totalFleetRam - assignedBudget;
+      const extraShare = remainderBudget / remainderTargets;
+      for (let i = targetBudgets.length; i < targets.length; i++) {
+        targetBudgets.push({
+          target: targets[i],
+          remainingBudget: extraShare,
+        });
+      }
+    }
+  }
 
   logger.info(
     `Fleet-Pool: ${ns.format.number(totalFleetRam, 0)} GB RAM verfügbar für ${targetBudgets.length} Targets.`,
   );
 
-  // 3. Budgets sequenziell über den Server-Pool abarbeiten
   let targetIndex = 0;
 
   for (const node of pool) {
@@ -374,13 +420,8 @@ function stopAllEngines(ns: NS, logger: LoggerClient): void {
 function resolveXpTarget(ns: NS): string {
   const rootedServers = getAllRootedServers(ns);
 
-  if (rootedServers.length === 0) {
-    return "n00dles";
-  }
-
-  if (rootedServers.includes("joesguns")) {
-    return "joesguns";
-  }
+  if (rootedServers.length === 0) return "n00dles";
+  if (rootedServers.includes("joesguns")) return "joesguns";
 
   const playerSkill = ns.getHackingLevel();
   const validTargets = rootedServers

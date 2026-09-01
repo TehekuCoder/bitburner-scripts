@@ -11,12 +11,8 @@ export interface StrategyRecommendation {
   preferredTarget?: string;
 }
 
-/**
-  Berechnet den gesamten verfügbaren Max-RAM im gerooteten Netzwerk.
-  Zieht auf 'home' einen Puffer für Verwaltungsskripte ab.
- */
 function getTotalNetworkRam(ns: NS): number {
-  const HOME_RESERVE_RAM = 32; // GB Puffer für Manager/UI-Skripte auf home
+  const HOME_RESERVE_RAM = 32;
   const servers = getAllServers(ns);
   let totalRam = 0;
 
@@ -32,6 +28,27 @@ function getTotalNetworkRam(ns: NS): number {
   }
 
   return totalRam;
+}
+
+function shouldUseJit(
+  hasFormulas: boolean,
+  totalNetworkRam: number,
+  desyncRisk: number,
+  currentStrategy: BatchStrategy | null | undefined,
+): boolean {
+  if (!hasFormulas) return false;
+
+  const enterRam = 1024;
+  const exitRam = 896;
+  const enterDesync = 2.0;
+  const exitDesync = 2.3;
+  const effectiveStrategy = currentStrategy ?? null;
+
+  if (effectiveStrategy === "JIT_HWGW") {
+    return totalNetworkRam >= exitRam && desyncRisk <= exitDesync;
+  }
+
+  return totalNetworkRam >= enterRam && desyncRisk <= enterDesync;
 }
 
 export function evaluateHackingStrategy(
@@ -56,17 +73,15 @@ export function evaluateHackingStrategy(
 
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
-  // Hysterese-Schwellenwerte definieren
-  const isCurrentlyJit = currentStrategy === "JIT_HWGW";
-  const ramThreshold = isCurrentlyJit ? 896 : 1024; // Behalte JIT bereits ab 896 GB RAM
-  const desyncThreshold = isCurrentlyJit ? 2.2 : 2.0; // Toleranz bei leicht erhöhtem Risiko
-
   let strategy: BatchStrategy = "SHOTGUN_HWGW";
   let reason = "";
 
   if (playerSkill < 30 || yieldFactor === 0) {
     strategy = "XP_GRIND";
     reason = "Fokus auf XP-Grind.";
+  } else if (totalNetworkRam < 64) {
+    strategy = "BOOTSTRAP";
+    reason = "Netzwerk noch im Bootstrap-Setup; Worker-Phase ist noch zu klein.";
   } else if (yieldFactor < 0.05 || totalNetworkRam < 128) {
     strategy = "WORKER";
     reason = "Netz-RAM oder Ertrag zu gering für Batching.";
@@ -76,25 +91,23 @@ export function evaluateHackingStrategy(
   } else if (!hasFormulas) {
     strategy = "SHOTGUN_HWGW";
     reason = "Hohes Netz-RAM, aber keine Formulas.exe.";
-  } else if (desyncRisk <= desyncThreshold && totalNetworkRam >= ramThreshold) {
+  } else if (shouldUseJit(hasFormulas, totalNetworkRam, desyncRisk, currentStrategy)) {
     strategy = "JIT_HWGW";
     reason =
-      "Formulas.exe vorhanden, ausreichend Netz-RAM & stabiles Desync-Risiko.";
+      "Formulas.exe vorhanden, ausreichend Netz-RAM & stabiler Desync-Bereich. Hysterese aktiv.";
   } else {
     strategy = "SHOTGUN_HWGW";
     reason =
-      "Gute Rahmenbedingungen, aber Desync-Risiko oder RAM für JIT grenzwertig.";
+      "JIT-Bedingungen nicht stabil genug; auf robuste Shotgun-Logik zurückgefallen.";
   }
 
-  // 2. Entkoppelte Ziel-Ermittlung
   let preferredTarget: string | undefined;
 
   if (strategy === "XP_GRIND") {
-    // XP-Best-Target: Niedrigstes Level / Schnellster Weaken-Zyklus (z. B. n00dles oder joesguns)
     preferredTarget = getBestXpTarget(ns);
   } else {
-    // Reines Ertrags-Rating ohne Verzerrung durch die Strategie-Formel
-    const targets = evaluateTargets(ns, "WORKER"); // Übermittelt 'WORKER', um reine Ertrags-Formel zu erzwingen
+    const targetStrategy = strategy === "BOOTSTRAP" ? "WORKER" : strategy;
+    const targets = evaluateTargets(ns, targetStrategy);
     if (targets.length > 0) {
       preferredTarget = targets[0].hostname;
     }
@@ -109,9 +122,6 @@ export function evaluateHackingStrategy(
   };
 }
 
-/**
- * Ermittelt den optimalen Server für reinen XP-Gewinn.
- */
 function getBestXpTarget(ns: NS): string {
   const servers = getAllServers(ns).filter(
     (s) =>
@@ -124,7 +134,6 @@ function getBestXpTarget(ns: NS): string {
 
   if (servers.length === 0) return "n00dles";
 
-  // Sortiert nach der kürzesten Weaken-Zeit bei Min-Security
   servers.sort((a, b) => ns.getWeakenTime(a) - ns.getWeakenTime(b));
   return servers[0];
 }
