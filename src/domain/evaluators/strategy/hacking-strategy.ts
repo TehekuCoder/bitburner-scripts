@@ -34,7 +34,10 @@ function getTotalNetworkRam(ns: NS): number {
   return totalRam;
 }
 
-export function evaluateHackingStrategy(ns: NS): StrategyRecommendation {
+export function evaluateHackingStrategy(
+  ns: NS,
+  currentStrategy?: BatchStrategy | null,
+): StrategyRecommendation {
   const playerSkill = ns.getHackingLevel();
   const mults = loadBnMults(ns);
 
@@ -51,36 +54,36 @@ export function evaluateHackingStrategy(ns: NS): StrategyRecommendation {
   const desyncRisk =
     serverStartingSecurity / (hackingSpeedMultiplier * serverWeakenRate);
 
+  const hasFormulas = ns.fileExists("Formulas.exe", "home");
+
+  // Hysterese-Schwellenwerte definieren
+  const isCurrentlyJit = currentStrategy === "JIT_HWGW";
+  const ramThreshold = isCurrentlyJit ? 896 : 1024; // Behalte JIT bereits ab 896 GB RAM
+  const desyncThreshold = isCurrentlyJit ? 2.2 : 2.0; // Toleranz bei leicht erhöhtem Risiko
+
   let strategy: BatchStrategy = "SHOTGUN_HWGW";
   let reason = "";
 
-  // 1. Strategie-Bestimmung auf Basis globaler Netzwerk-Ressourcen
   if (playerSkill < 30 || yieldFactor === 0) {
     strategy = "XP_GRIND";
-    reason =
-      playerSkill < 30
-        ? `Hacking-Skill zu niedrig (${playerSkill} < 30). Fokus auf XP-Grind.`
-        : `Yield-Factor ist 0. Fokus auf XP-Grind.`;
-  } else if (yieldFactor < 0.05) {
+    reason = "Fokus auf XP-Grind.";
+  } else if (yieldFactor < 0.05 || totalNetworkRam < 128) {
     strategy = "WORKER";
-    reason = `Geld-Multiplikator extrem niedrig (${yieldFactor.toFixed(3)}). Single-Thread Worker am stabilsten.`;
-  } else if (totalNetworkRam < 128) {
-    strategy = "WORKER";
-    reason = `Gesamtes Netz-RAM zu gering (${totalNetworkRam} GB < 128 GB).`;
-  } else if (!ns.fileExists("Formulas.exe", "home") && totalNetworkRam < 1024) {
+    reason = "Netz-RAM oder Ertrag zu gering für Batching.";
+  } else if (!hasFormulas && totalNetworkRam < 1024) {
     strategy = "PROTO_BATCH";
-    reason =
-      "Keine Formulas.exe und moderates Netz-RAM. Sequentieller Proto-Batch.";
-  } else if (!ns.fileExists("Formulas.exe", "home")) {
+    reason = "Keine Formulas.exe und moderates Netz-RAM.";
+  } else if (!hasFormulas) {
     strategy = "SHOTGUN_HWGW";
-    reason = "Hohes Netz-RAM, aber keine Formulas.exe. Shotgun/Burst HWGW.";
-  } else if (desyncRisk <= 2.0 && totalNetworkRam >= 1024) {
+    reason = "Hohes Netz-RAM, aber keine Formulas.exe.";
+  } else if (desyncRisk <= desyncThreshold && totalNetworkRam >= ramThreshold) {
     strategy = "JIT_HWGW";
     reason =
-      "Formulas.exe vorhanden, viel Netz-RAM & geringes Desync-Risiko. JIT-Pipeline aktiv.";
+      "Formulas.exe vorhanden, ausreichend Netz-RAM & stabiles Desync-Risiko.";
   } else {
     strategy = "SHOTGUN_HWGW";
-    reason = "Gute Rahmenbedingungen, aber erhöhtes Desync-Risiko.";
+    reason =
+      "Gute Rahmenbedingungen, aber Desync-Risiko oder RAM für JIT grenzwertig.";
   }
 
   // 2. Entkoppelte Ziel-Ermittlung

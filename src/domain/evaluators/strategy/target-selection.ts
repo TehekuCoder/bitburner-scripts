@@ -122,3 +122,114 @@ export function evaluateTargets(
 
   return targets.sort((a, b) => b.score - a.score);
 }
+
+export interface TargetSelectionOptions {
+  /** Wie viel % besser der Score des neuen Ziels sein muss (z. B. 1.15 = 15% besser). Default: 1.15 */
+  switchMargin?: number;
+  /** Mindesthaltedauer in ms auf einem Ziel, bevor gewechselt werden darf. Default: 60000 (60s) */
+  minHoldMs?: number;
+}
+
+export interface TargetSelectionResult {
+  target: string | null;
+  hasChanged: boolean;
+  reason: string;
+}
+
+/**
+ * Wählt das optimale Ziel aus der Liste der TargetScores aus und verhindert Target-Flapping
+ * durch Hysterese (Score-Puffer) und eine Mindesthaltedauer.
+ */
+export function selectBestTarget(
+  ns: NS,
+  targets: TargetScore[],
+  currentTarget: string | null,
+  lastTargetChangeTime: number,
+  options: TargetSelectionOptions = {},
+): TargetSelectionResult {
+  const switchMargin = options.switchMargin ?? 1.15;
+  const minHoldMs = options.minHoldMs ?? 60_000;
+  const now = Date.now();
+
+  // Keine Ziele vorhanden
+  if (targets.length === 0) {
+    return {
+      target: null,
+      hasChanged: currentTarget !== null,
+      reason: "Keine gültigen Ziele verfügbar.",
+    };
+  }
+
+  const topTarget = targets[0]; // Höchster absoluter Score
+
+  // 1. Erststart: Noch kein Ziel gewählt
+  if (!currentTarget) {
+    return {
+      target: topTarget.hostname,
+      hasChanged: true,
+      reason: `Initiales Ziel gewählt: ${topTarget.hostname} (Score: ${topTarget.score.toFixed(2)})`,
+    };
+  }
+
+  // 2. Das beste Ziel ist bereits aktiv
+  if (topTarget.hostname === currentTarget) {
+    return {
+      target: currentTarget,
+      hasChanged: false,
+      reason: "Aktuelles Ziel ist weiterhin auf Platz 1.",
+    };
+  }
+
+  // 3. Notfall: Hat das aktuelle Ziel Root-Rechte verloren?
+  if (!ns.hasRootAccess(currentTarget)) {
+    return {
+      target: topTarget.hostname,
+      hasChanged: true,
+      reason: `Root-Zugriff auf ${currentTarget} verloren! Notfall-Wechsel zu ${topTarget.hostname}`,
+    };
+  }
+
+  // 4. Mindesthaltedauer prüfen
+  const timeOnCurrentTarget = now - lastTargetChangeTime;
+  if (timeOnCurrentTarget < minHoldMs) {
+    const remainingSec = ((minHoldMs - timeOnCurrentTarget) / 1000).toFixed(1);
+    return {
+      target: currentTarget,
+      hasChanged: false,
+      reason: `Sperrfrist aktiv (${remainingSec}s verbleibend). Behalte ${currentTarget}.`,
+    };
+  }
+
+  // 5. Hysterese-Score-Vergleich
+  const currentTargetEntry = targets.find((t) => t.hostname === currentTarget);
+  const currentScore = currentTargetEntry?.score ?? 0;
+
+  // Wenn das aktuelle Ziel gar nicht mehr in den qualifizierten Targets ist (z. B. Hacking-Req zu hoch), sofort wechseln
+  if (!currentTargetEntry) {
+    return {
+      target: topTarget.hostname,
+      hasChanged: true,
+      reason: `Aktuelles Ziel ${currentTarget} qualifiziert sich nicht mehr. Wechsel zu ${topTarget.hostname}`,
+    };
+  }
+
+  // Besser als der Score * Margin?
+  if (topTarget.score > currentScore * switchMargin) {
+    const gainPercent = (
+      ((topTarget.score - currentScore) / currentScore) *
+      100
+    ).toFixed(1);
+    return {
+      target: topTarget.hostname,
+      hasChanged: true,
+      reason: `Ziel ${topTarget.hostname} ist ${gainPercent}% lukrativer als ${currentTarget} (übersteigt Margin von ${((switchMargin - 1) * 100).toFixed(0)}%).`,
+    };
+  }
+
+  // Wenn die Abweichung zu gering ist, beim aktuellen Ziel bleiben
+  return {
+    target: currentTarget,
+    hasChanged: false,
+    reason: `Ziel ${topTarget.hostname} zwar besser als ${currentTarget}, aber unter der Wechsel-Schwelle von ${((switchMargin - 1) * 100).toFixed(0)}%.`,
+  };
+}

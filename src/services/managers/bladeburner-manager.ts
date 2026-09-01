@@ -50,7 +50,7 @@ export async function main(ns: NS): Promise<void> {
 
     // Wenn wir uns gerade in der Regenerationsphase befinden
     if (
-      currentAction?.name === "Hyperbolic Regeneration" &&
+      currentAction?.name === "Hyperbolic Regeneration Chamber" &&
       staminaRatio < STAMINA_FULL_THRESHOLD
     ) {
       await sleepNextCycle(ns);
@@ -59,7 +59,7 @@ export async function main(ns: NS): Promise<void> {
 
     // Stamina zu niedrig ➔ Hyperbolic Regeneration starten
     if (staminaRatio < STAMINA_RECOVERY_THRESHOLD) {
-      setAction(ns, "General", "Hyperbolic Regeneration");
+      setAction(ns, "General", "Hyperbolic Regeneration Chamber");
       await sleepNextCycle(ns);
       continue;
     }

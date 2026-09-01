@@ -4,7 +4,7 @@ import { BatchStrategy } from "/shared/types/batcher.js";
 import { PATHS } from "../../infrastructure/runtime/paths.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import { evaluateHackingStrategy } from "/domain/evaluators/strategy/hacking-strategy.js";
-import { evaluateTargets } from "/domain/evaluators/strategy/target-selection.js";
+import { evaluateTargets, selectBestTarget } from "/domain/evaluators/strategy/target-selection.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
 import {
   getAllRootedServers,
@@ -19,18 +19,66 @@ export async function main(ns: NS): Promise<void> {
 
   let lastStrategy: BatchStrategy | null = null;
   let lastTarget: string | null = null;
+  let lastTargetChangeTime = 0;
+
+  let lastStrategyChangeTime = 0;
+  const STRATEGY_COOLDOWN_MS = 30_000;
+
+  // 🚨 Strategien, die den Cooldown ohne Verzögerung umgehen
+  const EMERGENCY_STRATEGIES: BatchStrategy[] = ["PREP", "XP_GRIND", "WORKER"];
 
   const JIT_DASHBOARD = PATHS.infrastructure.monitoring.jitDashboard;
   const ENGINE_DASHBOARD = PATHS.infrastructure.monitoring.dashboard;
 
   while (true) {
-    const evalRec = evaluateHackingStrategy(ns);
+    const evalRec = evaluateHackingStrategy(ns, lastStrategy);
+    const proposedStrategy: BatchStrategy = evalRec.strategy;
+    const now = Date.now();
 
-    // 1️⃣ Dynamische Strategie-Ermittlung
-    let activeStrategy: BatchStrategy = evalRec.strategy;
+    let activeStrategy = proposedStrategy;
+
+    if (lastStrategy !== null && proposedStrategy !== lastStrategy) {
+      const timeSinceLastChange = now - lastStrategyChangeTime;
+      const isEmergencySwitch = EMERGENCY_STRATEGIES.includes(proposedStrategy);
+
+      // Cooldown greift nur, wenn es KEIN Notfall-Wechsel ist
+      if (!isEmergencySwitch && timeSinceLastChange < STRATEGY_COOLDOWN_MS) {
+        const remainingSec = (
+          (STRATEGY_COOLDOWN_MS - timeSinceLastChange) /
+          1000
+        ).toFixed(1);
+
+        activeStrategy = lastStrategy;
+
+        logger.debug(
+          `Strategiewechsel zu ${proposedStrategy} blockiert (Cooldown: noch ${remainingSec}s)`,
+          undefined,
+          {
+            context: {
+              proposedStrategy,
+              currentStrategy: lastStrategy,
+              remainingSec,
+            },
+          },
+        );
+      } else {
+        // Wechsel wird durchgeführt (Cooldown abgelaufen ODER Notfall)
+        if (isEmergencySwitch) {
+          logger.warn(
+            `🚨 Sofortiger Notfall-Strategiewechsel zu ${proposedStrategy} (Cooldown umgangen)`,
+            undefined,
+            { context: { proposedStrategy, previousStrategy: lastStrategy } },
+          );
+        }
+
+        lastStrategyChangeTime = now;
+      }
+    } else if (lastStrategy === null) {
+      lastStrategyChangeTime = now;
+    }
 
     // 2️⃣ Target-Ermittlung
-    let activeTarget = evalRec.preferredTarget ?? resolveXpTarget(ns);
+    let candidateTarget = evalRec.preferredTarget ?? resolveXpTarget(ns);
 
     if (activeStrategy === "XP_GRIND") {
       const daemon = "w0r1d_d43m0n";
@@ -41,30 +89,51 @@ export async function main(ns: NS): Promise<void> {
       const playerSkill = ns.getHackingLevel();
 
       if (hasDaemonRoot && playerSkill >= reqSkill) {
-        activeTarget = daemon;
+        candidateTarget = daemon;
       } else if (!evalRec.preferredTarget) {
-        activeTarget = resolveXpTarget(ns);
+        candidateTarget = resolveXpTarget(ns);
       }
     }
 
     // 🛡️ Absicherung bei fehlendem Root
-    if (!ns.hasRootAccess(activeTarget)) {
+    if (!ns.hasRootAccess(candidateTarget)) {
       const fallbackTarget = resolveXpTarget(ns);
       logger.warn(
-        `Target '${activeTarget}' hat keinen Root-Zugriff. Fallback auf '${fallbackTarget}'`,
-        activeTarget,
+        `Target '${candidateTarget}' hat keinen Root-Zugriff. Fallback auf '${fallbackTarget}'`,
+        candidateTarget,
       );
-      activeTarget = fallbackTarget;
+      candidateTarget = fallbackTarget;
     }
+
+    const targets = evaluateTargets(ns, activeStrategy);
+
+    const targetSelection = selectBestTarget(
+      ns,
+      targets,
+      lastTarget,
+      lastTargetChangeTime,
+      {
+        switchMargin: 1.15, // Neuer Server muss 15% besser sein
+        minHoldMs: 60_000, // Mindestens 60s auf einem Ziel bleiben
+      },
+    );
+
+    if (targetSelection.hasChanged) {
+      logger.info(`🎯 Target-Wechsel: ${targetSelection.reason}`);
+      lastTargetChangeTime = Date.now();
+    }
+
+    const activeTarget = targetSelection.target;
+    lastTarget = candidateTarget;
 
     // 3️⃣ PREP-Check: Server muss erst vorbereitet werden, bevor HWGW/PROTO laufen kann
     if (
-      ns.hasRootAccess(activeTarget) &&
+      ns.hasRootAccess(candidateTarget) &&
       activeStrategy !== "XP_GRIND" &&
       activeStrategy !== "WORKER" &&
       activeStrategy !== "BOOTSTRAP"
     ) {
-      const server = ns.getServer(activeTarget);
+      const server = ns.getServer(candidateTarget);
       const isMaxMoney =
         (server.moneyAvailable ?? 0) >= (server.moneyMax ?? 1) * 0.99;
       const isMinSec =
@@ -76,29 +145,29 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // 📊 Statusänderungen protokollieren
-    if (activeStrategy !== lastStrategy || activeTarget !== lastTarget) {
+    if (activeStrategy !== lastStrategy || candidateTarget !== lastTarget) {
       logger.info(
-        `Strategie-Wechsel: ${activeStrategy} | Target: ${activeTarget}`,
-        activeTarget,
-        { context: { strategy: activeStrategy, target: activeTarget } },
+        `Strategie-Wechsel: ${activeStrategy} | Target: ${candidateTarget}`,
+        candidateTarget,
+        { context: { strategy: activeStrategy, target: candidateTarget } },
       );
       lastStrategy = activeStrategy;
-      lastTarget = activeTarget;
+      lastTarget = candidateTarget;
     }
 
     // 4️⃣ State aktualisieren
     patchBatcherState(ns, {
       batchStrategy: activeStrategy,
-      batcherTarget: activeTarget,
+      batcherTarget: candidateTarget,
       batcherActive: true,
       batcherProgress:
         activeStrategy === "XP_GRIND"
-          ? `XP-Grind aktiv auf ${activeTarget}`
+          ? `XP-Grind aktiv auf ${candidateTarget}`
           : `Laufende Strategie: ${activeStrategy}`,
     });
 
     // 5️⃣ Engine starten ODER Multi-Target Worker im Netzwerk verteilen
-    if (ns.hasRootAccess(activeTarget)) {
+    if (ns.hasRootAccess(candidateTarget)) {
       if (activeStrategy === "BOOTSTRAP" || activeStrategy === "WORKER") {
         stopAllEngines(ns, logger);
 
@@ -121,17 +190,17 @@ export async function main(ns: NS): Promise<void> {
         const topTargets =
           evalTargets.length > 0
             ? evalTargets.slice(0, maxTargets).map((t) => t.hostname)
-            : [activeTarget];
+            : [candidateTarget];
 
         deployWorkerFleet(ns, logger, allServers, topTargets);
       } else {
         stopNetworkWorkers(ns);
-        ensureEngineRunning(ns, activeStrategy, activeTarget, logger);
+        ensureEngineRunning(ns, activeStrategy, candidateTarget, logger);
       }
     } else {
       logger.error(
-        `Kein Root-Zugriff auf ${activeTarget} vorhanden! Engine gestoppt.`,
-        activeTarget,
+        `Kein Root-Zugriff auf ${candidateTarget} vorhanden! Engine gestoppt.`,
+        candidateTarget,
       );
     }
 
