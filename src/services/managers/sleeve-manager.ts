@@ -24,11 +24,20 @@ import {
 } from "/infrastructure/state/state.js";
 import { hasSleeve, hasGang } from "/lib/utils.js";
 
-// Helper-Funktion oben einfügen
 function isBladeburnerActive(ns: NS): boolean {
   if (!ns.bladeburner) return false;
   try {
     return ns.bladeburner.inBladeburner();
+  } catch {
+    return false;
+  }
+}
+
+function isPlayerDoingBlackOps(ns: NS): boolean {
+  if (!ns.bladeburner || !ns.bladeburner.inBladeburner()) return false;
+  try {
+    const currentAction = ns.bladeburner.getCurrentAction();
+    return currentAction?.type === "BlackOp";
   } catch {
     return false;
   }
@@ -116,12 +125,16 @@ function resolveSleeveAssignment(
   if (sleeveShock > 0) return { mode: "RECOVERY" };
   if (sleeveSync < 100) return { mode: "SYNCHRO" };
 
-  // 🚨 BLACK OPS OVERRIDE: Höchste Priorität bei aktiven BlackOps
+  // 1️⃣ BLACK OPS OVERRIDE: Optimale Sleeve-Synergie bei aktiver BlackOp
   if (hasBladeburner && isBlackOpsActive) {
-    return {
-      mode: "BLADEBURNER",
-      subType: "Support main sleeve",
-    };
+    if (sleeveId === 0) {
+      return {
+        mode: "BLADEBURNER",
+        target: "General",
+        subType: "Field Analysis",
+      };
+    }
+    return { mode: "BLADEBURNER", target: "General", subType: "Diplomacy" };
   }
 
   const isDominion =
@@ -145,19 +158,12 @@ function resolveSleeveAssignment(
     (c) => !assignedCompanies.has(c),
   );
 
-  // 3️⃣ EXPLIZITER OVERRIDE (sleeveGlobalMode)
+  // 2️⃣ EXPLIZITER OVERRIDE (sleeveGlobalMode)
   if (
     options.globalMode &&
     options.globalMode !== "RECOVERY" &&
     options.globalMode !== "SYNCHRO"
   ) {
-    type SleeveBladeburnerType = "General" | "Contracts";
-
-    const VALID_BLADEBURNER_TYPES: SleeveBladeburnerType[] = [
-      "General",
-      "Contracts",
-    ];
-
     switch (options.globalMode) {
       case "CRIME":
         return { mode: "CRIME", target: "Homicide" };
@@ -190,44 +196,33 @@ function resolveSleeveAssignment(
           : undefined;
 
         if (primaryTarget && !assignedCompanies.has(primaryTarget)) {
-          return { mode: "COMPANY", target: primaryTarget ?? undefined };
+          return { mode: "COMPANY", target: primaryTarget };
         }
         if (availableCompanies.length > 0) {
           return { mode: "COMPANY", target: availableCompanies[0] };
         }
         break;
       }
-
-      case "FACTION": {
-        let fac =
-          (options.targetFaction as FactionName) ?? availableFactions[0];
-
-        if (gangStatus.gangFaction && fac === gangStatus.gangFaction) {
-          fac = availableFactions.find(
-            (f) => f !== gangStatus.gangFaction,
-          ) as FactionName;
-        }
-
-        if (fac && !assignedFactions.has(fac)) {
-          return {
-            mode: "FACTION",
-            target: fac ?? undefined,
-            subType: "hacking",
-          };
-        }
-        break;
-      }
     }
   }
 
-  // 4️⃣ STRATEGIE-REAKTION: BLADEBURNER
+  // 3️⃣ STRATEGIE-REAKTION: BLADEBURNER (Automatische Rollenverteilung)
   if ((options.strategy as string) === "BLADEBURNER" && hasBladeburner) {
     const bType = options.targetBladeburnerType ?? "General";
-    const bAction = options.targetBladeburnerAction ?? "Field Analysis";
+    let bAction = options.targetBladeburnerAction;
+
+    if (!bAction) {
+      if (sleeveId === 0) bAction = "Field Analysis";
+      else if (sleeveId === 1) bAction = "Diplomacy";
+      else if (sleeveId === 2 || sleeveId == 3)
+        bAction = "Infiltrate Synthoids";
+      else bAction = "Support main sleeve";
+    }
+
     return { mode: "BLADEBURNER", target: bType, subType: bAction };
   }
 
-  // 5️⃣ STRATEGIE-REAKTION: COMPANY
+  // 4️⃣ STRATEGIE-REAKTION: COMPANY
   if (options.strategy === "COMPANY") {
     const primaryTarget = options.targetCompany
       ? (MEGACORPS[options.targetCompany] ??
@@ -311,7 +306,7 @@ function manageAllSleeves(
     options.isDominionActive === true ||
     options.globalMode === "DOMINION";
 
-  // 1a. Bestehende valide Fraktions-Tasks beibehalten (wird im Dominion-Modus übersprungen)
+  // 1a. Bestehende valide Fraktions-Tasks beibehalten
   for (const sleeve of statuses) {
     const needsRecoveryOrSync = sleeve.shock > 0 || sleeve.sync < 100;
 
@@ -374,7 +369,7 @@ function manageAllSleeves(
     plannedAssignments.push({ sleeveId: sleeve.id, assignment });
   }
 
-  // 2. Ausführung mit intelligentem Fallback
+  // 2. Ausführung mit Fallback
   const nonFactionTasks = plannedAssignments.filter(
     (p) => p.assignment.mode !== "FACTION",
   );
@@ -552,15 +547,5 @@ export async function main(ns: NS): Promise<void> {
     }
 
     await ns.sleep(2000);
-  }
-}
-
-function isPlayerDoingBlackOps(ns: NS): boolean {
-  if (!ns.bladeburner || !ns.bladeburner.inBladeburner()) return false;
-  try {
-    const currentAction = ns.bladeburner.getCurrentAction();
-    return currentAction?.type === "BlackOp";
-  } catch {
-    return false;
   }
 }

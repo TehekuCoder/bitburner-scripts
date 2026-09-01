@@ -33,9 +33,11 @@ function parseTaskDetails(task: SleeveTask | null): {
     case "CLASS":
       return { icon: "🎓", text: `${t.classType} @ ${t.location}` };
     case "INFILTRATE":
-      return { icon: "🥷", text: `Infiltration: ${t.location}` };
+      return { icon: "🥷", text: `Infiltration: ${t.location ?? "Synthoids"}` };
+    case "SUPPORT":
+      return { icon: "🛡️", text: "Support Main Player" };
     default:
-      return { icon: "⚙️", text: task.type };
+      return { icon: "⚙️", text: "Unbekannter Modus" };
   }
 }
 
