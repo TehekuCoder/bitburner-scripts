@@ -81,7 +81,8 @@ export function evaluateHackingStrategy(
     reason = "Fokus auf XP-Grind.";
   } else if (totalNetworkRam < 64) {
     strategy = "BOOTSTRAP";
-    reason = "Netzwerk noch im Bootstrap-Setup; Worker-Phase ist noch zu klein.";
+    reason =
+      "Netzwerk noch im Bootstrap-Setup; Worker-Phase ist noch zu klein.";
   } else if (yieldFactor < 0.05 || totalNetworkRam < 128) {
     strategy = "WORKER";
     reason = "Netz-RAM oder Ertrag zu gering für Batching.";
@@ -91,7 +92,9 @@ export function evaluateHackingStrategy(
   } else if (!hasFormulas) {
     strategy = "SHOTGUN_HWGW";
     reason = "Hohes Netz-RAM, aber keine Formulas.exe.";
-  } else if (shouldUseJit(hasFormulas, totalNetworkRam, desyncRisk, currentStrategy)) {
+  } else if (
+    shouldUseJit(hasFormulas, totalNetworkRam, desyncRisk, currentStrategy)
+  ) {
     strategy = "JIT_HWGW";
     reason =
       "Formulas.exe vorhanden, ausreichend Netz-RAM & stabiler Desync-Bereich. Hysterese aktiv.";

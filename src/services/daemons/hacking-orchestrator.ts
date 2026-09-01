@@ -28,8 +28,8 @@ export async function main(ns: NS): Promise<void> {
   let lastStrategyChangeTime = 0;
   const STRATEGY_COOLDOWN_MS = 30_000;
 
+  // PREP aus sturen Notfall-Sprüngen entfernt, damit Hysterese greift
   const EMERGENCY_STRATEGIES: BatchStrategy[] = [
-    "PREP",
     "XP_GRIND",
     "BOOTSTRAP",
     "WORKER",
@@ -43,31 +43,44 @@ export async function main(ns: NS): Promise<void> {
     const proposedStrategy: BatchStrategy = evalRec.strategy;
     const now = Date.now();
 
-    let strategyCandidate = proposedStrategy;
     let activeStrategy = proposedStrategy;
 
-    // 1️⃣ PREP hat Vorrang, damit kein JIT/Shotgun-Flip im selben Tick sofort wieder gedrückt wird.
-    const prepTarget = resolveTargetForStrategy(
+    // 1️⃣ Target für Evaluierung auflösen
+    const evalTarget = resolveTargetForStrategy(
       ns,
-      strategyCandidate,
+      proposedStrategy,
       lastTarget,
       lastTargetChangeTime,
     );
 
-    if (
-      prepTarget &&
-      strategyCandidate !== "XP_GRIND" &&
-      strategyCandidate !== "WORKER" &&
-      strategyCandidate !== "BOOTSTRAP" &&
-      shouldForcePrep(ns, prepTarget)
-    ) {
-      strategyCandidate = "PREP";
+    let strategyCandidate = proposedStrategy;
+
+    const isCurrentlyBatching =
+      lastStrategy === "JIT_HWGW" || lastStrategy === "SHOTGUN_HWGW";
+
+    // 2️⃣ Hysterese-Prüfung für PREP
+    if (evalTarget) {
+      if (isCurrentlyBatching && strategyCandidate === "PREP") {
+        // Falls der Evaluator PREP will, aber die Toleranzgrenzen noch nicht gerissen sind -> Batcher beibehalten!
+        if (!shouldForcePrep(ns, evalTarget, lastStrategy)) {
+          strategyCandidate = lastStrategy as BatchStrategy;
+        }
+      } else if (
+        !isCurrentlyBatching &&
+        strategyCandidate !== "XP_GRIND" &&
+        strategyCandidate !== "WORKER" &&
+        strategyCandidate !== "BOOTSTRAP" &&
+        shouldForcePrep(ns, evalTarget, lastStrategy)
+      ) {
+        strategyCandidate = "PREP";
+      }
     }
 
-    // 2️⃣ Strategie-Cooldown prüfen mit stabilerer JIT/Shotgun-Logik
+    // 3️⃣ Strategie-Cooldown prüfen
     if (lastStrategy !== null && strategyCandidate !== lastStrategy) {
       const timeSinceLastChange = now - lastStrategyChangeTime;
-      const isEmergencySwitch = EMERGENCY_STRATEGIES.includes(strategyCandidate);
+      const isEmergencySwitch =
+        EMERGENCY_STRATEGIES.includes(strategyCandidate);
       const isJitShotgunFlip =
         (lastStrategy === "JIT_HWGW" && strategyCandidate === "SHOTGUN_HWGW") ||
         (lastStrategy === "SHOTGUN_HWGW" && strategyCandidate === "JIT_HWGW");
@@ -106,13 +119,15 @@ export async function main(ns: NS): Promise<void> {
             },
           );
         }
+        activeStrategy = strategyCandidate;
         lastStrategyChangeTime = now;
       }
     } else if (lastStrategy === null) {
+      activeStrategy = strategyCandidate;
       lastStrategyChangeTime = now;
     }
 
-    // 3️⃣ Finalen Target nach der stabilen Strategie auflösen.
+    // 4️⃣ Finales Target auflösen
     let finalTarget = resolveTargetForStrategy(
       ns,
       activeStrategy,
@@ -129,15 +144,6 @@ export async function main(ns: NS): Promise<void> {
       finalTarget = fallbackTarget;
     }
 
-    if (
-      activeStrategy !== "XP_GRIND" &&
-      activeStrategy !== "WORKER" &&
-      activeStrategy !== "BOOTSTRAP" &&
-      shouldForcePrep(ns, finalTarget)
-    ) {
-      activeStrategy = "PREP";
-    }
-
     // 📊 Statusänderungen protokollieren
     if (activeStrategy !== lastStrategy || finalTarget !== lastTarget) {
       logger.info(
@@ -149,7 +155,7 @@ export async function main(ns: NS): Promise<void> {
       lastTarget = finalTarget;
     }
 
-    // 4️⃣ State aktualisieren
+    // 5️⃣ State aktualisieren
     patchBatcherState(ns, {
       batchStrategy: activeStrategy,
       batcherTarget: finalTarget,
@@ -160,7 +166,7 @@ export async function main(ns: NS): Promise<void> {
           : `Laufende Strategie: ${activeStrategy}`,
     });
 
-    // 5️⃣ Engine starten ODER Multi-Target Worker verteilen
+    // 6️⃣ Engine starten ODER Multi-Target Worker verteilen
     if (activeStrategy === "BOOTSTRAP" || activeStrategy === "WORKER") {
       stopAllEngines(ns, logger);
 
@@ -187,7 +193,7 @@ export async function main(ns: NS): Promise<void> {
       ensureEngineRunning(ns, activeStrategy, finalTarget, logger);
     }
 
-    // 6️⃣ Dashboards verwalten
+    // 7️⃣ Dashboards verwalten
     manageDashboards(
       ns,
       activeStrategy,
@@ -198,6 +204,38 @@ export async function main(ns: NS): Promise<void> {
 
     await ns.sleep(5000);
   }
+}
+
+/**
+ * Hysterese-basierter PREP-Check:
+ * - Wenn eine Batching-Strategie aktiv ist, werden Toleranzschwellen genutzt (85% Geld / +1.5 Security).
+ * - Wenn PREP aktiv ist, muss der Server zu 99% gefüllt und auf Min-Security sein, um PREP zu verlassen.
+ */
+function shouldForcePrep(
+  ns: NS,
+  target: string,
+  currentStrategy: BatchStrategy | null,
+): boolean {
+  const server = ns.getServer(target);
+  const money = server.moneyAvailable ?? 0;
+  const maxMoney = server.moneyMax ?? 1;
+  const sec = server.hackDifficulty ?? 99;
+  const minSec = server.minDifficulty ?? 1;
+
+  const isBatching =
+    currentStrategy === "JIT_HWGW" ||
+    currentStrategy === "SHOTGUN_HWGW" ||
+    currentStrategy === "PROTO_BATCH";
+
+  if (isBatching) {
+    const moneyDropped = money < maxMoney * 0.85;
+    const secSpiked = sec > minSec + 1.5;
+    return moneyDropped || secSpiked;
+  }
+
+  const isMaxMoney = money >= maxMoney * 0.99;
+  const isMinSec = sec <= minSec + 0.05;
+  return !isMaxMoney || !isMinSec;
 }
 
 function resolveTargetForStrategy(
@@ -231,21 +269,7 @@ function resolveTargetForStrategy(
     },
   );
 
-  if (targetSelection.hasChanged) {
-    return targetSelection.target ?? resolveXpTarget(ns);
-  }
-
   return targetSelection.target ?? resolveXpTarget(ns);
-}
-
-function shouldForcePrep(ns: NS, target: string): boolean {
-  const server = ns.getServer(target);
-  const isMaxMoney =
-    (server.moneyAvailable ?? 0) >= (server.moneyMax ?? 1) * 0.99;
-  const isMinSec =
-    (server.hackDifficulty ?? 99) <= (server.minDifficulty ?? 1) + 0.05;
-
-  return !isMaxMoney || !isMinSec;
 }
 
 function manageDashboards(
