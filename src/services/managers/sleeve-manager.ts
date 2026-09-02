@@ -82,7 +82,10 @@ function getFactionsNeedingRep(
   ownedAugs: string[],
   gangFaction?: string,
 ): FactionName[] {
-  const validFactions = playerFactions.filter((f) => f !== gangFaction);
+  // 🛑 Gang-Fraktion UND 'Bladeburners' herausfiltern
+  const validFactions = playerFactions.filter(
+    (f) => f !== gangFaction && f !== "Bladeburners",
+  );
 
   if (!ns.singularity) return validFactions as FactionName[];
 
@@ -356,6 +359,7 @@ function manageAllSleeves(
       bbDecision.recommendedSleeveRole !== "FACTION_REP");
 
   // 1a. Bestehende valide Fraktions-Tasks beibehalten
+  // 1a. Bestehende valide Fraktions-Tasks beibehalten
   for (const sleeve of statuses) {
     const needsRecoveryOrSync = sleeve.shock > 0 || sleeve.sync < 100;
 
@@ -370,6 +374,7 @@ function manageAllSleeves(
       if (rawTask && rawTask.type === "FACTION" && rawTask.factionName) {
         const fac = rawTask.factionName as FactionName;
         if (
+          fac !== "Bladeburners" && // 👈 Bladeburners explizit ignorieren
           factionsNeedingRep.includes(fac) &&
           fac !== gangStatus.gangFaction &&
           !assignedFactions.has(fac)

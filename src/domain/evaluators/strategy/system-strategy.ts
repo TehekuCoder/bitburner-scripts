@@ -357,10 +357,14 @@ export class SystemStrategyEvaluator {
 
     const {
       mode,
-      targetFaction = null,
+      targetFaction: rawTargetFaction = null,
       targetCompany = null,
       targetStat: rawTargetStat = null,
     } = strategy;
+
+    // 🛑 BLADEBURNER-FILTER: 'Bladeburners' ist keine reguläre Fraktion für Faction-Grind
+    const targetFaction =
+      (rawTargetFaction as string) === "Bladeburners" ? null : rawTargetFaction;
 
     const targetStat: number | null =
       typeof rawTargetStat === "number"
@@ -482,7 +486,6 @@ export class SystemStrategyEvaluator {
                 : mode === "MONEY"
                   ? 0.1
                   : 0.0;
-
 
     const dynamicMaxXp =
       mode === "CRIME" || mode === "KARMA"

@@ -14,9 +14,7 @@ export async function main(ns: NS): Promise<void> {
   const singularityAvailable = hasSingularity(ns);
 
   if (!singularityAvailable) {
-    logger.warn(
-      "Singularity-API (SF4) fehlt. Bladeburner-Only-Modus aktiv.",
-    );
+    logger.warn("Singularity-API (SF4) fehlt. Bladeburner-Only-Modus aktiv.");
   }
 
   logger.info("🚀 Sys-Dispatcher gestartet.");
@@ -30,8 +28,16 @@ export async function main(ns: NS): Promise<void> {
 
     let mode = evalRes.mode;
     let targetFaction = evalRes.targetFaction;
+
+    // 🛑 BLADEBURNER GUARD: Sicherstellen, dass 'Bladeburners' nie in den State geschrieben wird
+    if ((targetFaction as string) === "Bladeburners") {
+      targetFaction = null;
+    }
+
     let targetCompany = evalRes.targetCompany;
     let targetStat = evalRes.targetStat as string | number | null;
+
+    // ... (Restlicher Dispatcher-Code für Oszillations-Schutz, Auto-Join & State-Patching)
 
     // 🛡️ Oszillations-Schutz (Cooldown-Prüfung)
     const previousStrategy = currentState?.strategy || "MONEY";

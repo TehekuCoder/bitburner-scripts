@@ -30,6 +30,16 @@ export async function main(ns: NS): Promise<void> {
     const sing = ns.singularity;
     const gangState = loadGangState(ns);
 
+    // 🛑 BLADEBURNER IGNORE CHECK
+    if ((faction as string) === "Bladeburners") {
+      ns.print(
+        `🛑 [INVALID-TARGET] 'Bladeburners' nutzt eigenes Subsystem. Setze Ziel zurück...`,
+      );
+      patchFactionState(ns, { targetFaction: undefined });
+      await ns.sleep(2000);
+      continue;
+    }
+
     // ------------------------------------------------------------------
     // 🔀 NFG / GANG REDIRECT LOGIK
     // ------------------------------------------------------------------
