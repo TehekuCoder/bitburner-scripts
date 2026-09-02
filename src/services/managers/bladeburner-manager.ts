@@ -16,6 +16,7 @@ const CONFIG = {
   MIN_CHANCE_CONTRACT_HIGH: 0.75, // Min. 75% Chance für Bounty Hunter / Retirement
   MIN_CHANCE_TRACKING: 0.65, // Min. 65% Chance für Tracking
   MAX_CHAOS: 20, // Ab 20 Chaos ➔ Stadtwechsel oder Diplomacy
+  MIN_COMBAT_STATS: 100, // Zielwert für Strength, Defense, Dexterity, Agility nach Reset
 };
 
 const CITIES: CityName[] = [
@@ -70,7 +71,7 @@ export async function main(ns: NS): Promise<void> {
     // 🟢 3. Stadt- & Chaos-Management
     manageCityAndChaos(ns);
 
-    // 🟢 4. Aktionsauswahl & Chaos-Erste-Hilfe
+    // 🟢 4. Aktionsauswahl & Training- / Chaos-Fallback
     const bestAction = findBestAction(ns);
     const currentCity = ns.bladeburner.getCity();
     const currentChaos = ns.bladeburner.getCityChaos(currentCity);
@@ -80,10 +81,17 @@ export async function main(ns: NS): Promise<void> {
         setAction(ns, bestAction.type, bestAction.name);
       }
     } else {
-      // Fallback: Hohes Chaos mit Diplomacy senken oder Aufklären mit Field Analysis
+      // Fallback-Hierarchie wenn keine Verträge / Ops möglich sind:
+      // 1. Hohes Chaos senken ➔ Diplomacy
+      // 2. Kampfwerte unter Mindestwert ➔ Training
+      // 3. Aufklären ➔ Field Analysis
       if (currentChaos > CONFIG.MAX_CHAOS) {
         if (currentAction?.name !== "Diplomacy") {
           setAction(ns, "General", "Diplomacy");
+        }
+      } else if (hasLowCombatStats(ns)) {
+        if (currentAction?.name !== "Training") {
+          setAction(ns, "General", "Training");
         }
       } else if (currentAction?.name !== "Field Analysis") {
         setAction(ns, "General", "Field Analysis");
@@ -96,11 +104,29 @@ export async function main(ns: NS): Promise<void> {
 }
 
 /**
+ * Prüft, ob einer der vier relevanten Kampfwerte unter dem konfigurierten Minimum liegt.
+ */
+function hasLowCombatStats(ns: NS): boolean {
+  const { strength, defense, dexterity, agility } = ns.getPlayer().skills;
+  return (
+    strength < CONFIG.MIN_COMBAT_STATS ||
+    defense < CONFIG.MIN_COMBAT_STATS ||
+    dexterity < CONFIG.MIN_COMBAT_STATS ||
+    agility < CONFIG.MIN_COMBAT_STATS
+  );
+}
+
+/**
  * Evaluiert die beste Aktion mit absteigender Wertigkeit und gestaffelten Chancen.
  */
 function findBestAction(
   ns: NS,
 ): { type: BladeburnerActionType; name: BladeburnerActionName } | null {
+  // Wenn die Kampfwerte noch zu niedrig sind, direkt Training priorisieren
+  if (hasLowCombatStats(ns)) {
+    return { type: "General", name: "Training" };
+  }
+
   // 1. BlackOps prüfen
   const nextBlackOp = ns.bladeburner.getNextBlackOp();
   if (nextBlackOp && nextBlackOp.name) {
@@ -228,7 +254,6 @@ async function sleepNextCycle(ns: NS): Promise<void> {
     current.name as BladeburnerActionName,
   );
 
-  // Mindestens 1 Sekunde Warten zur Absicherung
   await ns.sleep(Math.max(duration, 1000));
 }
 

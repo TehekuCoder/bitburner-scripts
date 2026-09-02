@@ -23,6 +23,8 @@ import {
   patchSleeveState,
 } from "/infrastructure/state/state.js";
 import { hasSleeve, hasGang } from "/lib/utils.js";
+import { evaluateBladeburnerPreference } from "../../domain/strategy/bladeburner-decision.js";
+import { getChaosStatus } from "../../domain/bladeburner/chaos-control.js";
 
 function isBladeburnerActive(ns: NS): boolean {
   if (!ns.bladeburner) return false;
@@ -110,6 +112,7 @@ function getFactionsNeedingRep(
 }
 
 function resolveSleeveAssignment(
+  ns: NS,
   sleeveId: number,
   sleeveShock: number,
   sleeveSync: number,
@@ -121,11 +124,34 @@ function resolveSleeveAssignment(
   assignedCompanies: Set<string>,
   hasBladeburner: boolean,
   isBlackOpsActive: boolean,
+  bbDecision = evaluateBladeburnerPreference(ns),
 ): SleeveTaskAssignment {
   if (sleeveShock > 0) return { mode: "RECOVERY" };
   if (sleeveSync < 100) return { mode: "SYNCHRO" };
 
-  // 1️⃣ BLACK OPS OVERRIDE: Optimale Sleeve-Synergie bei aktiver BlackOp
+  // 1️⃣ CHAOS OVERRIDE: Priorisierte Diplomatie bei hohem Chaos (> 50)
+  if (hasBladeburner) {
+    // Verlangt mindestens 85% Mindesterfolgschance bei Verträgen
+    const chaosStatus = getChaosStatus(ns, 0.85);
+
+    if (chaosStatus.hasHighChaos && chaosStatus.targetCity) {
+      const sleeveCity = ns.sleeve.getSleeve(sleeveId).city;
+
+      if (sleeveCity !== chaosStatus.targetCity) {
+        ns.sleeve.travel(sleeveId, chaosStatus.targetCity);
+      }
+
+      if (sleeveId % 2 === 0) {
+        return {
+          mode: "BLADEBURNER",
+          target: "General",
+          subType: "Diplomacy",
+        };
+      }
+    }
+  }
+
+  // 2️⃣ BLACK OPS OVERRIDE
   if (hasBladeburner && isBlackOpsActive) {
     if (sleeveId === 0) {
       return {
@@ -158,7 +184,7 @@ function resolveSleeveAssignment(
     (c) => !assignedCompanies.has(c),
   );
 
-  // 2️⃣ EXPLIZITER OVERRIDE (sleeveGlobalMode)
+  // 3️⃣ EXPLIZITER OVERRIDE (sleeveGlobalMode)
   if (
     options.globalMode &&
     options.globalMode !== "RECOVERY" &&
@@ -206,23 +232,40 @@ function resolveSleeveAssignment(
     }
   }
 
-  // 3️⃣ STRATEGIE-REAKTION: BLADEBURNER (Automatische Rollenverteilung)
-  if ((options.strategy as string) === "BLADEBURNER" && hasBladeburner) {
+  // 4️⃣ STRATEGIE-REAKTION: BLADEBURNER
+  if (
+    (options.strategy === "BLADEBURNER" ||
+      bbDecision.shouldOverrideFactionGrind) &&
+    hasBladeburner
+  ) {
+    // Fall A: Kein Simulacrum -> Main-Char macht BB, Sleeves MÜSSEN Faction Rep farmen
+    if (
+      bbDecision.recommendedSleeveRole === "FACTION_REP" &&
+      availableFactions.length > 0
+    ) {
+      return {
+        mode: "FACTION",
+        target: availableFactions[0],
+        subType: "hacking" as FactionWorkType,
+      };
+    }
+
+    // Fall B: Simulacrum vorhanden oder Factions fertig -> Sleeves unterstützen BB
     const bType = options.targetBladeburnerType ?? "General";
     let bAction = options.targetBladeburnerAction;
 
     if (!bAction) {
       if (sleeveId === 0) bAction = "Field Analysis";
       else if (sleeveId === 1) bAction = "Diplomacy";
-      else if (sleeveId === 2 || sleeveId == 3)
+      else if (sleeveId === 2 || sleeveId === 3)
         bAction = "Infiltrate Synthoids";
-      else bAction = "Support main sleeve";
+      else bAction = "Infiltrate Synthoids";
     }
 
     return { mode: "BLADEBURNER", target: bType, subType: bAction };
   }
 
-  // 4️⃣ STRATEGIE-REAKTION: COMPANY
+  // 5️⃣ STRATEGIE-REAKTION: COMPANY
   if (options.strategy === "COMPANY") {
     const primaryTarget = options.targetCompany
       ? (MEGACORPS[options.targetCompany] ??
@@ -262,7 +305,7 @@ function resolveSleeveAssignment(
     return { mode: "CRIME", target: "Homicide" };
   }
 
-  // 5️⃣ STANDARD: Fraktions-Reputation farmen
+  // 6️⃣ STANDARD: Fraktions-Reputation farmen
   if (availableFactions.length > 0) {
     const targetFaction = availableFactions[0];
     return {
@@ -272,7 +315,7 @@ function resolveSleeveAssignment(
     };
   }
 
-  // 6️⃣ FALLBACK: Andere Firmen abklappern oder Crime
+  // 7️⃣ FALLBACK: Andere Firmen abklappern oder Crime
   if (availableCompanies.length > 0) {
     return { mode: "COMPANY", target: availableCompanies[0] };
   }
@@ -306,6 +349,12 @@ function manageAllSleeves(
     options.isDominionActive === true ||
     options.globalMode === "DOMINION";
 
+  const bbDecision = evaluateBladeburnerPreference(ns);
+  const isBbAssistActive =
+    isBlackOpsActive ||
+    (options.strategy === "BLADEBURNER" &&
+      bbDecision.recommendedSleeveRole !== "FACTION_REP");
+
   // 1a. Bestehende valide Fraktions-Tasks beibehalten
   for (const sleeve of statuses) {
     const needsRecoveryOrSync = sleeve.shock > 0 || sleeve.sync < 100;
@@ -314,7 +363,8 @@ function manageAllSleeves(
       !needsRecoveryOrSync &&
       !options.globalMode &&
       !gangStatus.shouldGrindKarma &&
-      !isDominion
+      !isDominion &&
+      !isBbAssistActive
     ) {
       const rawTask = ns.sleeve.getTask(sleeve.id) as any;
       if (rawTask && rawTask.type === "FACTION" && rawTask.factionName) {
@@ -346,6 +396,7 @@ function manageAllSleeves(
     if (plannedAssignments.some((p) => p.sleeveId === sleeve.id)) continue;
 
     const assignment = resolveSleeveAssignment(
+      ns,
       sleeve.id,
       sleeve.shock,
       sleeve.sync,

@@ -18,6 +18,7 @@ import { REFRESH_INTERVALS } from "/shared/constants/game-defaults";
 import { getAllServers, evaluateTargets } from "./target-selection";
 import { loadState, loadGangState } from "/infrastructure/state/state";
 import { LoggerClient } from "/infrastructure/logging/logger-client";
+import { evaluateBladeburnerPreference } from "../../strategy/bladeburner-decision";
 
 const MEGACORP_FACTIONS: string[] = [
   "ECorp",
@@ -286,6 +287,8 @@ export class SystemStrategyEvaluator {
       },
     });
 
+    const bbDecision = evaluateBladeburnerPreference(ns);
+
     // 6️⃣ Strategie ermitteln
     let strategy = determineStrategy(
       ns,
@@ -318,6 +321,24 @@ export class SystemStrategyEvaluator {
         targetStat: 100,
       };
     }
+
+    // ⚔️ Bladeburner-Override: Faction-Grind blockieren, aber DOMINION & KARMA schützen
+    const isFinishMode =
+      strategy.mode === "DOMINION" || strategy.mode === "KARMA";
+
+    if (
+      bbDecision.shouldOverrideFactionGrind &&
+      strategy.mode !== "TRAIN" &&
+      !isFinishMode
+    ) {
+      logger.debug(
+        "⚔️ Bladeburner-Priorisierung aktiv: Faction-Grind wird blockiert.",
+      );
+      strategy = { mode: "BLADEBURNER" };
+    }
+
+    // Nutze direkt das Ergebnis aus evaluateBladeburnerPreference statt doppelter Prüfung:
+    const isBladeburnerParallel = bbDecision.executionMode === "PARALLEL";
 
     // Fallback: Wenn Company-Modus ermittelt wurde, aber Hacking < 250 ist -> MONEY
     if (strategy.mode === "COMPANY" && p.skills.hacking < 250) {
@@ -462,15 +483,6 @@ export class SystemStrategyEvaluator {
                   ? 0.1
                   : 0.0;
 
-    // 🛡️ Prüfe, ob Bladeburner parallel mit Simulacrum läuft
-    const isBladeburnerActive =
-      hasBladeburner(ns) && ns.bladeburner.inBladeburner();
-    const isBladeburnerParallel =
-      isBladeburnerActive &&
-      hasSingularity(ns) &&
-      ns.singularity
-        .getOwnedAugmentations(false)
-        .includes("The Blade's Simulacrum");
 
     const dynamicMaxXp =
       mode === "CRIME" || mode === "KARMA"

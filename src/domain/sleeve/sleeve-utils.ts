@@ -390,12 +390,17 @@ function isSameTask(
       return currentClass === targetClass;
     }
 
-case "BLADEBURNER": {
+    case "BLADEBURNER": {
       if (current.type !== "BLADEBURNER") return false;
 
-      const targetName = assignment.subType ?? "Field Analysis";
       const currentName = t.actionName ?? t.actionType;
 
+      // Wenn Verträge ausgeführt werden, ist assignment.target die konkrete Action (z.B. "Tracking")
+      if (assignment.subType === "Take on contracts" && assignment.target) {
+        return currentName === assignment.target;
+      }
+
+      const targetName = assignment.subType ?? "Field Analysis";
       return currentName === targetName;
     }
 
