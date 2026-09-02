@@ -37,8 +37,6 @@ export async function main(ns: NS): Promise<void> {
     let targetCompany = evalRes.targetCompany;
     let targetStat = evalRes.targetStat as string | number | null;
 
-    // ... (Restlicher Dispatcher-Code für Oszillations-Schutz, Auto-Join & State-Patching)
-
     // 🛡️ Oszillations-Schutz (Cooldown-Prüfung)
     const previousStrategy = currentState?.strategy || "MONEY";
     const now = Date.now();
