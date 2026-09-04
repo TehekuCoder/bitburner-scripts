@@ -14,8 +14,8 @@ export async function main(ns: NS): Promise<void> {
   ns.print("🚀 Finance-Manager (Sequenzieller Dispatcher) gestartet.");
 
   // Helper: Führt ein Skript aus und wartet auf dessen Beendigung
-  const runAndWait = async (scriptPath: string): Promise<void> => {
-    if (!ns.fileExists(scriptPath, "home")) return;
+  const runAndWait = async (scriptPath: string): Promise<boolean> => {
+    if (!ns.fileExists(scriptPath, "home")) return false;
 
     const reqRam = ns.getScriptRam(scriptPath, "home");
     const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
@@ -23,21 +23,28 @@ export async function main(ns: NS): Promise<void> {
     // Falls nicht genug freier RAM da ist, überspringen
     if (freeRam < reqRam) {
       ns.print(
-        `[FINANCE-MGR] Nicht genug RAM für ${scriptPath} (Benötigt: ${formatRam(reqRam)}, Frei: ${formatRam(freeRam)})`,
+        `[FINANCE-MGR] ⚠️ Übersprungen: ${scriptPath} (Benötigt: ${formatRam(reqRam)}, Frei: ${formatRam(freeRam)})`,
       );
-      return;
+      return false;
     }
 
-    const pid = ns.run(scriptPath, 1);
-    if (pid > 0) {
-      while (ns.isRunning(pid)) {
-        await ns.sleep(20);
+    try {
+      const pid = ns.run(scriptPath, 1);
+      if (pid > 0) {
+        while (ns.isRunning(pid)) {
+          await ns.sleep(50);
+        }
+        return true;
       }
+    } catch (err) {
+      ns.print(
+        `[FINANCE-MGR] ❌ Fehler beim Ausführen von ${scriptPath}: ${err}`,
+      );
     }
+    return false;
   };
 
   while (true) {
-    const homeMaxRam = ns.getServerMaxRam("home");
     const bnMults = loadBnMults(ns);
 
     // 0. Finance-Core als Dauerläufer (UI & Kauf-Abwicklung)
@@ -72,10 +79,8 @@ export async function main(ns: NS): Promise<void> {
       await runAndWait(PATHS.domain.evaluators.purchase.home); // home.js (~9.65 GB)
       await runAndWait(PATHS.domain.evaluators.purchase.programs); // programs.js (~5.55 GB)
 
-      // Player-Augmentations nur evaluieren, wenn ausreichend Home-RAM vorhanden ist
-      if (homeMaxRam >= 64) {
-        await runAndWait(PATHS.domain.evaluators.purchase.player); // player.js (~28.10 GB)
-      }
+      // Player-Augmentations evaluieren (Prüfung auf freien RAM erfolgt dynamisch)
+      await runAndWait(PATHS.domain.evaluators.purchase.player); // player.js (~28.10 GB)
     }
 
     // 4. Gang (gang.js - ~13.60 GB)
@@ -97,7 +102,7 @@ export async function main(ns: NS): Promise<void> {
       await runAndWait(PATHS.domain.evaluators.purchase.stock);
     }
 
-    // 7. Corporation Evaluator (nur ausführen, wenn API da ist & noch keine Corp existiert)
+    // 7. Corporation Evaluator
     if (hasCorporation(ns) && !ns.corporation.hasCorporation()) {
       await runAndWait(PATHS.domain.evaluators.purchase.corporation);
     }
