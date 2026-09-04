@@ -14,6 +14,7 @@ import {
 import { runEvaluator } from "../evaluator-runner.js";
 import { AUG_PRICE_MULT } from "../../../shared/constants/game-defaults";
 import { PATHS } from "/infrastructure/runtime/paths.js";
+import { getBestNeuroFluxTarget } from "../../player/neuroflux.js";
 
 interface AugCandidate {
   name: string;
@@ -24,7 +25,6 @@ interface AugCandidate {
   etaSeconds: number;
 }
 
-// Persistenter Speicherbereich für Gang-Velocity
 interface GangStateCache {
   lastRep: number;
   lastTime: number;
@@ -33,10 +33,6 @@ interface GangStateCache {
 
 const g = globalThis as unknown as { __gangStateCache?: GangStateCache };
 g.__gangStateCache ??= { lastRep: 0, lastTime: 0, repPerSec: 0 };
-
-// Konfiguration für dynamisches Batching
-const MIN_BATCH_SIZE = 3; // Ab 3 bezahlbaren Augs lohnt sich ein Kauf-Zyklus
-const TARGET_BATCH_SIZE = 8; // Optimales Ziel für Re-Installations-Resets
 
 function updateGangVelocity(ns: NS): number {
   try {
@@ -79,7 +75,6 @@ export const PlayerEvaluator: PurchaseEvaluator = {
 
     const gangRepPerSec = updateGangVelocity(ns);
 
-    // Caching für Prereqs
     const prereqCache = new Map<string, string[]>();
     const getPrereqs = (name: string) => {
       if (!prereqCache.has(name))
@@ -147,7 +142,6 @@ export const PlayerEvaluator: PurchaseEvaluator = {
 
     if (candidates.length === 0) return requests;
 
-    // Nur Augmentations betrachten, deren Reputation BEREITS erreicht ist (ETA == 0)
     const readyCandidates = candidates.filter((item) => item.etaSeconds === 0);
     const readyMap = new Map<string, AugCandidate>(
       readyCandidates.map((c) => [c.name, c]),
@@ -183,7 +177,6 @@ export const PlayerEvaluator: PurchaseEvaluator = {
 
       if (immediateBuyable.length === 0) return requests;
 
-      // Im Kaufmodus immer das TEUERSTE bezahlbare Einzel-Augment zuerst kaufen
       immediateBuyable.sort((a, b) => b.price - a.price);
       const nextTarget = immediateBuyable[0];
 
@@ -205,49 +198,10 @@ export const PlayerEvaluator: PurchaseEvaluator = {
       return requests;
     }
 
-    // --- FALL 2: DYNAMISCHE BATCH-BERECHNUNG ---
-    // 1. Sortiere Kandidaten nach Basispreis absteigend (Teuerste zuerst für optimale 1.9x Ausnutzung)
-    const sortedFulfillable = [...fulfillableCandidates].sort(
-      (a, b) => b.price - a.price,
-    );
-
-    const affordableBatch: AugCandidate[] = [];
-    let cumulativeCost = 0;
-    let currentMultiplier = 1.0;
-
-    for (const cand of sortedFulfillable) {
-      // Wenn das Prereq noch nicht im Batch oder im Besitz ist, müssen wir es vorbereiten
-      const prereqs = getPrereqs(cand.name).filter(
-        (p) => !ownedAugs.includes(p),
-      );
-      const missingPrereqs = prereqs.filter(
-        (p) => !affordableBatch.some((b) => b.name === p),
-      );
-
-      // Kosten für das Haupt-Augment + eventuell fehlende Prereqs simulieren
-      let stepCost = cand.price * currentMultiplier;
-
-      // Prüfen, ob wir das Budget überschreiten
-      if (cumulativeCost + stepCost > currentMoney) {
-        continue; // Zu teuer mit aktuellem Multiplikator -> Nächstes/Günstigeres testen
-      }
-
-      // Hinzufügen (falls Prereqs erfüllt sind)
-      if (missingPrereqs.length === 0) {
-        affordableBatch.push(cand);
-        cumulativeCost += stepCost;
-        currentMultiplier *= AUG_PRICE_MULT;
-      }
-
-      if (affordableBatch.length >= TARGET_BATCH_SIZE) break;
-    }
-
-    const hasRedPill = sortedFulfillable.some((a) => a.name === "The Red Pill");
-    const redPillCand = sortedFulfillable.find(
+    // Sonderfall Red Pill: Wenn verfügbar und bezahlbar, SOFORT kaufen!
+    const redPillCand = fulfillableCandidates.find(
       (a) => a.name === "The Red Pill",
     );
-
-    // Sonderfall Red Pill: Wenn verfügbar und bezahlbar, SOFORT kaufen!
     if (redPillCand && redPillCand.price <= currentMoney) {
       requests.push({
         id: "player-aug-redpill",
@@ -264,9 +218,61 @@ export const PlayerEvaluator: PurchaseEvaluator = {
       return requests;
     }
 
-    // Kaufanfrage stellen, wenn die Mindest-Batchgröße erreicht ist ODER wir kurz vor Red Pill stehen
+    // --- FALL 2: DYNAMISCHE BATCH-BERECHNUNG ---
+    const baseTargetBatch = Math.max(
+      3,
+      Math.min(8, Math.floor(6 / (costMult || 1))),
+    );
+
+    // 1. Auswählen: Nach Basispreis AUFSTEIGEND sortieren (Günstigste bevorzugen)
+    const sortedByPriceAsc = [...fulfillableCandidates].sort(
+      (a, b) => a.price - b.price,
+    );
+    const effectiveBatchTarget = Math.min(
+      baseTargetBatch,
+      sortedByPriceAsc.length,
+    );
+
+    const selectedBatch: AugCandidate[] = [];
+    let cumulativeCost = 0;
+    let currentMultiplier = 1.0;
+
+    for (const cand of sortedByPriceAsc) {
+      const prereqs = getPrereqs(cand.name).filter(
+        (p) => !ownedAugs.includes(p),
+      );
+      const missingPrereqs = prereqs.filter(
+        (p) => !selectedBatch.some((b) => b.name === p),
+      );
+
+      if (missingPrereqs.length > 0) continue;
+
+      const stepCost = cand.price * currentMultiplier;
+      if (cumulativeCost + stepCost <= currentMoney) {
+        selectedBatch.push(cand);
+        cumulativeCost += stepCost;
+        currentMultiplier *= AUG_PRICE_MULT;
+      }
+
+      if (selectedBatch.length >= effectiveBatchTarget) break;
+    }
+
+    // 2. Kaufen: Gewählte Augments ABSTEIGEND nach Preis sortieren (Teuerste zuerst kaufen)
+    const affordableBatch = [...selectedBatch].sort(
+      (a, b) => b.price - a.price,
+    );
+
+    const hasRedPill = fulfillableCandidates.some(
+      (a) => a.name === "The Red Pill",
+    );
+    const reachesTarget = affordableBatch.length >= effectiveBatchTarget;
+    const isOutofAugs =
+      sortedByPriceAsc.length < baseTargetBatch &&
+      affordableBatch.length === sortedByPriceAsc.length;
+
     if (
-      affordableBatch.length >= MIN_BATCH_SIZE ||
+      reachesTarget ||
+      isOutofAugs ||
       (hasRedPill && affordableBatch.length > 0)
     ) {
       requests.push({
@@ -275,7 +281,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
         priority: adjustPriorityByMult(PurchasePriority.HIGH, efficiencyMult),
         score: Math.max(1, Math.floor(85 * efficiencyMult)),
         cost: cumulativeCost,
-        description: `Dynamic Aug Batch (${affordableBatch.length} Items, Cost: ${ns.format.number(cumulativeCost)})`,
+        description: `Dynamic Aug Batch (${affordableBatch.length}/${effectiveBatchTarget} Items, Cost: ${ns.format.number(cumulativeCost)})`,
         action: {
           script: PATHS.app.actions.singularity,
           args: [
@@ -287,6 +293,23 @@ export const PlayerEvaluator: PurchaseEvaluator = {
               })),
             ),
           ],
+        },
+      });
+    }
+    // --- FALL 3: NEUROFLUX GOVERNOR DUMP ---
+    // Wenn keine normalen Augmentations mehr verfügbar/bezahlbar sind, Geld in NeuroFlux stecken
+    const nfgTarget = getBestNeuroFluxTarget(ns);
+    if (nfgTarget && currentMoney >= nfgTarget.price) {
+      requests.push({
+        id: `player-aug-nfg-${Date.now()}`,
+        category: "PLAYER_AUG" as PurchaseCategory,
+        priority: adjustPriorityByMult(PurchasePriority.MEDIUM, efficiencyMult),
+        score: 50,
+        cost: nfgTarget.price,
+        description: `NeuroFlux Governor Level Up via ${nfgTarget.faction}`,
+        action: {
+          script: PATHS.app.actions.singularity,
+          args: ["player-purchase-nfg", nfgTarget.faction],
         },
       });
     }

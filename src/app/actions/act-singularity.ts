@@ -36,16 +36,35 @@ export async function main(ns: NS): Promise<void> {
           faction: FactionName;
           name: string;
         }[];
+
         for (const item of batch) {
-          if (item.faction && item.name) {
-            const success = ns.singularity.purchaseAugmentation(
-              item.faction,
-              item.name,
+          if (!item.faction || !item.name) continue;
+
+          const currentMoney = ns.getServerMoneyAvailable("home");
+          const currentPrice = ns.singularity.getAugmentationPrice(item.name);
+
+          // Budget-Absicherung vor jedem Kauf
+          if (currentMoney < currentPrice) {
+            ns.tprint(
+              `[WARN] Batch abgebrochen für ${item.name}: Zu wenig Geld.`,
             );
-            if (!success) break; // Abbrechen, falls Budget oder Prereqs fehlschlagen
+            break;
           }
+
+          const success = ns.singularity.purchaseAugmentation(
+            item.faction,
+            item.name,
+          );
+          if (!success) {
+            ns.tprint(`[ERROR] Kauf fehlgeschlagen für: ${item.name}`);
+            break;
+          }
+
+          ns.print(`[SUCCESS] Gekauft: ${item.name}`);
         }
-      } catch {}
+      } catch (e) {
+        ns.tprint(`[ERROR] Fehler beim Parsen des Augment-Batches: ${e}`);
+      }
       break;
     }
 
@@ -56,6 +75,11 @@ export async function main(ns: NS): Promise<void> {
           ns.singularity.purchaseAugmentation(faction, "NeuroFlux Governor")
         ) {}
       }
+      break;
+    }
+    case "player-install-augs": {
+      const startScript = (ns.args[1] as string) || "init.js";
+      ns.singularity.installAugmentations(startScript);
       break;
     }
   }

@@ -26,6 +26,7 @@ const ALL_KNOWN_FACTIONS: FactionName[] = [
   "Daedalus",
   "Illuminati",
   "The Covenant",
+  "Bladeburners",
   "ECorp",
   "MegaCorp",
   "Bachman & Associates",
