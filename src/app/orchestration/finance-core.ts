@@ -23,7 +23,7 @@ interface EvaluatorCacheEntry {
 
 const evaluatorRequestCache = new Map<string, EvaluatorCacheEntry>();
 const CACHE_TTL_MS = 45000; // 45s TTL für Anfragen
-const BATCH_GAP_MS = 3000;  // Nach 3s Inaktivität alten Lauf als neu betrachten
+const BATCH_GAP_MS = 3000; // Nach 3s Inaktivität alten Lauf als neu betrachten
 
 function pushBounded<T>(array: T[], item: T, maxSize: number = 6): void {
   array.push(item);
@@ -223,7 +223,7 @@ export async function main(ns: NS): Promise<void> {
           const pid = ns.exec(req.action.script, "home", 1, ...req.action.args);
 
           if (pid > 0) {
-            const purchaseMsg = `🛒 KAUF: ${req.description} ($${ns.format.number(req.cost)})`;
+            const purchaseMsg = `🛒 [$${ns.format.number(req.cost)}] ${req.description}`;
             logger.success(purchaseMsg);
             pushBounded(lastPurchases, purchaseMsg, 6);
 
@@ -240,7 +240,8 @@ export async function main(ns: NS): Promise<void> {
             pushBounded(lastWarnings, errorMsg, 6);
           }
         } else {
-          const savingMsg = `⏳ SPARZIEL: ${req.description} ($${ns.format.number(availableMoney)} / $${ns.format.number(req.cost)})`;
+          // Beträge nach vorne gesetzt, damit sie beim Truncate nicht abgeschnitten werden!
+          const savingMsg = `⏳ [$${ns.format.number(availableMoney)} / $${ns.format.number(req.cost)}] ${req.description}`;
           pushBounded(lastWarnings, savingMsg, 6);
 
           blockedCategories.add(req.category);

@@ -54,17 +54,29 @@ const CATEGORY_TAGS: Record<string, string> = {
 };
 
 /**
+ * Kompakte Prioritäts-Tags.
+ */
+const PRIO_TAGS: Record<string, string> = {
+  CRITICAL: "CRIT",
+  HIGH: "HIGH",
+  MEDIUM: "MED ",
+  LOW: "LOW ",
+};
+
+/**
  * Bereinigt unknackige Textmonster und verhindert doppelte Akronyme.
  */
 function cleanupDescription(desc: string): string {
   return desc
     .replace(/^Software:\s*/i, "")
     .replace(/^Gang '[^']+':\s*/i, "")
-    .replace(/\s*\(Börsen-Automatisierung\)/i, "");
+    .replace(/\s*\(Börsen-Automatisierung\)/i, "")
+    .replace(/^CRITICAL:\s*/i, "")
+    .replace(/'/g, "");
 }
 
 /**
- * Filtert doppelte Log-Einträge heraus, selbst wenn sich Beträge leicht unterscheiden.
+ * Filtert doppelte Log-Einträge heraus.
  */
 function filterUniqueLogs(logs: string[]): string[] {
   const seenKeys = new Set<string>();
@@ -73,7 +85,7 @@ function filterUniqueLogs(logs: string[]): string[] {
   for (let i = logs.length - 1; i >= 0; i--) {
     const rawLog = logs[i];
     const normalizedKey = rawLog
-      .replace(/\(\$\d+(\.\d+)?[a-z]?\s*\/\s*\$\d+(\.\d+)?[a-z]?\)/i, "")
+      .replace(/\[\$\d+(\.\d+)?[a-z]?\s*\/\s*\$\d+(\.\d+)?[a-z]?\]/i, "")
       .trim();
 
     if (!seenKeys.has(normalizedKey)) {
@@ -243,6 +255,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   buffer.push(`${CLR.WHITE_BOLD}NÄCHSTER GEPLANTER KAUF:${CLR.RESET}`);
   if (data.nextPurchaseRequest) {
     const req = data.nextPurchaseRequest;
+    const currentMoneyStr = `$${ns.format.number(data.currentMoney)}`;
     const reqCostStr = `$${ns.format.number(req.cost)}`;
     const progressPct =
       req.cost > 0 ? Math.min(100, (data.currentMoney / req.cost) * 100) : 100;
@@ -254,7 +267,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
         : `${CLR.YELLOW}Sparen...${CLR.RESET}`;
 
     buffer.push(`Ziel:        ${shortDesc}`);
-    buffer.push(`Kosten:      ${reqCostStr} (${progressPct.toFixed(1)}%)`);
+    buffer.push(`Fortschritt: ${currentMoneyStr} / ${reqCostStr} (${progressPct.toFixed(1)}%)`);
     buffer.push(
       `Status:      [${CLR.CYAN}${progressBar}${CLR.RESET}] ${statusStr}`,
     );
@@ -275,15 +288,15 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     buffer.push(`> ${CLR.GRAY}Keine wartenden Anfragen.${CLR.RESET}`);
   } else {
     for (const req of data.topPendingRequests) {
-      const prio = req.priorityLabel.substring(0, 4);
+      const prio = PRIO_TAGS[req.priorityLabel] ?? req.priorityLabel.substring(0, 4);
       const catTag =
         CATEGORY_TAGS[req.category] ?? req.category.substring(0, 3);
       const cleanDesc = cleanupDescription(req.description);
       const costStr = `$${ns.format.number(req.cost)}`;
-      const shortDesc = truncateANSI(cleanDesc, 36);
+      const shortDesc = truncateANSI(cleanDesc, 40);
 
       buffer.push(
-        `> [${CLR.CYAN}${prio}${CLR.RESET}] [${CLR.YELLOW}${catTag}${CLR.RESET}] ${padANSI(shortDesc, 36)} ${padANSI(costStr, 9, true)}`,
+        `> [${CLR.CYAN}${prio}${CLR.RESET}] [${CLR.YELLOW}${catTag}${CLR.RESET}] ${padANSI(shortDesc, 40)} ${padANSI(costStr, 9, true)}`,
       );
     }
   }
@@ -303,7 +316,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   } else {
     for (const logLine of uniqueLogs) {
       const cleanedLog = cleanupDescription(logLine);
-      buffer.push(`> ${truncateANSI(cleanedLog, 58)}`);
+      buffer.push(`> ${truncateANSI(cleanedLog, 60)}`);
     }
   }
 
