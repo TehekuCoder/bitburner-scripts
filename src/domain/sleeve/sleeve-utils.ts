@@ -378,8 +378,16 @@ function isSameTask(
       return t.companyName === targetCompany;
     }
 
-    case "FACTION":
-      return current.type === "FACTION" && t.factionName === assignment.target;
+    case "FACTION": {
+      if (current.type !== "FACTION") return false;
+      const currentWorkType = t.factionWorkType ?? t.workType;
+      const targetWorkType = assignment.subType ?? "hacking";
+
+      return (
+        t.factionName === assignment.target &&
+        currentWorkType === targetWorkType
+      );
+    }
 
     case "UNI": {
       if (current.type !== "CLASS") return false;
