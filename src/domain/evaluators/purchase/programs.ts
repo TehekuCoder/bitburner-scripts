@@ -68,7 +68,11 @@ function getTargetPortRequirement(ns: NS, playerHacking: number): number {
     if (visited.has(host)) continue;
     visited.add(host);
 
-    if (host !== "home" && !host.startsWith("pserv-")) {
+    if (
+      host !== "home" &&
+      !host.startsWith("cloud-") &&
+      !host.startsWith("hacknet-")
+    ) {
       const reqHacking = ns.getServerRequiredHackingLevel(host);
       const reqPorts = ns.getServerNumPortsRequired(host);
 
