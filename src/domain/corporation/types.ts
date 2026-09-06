@@ -1,3 +1,5 @@
+// domain/corporation/types.ts
+
 import { NS } from "@ns";
 import { CorpPhase } from "../../shared/constants/corporation";
 import { LoggerClient } from "../../infrastructure/logging/logger-client";
@@ -17,6 +19,7 @@ export interface CorpPhaseHandler {
 export interface InvestorConfig {
   targetOffer: number;
   nextPhase: CorpPhase;
+  fallbackPhase?: CorpPhase;
   divisionNames: string[];
   resetJobs: (ns: NS) => void;
 }

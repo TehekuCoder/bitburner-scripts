@@ -1,5 +1,8 @@
+// domain/corporation/phases/phase-tobacco.ts
+
 import {
   buyCorporationUpgrades,
+  calculateDivisionSetupCost,
   maintainEmployeeMorale,
   maintainRatios,
   safeExportMaterial,
@@ -14,7 +17,7 @@ import {
   CORP_RESEARCH_PRIORITY,
   CorpPhase,
   TOBACCO_BOOST_RATIOS,
-} from "/shared/constants/corporation";
+} from "../../../shared/constants/corporation";
 
 export class InitTobaccoPhaseHandler implements CorpPhaseHandler {
   async execute(ctx: CorpPhaseContext): Promise<CorpPhase> {
@@ -22,41 +25,38 @@ export class InitTobaccoPhaseHandler implements CorpPhaseHandler {
     const corp = ns.corporation;
     const { tobacco, agri } = CORP_CONFIG.divisions;
 
+    log("Initialisiere Tobacco-Division...", "INFO");
+
+    // 1. Kapitalprüfung für Basis-Setup (Gründung + Städte + Lagerhäuser)
     if (!corp.getCorporation().divisions.includes(tobacco.name)) {
-      const requiredCost = 20_000_000_000;
-      if (corp.getCorporation().funds < requiredCost) {
+      const baseSetupCost = calculateDivisionSetupCost(ns, tobacco.type, {
+        includeCities: true,
+        includeWarehouses: true,
+      });
+
+      if (corp.getCorporation().funds < baseSetupCost) {
         log(
-          `Warten auf Kapital für Tobacco-Gründung ($${ns.format.number(corp.getCorporation().funds, 2)} / $${ns.format.number(requiredCost, 2)})`,
+          `Warten auf Kapital für Tobacco-Setup ($${ns.format.number(baseSetupCost)})...`,
           "DEBUG",
         );
         return ctx.currentPhase;
       }
-      log("Gründe Tobacco-Division...", "INFO");
       corp.expandIndustry(tobacco.type, tobacco.name);
     }
 
+    const hasSmartSupply = corp.hasUnlock("Smart Supply");
+
+    // 2. Erstellen & Konfigurieren der Städte, Lagerhäuser & Büros
     for (const city of CORP_CONFIG.cities) {
       if (!corp.getDivision(tobacco.name).cities.includes(city)) {
-        const cityCost = 4_000_000_000;
-        if (corp.getCorporation().funds < cityCost) {
-          log(`Warten auf Kapital für Expansion nach ${city}...`, "DEBUG");
-          return ctx.currentPhase;
-        }
         corp.expandCity(tobacco.name, city);
       }
-    }
 
-    for (const city of CORP_CONFIG.cities) {
       if (!corp.hasWarehouse(tobacco.name, city)) {
-        const whCost = 5_000_000_000;
-        if (corp.getCorporation().funds < whCost) {
-          log(`Warten auf Kapital für Lagerhalle in ${city}...`, "DEBUG");
-          return ctx.currentPhase;
-        }
         corp.purchaseWarehouse(tobacco.name, city);
       }
 
-      if (corp.hasUnlock("Smart Supply")) {
+      if (hasSmartSupply) {
         corp.setSmartSupply(tobacco.name, city, true);
       }
 
@@ -77,6 +77,7 @@ export class InitTobaccoPhaseHandler implements CorpPhaseHandler {
         );
       }
 
+      // Bürogröße anpassen
       const targetSize = city === CORP_CONFIG.mainCity ? 60 : 12;
       const currentOffice = corp.getOffice(tobacco.name, city);
 
@@ -86,6 +87,7 @@ export class InitTobaccoPhaseHandler implements CorpPhaseHandler {
           city,
           targetSize - currentOffice.size,
         );
+
         if (corp.getCorporation().funds < upgradeCost) {
           log(
             `Warten auf Kapital für Büro-Erweiterung in ${city} auf ${targetSize}...`,
@@ -93,6 +95,7 @@ export class InitTobaccoPhaseHandler implements CorpPhaseHandler {
           );
           return ctx.currentPhase;
         }
+
         corp.upgradeOfficeSize(
           tobacco.name,
           city,
@@ -151,24 +154,19 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       maintainEmployeeMorale(ns, tobacco.name, city);
     }
 
-    // 2. Booster-Materialien im Lager auf Ziel-Verhältnis halten
-    // a. Tobacco-Booster im neuen Lager nachkaufen
+    // 2. Booster-Materialien nachkaufen
     maintainRatios(
       ns,
       CORP_CONFIG.divisions.tobacco.name,
       TOBACCO_BOOST_RATIOS,
       0.7,
     );
-
-    // b. Agrar-Booster im ebenfalls gewachsenen Lager nachkaufen
     maintainRatios(
       ns,
       CORP_CONFIG.divisions.agri.name,
       AGRI_BOOST_RATIOS.R2,
       0.7,
     );
-
-    // c. Chemie-Booster im ebenfalls gewachsenen Lager nachkaufen
     maintainRatios(
       ns,
       CORP_CONFIG.divisions.chem.name,
@@ -176,7 +174,7 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       0.7,
     );
 
-    // 3. Forschungen streng nach Priorität durchführen & R&D Reallokation
+    // 3. Forschungen
     let allResearched = true;
 
     for (const tech of CORP_RESEARCH_PRIORITY) {
@@ -198,13 +196,11 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       }
     }
 
-    // Falls ALLE Forschungen abgeschlossen sind: R&D-Stellen komplett auflösen!
     if (allResearched) {
       for (const city of divInfo.cities) {
         const isHQ = city === mainCity;
         const currentOffice = corp.getOffice(tobacco.name, city);
 
-        // Nur anpassen, wenn noch R&D-Mitarbeiter vorhanden sind
         if (currentOffice.employeeJobs["Research & Development"] > 0) {
           const targetJobs = isHQ
             ? CORP_CONFIG.jobDistribution.tobaccoHQ60Maxed
@@ -225,28 +221,25 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       }
     }
 
-    // 4. Produkte verwalten & Verkaufen (KORREKTUR PUNKT 3: TA.II Optimierung)
+    // 4. Produkt-Verkäufe
     let products = corp.getDivision(tobacco.name).products;
     const hasTA2 = corp.hasResearched(tobacco.name, "Market-TA.II");
 
     for (const prodName of products) {
       const prod = corp.getProduct(tobacco.name, mainCity, prodName);
       if (prod.developmentProgress === 100) {
-        // Market-TA.II ist eine globale Produkteinstellung (einmalig pro Produkt, nicht pro Stadt)
         if (hasTA2) {
           corp.setProductMarketTA2(tobacco.name, prodName, true);
         }
 
         for (const city of divInfo.cities) {
-          // Solange kein Market-TA.II vorhanden ist, verkaufen wir manuell zum 2x Marktpreis.
-          // Sobald TA.II aktiv ist, reicht "MP", da das Spiel die Preise dynamisch regelt.
           const price = hasTA2 ? "MP" : "MP * 2";
           corp.sellProduct(tobacco.name, city, prodName, "MAX", price, true);
         }
       }
     }
 
-    // 5. Maximale Produktkapazität ermitteln
+    // 5. Produktentwicklung
     let maxProducts = 3;
     if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.I")) maxProducts++;
     if (corp.hasResearched(tobacco.name, "uPgrade: Capacity.II")) maxProducts++;
@@ -257,7 +250,6 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
     );
 
     if (!isDeveloping) {
-      // (KORREKTUR PUNKT 1: Array-Synchronisation nach discontinuing)
       if (products.length >= maxProducts) {
         const oldestProduct = products[0];
         corp.discontinueProduct(tobacco.name, oldestProduct);
@@ -265,25 +257,19 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
           `[Tobacco] Ältester Artikel '${oldestProduct}' eingestellt.`,
           "INFO",
         );
-        // Nach dem Einstellen das Produkt-Array aus der API neu laden:
         products = corp.getDivision(tobacco.name).products;
       }
 
-      // Freie Produktnummer ermitteln
       let prodIndex = 1;
       while (products.includes(`Tobacco-${prodIndex}`)) {
         prodIndex++;
       }
       const newProdName = `Tobacco-${prodIndex}`;
 
-      // (KORREKTUR PUNKT 2: Sauberer Budget-Split & Maximum-Check)
-      // Bitburner erlaubt maximal $1.000.000.000 je Kategorie (Design & Marketing),
-      // also insgesamt max. $2.000.000.000 pro Produkt.
       const availableFunds = corp.getCorporation().funds;
       const minRequired = 2_000_000;
-      const maxPerCategory = 1_000_000_000; // Maximum laut Bitburner-API
+      const maxPerCategory = 1_000_000_000;
 
-      // Wir investieren 5% der verfügbaren Mittel pro Kategorie (10% insgesamt), gedeckelt auf $1 Mrd.
       const categoryInvestment = Math.min(
         maxPerCategory,
         Math.max(minRequired / 2, availableFunds * 0.05),
@@ -299,13 +285,13 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
           categoryInvestment,
         );
         log(
-          `[Tobacco] Neues Produkt gestartet: ${newProdName} (Budget: $${ns.format.number(totalInvestment, 2)})`,
+          `[Tobacco] Neues Produkt gestartet: ${newProdName} (Budget: $${ns.format.number(totalInvestment)})`,
           "SUCCESS",
         );
       }
     }
 
-    // 6. Upgrades kaufen & Reinvestition
+    // 6. Upgrades & Reinvestition
     if (corp.getCorporation().funds > 1_000_000_000) {
       buyCorporationUpgrades(ns, 0.1, logger);
 
@@ -323,7 +309,6 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
         }
       }
 
-      // Neben Upgrades auch Tobacco-Lager erweitern, falls diese vollzulaufen drohen
       for (const city of divInfo.cities) {
         if (corp.hasWarehouse(tobacco.name, city)) {
           const wh = corp.getWarehouse(tobacco.name, city);

@@ -1,3 +1,4 @@
+//services/managers/corporation-manager.ts
 import { CityName, CorpMaterialName, NS } from "@ns";
 import {
   AGRI_BOOST_RATIOS,

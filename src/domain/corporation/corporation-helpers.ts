@@ -1,3 +1,4 @@
+//domain/corporation/corporation-helpers.ts
 import {
   NS,
   CityName,
@@ -6,6 +7,7 @@ import {
   CorpUpgradeName,
   CorpUnlockName,
   CorpResearchName,
+  CorpIndustryName,
 } from "@ns";
 
 import { LoggerClient } from "../../infrastructure/logging/logger-client";
@@ -85,12 +87,12 @@ export function setupOfficeAndJobs(
 ): boolean {
   const corp = ns.corporation;
 
-  // Guard: Prüfen, ob die Division überhaupt existiert
+  // Guard: Prüfen, ob die Division existiert
   if (!corp.getCorporation().divisions.includes(divisionName)) {
     return false;
   }
 
-  // Guard: Prüfen, ob die Stadt in der Division freigeschaltet ist
+  // Guard: Prüfen, ob die Stadt freigeschaltet ist
   if (!corp.getDivision(divisionName).cities.includes(cityName)) {
     return false;
   }
@@ -124,21 +126,28 @@ export function setupOfficeAndJobs(
     return false;
   }
 
-  // 3. ALLE Jobs bedingungslos auf 0 setzen -> Alle Mitarbeiter sind sicher "Unassigned"
+  // 3. ALLE Jobs auf 0 zurücksetzen -> Alle Mitarbeiter werden sicher "Unassigned"
   for (const job of ALL_JOBS) {
     corp.setJobAssignment(divisionName, cityName, job, 0);
   }
 
-  // 4. Ziel-Zuweisungen aus dem Unassigned-Pool setzen
+  // 4. Ziel-Zuweisungen sicher aus dem Unassigned-Pool setzen
   for (const [job, count] of Object.entries(jobs) as [CorpJobRole, number][]) {
-    if (count && count > 0) {
-      corp.setJobAssignment(divisionName, cityName, job, count);
+    if (!count || count <= 0) continue;
+
+    const currentOffice = corp.getOffice(divisionName, cityName);
+    const availableUnassigned = currentOffice.employeeJobs["Unassigned"] ?? 0;
+
+    // Deckelt die Anforderung auf die tatsächlich verfügbaren Unassigned-Mitarbeiter
+    const amountToAssign = Math.min(count, availableUnassigned);
+
+    if (amountToAssign > 0) {
+      corp.setJobAssignment(divisionName, cityName, job, amountToAssign);
     }
   }
 
   return true;
 }
-
 export function upgradeWarehouseToLevel(
   ns: NS,
   divisionName: string,
@@ -396,6 +405,12 @@ export function autoResearchDivision(
   log?: (msg: string, level?: LogLevel) => void
 ): boolean {
   const corp = ns.corporation;
+
+  // Guard: Prüfen, ob die Division überhaupt existiert
+  if (!corp.getCorporation().divisions.includes(divisionName)) {
+    return false;
+  }
+
   let allCompleted = true;
 
   for (const tech of priorityList) {
@@ -420,9 +435,6 @@ export function autoResearchDivision(
 
   return allCompleted;
 }
-
-
-
 /**
  * Stellt Jobs ein und berücksichtigt, ob noch R&D benötigt wird.
  */
@@ -431,7 +443,7 @@ export function syncOfficeJobsWithResearch(
   divisionName: string,
   city: CityName,
   officeSize: number,
-  isResearchComplete: boolean
+  isResearchComplete: boolean,
 ): void {
   // Wenn Forschung durch ist: Reines Produktions-/Business-Setup
   if (isResearchComplete) {
@@ -439,21 +451,64 @@ export function syncOfficeJobsWithResearch(
       Operations: Math.floor(officeSize * 0.3),
       Engineer: Math.floor(officeSize * 0.3),
       Business: Math.floor(officeSize * 0.2),
-      Management: officeSize - (Math.floor(officeSize * 0.3) * 2 + Math.floor(officeSize * 0.2)),
+      Management:
+        officeSize -
+        (Math.floor(officeSize * 0.3) * 2 + Math.floor(officeSize * 0.2)),
       "Research & Development": 0,
     });
     return;
   }
 
   // Solange geforscht wird: Mindestens 1 R&D Slot ab Bürogröße 6+
-  const rdSlots = officeSize >= 6 ? Math.max(1, Math.floor(officeSize * 0.15)) : 0;
+  const rdSlots =
+    officeSize >= 6 ? Math.max(1, Math.floor(officeSize * 0.15)) : 0;
   const remainingSlots = officeSize - rdSlots;
 
   setupOfficeAndJobs(ns, divisionName, city, officeSize, {
     Operations: Math.floor(remainingSlots * 0.35),
     Engineer: Math.floor(remainingSlots * 0.35),
     Business: Math.floor(remainingSlots * 0.15),
-    Management: remainingSlots - (Math.floor(remainingSlots * 0.35) * 2 + Math.floor(remainingSlots * 0.15)),
+    Management:
+      remainingSlots -
+      (Math.floor(remainingSlots * 0.35) * 2 +
+        Math.floor(remainingSlots * 0.15)),
     "Research & Development": rdSlots,
   });
+}
+
+export interface DivisionSetupCostOptions {
+  includeCities?: boolean;
+  includeWarehouses?: boolean;
+  targetWarehouseLevel?: number;
+  targetOfficeSize?: number;
+}
+
+/**
+ * Berechnet die Gesamtkosten für das Erstellen und Grund-Setup einer Division.
+ */
+export function calculateDivisionSetupCost(
+  ns: NS,
+  industryType: CorpIndustryName,
+  options: DivisionSetupCostOptions = {}
+): number {
+  const corp = ns.corporation;
+  const constants = corp.getConstants();
+
+  // 1. Branchendaten korrekt über die Netscript API abrufen
+  const industryData = corp.getIndustryData(industryType);
+  let totalCost = industryData.startingCost;
+
+  const cityCount = CORP_CONFIG.cities.length;
+
+  // 2. Bürokosten mit Werten aus CorpConstants berechnen
+  if (options.includeCities) {
+    totalCost += cityCount * constants.officeInitialCost;
+  }
+
+  // 3. Lagerhaus-Initialkosten mit Werten aus CorpConstants berechnen
+  if (options.includeWarehouses) {
+    totalCost += cityCount * constants.warehouseInitialCost;
+  }
+
+  return totalCost;
 }

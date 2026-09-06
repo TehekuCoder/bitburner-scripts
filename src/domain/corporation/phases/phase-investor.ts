@@ -4,11 +4,11 @@ import { NS } from "@ns";
 import {
   setupOfficeAndJobs,
   maintainEmployeeMorale,
+  JobAssignments,
 } from "../corporation-helpers";
 import { CorpPhaseHandler, CorpPhaseContext, InvestorConfig } from "../types";
-import { CORP_CONFIG, CorpPhase } from "/shared/constants/corporation";
+import { CORP_CONFIG, CorpPhase } from "../../../shared/constants/corporation";
 
-// Optimierter InvestorPhaseHandler mit Anstau- & Dump-Verteilung
 export class InvestorPhaseHandler implements CorpPhaseHandler {
   private state: "IDLE" | "ACCUMULATING" | "SELLING" = "IDLE";
   private ticks = 0;
@@ -47,7 +47,6 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
       );
       for (const div of this.config.divisionNames) {
         for (const city of CORP_CONFIG.cities) {
-          // Maximale Produktion beim Anstauen (z.B. Operations/Engineer Fokus)
           const office = corp.getOffice(div, city);
           setupOfficeAndJobs(ns, div, city, office.size, {
             Operations: Math.floor(office.size / 2),
@@ -85,19 +84,17 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
 
       if (!isFull && this.ticks < 15) return ctx.currentPhase;
 
-      log(
-        "Lager gefüllt. Schalte auf MAX-DUMP & Business-Spike um...",
-        "INFO",
-      );
+      log("Lager gefüllt. Schalte auf MAX-DUMP & Business-Spike um...", "INFO");
       for (const div of this.config.divisionNames) {
         for (const city of CORP_CONFIG.cities) {
-          setupOfficeAndJobs(
-            ns,
-            div,
-            city,
-            corp.getOffice(div, city).size,
-            CORP_CONFIG.jobDistribution.spike9,
-          );
+          const officeSize = corp.getOffice(div, city).size;
+
+          const spikeJobs: JobAssignments =
+            officeSize >= 9
+              ? CORP_CONFIG.jobDistribution.spike9
+              : { Operations: 1, Business: Math.max(1, officeSize - 1) };
+
+          setupOfficeAndJobs(ns, div, city, officeSize, spikeJobs);
 
           // "0" erzwingt sofortigen Abverkauf der gesamten Lagerbestände in einem Tick
           corp.sellMaterial(div, city, "Plants", "MAX", "0");
@@ -142,7 +139,10 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
         this.attempts++;
 
         if (this.attempts >= 3) {
-          if (funds >= 400e9 && corp.acceptInvestmentOffer()) {
+          // Dynamischer Plateau-Akzeptanzwert (80% des Zielangebots)
+          const minAcceptable = this.config.targetOffer * 0.8;
+
+          if (funds >= minAcceptable && corp.acceptInvestmentOffer()) {
             log(
               `Ziel $${ns.format.number(this.config.targetOffer)} nicht erreicht, aber Plateau bei $${ns.format.number(funds)} erfolgreich angenommen!`,
               "SUCCESS",
@@ -151,12 +151,13 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
             return this.config.nextPhase;
           }
 
+          const fallback = this.config.fallbackPhase ?? ctx.currentPhase;
           log(
-            `Angebot stagnierte bei $${ns.format.number(funds)}. Kehre zu EXPORT_LOOP zurück...`,
+            `Angebot stagnierte bei $${ns.format.number(funds)}. Kehre zu ${fallback} zurück...`,
             "WARN",
           );
           this.resetState(ns);
-          return "EXPORT_LOOP";
+          return fallback;
         }
 
         log(

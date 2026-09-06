@@ -3,6 +3,7 @@
 import {
   autoResearchDivision,
   buyCorporationUpgrades,
+  calculateDivisionSetupCost,
   maintainEmployeeMorale,
   purchaseBoosterMaterials,
   safeExportMaterial,
@@ -24,29 +25,35 @@ export class InitChemPhaseHandler implements CorpPhaseHandler {
     const corp = ns.corporation;
     const { chem } = CORP_CONFIG.divisions;
 
-    log("Gründe Chemical-Division...", "INFO");
+    log("Initialisiere Chemical-Division...", "INFO");
 
+    // 1. Vorab-Kapitalprüfung für Gründung + alle Städte + alle Lagerhäuser
     if (!corp.getCorporation().divisions.includes(chem.name)) {
-      const expandCost = 20_000_000_000; // $20b Kosten für Chemical Industry
-      if (corp.getCorporation().funds < expandCost) {
-        log(`[CHEM] Warten auf Kapital für Chem-Expansion ($20b)...`, "WARN");
-        return "INIT_CHEM";
+      const requiredCost = calculateDivisionSetupCost(ns, chem.type, {
+        includeCities: true,
+        includeWarehouses: true,
+      });
+
+      if (corp.getCorporation().funds < requiredCost) {
+        log(
+          `[CHEM] Warten auf Kapital für Chem-Setup ($${ns.format.number(requiredCost)})...`,
+          "DEBUG",
+        );
+        return ctx.currentPhase;
       }
+
       corp.expandIndustry(chem.type, chem.name);
     }
 
     const hasSmartSupply = corp.hasUnlock("Smart Supply");
 
+    // 2. Städte, Lagerhäuser, Jobs & Verkäufe einrichten
     for (const city of CORP_CONFIG.cities) {
       if (!corp.getDivision(chem.name).cities.includes(city)) {
-        const cityCost = 5_000_000;
-        if (corp.getCorporation().funds < cityCost) return "INIT_CHEM";
         corp.expandCity(chem.name, city);
       }
 
       if (!corp.hasWarehouse(chem.name, city)) {
-        const whCost = 5_000_000;
-        if (corp.getCorporation().funds < whCost) return "INIT_CHEM";
         corp.purchaseWarehouse(chem.name, city);
       }
 
@@ -68,7 +75,7 @@ export class InitChemPhaseHandler implements CorpPhaseHandler {
     }
 
     log(
-      `Chem-Initialisierung abgeschlossen ${!hasSmartSupply ? "(ohne Smart Supply)" : ""}. Wechsle zu EXPORT_LOOP`,
+      `Chem-Initialisierung abgeschlossen ${!hasSmartSupply ? "(ohne Smart Supply)" : ""}. Wechsle zu EXPORT_LOOP.`,
       "SUCCESS",
     );
     return "EXPORT_LOOP";
@@ -78,30 +85,35 @@ export class InitChemPhaseHandler implements CorpPhaseHandler {
 export class ExportLoopPhaseHandler implements CorpPhaseHandler {
   async execute(ctx: CorpPhaseContext): Promise<CorpPhase> {
     const { ns, log, logger } = ctx;
-    const corp = ns.corporation; // <-- Gefixt: corp Variable definiert
+    const corp = ns.corporation;
     const { agri, chem } = CORP_CONFIG.divisions;
+
+    if (!corp.getCorporation().divisions.includes(chem.name)) {
+      log(
+        `[CHEM] Division '${chem.name}' existiert noch nicht. Kehre zu INIT_CHEM zurück...`,
+        "WARN",
+      );
+      return "INIT_CHEM";
+    }
 
     log("Führe Skalierung & Export-Loop für Investor 2 aus...", "DEBUG");
 
-    // 1. Automatische Forschung für Material-Sparten ausführen
     const agriResearchedAll = autoResearchDivision(
       ns,
       agri.name,
       MATERIAL_RESEARCH_PRIORITY,
-      log
+      log,
     );
 
     const chemResearchedAll = autoResearchDivision(
       ns,
       chem.name,
       MATERIAL_RESEARCH_PRIORITY,
-      log
+      log,
     );
-
     let allReady = true;
 
     for (const city of CORP_CONFIG.cities) {
-      // Export-Routen sicherstellen
       safeExportMaterial(
         ns,
         chem.name,
@@ -121,23 +133,21 @@ export class ExportLoopPhaseHandler implements CorpPhaseHandler {
         "IPROD * -1",
       );
 
-      // Büros auf Phase 2 vergrößern & Jobs inklusive R&D synchronisieren
       syncOfficeJobsWithResearch(
         ns,
         agri.name,
         city,
         CORP_CONFIG.officeSizes.phase2,
-        agriResearchedAll
+        agriResearchedAll,
       );
       syncOfficeJobsWithResearch(
         ns,
         chem.name,
         city,
         CORP_CONFIG.officeSizes.phase2,
-        chemResearchedAll
+        chemResearchedAll,
       );
 
-      // Lagerhäuser ausbauen
       upgradeWarehouseToLevel(
         ns,
         agri.name,
@@ -151,7 +161,6 @@ export class ExportLoopPhaseHandler implements CorpPhaseHandler {
         CORP_CONFIG.warehouseLevels.chemR2,
       );
 
-      // Dynamischer Booster-Einkauf für R2
       const agriReady = await purchaseBoosterMaterials(
         ns,
         agri.name,

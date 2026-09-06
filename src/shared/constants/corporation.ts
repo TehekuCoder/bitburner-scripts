@@ -1,3 +1,4 @@
+//shared/constants/corporations.ts
 import { CityName, CorpMaterialName, CorpResearchName } from "@ns";
 
 export const CORP_CONFIG = {
@@ -57,6 +58,7 @@ export const CORP_CONFIG = {
       Management: 1,
       "Research & Development": 0,
     },
+
     tobaccoHQ60: {
       Operations: 12,
       Engineer: 12,
@@ -77,6 +79,10 @@ export const CORP_CONFIG = {
       Business: 2,
       Management: 2,
       "Research & Development": 0,
+    },
+    spike6: {
+      Operations: 1,
+      Business: 5,
     },
     spike9: {
       Operations: 4,

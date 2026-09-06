@@ -59,6 +59,34 @@ export function loadBnMults(ns: NS): BitNodeMultipliers {
   }
   return DEFAULT_MULTIPLIERS;
 }
+
+export function isCorporationViable(ns: NS): boolean {
+  if (!hasCorporation(ns)) return false;
+
+  // 1. Wenn die Corp bereits existiert, soll der Manager sie immer verwalten
+  try {
+    if (ns.corporation.hasCorporation()) return true;
+  } catch {
+    return false;
+  }
+
+  const bnMults = loadBnMults(ns);
+  const money = ns.getServerMoneyAvailable("home");
+
+  // 2. BitNode-Debuff Abfanger (Valuation < 0.5, z.B. BN7 mit 0.20)
+  if (bnMults.CorporationValuation < 0.5) {
+    // Wenn eine Gang bereits läuft, lassen wir das Geld lieber dort / in Augmentations fließen
+    if (hasGang(ns) && ns.gang.inGang()) {
+      // Erst gründen, wenn Cash im Überfluss da ist (z.B. >= 5 Billionen $)
+      return money >= 5e12;
+    }
+    // Ohne Gang bei Debuff ebenfalls höhere Schwelle (1 Billion $)
+    return money >= 1e12;
+  }
+
+  // 3. Standard-BitNode: Normale Schwelle von 150 Mrd. $
+  return money >= 150e9;
+}
 /**
  * Extrahiert den reinen Skriptnamen ohne Ordnerpfad.
  * Beispiel: "/daemons/batcher-daemon.js" -> "batcher-daemon.js"

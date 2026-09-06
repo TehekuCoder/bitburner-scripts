@@ -4,6 +4,7 @@ import {
   AGRI_BOOST_RATIOS,
 } from "../../../shared/constants/corporation";
 import {
+  calculateDivisionSetupCost,
   setupOfficeAndJobs,
   upgradeWarehouseToLevel,
   purchaseBoosterMaterials,
@@ -11,7 +12,6 @@ import {
 } from "../corporation-helpers";
 import { CorpPhaseContext, CorpPhaseHandler } from "../types";
 
-// Optimierte InitAgriPhaseHandler mit Kapital-Prüfung
 export class InitAgriPhaseHandler implements CorpPhaseHandler {
   async execute(ctx: CorpPhaseContext): Promise<CorpPhase> {
     const { ns, log } = ctx;
@@ -20,25 +20,34 @@ export class InitAgriPhaseHandler implements CorpPhaseHandler {
 
     log("Initialisiere Agri-Sparte...", "INFO");
 
-    // 1. Division gründen ($15b Kosten)
-    if (!corp.getCorporation().divisions.includes(agri.name)) {
-      if (corp.getCorporation().funds < 15_000_000_000) {
-        log("Warten auf Kapital für Agri-Gründung ($15B)...", "DEBUG");
+    const isExpanded = corp.getCorporation().divisions.includes(agri.name);
+
+    // 1. Kapital-Prüfung vorab (Gründung + alle Städte + alle Lagerhäuser)
+    if (!isExpanded) {
+      const requiredSetupCost = calculateDivisionSetupCost(ns, agri.type, {
+        includeCities: true,
+        includeWarehouses: true,
+      });
+
+      if (corp.getCorporation().funds < requiredSetupCost) {
+        log(
+          `Warten auf Kapital für Agri-Setup ($${ns.format.number(requiredSetupCost)})...`,
+          "DEBUG",
+        );
         return ctx.currentPhase;
       }
+
       corp.expandIndustry(agri.type, agri.name);
     }
 
     const hasSmartSupply = corp.hasUnlock("Smart Supply");
 
-    // 2. Städte & Lagerhäuser erweitern
+    // 2. Städte & Lagerhäuser direkt in einem Rutsch durchkonfigurieren
     for (const city of CORP_CONFIG.cities) {
       if (!corp.getDivision(agri.name).cities.includes(city)) {
-        if (corp.getCorporation().funds < 4_000_000_000) return ctx.currentPhase;
         corp.expandCity(agri.name, city);
       }
       if (!corp.hasWarehouse(agri.name, city)) {
-        if (corp.getCorporation().funds < 5_000_000_000) return ctx.currentPhase;
         corp.purchaseWarehouse(agri.name, city);
       }
 

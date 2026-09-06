@@ -3,7 +3,7 @@ import { LoggerClient } from "/infrastructure/logging/logger-client";
 import { getAllServers } from "/infrastructure/network/network";
 import { PATHS } from "/infrastructure/runtime/paths";
 import { loadState } from "/infrastructure/state/state";
-import { hasSingularity, hasGang, hasSleeve, hasCorporation } from "/lib/utils";
+import { hasSingularity, hasGang, hasSleeve, hasCorporation, isCorporationViable } from "/lib/utils";
 
 interface DaemonConfig {
   name: string;
@@ -225,11 +225,7 @@ export async function main(ns: NS): Promise<void> {
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["corporation", "corp"])) return false;
-        return (
-          hasCorporation(ns) &&
-          (ns.corporation.hasCorporation() ||
-            ns.getServerMoneyAvailable("home") >= 150e9)
-        );
+        return isCorporationViable(ns);
       },
     },
     {
@@ -342,3 +338,4 @@ export async function main(ns: NS): Promise<void> {
     await ns.sleep(10000);
   }
 }
+
