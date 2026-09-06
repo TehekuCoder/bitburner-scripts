@@ -1,5 +1,3 @@
-// evaluators/purchase/corporation.ts
-
 import { NS } from "@ns";
 import {
   PurchaseEvaluator,
@@ -8,7 +6,11 @@ import {
   PurchaseCategory,
 } from "/shared/types/finance.js";
 import { runEvaluator } from "../evaluator-runner.js";
-import { loadBnMults, adjustPriorityByMult } from "lib/utils.js";
+import {
+  loadBnMults,
+  adjustPriorityByMult,
+  isCorporationViable,
+} from "lib/utils.js";
 import { PATHS } from "/infrastructure/runtime/paths";
 
 const CORP_NAME = "Philip Matrix";
@@ -17,36 +19,27 @@ export const CorporationEvaluator: PurchaseEvaluator = {
   category: "CORPORATION" as PurchaseCategory,
 
   getRequests(ns: NS): PurchaseRequest[] {
-    // 🔴 1. API Availability Check (Benötigt BN3 oder SF3)
-    if (!ns.corporation) return [];
+    // 🔴 1. Viability & API Check (nutzt die zentrale Logik)
+    if (!isCorporationViable(ns)) return [];
 
     try {
       if (ns.corporation.hasCorporation()) return [];
     } catch {
-      return []; // Fallback, falls API im aktuellen BN gesperrt ist
+      return [];
     }
 
-    // 🔴 2. BitNode Multipliers Evaluieren
     const bnMults = loadBnMults(ns);
-    const valMult =
-      bnMults.CorporationValuation ?? 1.0;
-    const softcapMult =
-      bnMults.CorporationSoftcap ?? 1.0;
+    const valMult = bnMults.CorporationValuation ?? 1.0;
 
-    // Falls Corporations im BitNode totgelegt sind
-    if (valMult <= 0 || softcapMult <= 0) return [];
-
-    // 🟢 3. Kosten & Priorität ermitteln
+    // 🟢 2. Kosten & Priorität ermitteln
     const currentBn = ns.getResetInfo().currentNode;
     const isFreeInBn3 = currentBn === 3;
-    const cost = isFreeInBn3 ? 0 : 150_000_000_000; // 150 Mrd. $ außerhalb BN3
+    const cost = isFreeInBn3 ? 0 : 150_000_000_000;
 
-    // Basis-Priorität festlegen
     let basePriority = isFreeInBn3
       ? PurchasePriority.CRITICAL
       : PurchasePriority.HIGH;
 
-    // Außerhalb BN3: Bei reduzierten Corp-Multiplikatoren Priorität anpassen
     if (!isFreeInBn3) {
       basePriority = adjustPriorityByMult(basePriority, valMult);
     }

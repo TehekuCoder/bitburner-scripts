@@ -396,8 +396,15 @@ export const HacknetEvaluator: PurchaseEvaluator = {
         if (needsNetburnersCores && req.id.includes("-core")) return true;
 
         if (isServerMode && req.id.includes("-cache")) return true;
+        // Zeile ~370 in hacknet.ts
         if (isServerMode && req.id.includes("-ram")) {
           const nodeIdx = Number(req.id.split("-")[2]);
+
+          // Guard-Clause für ungültige oder veraltete Node-Indices:
+          if (Number.isNaN(nodeIdx) || nodeIdx >= ns.hacknet.numNodes()) {
+            return false;
+          }
+
           const currentRam = ns.hacknet.getNodeStats(nodeIdx).ram;
           return evaluateServerRamUpgrade(
             req,

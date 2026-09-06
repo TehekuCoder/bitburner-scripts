@@ -8,7 +8,7 @@ import {
 } from "/shared/types/finance.js";
 import { TRANSACTION_FEE } from "../../../shared/constants/finance.js";
 import { runEvaluator } from "../evaluator-runner.js";
-import { loadBnMults, adjustPriorityByMult } from "/lib/utils.js";
+import { loadBnMults, adjustPriorityByMult, isStockViable } from "/lib/utils.js";
 import { PATHS } from "/infrastructure/runtime/paths";
 
 export const StockEvaluator: PurchaseEvaluator = {
@@ -16,97 +16,99 @@ export const StockEvaluator: PurchaseEvaluator = {
 
   getRequests(ns: NS): PurchaseRequest[] {
     const requests: PurchaseRequest[] = [];
-    if (!ns.stock) return requests;
+    
+    // 🔴 1. Viability Check
+    if (!isStockViable(ns)) return requests;
 
     const bnMults = loadBnMults(ns);
-
     const fourSigmaCostMult = bnMults.FourSigmaMarketDataCost ?? 1.0;
     const fourSigmaApiCostMult = bnMults.FourSigmaMarketDataApiCost ?? 1.0;
 
+    const wseCost = 200_000_000;
+    const tixCost = 5_000_000_000;
     const fourSigmaDataCost = 1_000_000_000 * fourSigmaCostMult;
     const fourSigmaTixCost = 25_000_000_000 * fourSigmaApiCostMult;
 
-    // --- 1. LIZENZEN VERWALTEN ---
+    const playerMoney = ns.getServerMoneyAvailable("home");
+
+    // --- 2. LIZENZEN VERWALTEN MIT DYNAMISCHER PRIO ---
     let fullyUnlocked = true;
+
+    // Hilfsfunktion: Eine Lizenz sollte uns nicht komplett pleite machen (max. 30% des Vermögens)
+    const canAffordSafely = (cost: number) => playerMoney >= cost * 3.33;
 
     if (!ns.stock.hasWseAccount()) {
       fullyUnlocked = false;
-      requests.push({
-        id: "stock-wse-account",
-        category: "STOCK_LICENSE" as PurchaseCategory,
-        priority: PurchasePriority.HIGH,
-        score: 80,
-        cost: 200_000_000,
-        description: "Börsenzugang (WSE)",
-        action: {
-          script: PATHS.app.actions.stock,
-          args: ["stock-purchase-license", "wse"],
-        },
-      });
+      if (canAffordSafely(wseCost)) {
+        requests.push({
+          id: "stock-wse-account",
+          category: "STOCK_LICENSE" as PurchaseCategory,
+          priority: PurchasePriority.LOW,
+          score: 40,
+          cost: wseCost,
+          description: "Börsenzugang (WSE)",
+          action: {
+            script: PATHS.app.actions.stock,
+            args: ["stock-purchase-license", "wse"],
+          },
+        });
+      }
     } else if (!ns.stock.hasTixApiAccess()) {
       fullyUnlocked = false;
-      requests.push({
-        id: "stock-tix-api",
-        category: "STOCK_LICENSE" as PurchaseCategory,
-        priority: PurchasePriority.HIGH,
-        score: 85,
-        cost: 5_000_000_000,
-        description: "TIX API (Börsen-Automatisierung)",
-        action: {
-          script: PATHS.app.actions.stock,
-          args: ["stock-purchase-license", "tix"],
-        },
-      });
+      // TIX API erst kaufen, wenn wir uns auch der 4S-Schwelle nähern (~20B+ Vermögen)
+      if (playerMoney >= 20_000_000_000) {
+        requests.push({
+          id: "stock-tix-api",
+          category: "STOCK_LICENSE" as PurchaseCategory,
+          priority: playerMoney >= 35_000_000_000 ? PurchasePriority.HIGH : PurchasePriority.MEDIUM,
+          score: 60,
+          cost: tixCost,
+          description: "TIX API (Börsen-Automatisierung)",
+          action: {
+            script: PATHS.app.actions.stock,
+            args: ["stock-purchase-license", "tix"],
+          },
+        });
+      }
     } else if (!ns.stock.has4SData()) {
       fullyUnlocked = false;
-      const efficiencyMult =
-        fourSigmaCostMult > 0 ? 1 / fourSigmaCostMult : 1.0;
-      const priority = adjustPriorityByMult(
-        PurchasePriority.MEDIUM,
-        efficiencyMult,
-      );
-      const score = Math.max(1, Math.floor(70 * efficiencyMult));
-
-      requests.push({
-        id: "stock-4s-data",
-        category: "STOCK_LICENSE" as PurchaseCategory,
-        priority,
-        score,
-        cost: fourSigmaDataCost,
-        description: `4S Marktdaten (Forecast) [Mult: ${fourSigmaCostMult.toFixed(2)}x]`,
-        action: {
-          script: PATHS.app.actions.stock,
-          args: ["stock-purchase-license", "4s"],
-        },
-      });
+      if (canAffordSafely(fourSigmaDataCost)) {
+        requests.push({
+          id: "stock-4s-data",
+          category: "STOCK_LICENSE" as PurchaseCategory,
+          priority: PurchasePriority.MEDIUM,
+          score: 70,
+          cost: fourSigmaDataCost,
+          description: `4S Marktdaten (Forecast) [Mult: ${fourSigmaCostMult.toFixed(2)}x]`,
+          action: {
+            script: PATHS.app.actions.stock,
+            args: ["stock-purchase-license", "4s"],
+          },
+        });
+      }
     } else if (!ns.stock.has4SDataTixApi()) {
       fullyUnlocked = false;
-      const efficiencyMult =
-        fourSigmaApiCostMult > 0 ? 1 / fourSigmaApiCostMult : 1.0;
-      const priority = adjustPriorityByMult(
-        PurchasePriority.MEDIUM,
-        efficiencyMult,
-      );
-      const score = Math.max(1, Math.floor(75 * efficiencyMult));
-
-      requests.push({
-        id: "stock-4s-tix-api",
-        category: "STOCK_LICENSE" as PurchaseCategory,
-        priority,
-        score,
-        cost: fourSigmaTixCost,
-        description: `4S TIX API (Forecast Automatisierung) [Mult: ${fourSigmaApiCostMult.toFixed(2)}x]`,
-        action: {
-          script: PATHS.app.actions.stock,
-          args: ["stock-purchase-license", "4s-tix"],
-        },
-      });
+      // Sobald wir 4S Data haben, ist 4S TIX API der finale Baustein -> HIGH Priority, wenn bezahlbar
+      if (canAffordSafely(fourSigmaTixCost) || playerMoney >= fourSigmaTixCost * 1.2) {
+        requests.push({
+          id: "stock-4s-tix-api",
+          category: "STOCK_LICENSE" as PurchaseCategory,
+          priority: PurchasePriority.HIGH,
+          score: 90,
+          cost: fourSigmaTixCost,
+          description: `4S TIX API (Forecast Automatisierung) [Mult: ${fourSigmaApiCostMult.toFixed(2)}x]`,
+          action: {
+            script: PATHS.app.actions.stock,
+            args: ["stock-purchase-license", "4s-tix"],
+          },
+        });
+      }
     }
 
     // Ohne Lizenzen keine Trading-Kaufanträge stellen
     if (!fullyUnlocked) return requests;
 
-    // --- 2. TRADING FEATURE CHECK ---
+    // --- 3. TRADING FEATURE CHECK & KAUFANFRAGEN ---
     const symbols = ns.stock.getSymbols();
     let canShort = true;
     try {
@@ -115,7 +117,6 @@ export const StockEvaluator: PurchaseEvaluator = {
       canShort = false;
     }
 
-    // --- 3. TRADING KAUF-ANFRAGEN ---
     const buyCandidates: {
       sym: string;
       forecast: number;
@@ -148,7 +149,6 @@ export const StockEvaluator: PurchaseEvaluator = {
 
     buyCandidates.sort((a, b) => b.strength - a.strength);
 
-    const playerMoney = ns.getServerMoneyAvailable("home");
     const tradeBudget = playerMoney * 0.2;
 
     if (tradeBudget > TRANSACTION_FEE * 10) {
@@ -177,7 +177,7 @@ export const StockEvaluator: PurchaseEvaluator = {
           requests.push({
             id: `stock-invest-${sym}-${candidate.type}`,
             category: "STOCK_TRADE" as PurchaseCategory,
-            priority, // <-- Nicht mehr IDLE!
+            priority,
             score,
             cost: targetCost,
             description: `Aktien-Kauf: ${sym} (${candidate.type}) [Forecast: ${(candidate.forecast * 100).toFixed(1)}%]`,

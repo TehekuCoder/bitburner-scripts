@@ -34,6 +34,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "CCT Solver Task",
       path: PATHS.domain.tasks.cctSolver,
+      minHomeRam: 512,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["cct", "solver"])) return false;
@@ -95,7 +96,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Hash Manager",
       path: PATHS.services.managers.hash,
-      minHomeRam: 32,
+      minHomeRam: 512,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, "hacknet")) return false;
@@ -111,7 +112,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "IPvGo Manager",
       path: PATHS.services.managers.ipvgo,
-      minHomeRam: 64,
+      minHomeRam: 512,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["ipvgo", "go"])) return false;

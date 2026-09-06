@@ -5,21 +5,24 @@ export async function main(ns: NS): Promise<void> {
   const index = Number(ns.args[1] ?? -1);
   const amount = Number(ns.args[2] ?? 1);
 
+  const numNodes = ns.hacknet.numNodes();
+  const isValidIndex = index >= 0 && index < numNodes;
+
   switch (action) {
     case "hacknet-new-node":
       ns.hacknet.purchaseNode();
       break;
     case "hacknet-upgrade-level":
-      if (index >= 0) ns.hacknet.upgradeLevel(index, amount);
+      if (isValidIndex) ns.hacknet.upgradeLevel(index, amount);
       break;
     case "hacknet-upgrade-ram":
-      if (index >= 0) ns.hacknet.upgradeRam(index, amount);
+      if (isValidIndex) ns.hacknet.upgradeRam(index, amount);
       break;
     case "hacknet-upgrade-core":
-      if (index >= 0) ns.hacknet.upgradeCore(index, amount);
+      if (isValidIndex) ns.hacknet.upgradeCore(index, amount);
       break;
     case "hacknet-upgrade-cache":
-      if (index >= 0) ns.hacknet.upgradeCache(index, amount);
+      if (isValidIndex) ns.hacknet.upgradeCache(index, amount);
       break;
   }
 }

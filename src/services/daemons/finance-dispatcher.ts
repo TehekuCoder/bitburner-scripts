@@ -7,6 +7,8 @@ import {
   loadBnMults,
   hasCorporation,
   formatRam,
+  isCorporationViable,
+  isStockViable,
 } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
@@ -97,16 +99,19 @@ export async function main(ns: NS): Promise<void> {
       await runAndWait(PATHS.domain.evaluators.purchase.sleeve);
     }
 
-    // 6. Stock Market (stock.js - ~19.80 GB)
-    if (Boolean(ns.stock)) {
+    // 6. Stock Market
+    if (isStockViable(ns)) {
       await runAndWait(PATHS.domain.evaluators.purchase.stock);
     }
 
     // 7. Corporation Evaluator
-    if (hasCorporation(ns) && !ns.corporation.hasCorporation()) {
+    if (
+      hasCorporation(ns) &&
+      !ns.corporation.hasCorporation() &&
+      isCorporationViable(ns)
+    ) {
       await runAndWait(PATHS.domain.evaluators.purchase.corporation);
     }
-
     // Pause zwischen den Evaluations-Zyklen
     await ns.sleep(3000);
   }

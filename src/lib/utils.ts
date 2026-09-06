@@ -63,29 +63,58 @@ export function loadBnMults(ns: NS): BitNodeMultipliers {
 export function isCorporationViable(ns: NS): boolean {
   if (!hasCorporation(ns)) return false;
 
-  // 1. Wenn die Corp bereits existiert, soll der Manager sie immer verwalten
+  // 1. Wenn die Corp bereits existiert, ist sie immer aktiv/nutzbar
   try {
     if (ns.corporation.hasCorporation()) return true;
   } catch {
     return false;
   }
 
+  // 2. Multiplikatoren prüfen: Ist Corporation im BitNode totgelegt?
   const bnMults = loadBnMults(ns);
+  const valMult = bnMults.CorporationValuation ?? 1.0;
+  const softcapMult = bnMults.CorporationSoftcap ?? 1.0;
+  if (valMult <= 0 || softcapMult <= 0) return false;
+
+  // 3. Sonderfall BN3: Gründung ist GRATIS (0 $) -> sofort viable!
+  const currentBn = ns.getResetInfo().currentNode;
+  if (currentBn === 3) return true;
+
+  // 4. Außerhalb BN3: Kapitalschwellen unter Berücksichtigung von Debuffs & Gangs
   const money = ns.getServerMoneyAvailable("home");
 
-  // 2. BitNode-Debuff Abfanger (Valuation < 0.5, z.B. BN7 mit 0.20)
-  if (bnMults.CorporationValuation < 0.5) {
-    // Wenn eine Gang bereits läuft, lassen wir das Geld lieber dort / in Augmentations fließen
+  if (valMult < 0.5) {
+    // Bei starkem Valuation-Debuff (z. B. BN7) bevorzugen wir Gang-Investitionen
     if (hasGang(ns) && ns.gang.inGang()) {
-      // Erst gründen, wenn Cash im Überfluss da ist (z.B. >= 5 Billionen $)
-      return money >= 5e12;
+      return money >= 5e12; // 5 Billionen $
     }
-    // Ohne Gang bei Debuff ebenfalls höhere Schwelle (1 Billion $)
-    return money >= 1e12;
+    return money >= 1e12; // 1 Billion $
   }
 
-  // 3. Standard-BitNode: Normale Schwelle von 150 Mrd. $
-  return money >= 150e9;
+  // Standard-Schwelle außerhalb BN3
+  return money >= 150e9; // 150 Mrd. $
+}
+
+export function isStockViable(ns: NS): boolean {
+  if (!ns.stock) return false;
+
+  const bnMults = loadBnMults(ns);
+  const fourSigmaCostMult = bnMults.FourSigmaMarketDataCost ?? 1.0;
+  const fourSigmaApiCostMult = bnMults.FourSigmaMarketDataApiCost ?? 1.0;
+
+  // Wenn die Multiplikatoren auf 0 stehen, ist 4S im BitNode deaktiviert
+  if (fourSigmaCostMult <= 0 || fourSigmaApiCostMult <= 0) return false;
+
+  const money = ns.getServerMoneyAvailable("home");
+
+  // Wenn bereits alle Lizenzen vorhanden sind, reicht ein kleines Trading-Kapital
+  if (ns.stock.has4SDataTixApi()) {
+    return money >= 100_000_000; // 100M $
+  }
+
+  // Für den Lizenzkauf: Erst evaluieren, wenn wir mindestens 10 Mrd. $ auf der Kante haben,
+  // um nicht frühzeitig 5 Mrd. $ für eine nutzlose TIX-API zu blockieren.
+  return money >= 10_000_000_000; // 10 Mrd. $
 }
 /**
  * Extrahiert den reinen Skriptnamen ohne Ordnerpfad.
