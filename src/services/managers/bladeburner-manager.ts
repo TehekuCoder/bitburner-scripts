@@ -4,6 +4,7 @@ import {
   BladeburnerActionName,
   CityName,
   BladeburnerSkillName,
+  BladeburnerBlackOpName,
 } from "@ns";
 import { BLADEBURNER_SKILL_PRIORITIES } from "/shared/constants/bladeburner";
 
@@ -78,27 +79,17 @@ export async function main(ns: NS): Promise<void> {
 
     if (bestAction) {
       if (currentAction?.name !== bestAction.name) {
-        setAction(ns, bestAction.type, bestAction.name);
+        const success = setAction(ns, bestAction.type, bestAction.name);
+        if (!success) {
+          // Falls die Wunsch-Aktion abgelehnt wird, sofort Fallback starten
+          executeFallbackAction(ns, currentAction, currentChaos);
+        }
       }
     } else {
-      // Fallback-Hierarchie wenn keine Verträge / Ops möglich sind:
-      // 1. Hohes Chaos senken ➔ Diplomacy
-      // 2. Kampfwerte unter Mindestwert ➔ Training
-      // 3. Aufklären ➔ Field Analysis
-      if (currentChaos > CONFIG.MAX_CHAOS) {
-        if (currentAction?.name !== "Diplomacy") {
-          setAction(ns, "General", "Diplomacy");
-        }
-      } else if (hasLowCombatStats(ns)) {
-        if (currentAction?.name !== "Training") {
-          setAction(ns, "General", "Training");
-        }
-      } else if (currentAction?.name !== "Field Analysis") {
-        setAction(ns, "General", "Field Analysis");
-      }
+      executeFallbackAction(ns, currentAction, currentChaos);
     }
 
-    // Warten bis zur nächsten Evaluierung nach Ablauf des Zyklus
+    // Warten bis zur nächsten Evaluierung
     await sleepNextCycle(ns);
   }
 }
@@ -122,25 +113,26 @@ function hasLowCombatStats(ns: NS): boolean {
 function findBestAction(
   ns: NS,
 ): { type: BladeburnerActionType; name: BladeburnerActionName } | null {
-  // Wenn die Kampfwerte noch zu niedrig sind, direkt Training priorisieren
   if (hasLowCombatStats(ns)) {
     return { type: "General", name: "Training" };
   }
 
   // 1. BlackOps prüfen
   const nextBlackOp = ns.bladeburner.getNextBlackOp();
-  if (nextBlackOp && nextBlackOp.name) {
-    const reqRank = ns.bladeburner.getBlackOpRank(nextBlackOp.name);
+  const validBlackOpName = getValidBlackOpName(nextBlackOp);
+
+  if (validBlackOpName) {
+    const reqRank = ns.bladeburner.getBlackOpRank(validBlackOpName);
     if (ns.bladeburner.getRank() >= reqRank) {
       const [minChance, maxChance] =
         ns.bladeburner.getActionEstimatedSuccessChance(
           "Black Operations",
-          nextBlackOp.name as BladeburnerActionName,
+          validBlackOpName,
         );
       if ((minChance + maxChance) / 2 >= CONFIG.MIN_CHANCE_BLACKOP) {
         return {
           type: "Black Operations",
-          name: nextBlackOp.name as BladeburnerActionName,
+          name: validBlackOpName,
         };
       }
     }
@@ -149,14 +141,13 @@ function findBestAction(
   // 2. Operations prüfen (von wertvoll zu einfach)
   const operations = ns.bladeburner.getOperationNames().slice().reverse();
   for (const op of operations) {
-    if (ns.bladeburner.getActionCountRemaining("Operations", op) <= 0) continue;
+    // 🔴 Geändert von <= 0 auf < 1
+    if (ns.bladeburner.getActionCountRemaining("Operations", op) < 1) continue;
 
     const actionName = op as BladeburnerActionName;
     const [minChance, maxChance] =
       ns.bladeburner.getActionEstimatedSuccessChance("Operations", actionName);
-    const avgChance = (minChance + maxChance) / 2;
-
-    if (avgChance >= CONFIG.MIN_CHANCE_OPERATION) {
+    if ((minChance + maxChance) / 2 >= CONFIG.MIN_CHANCE_OPERATION) {
       return { type: "Operations", name: actionName };
     }
   }
@@ -164,20 +155,19 @@ function findBestAction(
   // 3. Contracts prüfen (von wertvoll zu einfach)
   const contracts = ns.bladeburner.getContractNames().slice().reverse();
   for (const contract of contracts) {
-    if (ns.bladeburner.getActionCountRemaining("Contracts", contract) <= 0)
+    // 🔴 Geändert von <= 0 auf < 1
+    if (ns.bladeburner.getActionCountRemaining("Contracts", contract) < 1)
       continue;
 
     const actionName = contract as BladeburnerActionName;
     const [minChance, maxChance] =
       ns.bladeburner.getActionEstimatedSuccessChance("Contracts", actionName);
-    const avgChance = (minChance + maxChance) / 2;
-
     const reqChance =
       contract === "Tracking"
         ? CONFIG.MIN_CHANCE_TRACKING
         : CONFIG.MIN_CHANCE_CONTRACT_HIGH;
 
-    if (avgChance >= reqChance) {
+    if ((minChance + maxChance) / 2 >= reqChance) {
       return { type: "Contracts", name: actionName };
     }
   }
@@ -231,30 +221,56 @@ function setAction(
   ns: NS,
   type: BladeburnerActionType,
   name: BladeburnerActionName,
-): void {
+): boolean {
   const success = ns.bladeburner.startAction(type, name);
   if (success) {
     ns.print(`▶️ Aktion gestartet: [${type}] ${name}`);
+  } else {
+    ns.print(`⚠️ Aktion konnte nicht gestartet werden: [${type}] ${name}`);
   }
+  return success;
 }
 
 /**
- * Wartet exakt die Dauer eines Aktionszyklus ab, damit danach im Haupt-Loop
- * die Erfolgschancen, Stamina und Stadt-Bedingungen neu bewertet werden.
+ * Prüft typsicher, ob eine gültige BlackOp bereitsteht.
+ */
+function getValidBlackOpName(
+  nextBlackOp: { name: BladeburnerBlackOpName } | null,
+): BladeburnerBlackOpName | null {
+  if (!nextBlackOp || !nextBlackOp.name) return null;
+  const rawName = nextBlackOp.name as string;
+  if (rawName === "" || rawName === "None") return null;
+  return nextBlackOp.name;
+}
+
+/**
+ * Berechnet dynamisch die verbleibende Aktionsdauer.
+ * Berücksichtigt 5x-Bonus-Time nach Offline-Phasen und bleibt maximal reaktionsfähig.
  */
 async function sleepNextCycle(ns: NS): Promise<void> {
   const current = ns.bladeburner.getCurrentAction();
   if (!current || current.type === "Idle") {
-    await ns.sleep(1000);
+    await ns.sleep(300);
     return;
   }
 
-  const duration = ns.bladeburner.getActionTime(
+  const totalTime = ns.bladeburner.getActionTime(
     current.type as BladeburnerActionType,
     current.name as BladeburnerActionName,
   );
+  const currentTime = ns.bladeburner.getActionCurrentTime();
 
-  await ns.sleep(Math.max(duration, 1000));
+  // Verbleibende Zeit der aktuellen Aktion berechnen
+  let remainingMs = Math.max(0, totalTime - currentTime);
+
+  // Bonus-Time beschleunigt Bladeburner um das 5-fache!
+  if (ns.bladeburner.getBonusTime() > 0) {
+    remainingMs /= 5;
+  }
+
+  // Kurzes Intervall wählen (mind. 100ms, max. 500ms)
+  const sleepTime = Math.min(Math.max(remainingMs, 100), 500);
+  await ns.sleep(sleepTime);
 }
 
 function autoUpgradeSkills(ns: NS): void {
@@ -262,15 +278,16 @@ function autoUpgradeSkills(ns: NS): void {
   if (availableSp <= 0) return;
 
   const nextBlackOp = ns.bladeburner.getNextBlackOp();
+  const validBlackOpName = getValidBlackOpName(nextBlackOp);
   let isBlackOpBlocked = false;
 
-  if (nextBlackOp && nextBlackOp.name) {
-    const reqRank = ns.bladeburner.getBlackOpRank(nextBlackOp.name);
+  if (validBlackOpName) {
+    const reqRank = ns.bladeburner.getBlackOpRank(validBlackOpName);
     if (ns.bladeburner.getRank() >= reqRank) {
       const [minChance, maxChance] =
         ns.bladeburner.getActionEstimatedSuccessChance(
           "Black Operations",
-          nextBlackOp.name as BladeburnerActionName,
+          validBlackOpName,
         );
       if ((minChance + maxChance) / 2 < CONFIG.MIN_CHANCE_BLACKOP) {
         isBlackOpBlocked = true;
@@ -324,5 +341,23 @@ function autoUpgradeSkills(ns: NS): void {
     } else {
       break;
     }
+  }
+}
+
+function executeFallbackAction(
+  ns: NS,
+  currentAction: { type: string; name: string } | null,
+  currentChaos: number,
+): void {
+  if (currentChaos > CONFIG.MAX_CHAOS) {
+    if (currentAction?.name !== "Diplomacy") {
+      setAction(ns, "General", "Diplomacy");
+    }
+  } else if (hasLowCombatStats(ns)) {
+    if (currentAction?.name !== "Training") {
+      setAction(ns, "General", "Training");
+    }
+  } else if (currentAction?.name !== "Field Analysis") {
+    setAction(ns, "General", "Field Analysis");
   }
 }
