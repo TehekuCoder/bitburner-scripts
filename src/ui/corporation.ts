@@ -1,6 +1,6 @@
 import { CorporationInfo, NS } from "@ns";
 import { loadCorporationState } from "/infrastructure/state/state";
-import { CORP_CONFIG } from "/shared/constants/corporation";
+import { CORP_CONFIG, MATERIAL_RESEARCH_PRIORITY, PRODUCT_RESEARCH_PRIORITY } from "/shared/constants/corporation";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -44,23 +44,22 @@ function renderDashboard(
   const dividerSub =
     "----------------------------------------------------------------------------------";
 
-  const profit = corp.revenue - corp.expenses;
-  const profitStr =
-    profit >= 0
-      ? `+$${ns.format.number(profit)}/s`
-      : `-$${ns.format.number(Math.abs(profit))}/s`;
+  const profitCycle = corp.revenue - corp.expenses;
+  const profitPerSec = profitCycle / 10;
+  const revPerSec = corp.revenue / 10;
+  const expPerSec = corp.expenses / 10;
 
   const investOffer = ns.corporation.getInvestmentOffer();
 
-  ns.print(dividerHeader);
-  ns.print(
-    ` 🏢 BitOS CORP SYSTEM | ${corp.name} | Aktuelle Phase: [ ${stage} ]`,
-  );
-  ns.print(dividerHeader);
+  const profitStr =
+    profitPerSec >= 0
+      ? `+$${ns.format.number(profitPerSec)}/s`
+      : `-$${ns.format.number(Math.abs(profitPerSec))}/s`;
+
   ns.print(
     ` Capital: $${ns.format.number(corp.funds)} | ` +
-      `Revenue: $${ns.format.number(corp.revenue)}/s | ` +
-      `Expenses: $${ns.format.number(corp.expenses)}/s`,
+      `Revenue: $${ns.format.number(revPerSec)}/s | ` +
+      `Expenses: $${ns.format.number(expPerSec)}/s`,
   );
   ns.print(
     ` Net Profit: ${profitStr} | ` +
@@ -112,7 +111,15 @@ function renderDashboard(
   }
 
   ns.print(dividerSub);
+  
+  // 1. Phasen-Checklist rendern
   renderPhaseChecklist(ns, stage, corp);
+  
+  ns.print(dividerSub);
+  
+  // 2. Forschungs-Übersicht rendern (Inkonsistenz behoben)
+  renderResearchOverview(ns, corp);
+  
   ns.print(dividerHeader);
 
   if (localLogBuffer.length > 0) {
@@ -183,9 +190,7 @@ function renderPhaseChecklist(
       ns.print(
         `  [${isUpgraded ? "X" : " "}] Büros auf ${CORP_CONFIG.officeSizes.phase2} Mitarbeiter skaliert (${agriOffice}/${CORP_CONFIG.officeSizes.phase2} Agri | ${chemOffice}/${CORP_CONFIG.officeSizes.phase2} Chem)`,
       );
-      ns.print(
-        `  [ ] Exporte (Agri <-> Chem) & Booster R2 Einkäufe aktiv`,
-      );
+      ns.print(`  [ ] Exporte (Agri <-> Chem) & Booster R2 Einkäufe aktiv`);
       break;
     }
 
@@ -237,5 +242,53 @@ function renderPhaseChecklist(
 
     default:
       ns.print(`  [ ] Aktive Phase: ${stage}`);
+  }
+}
+
+/**
+ * Rendert die Forschungsübersicht aller aktiven Divisionen.
+ */
+function renderResearchOverview(ns: NS, corpInfo: CorporationInfo): void {
+  ns.print(" FORSCHUNGSFORTSCHRITT & PRIORITÄTEN:");
+
+  for (const divName of corpInfo.divisions) {
+    const div = ns.corporation.getDivision(divName);
+
+    const isMaterial =
+      div.industry === "Agriculture" || div.industry === "Chemical";
+    const priorityList = isMaterial
+      ? MATERIAL_RESEARCH_PRIORITY
+      : PRODUCT_RESEARCH_PRIORITY;
+
+    let completedCount = 0;
+    let nextTech: { name: string; cost: number } | null = null;
+
+    for (const tech of priorityList) {
+      if (ns.corporation.hasResearched(divName, tech)) {
+        completedCount++;
+      } else if (!nextTech) {
+        nextTech = {
+          name: tech,
+          cost: ns.corporation.getResearchCost(divName, tech),
+        };
+      }
+    }
+
+    const totalTechs = priorityList.length;
+    const progressPct = Math.floor((completedCount / totalTechs) * 100);
+    const statusStr = `${completedCount}/${totalTechs} (${progressPct}%)`;
+    const rpStr = ns.format.number(div.researchPoints);
+
+    let nextTechStr = "✓ Alle Prios abgeschlossen";
+    if (nextTech) {
+      const costStr = ns.format.number(nextTech.cost);
+      const isReady = div.researchPoints >= nextTech.cost;
+      const indicator = isReady ? "✓" : "…";
+      nextTechStr = `${indicator} ${nextTech.name} (${costStr} RP)`;
+    }
+
+    ns.print(
+      `   ${div.name.padEnd(12)} | RP: ${rpStr.padStart(8)} | Prio: ${statusStr.padEnd(11)} | Ziel: ${nextTechStr}`,
+    );
   }
 }

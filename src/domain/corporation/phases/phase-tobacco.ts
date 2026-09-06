@@ -176,7 +176,7 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
       0.7,
     );
 
-// 3. Forschungen streng nach Priorität durchführen & R&D Reallokation
+    // 3. Forschungen streng nach Priorität durchführen & R&D Reallokation
     let allResearched = true;
 
     for (const tech of CORP_RESEARCH_PRIORITY) {
@@ -320,6 +320,27 @@ export class TobaccoLoopPhaseHandler implements CorpPhaseHandler {
         const advertCost = corp.getHireAdVertCost(tobacco.name);
         if (corp.getCorporation().funds >= advertCost * 2) {
           corp.hireAdVert(tobacco.name);
+        }
+      }
+
+      // Neben Upgrades auch Tobacco-Lager erweitern, falls diese vollzulaufen drohen
+      for (const city of divInfo.cities) {
+        if (corp.hasWarehouse(tobacco.name, city)) {
+          const wh = corp.getWarehouse(tobacco.name, city);
+          if (wh.sizeUsed / wh.size > 0.85) {
+            const upgradeCost = corp.getUpgradeWarehouseCost(
+              tobacco.name,
+              city,
+              1,
+            );
+            if (corp.getCorporation().funds > upgradeCost * 2) {
+              corp.upgradeWarehouse(tobacco.name, city, 1);
+              log(
+                `[Tobacco] Lagerhaus in ${city} auf Level ${wh.level + 1} erweitert.`,
+                "INFO",
+              );
+            }
+          }
         }
       }
     }

@@ -5,10 +5,12 @@ import {
   CorpEmployeePosition,
   CorpUpgradeName,
   CorpUnlockName,
+  CorpResearchName,
 } from "@ns";
 
 import { LoggerClient } from "../../infrastructure/logging/logger-client";
 import { CORP_CONFIG, MATERIAL_VOLUMES } from "/shared/constants/corporation";
+import { LogLevel } from "/shared/types/logger";
 
 export type CorpJobRole = Exclude<CorpEmployeePosition, "Unassigned">;
 export type MaterialTargets = Partial<Record<CorpMaterialName, number>>;
@@ -82,8 +84,19 @@ export function setupOfficeAndJobs(
   jobs: JobAssignments,
 ): boolean {
   const corp = ns.corporation;
-  const office = corp.getOffice(divisionName, cityName);
 
+  // Guard: Prüfen, ob die Division überhaupt existiert
+  if (!corp.getCorporation().divisions.includes(divisionName)) {
+    return false;
+  }
+
+  // Guard: Prüfen, ob die Stadt in der Division freigeschaltet ist
+  if (!corp.getDivision(divisionName).cities.includes(cityName)) {
+    return false;
+  }
+
+  // 1. Bürogröße bei Bedarf erweitern
+  let office = corp.getOffice(divisionName, cityName);
   if (office.size < targetSize) {
     const sizeDiff = targetSize - office.size;
     const upgradeCost = corp.getOfficeSizeUpgradeCost(
@@ -98,26 +111,25 @@ export function setupOfficeAndJobs(
     corp.upgradeOfficeSize(divisionName, cityName, sizeDiff);
   }
 
-  let currentOffice = corp.getOffice(divisionName, cityName);
-  while (currentOffice.numEmployees < targetSize) {
+  // 2. Fehlende Mitarbeiter einstellen
+  office = corp.getOffice(divisionName, cityName);
+  while (office.numEmployees < targetSize) {
     if (!corp.hireEmployee(divisionName, cityName)) {
       break;
     }
-    currentOffice = corp.getOffice(divisionName, cityName);
+    office = corp.getOffice(divisionName, cityName);
   }
 
-  if (currentOffice.numEmployees < targetSize) {
+  if (office.numEmployees < targetSize) {
     return false;
   }
 
-  // Setze Zuweisungen nur zurück, wenn sich die Soll-Zahlen tatsächlich unterscheiden
+  // 3. ALLE Jobs bedingungslos auf 0 setzen -> Alle Mitarbeiter sind sicher "Unassigned"
   for (const job of ALL_JOBS) {
-    const targetCount = jobs[job] ?? 0;
-    if (office.employeeJobs[job] !== targetCount) {
-      corp.setJobAssignment(divisionName, cityName, job, 0);
-    }
+    corp.setJobAssignment(divisionName, cityName, job, 0);
   }
 
+  // 4. Ziel-Zuweisungen aus dem Unassigned-Pool setzen
   for (const [job, count] of Object.entries(jobs) as [CorpJobRole, number][]) {
     if (count && count > 0) {
       corp.setJobAssignment(divisionName, cityName, job, count);
@@ -325,7 +337,7 @@ export function buyPhaseUnlocks(ns: NS, currentPhase: string): void {
 
 /**
  * Hält die Booster-Materialien einer Division auf dem Ziel-Prozentwert des Lagerraums.
- * 
+ *
  * @param ns Bitburner NS-Instanz
  * @param divName Name der Division (z. B. "GreenPill Organics")
  * @param targetRatios Prozentualer Anteil am Speicherplatz je Material (z. B. Hardware: 0.1)
@@ -371,4 +383,77 @@ export function maintainRatios(
       }
     }
   }
+}
+
+/**
+ * Erforscht automatisch Technologien für eine Division basierend auf einer Prioritätsliste.
+ * @returns true, wenn ALLE Technologien aus der Liste erforscht wurden.
+ */
+export function autoResearchDivision(
+  ns: NS,
+  divisionName: string,
+  priorityList: readonly CorpResearchName[],
+  log?: (msg: string, level?: LogLevel) => void
+): boolean {
+  const corp = ns.corporation;
+  let allCompleted = true;
+
+  for (const tech of priorityList) {
+    if (!corp.hasResearched(divisionName, tech)) {
+      allCompleted = false;
+      const currentRP = corp.getDivision(divisionName).researchPoints;
+      const cost = corp.getResearchCost(divisionName, tech);
+
+      if (currentRP >= cost) {
+        try {
+          corp.research(divisionName, tech);
+          if (log) log(`[${divisionName}] Erforscht: ${tech}`, "SUCCESS");
+        } catch {
+          break; // Falls unerwartet Guthaben fehlt
+        }
+      } else {
+        // Sequenzielle Priorität: Warten, bis genug Punkte für die aktuelle Tech da sind
+        break;
+      }
+    }
+  }
+
+  return allCompleted;
+}
+
+
+
+/**
+ * Stellt Jobs ein und berücksichtigt, ob noch R&D benötigt wird.
+ */
+export function syncOfficeJobsWithResearch(
+  ns: NS,
+  divisionName: string,
+  city: CityName,
+  officeSize: number,
+  isResearchComplete: boolean
+): void {
+  // Wenn Forschung durch ist: Reines Produktions-/Business-Setup
+  if (isResearchComplete) {
+    setupOfficeAndJobs(ns, divisionName, city, officeSize, {
+      Operations: Math.floor(officeSize * 0.3),
+      Engineer: Math.floor(officeSize * 0.3),
+      Business: Math.floor(officeSize * 0.2),
+      Management: officeSize - (Math.floor(officeSize * 0.3) * 2 + Math.floor(officeSize * 0.2)),
+      "Research & Development": 0,
+    });
+    return;
+  }
+
+  // Solange geforscht wird: Mindestens 1 R&D Slot ab Bürogröße 6+
+  const rdSlots = officeSize >= 6 ? Math.max(1, Math.floor(officeSize * 0.15)) : 0;
+  const remainingSlots = officeSize - rdSlots;
+
+  setupOfficeAndJobs(ns, divisionName, city, officeSize, {
+    Operations: Math.floor(remainingSlots * 0.35),
+    Engineer: Math.floor(remainingSlots * 0.35),
+    Business: Math.floor(remainingSlots * 0.15),
+    Management: remainingSlots - (Math.floor(remainingSlots * 0.35) * 2 + Math.floor(remainingSlots * 0.15)),
+    "Research & Development": rdSlots,
+  });
 }

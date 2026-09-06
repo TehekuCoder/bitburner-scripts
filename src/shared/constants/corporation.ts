@@ -1,4 +1,4 @@
-import { CityName, CorpMaterialName } from "@ns";
+import { CityName, CorpMaterialName, CorpResearchName } from "@ns";
 
 export const CORP_CONFIG = {
   corpName: "Philip Matrix",
@@ -149,3 +149,28 @@ export const TOBACCO_BOOST_RATIOS = {
   "AI Cores": 0.2,
   "Real Estate": 0.2,
 } as const;
+
+export const MATERIAL_RESEARCH_PRIORITY: readonly CorpResearchName[] = [
+  "Hi-Tech R&D Laboratory",
+  "Overclock",
+  "Sti.mu",
+  "Self-Correcting Assemblers",
+  "Drones - Assembly",
+  "Drones - Transport",
+  "Go-Juice",
+] as const;
+
+export const PRODUCT_RESEARCH_PRIORITY: readonly CorpResearchName[] = [
+  "Hi-Tech R&D Laboratory",
+  "Market-TA.I",
+  "Market-TA.II",
+  "uPgrade: Capacity.I",
+  "uPgrade: Capacity.II",
+  "Overclock",
+  "Sti.mu",
+  "Self-Correcting Assemblers",
+  "Drones - Assembly",
+  "Drones - Transport",
+  "Go-Juice",
+  "uPgrade: Fulcrum",
+] as const;

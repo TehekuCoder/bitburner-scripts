@@ -8,6 +8,7 @@ import {
 import { CorpPhaseHandler, CorpPhaseContext, InvestorConfig } from "../types";
 import { CORP_CONFIG, CorpPhase } from "/shared/constants/corporation";
 
+// Optimierter InvestorPhaseHandler mit Anstau- & Dump-Verteilung
 export class InvestorPhaseHandler implements CorpPhaseHandler {
   private state: "IDLE" | "ACCUMULATING" | "SELLING" = "IDLE";
   private ticks = 0;
@@ -32,21 +33,27 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
       return this.config.nextPhase;
     }
 
-    // Morale aufrechterhalten, damit die Produktivität nicht einbricht
     for (const div of this.config.divisionNames) {
       for (const city of CORP_CONFIG.cities) {
         maintainEmployeeMorale(ns, div, city);
       }
     }
 
-    // STATE 1: Stoppe Verkäufe, um Rohstoffe/Produkte aufzustauen
+    // STATE 1: Stoppe Verkäufe & fokussiere Mitarbeiter auf Produktion
     if (this.state === "IDLE") {
       log(
-        `Starte Profit-Spike für Investor (${this.config.nextPhase}). Stoppe Verkäufe... (Versuch ${this.attempts + 1}/3)`,
+        `Starte Profit-Spike für Investor (${this.config.nextPhase}). Stoppe Verkäufe & maximiere Produktion... (Versuch ${this.attempts + 1}/3)`,
         "INFO",
       );
       for (const div of this.config.divisionNames) {
         for (const city of CORP_CONFIG.cities) {
+          // Maximale Produktion beim Anstauen (z.B. Operations/Engineer Fokus)
+          const office = corp.getOffice(div, city);
+          setupOfficeAndJobs(ns, div, city, office.size, {
+            Operations: Math.floor(office.size / 2),
+            Engineer: Math.ceil(office.size / 2),
+          });
+
           corp.sellMaterial(div, city, "Plants", "0", "MP");
           corp.sellMaterial(div, city, "Food", "0", "MP");
           if (div === CORP_CONFIG.divisions.chem.name) {
@@ -59,12 +66,10 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
       return ctx.currentPhase;
     }
 
-    // STATE 2: Warten, bis Lagerhäuser gefüllt sind (oder Timeout nach 15 Ticks)
+    // STATE 2: Warten auf gefüllte Lager
     if (this.state === "ACCUMULATING") {
       this.ticks++;
 
-      // Statt wh.sizeUsed / wh.size < 0.9
-      // Messen wir explizit die gelagerten Verkaufsprodukte
       let isFull = true;
       for (const div of this.config.divisionNames) {
         for (const city of CORP_CONFIG.cities) {
@@ -72,7 +77,6 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
             div === CORP_CONFIG.divisions.chem.name ? "Chemicals" : "Plants";
           const mat = corp.getMaterial(div, city, mainMat);
 
-          // Warten, bis mindestens 500 Einheiten des Hauptprodukts angestaut wurden
           if (mat.stored < 500) {
             isFull = false;
           }
@@ -82,7 +86,7 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
       if (!isFull && this.ticks < 15) return ctx.currentPhase;
 
       log(
-        "Lager gefüllt. Öffne Ventile & passe Jobs für Maximal-Profit an...",
+        "Lager gefüllt. Schalte auf MAX-DUMP & Business-Spike um...",
         "INFO",
       );
       for (const div of this.config.divisionNames) {
@@ -91,13 +95,15 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
             ns,
             div,
             city,
-            9,
+            corp.getOffice(div, city).size,
             CORP_CONFIG.jobDistribution.spike9,
           );
-          corp.sellMaterial(div, city, "Plants", "MAX", "MP");
-          corp.sellMaterial(div, city, "Food", "MAX", "MP");
+
+          // "0" erzwingt sofortigen Abverkauf der gesamten Lagerbestände in einem Tick
+          corp.sellMaterial(div, city, "Plants", "MAX", "0");
+          corp.sellMaterial(div, city, "Food", "MAX", "0");
           if (div === CORP_CONFIG.divisions.chem.name) {
-            corp.sellMaterial(div, city, "Chemicals", "MAX", "MP");
+            corp.sellMaterial(div, city, "Chemicals", "MAX", "0");
           }
         }
       }
@@ -106,7 +112,7 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
       return ctx.currentPhase;
     }
 
-    // STATE 3: Abwarten, bis das Angebot das Ziel erreicht (max. 5 Ticks)
+    // STATE 3: Angebot evaluieren & annehmen
     if (this.state === "SELLING") {
       this.sellTicks++;
       const currentOffer = corp.getInvestmentOffer();
@@ -121,7 +127,6 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
         "INFO",
       );
 
-      // 1. Primäres Ziel erreicht
       if (funds >= this.config.targetOffer) {
         if (corp.acceptInvestmentOffer()) {
           log(
@@ -133,13 +138,10 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
         }
       }
 
-      // 2. Ende des Verkauf-Fensters erreicht
       if (this.sellTicks >= 5) {
         this.attempts++;
 
-        // Nach 3 erfolglosen Versuchen: Angebot stagnierte
         if (this.attempts >= 3) {
-          // Akzeptiere ein starkes Plateau Angebot ab $400b für den Übergang zu Tobacco
           if (funds >= 400e9 && corp.acceptInvestmentOffer()) {
             log(
               `Ziel $${ns.format.number(this.config.targetOffer)} nicht erreicht, aber Plateau bei $${ns.format.number(funds)} erfolgreich angenommen!`,
@@ -149,9 +151,8 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
             return this.config.nextPhase;
           }
 
-          // Falls zu niedrig: Zurück zu EXPORT_LOOP für weiteres Ausbauen
           log(
-            `Angebot stagnierte bei $${ns.format.number(funds)}. Kehre zu EXPORT_LOOP zurück, um weiter zu skalieren.`,
+            `Angebot stagnierte bei $${ns.format.number(funds)}. Kehre zu EXPORT_LOOP zurück...`,
             "WARN",
           );
           this.resetState(ns);
@@ -159,7 +160,7 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
         }
 
         log(
-          `Spike-Fenster abgelaufen (Versuch ${this.attempts}/3). Ziel nicht erreicht. Starte neuen Anlauf...`,
+          `Spike-Fenster abgelaufen (Versuch ${this.attempts}/3). Neustart...`,
           "WARN",
         );
         this.config.resetJobs(ns);
