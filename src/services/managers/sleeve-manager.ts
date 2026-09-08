@@ -26,6 +26,28 @@ import { hasSleeve, hasGang } from "/lib/utils.js";
 import { evaluateBladeburnerPreference } from "../../domain/strategy/bladeburner-decision.js";
 import { getChaosStatus } from "../../domain/bladeburner/chaos-control.js";
 
+/**
+ * Ermittelt den aktuellen BitNode ohne Abhängigkeit von SF5.
+ */
+function getCurrentBitNode(ns: NS): number | null {
+  try {
+    if (typeof ns.getResetInfo === "function") {
+      return ns.getResetInfo().currentNode;
+    }
+  } catch {
+    // Fallback falls getResetInfo in sehr alten Versionen fehlt
+  }
+  return null;
+}
+
+/**
+ * Prüft, ob der aktuelle BitNode einen klaren Bladeburner-Fokus hat (BN6 & BN7).
+ */
+function isBladeburnerFocusedNode(ns: NS): boolean {
+  const currentNode = getCurrentBitNode(ns);
+  return currentNode === 6 || currentNode === 7;
+}
+
 function isBladeburnerActive(ns: NS): boolean {
   if (!ns.bladeburner) return false;
   try {
@@ -82,7 +104,6 @@ function getFactionsNeedingRep(
   ownedAugs: string[],
   gangFaction?: string,
 ): FactionName[] {
-  // 🛑 Gang-Fraktion UND 'Bladeburners' herausfiltern
   const validFactions = playerFactions.filter(
     (f) => f !== gangFaction && f !== "Bladeburners",
   );
@@ -134,7 +155,6 @@ function resolveSleeveAssignment(
 
   // 1️⃣ CHAOS OVERRIDE: Priorisierte Diplomatie bei hohem Chaos (> 50)
   if (hasBladeburner) {
-    // Verlangt mindestens 85% Mindesterfolgschance bei Verträgen
     const chaosStatus = getChaosStatus(ns, 0.85);
 
     if (chaosStatus.hasHighChaos && chaosStatus.targetCity) {
@@ -235,14 +255,17 @@ function resolveSleeveAssignment(
     }
   }
 
-  // 4️⃣ STRATEGIE-REAKTION: BLADEBURNER
+  // 4️⃣ STRATEGIE-REAKTION: BLADEBURNER (Mit BN6/BN7 Fokus)
+  const isBbNode = isBladeburnerFocusedNode(ns);
+  const forceBladeburnerFocus = isBbNode || options.strategy === "BLADEBURNER";
+
   if (
-    (options.strategy === "BLADEBURNER" ||
-      bbDecision.shouldOverrideFactionGrind) &&
+    (forceBladeburnerFocus || bbDecision.shouldOverrideFactionGrind) &&
     hasBladeburner
   ) {
-    // Fall A: Kein Simulacrum -> Main-Char macht BB, Sleeves MÜSSEN Faction Rep farmen
+    // 🛑 In BN6/BN7 oder explizitem BLADEBURNER-Modus ignorieren wir den FACTION_REP Fallback!
     if (
+      !forceBladeburnerFocus &&
       bbDecision.recommendedSleeveRole === "FACTION_REP" &&
       availableFactions.length > 0
     ) {
@@ -253,15 +276,13 @@ function resolveSleeveAssignment(
       };
     }
 
-    // Fall B: Simulacrum vorhanden oder Factions fertig -> Sleeves unterstützen BB
+    // Fall B: Sleeves unterstützen Bladeburner voll und ganz
     const bType = options.targetBladeburnerType ?? "General";
     let bAction = options.targetBladeburnerAction;
 
     if (!bAction) {
       if (sleeveId === 0) bAction = "Field Analysis";
       else if (sleeveId === 1) bAction = "Diplomacy";
-      else if (sleeveId === 2 || sleeveId === 3)
-        bAction = "Infiltrate Synthoids";
       else bAction = "Infiltrate Synthoids";
     }
 
@@ -339,6 +360,7 @@ function manageAllSleeves(
   const gangStatus = checkSleeveGangStatus(ns);
   const hasBladeburner = isBladeburnerActive(ns);
   const isBlackOpsActive = isPlayerDoingBlackOps(ns);
+  const isBbNode = isBladeburnerFocusedNode(ns);
 
   const assignedFactions = new Set<string>();
   const assignedCompanies = new Set<string>();
@@ -355,11 +377,11 @@ function manageAllSleeves(
   const bbDecision = evaluateBladeburnerPreference(ns);
   const isBbAssistActive =
     isBlackOpsActive ||
+    (hasBladeburner && (isBbNode || options.strategy === "BLADEBURNER")) ||
     (options.strategy === "BLADEBURNER" &&
       bbDecision.recommendedSleeveRole !== "FACTION_REP");
 
-  // 1a. Bestehende valide Fraktions-Tasks beibehalten
-  // 1a. Bestehende valide Fraktions-Tasks beibehalten
+  // 1a. Bestehende valide Fraktions-Tasks beibehalten (wird im Bladeburner-Fokus übersprungen)
   for (const sleeve of statuses) {
     const needsRecoveryOrSync = sleeve.shock > 0 || sleeve.sync < 100;
 
@@ -374,7 +396,7 @@ function manageAllSleeves(
       if (rawTask && rawTask.type === "FACTION" && rawTask.factionName) {
         const fac = rawTask.factionName as FactionName;
         if (
-          fac !== "Bladeburners" && // 👈 Bladeburners explizit ignorieren
+          fac !== "Bladeburners" &&
           factionsNeedingRep.includes(fac) &&
           fac !== gangStatus.gangFaction &&
           !assignedFactions.has(fac)
@@ -539,8 +561,12 @@ export async function main(ns: NS): Promise<void> {
     }
 
     const unlockStatus = checkSleeveGangStatus(ns);
+    const isBbNode = isBladeburnerFocusedNode(ns);
+
     let statusMsg = "";
-    if (unlockStatus.inGang) {
+    if (isBbNode) {
+      statusMsg = `Sleeves aktiv im BN6/BN7 Bladeburner-Fokus-Modus!`;
+    } else if (unlockStatus.inGang) {
       statusMsg = `Sleeves + Gang aktiv (${unlockStatus.gangFaction ?? "Gang"} wird ignoriert)`;
     } else if (unlockStatus.shouldGrindKarma) {
       statusMsg = `Sleeves aktiv, Gang ausstehend (Karma: ${ns.heart.break().toFixed(0)} / -54000)`;
