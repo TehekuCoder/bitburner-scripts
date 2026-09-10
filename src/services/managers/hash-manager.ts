@@ -1,6 +1,7 @@
 import { CompanyName, HacknetServerHashUpgrade, NS } from "@ns";
 import { hasSingularity } from "/lib/utils";
 import { MEGACORP_COMPANY_TO_FACTION } from "/shared/constants/factions";
+import { LoggerClient } from "/infrastructure/logging/logger-client";
 
 export interface UpgradePriority {
   name: HacknetServerHashUpgrade;
@@ -22,21 +23,31 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
 
+  const logger = new LoggerClient(ns, "HASH-MANAGER");
+  logger.info("Hash-Manager Daemon gestartet.");
+
   const activeTargets: string[] = ["n00dles", "joesguns"];
+  let lastStrategy: BotStrategy | null = null;
 
   while (true) {
     // 1. Hardware/Hacknet automatisch ausbauen
-    tryAutoUpgradeHome(ns);
+    tryAutoUpgradeHome(ns, logger);
 
     // 2. Strategie dynamisch ermitteln
     const strategy = autoDetectStrategy(ns);
+    if (strategy !== lastStrategy) {
+      logger.info(`Strategie gewechselt zu: ${strategy}`, undefined, {
+        context: { strategy },
+      });
+      lastStrategy = strategy;
+    }
 
     // 3. Dynamische Prioritätsliste generieren
-    const priorityList = getDynamicPriorityList(ns, strategy, activeTargets);
+    const priorityList = getDynamicPriorityList(ns, strategy, activeTargets, undefined, logger);
 
     // 4. Hashes synchron und ohne künstlichen Delay verbrauchen
     for (const upgrade of priorityList) {
-      while (trySpendHashes(ns, upgrade, activeTargets)) {
+      while (trySpendHashes(ns, upgrade, activeTargets, logger)) {
         // Synchroner Kauf aller verfügbaren Hashes im selben Tick
       }
     }
@@ -53,6 +64,7 @@ export function getDynamicPriorityList(
   strategy: BotStrategy,
   activeTargets: string[],
   criticalMoneyFloor?: number,
+  logger?: LoggerClient,
 ): UpgradePriority[] {
   const list: UpgradePriority[] = [];
 
@@ -61,6 +73,9 @@ export function getDynamicPriorityList(
   // =========================================================
   const moneyStatus = checkMoneyStatus(ns, criticalMoneyFloor);
   if (moneyStatus.shouldSellForMoney) {
+    if (moneyStatus.reason && logger) {
+      logger.debug(`Liquidierung getriggert: ${moneyStatus.reason}`);
+    }
     list.push({ name: "Sell for Money" });
   }
 
@@ -115,6 +130,7 @@ function trySpendHashes(
   ns: NS,
   upgrade: UpgradePriority,
   activeTargets: string[],
+  logger?: LoggerClient,
 ): boolean {
   const hashCost = ns.hacknet.hashCost(upgrade.name);
   if (ns.hacknet.numHashes() < hashCost) {
@@ -123,7 +139,14 @@ function trySpendHashes(
 
   // Fall 1: Explizites Custom-Target (z. B. Firmenname für Company Favor)
   if (upgrade.customTarget) {
-    return ns.hacknet.spendHashes(upgrade.name, upgrade.customTarget);
+    const success = ns.hacknet.spendHashes(upgrade.name, upgrade.customTarget);
+    if (success && logger) {
+      logger.success(`Upgrade '${upgrade.name}' gekauft für '${upgrade.customTarget}'`, undefined, {
+        context: { cost: hashCost, target: upgrade.customTarget },
+        tags: ["hash-spend"],
+      });
+    }
+    return success;
   }
 
   // Fall 2: Server-spezifisches Upgrade (nach maxMoney sortiert)
@@ -134,6 +157,12 @@ function trySpendHashes(
 
     for (const target of sortedTargets) {
       if (ns.hacknet.spendHashes(upgrade.name, target)) {
+        if (logger) {
+          logger.success(`Upgrade '${upgrade.name}' auf '${target}' angewendet`, undefined, {
+            context: { cost: hashCost, target },
+            tags: ["hash-spend"],
+          });
+        }
         return true;
       }
     }
@@ -141,7 +170,14 @@ function trySpendHashes(
   }
 
   // Fall 3: Globales Upgrade ohne Ziel
-  return ns.hacknet.spendHashes(upgrade.name);
+  const success = ns.hacknet.spendHashes(upgrade.name);
+  if (success && logger) {
+    logger.success(`Upgrade '${upgrade.name}' gekauft`, undefined, {
+      context: { cost: hashCost },
+      tags: ["hash-spend"],
+    });
+  }
+  return success;
 }
 
 // =========================================================
@@ -269,23 +305,35 @@ export function getTargetCompanyForFavor(ns: NS): CompanyName | null {
  * Kauft automatisch Hacknet-Nodes und Upgrades, solange der Preis
  * einen Bruchteil des aktuellen Barvermögens nicht übersteigt.
  */
-function tryAutoUpgradeHome(ns: NS): void {
+function tryAutoUpgradeHome(ns: NS, logger?: LoggerClient): void {
   const money = ns.getServerMoneyAvailable("home");
 
   if (ns.hacknet.getPurchaseNodeCost() <= money * 0.1) {
-    ns.hacknet.purchaseNode();
+    const nodeIndex = ns.hacknet.purchaseNode();
+    if (nodeIndex !== -1 && logger) {
+      logger.info(`Neuer Hacknet-Node gekauft (Index: ${nodeIndex})`, undefined, {
+        context: { nodeIndex },
+        tags: ["hardware-buy"],
+      });
+    }
   }
 
   const numNodes = ns.hacknet.numNodes();
   for (let i = 0; i < numNodes; i++) {
     if (ns.hacknet.getCoreUpgradeCost(i, 1) <= money * 0.05) {
-      ns.hacknet.upgradeCore(i, 1);
+      if (ns.hacknet.upgradeCore(i, 1) && logger) {
+        logger.debug(`Node ${i}: Core-Upgrade gekauft`, undefined, { context: { node: i } });
+      }
     }
     if (ns.hacknet.getRamUpgradeCost(i, 1) <= money * 0.05) {
-      ns.hacknet.upgradeRam(i, 1);
+      if (ns.hacknet.upgradeRam(i, 1) && logger) {
+        logger.debug(`Node ${i}: RAM-Upgrade gekauft`, undefined, { context: { node: i } });
+      }
     }
     if (ns.hacknet.getLevelUpgradeCost(i, 5) <= money * 0.05) {
-      ns.hacknet.upgradeLevel(i, 5);
+      if (ns.hacknet.upgradeLevel(i, 5) && logger) {
+        logger.debug(`Node ${i}: Level +5 gekauft`, undefined, { context: { node: i } });
+      }
     }
   }
 }

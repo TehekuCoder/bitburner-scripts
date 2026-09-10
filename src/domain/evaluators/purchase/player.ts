@@ -25,42 +25,6 @@ interface AugCandidate {
   etaSeconds: number;
 }
 
-interface GangStateCache {
-  lastRep: number;
-  lastTime: number;
-  repPerSec: number;
-}
-
-const g = globalThis as unknown as { __gangStateCache?: GangStateCache };
-g.__gangStateCache ??= { lastRep: 0, lastTime: 0, repPerSec: 0 };
-
-function updateGangVelocity(ns: NS): number {
-  try {
-    if (!ns.gang?.inGang()) return 0;
-    const cache = g.__gangStateCache!;
-    const currentRep = ns.gang.getGangInformation().respect;
-    const now = Date.now();
-
-    if (cache.lastTime > 0 && now > cache.lastTime) {
-      const dt = (now - cache.lastTime) / 1000;
-      const dRep = currentRep - cache.lastRep;
-      if (dt > 0 && dRep >= 0) {
-        const instantRate = dRep / dt;
-        cache.repPerSec =
-          cache.repPerSec === 0
-            ? instantRate
-            : cache.repPerSec * 0.7 + instantRate * 0.3;
-      }
-    }
-
-    cache.lastRep = currentRep;
-    cache.lastTime = now;
-    return cache.repPerSec;
-  } catch {
-    return 0;
-  }
-}
-
 export const PlayerEvaluator: PurchaseEvaluator = {
   category: "PLAYER_AUG" as PurchaseCategory,
 
@@ -73,26 +37,16 @@ export const PlayerEvaluator: PurchaseEvaluator = {
     const costMult = bnMults.AugmentationMoneyCost ?? 1.0;
     const efficiencyMult = costMult > 0 ? 1 / costMult : 1.0;
 
-    const gangRepPerSec = updateGangVelocity(ns);
-
-    const prereqCache = new Map<string, string[]>();
-    const getPrereqs = (name: string) => {
-      if (!prereqCache.has(name))
-        prereqCache.set(name, sing.getAugmentationPrereq(name));
-      return prereqCache.get(name)!;
-    };
-
     const ownedAugs = sing.getOwnedAugmentations(true);
     const uninstalled = getPurchasedUninstalledAugs(ns);
     const hasStartedBuying = uninstalled.length > 0;
+    const currentMoney = ns.getServerMoneyAvailable("home");
 
+    // --- 1. CANDIDATES SCANNEN ---
     const factionsToScan = new Set<FactionName>(ns.getPlayer().factions);
-    let gangFactionName: FactionName | null = null;
-
     try {
       if (ns.gang?.inGang()) {
-        gangFactionName = ns.gang.getGangInformation().faction as FactionName;
-        factionsToScan.add(gangFactionName);
+        factionsToScan.add(ns.gang.getGangInformation().faction as FactionName);
       }
     } catch {}
 
@@ -100,30 +54,14 @@ export const PlayerEvaluator: PurchaseEvaluator = {
     const scannedAugNames = new Set<string>();
 
     for (const faction of factionsToScan) {
-      const isGang = faction === gangFactionName;
       const currentRep = sing.getFactionRep(faction);
-
       for (const aug of sing.getAugmentationsFromFaction(faction)) {
-        if (
-          aug === "NeuroFlux Governor" ||
-          ownedAugs.includes(aug) ||
-          scannedAugNames.has(aug)
-        ) {
+        if (aug === "NeuroFlux Governor" || ownedAugs.includes(aug) || scannedAugNames.has(aug)) {
           continue;
         }
 
         const repReq = sing.getAugmentationRepReq(aug);
-        let etaSeconds = 0;
-
-        if (currentRep < repReq) {
-          if (isGang && gangRepPerSec > 0) {
-            etaSeconds = (repReq - currentRep) / gangRepPerSec;
-          } else {
-            continue;
-          }
-        }
-
-        if (etaSeconds <= 180) {
+        if (currentRep >= repReq) {
           const price = sing.getAugmentationPrice(aug);
           if (Number.isFinite(price) && price > 0) {
             candidates.push({
@@ -131,8 +69,8 @@ export const PlayerEvaluator: PurchaseEvaluator = {
               faction,
               price,
               repReq,
-              isGang,
-              etaSeconds,
+              isGang: false,
+              etaSeconds: 0,
             });
             scannedAugNames.add(aug);
           }
@@ -140,73 +78,63 @@ export const PlayerEvaluator: PurchaseEvaluator = {
       }
     }
 
-    if (candidates.length === 0) return requests;
-
-    const readyCandidates = candidates.filter((item) => item.etaSeconds === 0);
-    const readyMap = new Map<string, AugCandidate>(
-      readyCandidates.map((c) => [c.name, c]),
-    );
-    const readyNames = new Set<string>(readyMap.keys());
-
-    const isPrereqChainSatisfied = (augName: string): boolean => {
-      const prereqs = getPrereqs(augName);
-      for (const p of prereqs) {
-        if (!ownedAugs.includes(p)) {
-          if (!readyNames.has(p)) return false;
-          if (!isPrereqChainSatisfied(p)) return false;
-        }
-      }
-      return true;
-    };
-
-    const fulfillableCandidates = readyCandidates.filter((aug) =>
-      isPrereqChainSatisfied(aug.name),
-    );
-
-    if (fulfillableCandidates.length === 0) return requests;
-
-    const currentMoney = ns.getServerMoneyAvailable("home");
-
-    // --- FALL 1: BEREITS IM KAUFMODUS ---
+    // --- FALL 1: BEREITS IM KAUFMODUS (DUMP MODE) ---
+    // Sobald das erste Augment gekauft wurde, haben alle Folgekäufe CRITICAL Status
     if (hasStartedBuying) {
-      const immediateBuyable = fulfillableCandidates.filter(
-        (aug) =>
-          getPrereqs(aug.name).every((p) => ownedAugs.includes(p)) &&
-          aug.price <= currentMoney,
-      );
+      const immediateBuyable = candidates
+        .filter(
+          (aug) =>
+            sing.getAugmentationPrereq(aug.name).every((p) => ownedAugs.includes(p)) &&
+            aug.price <= currentMoney
+        )
+        .sort((a, b) => b.price - a.price);
 
-      if (immediateBuyable.length === 0) return requests;
+      if (immediateBuyable.length > 0) {
+        const nextTarget = immediateBuyable[0];
+        requests.push({
+          id: `player-aug-dump-${nextTarget.name}`,
+          category: "PLAYER_AUG",
+          priority: PurchasePriority.CRITICAL, // ⚡ CRITICAL: Kaufserie vollenden
+          score: 100,
+          cost: nextTarget.price,
+          description: `[CRITICAL DUMP] ${nextTarget.name}`,
+          action: {
+            script: PATHS.app.actions.singularity,
+            args: ["player-purchase-aug", nextTarget.faction, nextTarget.name],
+          },
+        });
+        return requests;
+      }
 
-      immediateBuyable.sort((a, b) => b.price - a.price);
-      const nextTarget = immediateBuyable[0];
-
-      requests.push({
-        id: `player-aug-dump-${nextTarget.name}`,
-        category: "PLAYER_AUG" as PurchaseCategory,
-        priority: adjustPriorityByMult(
-          PurchasePriority.CRITICAL,
-          efficiencyMult,
-        ),
-        score: Math.max(1, Math.floor(100 * efficiencyMult)),
-        cost: nextTarget.price,
-        description: `Batch Dump: ${nextTarget.name}`,
-        action: {
-          script: PATHS.app.actions.singularity,
-          args: ["player-purchase-aug", nextTarget.faction, nextTarget.name],
-        },
-      });
+      // Restgeld in NeuroFlux kippen
+      const nfgTarget = getBestNeuroFluxTarget(ns);
+      if (nfgTarget && currentMoney >= nfgTarget.price) {
+        requests.push({
+          id: `player-aug-nfg-${Date.now()}`,
+          category: "PLAYER_AUG",
+          priority: PurchasePriority.CRITICAL, // ⚡ CRITICAL: Letztes Geld vor Reset sichern
+          score: 99,
+          cost: nfgTarget.price,
+          description: `[CRITICAL DUMP] NeuroFlux Governor via ${nfgTarget.faction}`,
+          action: {
+            script: PATHS.app.actions.singularity,
+            args: ["player-purchase-nfg", nfgTarget.faction],
+          },
+        });
+        return requests;
+      }
       return requests;
     }
 
-    // Sonderfall Red Pill: Wenn verfügbar und bezahlbar, SOFORT kaufen!
-    const redPillCand = fulfillableCandidates.find(
-      (a) => a.name === "The Red Pill",
-    );
+    if (candidates.length === 0) return requests;
+
+    // --- FALL 2: RED PILL CHECK ---
+    const redPillCand = candidates.find((a) => a.name === "The Red Pill");
     if (redPillCand && redPillCand.price <= currentMoney) {
       requests.push({
         id: "player-aug-redpill",
-        category: "PLAYER_AUG" as PurchaseCategory,
-        priority: PurchasePriority.CRITICAL,
+        category: "PLAYER_AUG",
+        priority: PurchasePriority.CRITICAL, // ⚡ CRITICAL: Win-Condition
         score: 100,
         cost: redPillCand.price,
         description: "CRITICAL: The Red Pill Purchase",
@@ -218,101 +146,72 @@ export const PlayerEvaluator: PurchaseEvaluator = {
       return requests;
     }
 
-    // --- FALL 2: DYNAMISCHE BATCH-BERECHNUNG ---
-    const baseTargetBatch = Math.max(
-      3,
-      Math.min(8, Math.floor(6 / (costMult || 1))),
-    );
-
-    // 1. Auswählen: Nach Basispreis AUFSTEIGEND sortieren (Günstigste bevorzugen)
-    const sortedByPriceAsc = [...fulfillableCandidates].sort(
-      (a, b) => a.price - b.price,
-    );
-    const effectiveBatchTarget = Math.min(
-      baseTargetBatch,
-      sortedByPriceAsc.length,
-    );
+    // --- FALL 3: BATCH-EVALUIERUNG UND CRITICAL-PROMOTION ---
+    const baseTargetBatch = Math.max(3, Math.min(8, Math.floor(6 / (costMult || 1))));
+    const sortedByPriceAsc = [...candidates].sort((a, b) => a.price - b.price);
 
     const selectedBatch: AugCandidate[] = [];
     let cumulativeCost = 0;
     let currentMultiplier = 1.0;
 
     for (const cand of sortedByPriceAsc) {
-      const prereqs = getPrereqs(cand.name).filter(
-        (p) => !ownedAugs.includes(p),
-      );
-      const missingPrereqs = prereqs.filter(
-        (p) => !selectedBatch.some((b) => b.name === p),
-      );
+      const prereqs = sing.getAugmentationPrereq(cand.name).filter((p) => !ownedAugs.includes(p));
+      const missingPrereqs = prereqs.filter((p) => !selectedBatch.some((b) => b.name === p));
 
       if (missingPrereqs.length > 0) continue;
 
       const stepCost = cand.price * currentMultiplier;
+      
+      // Prüfen, ob das Batch bezahlbar bleibt
       if (cumulativeCost + stepCost <= currentMoney) {
         selectedBatch.push(cand);
         cumulativeCost += stepCost;
         currentMultiplier *= AUG_PRICE_MULT;
       }
 
-      if (selectedBatch.length >= effectiveBatchTarget) break;
+      if (selectedBatch.length >= baseTargetBatch) break;
     }
 
-    // 2. Kaufen: Gewählte Augments ABSTEIGEND nach Preis sortieren (Teuerste zuerst kaufen)
-    const affordableBatch = [...selectedBatch].sort(
-      (a, b) => b.price - a.price,
-    );
+    if (selectedBatch.length === 0) return requests;
 
-    const hasRedPill = fulfillableCandidates.some(
-      (a) => a.name === "The Red Pill",
-    );
-    const reachesTarget = affordableBatch.length >= effectiveBatchTarget;
-    const isOutofAugs =
-      sortedByPriceAsc.length < baseTargetBatch &&
-      affordableBatch.length === sortedByPriceAsc.length;
+    // Sortierung für Ausführung: Teuerstes zuerst
+    const affordableBatch = [...selectedBatch].sort((a, b) => b.price - a.price);
 
-    if (
-      reachesTarget ||
-      isOutofAugs ||
-      (hasRedPill && affordableBatch.length > 0)
-    ) {
-      requests.push({
-        id: "player-aug-batch",
-        category: "PLAYER_AUG" as PurchaseCategory,
-        priority: adjustPriorityByMult(PurchasePriority.HIGH, efficiencyMult),
-        score: Math.max(1, Math.floor(85 * efficiencyMult)),
-        cost: cumulativeCost,
-        description: `Dynamic Aug Batch (${affordableBatch.length}/${effectiveBatchTarget} Items, Cost: ${ns.format.number(cumulativeCost)})`,
-        action: {
-          script: PATHS.app.actions.singularity,
-          args: [
-            "player-purchase-aug-batch",
-            JSON.stringify(
-              affordableBatch.map((a) => ({
-                faction: a.faction,
-                name: a.name,
-              })),
-            ),
-          ],
-        },
-      });
+    // Kriterien für CRITICAL Evaluierung
+    const isFullBatchReady = affordableBatch.length >= baseTargetBatch;
+    const isAllRemainingAugs = affordableBatch.length === candidates.length;
+    
+    // Priorität bestimmen
+    let priority = PurchasePriority.HIGH;
+    let isCritical = false;
+
+    if (isFullBatchReady || isAllRemainingAugs) {
+      priority = PurchasePriority.CRITICAL; // ⚡ CRITICAL: Das angesparte Batch ist jetzt komplett kaufbar!
+      isCritical = true;
+    } else {
+      priority = adjustPriorityByMult(PurchasePriority.HIGH, efficiencyMult);
     }
-    // --- FALL 3: NEUROFLUX GOVERNOR DUMP ---
-    // Wenn keine normalen Augmentations mehr verfügbar/bezahlbar sind, Geld in NeuroFlux stecken
-    const nfgTarget = getBestNeuroFluxTarget(ns);
-    if (nfgTarget && currentMoney >= nfgTarget.price) {
-      requests.push({
-        id: `player-aug-nfg-${Date.now()}`,
-        category: "PLAYER_AUG" as PurchaseCategory,
-        priority: adjustPriorityByMult(PurchasePriority.MEDIUM, efficiencyMult),
-        score: 50,
-        cost: nfgTarget.price,
-        description: `NeuroFlux Governor Level Up via ${nfgTarget.faction}`,
-        action: {
-          script: PATHS.app.actions.singularity,
-          args: ["player-purchase-nfg", nfgTarget.faction],
-        },
-      });
-    }
+
+    requests.push({
+      id: "player-aug-batch",
+      category: "PLAYER_AUG",
+      priority,
+      score: isCritical ? 100 : Math.max(1, Math.floor(85 * efficiencyMult)),
+      cost: cumulativeCost,
+      description: `${isCritical ? "CRITICAL " : ""}Aug Batch (${affordableBatch.length}/${baseTargetBatch} Items, Total: $${ns.format.number(cumulativeCost)})`,
+      action: {
+        script: PATHS.app.actions.singularity,
+        args: [
+          "player-purchase-aug-batch",
+          JSON.stringify(
+            affordableBatch.map((a) => ({
+              faction: a.faction,
+              name: a.name,
+            }))
+          ),
+        ],
+      },
+    });
 
     return requests;
   },
