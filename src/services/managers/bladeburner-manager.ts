@@ -93,6 +93,7 @@ function findBestAction(
     return { type: "General", name: "Training" };
   }
 
+  // 1. BlackOps priorisieren
   if (validBlackOpName) {
     const reqRank = ns.bladeburner.getBlackOpRank(validBlackOpName);
     if (ns.bladeburner.getRank() >= reqRank) {
@@ -103,9 +104,15 @@ function findBestAction(
     }
   }
 
+  // Aktionen filtern, die die Stadt-Population zerstören oder ineffizient sind
+  const IGNORED_OPERATIONS = ["Sting Operation", "Raid"];
+
+  // 2. Operations durchsuchen
   const operations = ns.bladeburner.getOperationNames().slice().reverse();
   for (const op of operations) {
+    if (IGNORED_OPERATIONS.includes(op)) continue; // Ineffiziente/gefährliche Ops überspringen
     if (ns.bladeburner.getActionCountRemaining("Operations", op) < 1) continue;
+
     const actionName = op as BladeburnerActionName;
     const [minChance, maxChance] = ns.bladeburner.getActionEstimatedSuccessChance("Operations", actionName);
     if ((minChance + maxChance) / 2 >= CONFIG.MIN_CHANCE_OPERATION) {
@@ -113,6 +120,7 @@ function findBestAction(
     }
   }
 
+  // 3. Contracts durchsuchen (Fallback, falls keine Ops möglich sind)
   const contracts = ns.bladeburner.getContractNames().slice().reverse();
   for (const contract of contracts) {
     if (ns.bladeburner.getActionCountRemaining("Contracts", contract) < 1) continue;
