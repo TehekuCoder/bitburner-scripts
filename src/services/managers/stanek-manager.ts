@@ -2,13 +2,9 @@ import { NS } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client";
 import { loadState } from "/infrastructure/state/state";
 
-/**
- * Stanek's Gift Manager & Continuous Charger
- */
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
-  // Logger mit Standard-Tag 'stanek' initialisieren für einfaches Filtern
   const logger = new LoggerClient(
     ns,
     "StanekManager",
@@ -21,7 +17,6 @@ export async function main(ns: NS): Promise<void> {
 
   logger.info("⛩️ Stanek's Gift Manager gestartet.");
 
-  // 1. Sicherheitsprüfung & Geschenk annehmen
   if (typeof ns.stanek === "undefined") {
     logger.error("❌ Stanek-API ist in diesem BitNode/Run nicht verfügbar.");
     return;
@@ -39,21 +34,17 @@ export async function main(ns: NS): Promise<void> {
 
   let totalCharges = 0;
 
-  // 2. Kontinuierliche Ladeschleife
   while (true) {
     const state = loadState(ns);
 
-    // Prüfen, ob manuell deaktiviert
     if (state?.disabledModules?.includes("stanek")) {
       logger.warn("⏸️ Stanek-Modul ist deaktiviert. Warte 60s...");
       await ns.sleep(60000);
       continue;
     }
 
-    // Aktive Fragmente abfragen
     let fragments = ns.stanek.activeFragments();
 
-    // Falls noch keine Fragmente gesetzt sind, versuchen automatisch Standard-Layout zu setzen
     if (fragments.length === 0) {
       logger.info("📐 Keines der Fragmente ist platziert. Versuche Auto-Setup...");
       autoSetupFragments(ns, logger);
@@ -66,12 +57,10 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    // 3. Fragmente reihum aufladen (Charge Loop)
     for (const fragment of fragments) {
       await ns.stanek.chargeFragment(fragment.x, fragment.y);
       totalCharges++;
 
-      // Alle 50 Charges ein strukturiertes Debug-Log an den Zentral-Logger senden
       if (totalCharges % 50 === 0) {
         logger.debug(
           `⚡ Charging aktiv [Meilenstein: ${totalCharges} Charges]`,
@@ -94,30 +83,46 @@ export async function main(ns: NS): Promise<void> {
 }
 
 /**
- * Hilfsfunktion zum automatischen Platzieren von Basis-Fragmenten,
- * falls das Grid komplett leer ist.
+ * Durchsucht das Stanek-Grid nach freien Plätzen und platziert universelle Fragmente.
  */
 function autoSetupFragments(ns: NS, logger: LoggerClient): void {
   try {
     const width = ns.stanek.giftWidth();
     const height = ns.stanek.giftHeight();
+    const definitions = ns.stanek.fragmentDefinitions();
 
-    logger.info(`Grid-Größe erkannt: ${width}x${height}`, undefined, {
+    logger.info(`Grid-Größe erkannt: ${width}x${height}. Verarbeite Definitionen...`, undefined, {
       context: { width, height },
     });
 
-    const defaultLayout = [
-      { id: 0, x: 0, y: 0, rotation: 0 },  // Hacking Skill
-      { id: 1, x: 0, y: 1, rotation: 0 },  // Hacking Exp
-      { id: 25, x: 1, y: 0, rotation: 0 }, // Special Fragment
-    ];
+    // Nützliche Fragment-IDs priorisieren (z.B. Hacking Skill, Exp, Hacking Power)
+    // Fragment IDs in Bitburner: 0 = Hack Skill, 1 = Hack Exp, 5 = Faster Hack/Grow/Weaken, etc.
+    const priorityIds = [0, 1, 5, 6, 7, 25];
 
-    for (const f of defaultLayout) {
-      if (ns.stanek.canPlaceFragment(f.x, f.y, f.rotation, f.id)) {
-        ns.stanek.placeFragment(f.x, f.y, f.rotation, f.id);
-        logger.success(`🧩 Fragment ${f.id} platziert bei [${f.x}, ${f.y}]`, undefined, {
-          context: { fragmentId: f.id, x: f.x, y: f.y },
-        });
+    for (const id of priorityIds) {
+      const def = definitions.find((d) => d.id === id);
+      if (!def) continue;
+
+      let placed = false;
+
+      // Rastersuche über alle X, Y und Rotationen (0-3)
+      for (let x = 0; x < width && !placed; x++) {
+        for (let y = 0; y < height && !placed; y++) {
+          for (let rotation = 0; rotation < 4; rotation++) {
+            if (ns.stanek.canPlaceFragment(x, y, rotation, id)) {
+              const success = ns.stanek.placeFragment(x, y, rotation, id);
+              if (success) {
+                logger.success(
+                  `🧩 Fragment ${id} (${def.type}) platziert bei [${x}, ${y}] mit Rotation ${rotation}`,
+                  undefined,
+                  { context: { fragmentId: id, x, y, rotation } }
+                );
+                placed = true;
+                break;
+              }
+            }
+          }
+        }
       }
     }
   } catch (err) {
