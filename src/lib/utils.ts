@@ -276,6 +276,15 @@ export function hasCorporation(ns: NS): boolean {
 export function hasBladeburner(ns: NS): boolean {
   return ns.bladeburner !== undefined;
 }
+/**
+ * Prüft sauber, ob die Stanek-API (SF13 / BN13) verfügbar ist.
+ *
+ * @param ns Bitburner Netscript Context
+ * @returns true, wenn Stanek-Funktionen genutzt werden können.
+ */
+export function hasStanek(ns: NS): boolean {
+  return ns.stanek !== undefined;
+}
 
 export function adjustPriorityByMult(
   basePriority: PurchasePriority,

@@ -245,7 +245,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Bladeburner Manager",
       path: PATHS.services.managers.bladeburner,
-      minHomeRam: 128,
+      minHomeRam: 256,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, "bladeburner")) return false;
@@ -255,6 +255,22 @@ export async function main(ns: NS): Promise<void> {
             (ns.bladeburner.inBladeburner() ||
               ns.getPlayer().skills.strength >= 100)
           );
+        } catch {
+          return false;
+        }
+      },
+    },
+
+    // 10b. Stanek Manager & Charger
+    {
+      name: "Stanek Manager",
+      path: PATHS.services.managers.stanek,
+      minHomeRam: 128,
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["stanek", "church"])) return false;
+        try {
+          return typeof ns.stanek !== "undefined";
         } catch {
           return false;
         }

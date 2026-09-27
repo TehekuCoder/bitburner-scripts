@@ -6,7 +6,7 @@ import { PATHS } from "/infrastructure/runtime/paths";
 import { loadState, patchState } from "/infrastructure/state/state";
 import { CITY_FACTIONS } from "/shared/constants/factions";
 import { REFRESH_INTERVALS } from "/shared/constants/game-defaults";
-import { hasSingularity, hasBladeburner } from "/lib/utils";
+import { hasSingularity, hasBladeburner, hasStanek } from "/lib/utils";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -72,7 +72,7 @@ export async function main(ns: NS): Promise<void> {
       handleFactionInvitations(ns, logger);
     }
 
-    // ⚔️ Bladeburner Division & Faction Auto-Join prüfen
+    // ⚔️ Bladeburner Division & Faction Auto-Join prüfen (inkl. Stanek Guard)
     handleBladeburnerAutoJoin(ns, logger);
 
     // 📝 State-Patching
@@ -163,14 +163,9 @@ function manageMicroservices(
       .getOwnedAugmentations(false)
       .includes("The Blade's Simulacrum");
 
-  // ⚔️ Drei Modi:
-  // 1. OHNE Bladeburner: Normale Task-Strategie
-  // 2. MIT Bladeburner + OHNE Simulacrum: Bladeburner exklusiv (außer TRAIN)
-  // 3. MIT Bladeburner + MIT Simulacrum: Beide parallel, normale Task-Strategie läuft daneben
   if (isBladeburnerActive && !hasSimulacrum && currentMode !== "TRAIN") {
     targetScript = undefined;
   }
-  // Mit Simulacrum: Lasse targetScript normal laufen (wird parallel zu Bladeburner ausgeführt)
 
   // Stoppe alle nicht mehr benötigten Microservices
   const activeScriptsToStop = new Set(
@@ -268,6 +263,62 @@ function handleFactionInvitations(ns: NS, logger: LoggerClient): void {
 }
 
 /**
+ * 🛡️ STANEK GUARD
+ * Stellt sicher, dass Staneks Gift VOR dem Bladeburner-Beitritt akzeptiert wird.
+ * Tritt automatisch der Church of the Machine God bei (falls SF4 verfügbar).
+ * Gibt `true` zurück, wenn Stanek bereit/akzeptiert ist ODER in diesem Run nicht existiert.
+ */
+function ensureStanekGiftAccepted(ns: NS, logger: LoggerClient): boolean {
+  if (!hasStanek(ns)) return true;
+
+  // 1. Prüfen, ob Gift bereits akzeptiert wurde
+  try {
+    if (ns.stanek.acceptGift()) {
+      return true;
+    }
+  } catch {
+    // Falls acceptGift() fehlschlägt, versuchen wir den Beitritt über Singularity
+  }
+
+  // 2. Falls Singularity verfügbar ist: Nach Chongqing reisen & Church joinen
+  if (hasSingularity(ns)) {
+    const player = ns.getPlayer();
+    if (player.city !== "Chongqing") {
+      const cost = 200000;
+      if (player.money >= cost) {
+        if (ns.singularity.travelToCity("Chongqing")) {
+          logger.info("🌆 Für Church of the Machine God nach Chongqing gereist.");
+        }
+      } else {
+        logger.warn("⚠️ Kann nicht nach Chongqing reisen (unzureichend Geld). Stanek-Beitritt verzögert.");
+        return false;
+      }
+    }
+
+    // Church of the Machine God beitreten
+    if (!player.factions.includes("Church of the Machine God")) {
+      if (ns.singularity.joinFaction("Church of the Machine God")) {
+        logger.success("⛪ Church of the Machine God erfolgreich beigetreten!");
+      }
+    }
+
+    // 3. Zweiter Versuch: Geschenk annehmen
+    try {
+      if (ns.stanek.acceptGift()) {
+        logger.success("⛩️ Staneks Gift erfolgreich akzeptiert!");
+        ns.toast("Staneks Gift akzeptiert!", "success");
+        return true;
+      }
+    } catch {
+      // Weiter unten Warnung ausgeben
+    }
+  }
+
+  logger.warn("🛑 STANEK GUARD: Bladeburner-Beitritt blockiert! Staneks Gift wurde noch nicht akzeptiert.");
+  return false;
+}
+
+/**
  * Prüft und übernimmt das automatische Beitreten zur Bladeburner Division
  * (Stats >= 100) sowie zur Bladeburner-Fraktion (Rank >= 25).
  */
@@ -275,16 +326,21 @@ function handleBladeburnerAutoJoin(ns: NS, logger: LoggerClient): void {
   // 1. Prüfen, ob die Bladeburner-API verfügbar ist (SF7 / BN6 / BN7)
   if (ns.bladeburner === undefined) return;
 
-  const player = ns.getPlayer();
-  const minCombatStat = Math.min(
-    player.skills.strength,
-    player.skills.defense,
-    player.skills.dexterity,
-    player.skills.agility,
-  );
-
   // 2. Stufe 1: Der Bladeburner Division beitreten (Voraussetzung: Stats >= 100)
   if (!ns.bladeburner.inBladeburner()) {
+    // 🛡️ STANEK GUARD: Bevor wir Bladeburner beitreten, MUSS Staneks Gift getrunken sein!
+    if (!ensureStanekGiftAccepted(ns, logger)) {
+      return;
+    }
+
+    const player = ns.getPlayer();
+    const minCombatStat = Math.min(
+      player.skills.strength,
+      player.skills.defense,
+      player.skills.dexterity,
+      player.skills.agility,
+    );
+
     if (minCombatStat >= 100) {
       const joined = ns.bladeburner.joinBladeburnerDivision();
       if (joined) {
@@ -292,10 +348,11 @@ function handleBladeburnerAutoJoin(ns: NS, logger: LoggerClient): void {
         ns.toast("Bladeburner Division beigetreten!", "success");
       }
     }
-    return; // Noch nicht in der Division -> Faction-Join erst im nächsten Schritt möglich
+    return;
   }
 
   // 3. Stufe 2: Der Bladeburner-Fraktion beitreten (Voraussetzung: Rank >= 25)
+  const player = ns.getPlayer();
   if (!player.factions.includes("Bladeburners") && ns.singularity) {
     const currentRank = ns.bladeburner.getRank();
     if (currentRank >= 25) {

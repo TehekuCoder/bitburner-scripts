@@ -155,6 +155,7 @@ export const PATHS = {
       hash: "services/managers/hash-manager.js",
       ipvgo: "services/managers/ipvgo-manager.js",
       sleeve: "services/managers/sleeve-manager.js",
+      stanek: "services/managers/stanek-manager.js",
     },
     payloads: {
       grow: "services/payloads/grow.js",

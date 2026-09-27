@@ -88,6 +88,7 @@ export class SystemStrategyEvaluator {
     const currentState = loadState(ns);
     const p = ns.getPlayer();
     const bnMults = loadBnMults(ns);
+    const singularityAvailable = hasSingularity(ns);
 
     const player = ns.getPlayer();
     const combatStats = [
@@ -193,9 +194,12 @@ export class SystemStrategyEvaluator {
       context: {
         targetName: nextRoadmapFaction?.name ?? "null",
         targetRep: nextRoadmapFaction?.targetRep ?? 0,
-        currentRep: nextRoadmapFaction
-          ? ns.singularity.getFactionRep(nextRoadmapFaction.name as FactionName)
-          : 0,
+        currentRep:
+          nextRoadmapFaction && singularityAvailable
+            ? ns.singularity.getFactionRep(
+                nextRoadmapFaction.name as FactionName,
+              )
+            : 0,
         isNFG: nextRoadmapFaction?.isNFG ?? false,
       },
     });
@@ -208,12 +212,15 @@ export class SystemStrategyEvaluator {
     }
 
     const currentFactionReps: Record<string, number> = {};
-    for (const f of p.factions) {
-      currentFactionReps[f] = ns.singularity.getFactionRep(f);
+    if (singularityAvailable) {
+      for (const f of p.factions) {
+        currentFactionReps[f] = ns.singularity.getFactionRep(f);
+      }
     }
 
     // 3️⃣ Megacorp Bewerbungen (erst ab Hacking Level 250 möglich)
     if (
+      singularityAvailable &&
       p.skills.hacking >= 250 &&
       now - this.lastCorpApplication > REFRESH_INTERVALS.MEGACORP_APPLY
     ) {
@@ -337,7 +344,6 @@ export class SystemStrategyEvaluator {
       strategy = { mode: "BLADEBURNER" };
     }
 
-    // Nutze direkt das Ergebnis aus evaluateBladeburnerPreference statt doppelter Prüfung:
     const isBladeburnerParallel = bbDecision.executionMode === "PARALLEL";
 
     // Fallback: Wenn Company-Modus ermittelt wurde, aber Hacking < 250 ist -> MONEY
@@ -391,11 +397,15 @@ export class SystemStrategyEvaluator {
       const factionKey = targetFaction as FactionName;
       currentVal =
         currentFactionReps[factionKey] ??
-        ns.singularity.getFactionRep(factionKey);
+        (singularityAvailable
+          ? ns.singularity.getFactionRep(factionKey)
+          : 0);
       targetVal = factionTargets[factionKey] ?? 0;
       label = `Fraktion: ${targetFaction}`;
     } else if (mode === "COMPANY" && targetCompany) {
-      currentVal = ns.singularity.getCompanyRep(targetCompany);
+      currentVal = singularityAvailable
+        ? ns.singularity.getCompanyRep(targetCompany)
+        : 0;
       targetVal = targetCompany === "Fulcrum Technologies" ? 250_000 : 400_000;
       label = `Corp: ${targetCompany}`;
     } else if (mode === "TRAIN") {
