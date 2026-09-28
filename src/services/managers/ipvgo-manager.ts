@@ -9,21 +9,14 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
   const logger = new LoggerClient(ns, "IPvGoManager");
-  const boardSize: GoBoardSize = (ns.args[0] as GoBoardSize) || 5;
+  const boardSize = (ns.args[0] as GoBoardSize) || 5;
 
-  // Siege direkt aus den tatsächlichen IPvGo-Statistiken der API initialisieren
-  const opponentWins: Record<GoOpponent, number> = {
-    Netburners: getInitialWins(ns, "Netburners"),
-    "Slum Snakes": getInitialWins(ns, "Slum Snakes"),
-    Tetrads: getInitialWins(ns, "Tetrads"),
-    "The Black Hand": getInitialWins(ns, "The Black Hand"),
-    Daedalus: 0,
-    Illuminati: 0,
-  };
+  // Initialisierung der Siege über die Bitburner 3.0 API (0 GB RAM)
+  const opponentWins = getInitialWins(ns);
 
   let currentOpponent: GoOpponent | null = null;
   logger.info(
-    `🎮 IPvGo-Manager gestartet (Brettgröße: ${boardSize}x${boardSize})`,
+    `🎮 IPvGo-Manager gestartet (Bitburner 3.0 | Brettgröße: ${boardSize}x${boardSize})`,
   );
 
   while (true) {
@@ -42,43 +35,63 @@ export async function main(ns: NS): Promise<void> {
     let inGame = true;
 
     while (inGame) {
+      let result: {
+        type: "move" | "pass" | "gameOver";
+        x: number | null;
+        y: number | null;
+      };
+
       const validMoves = ns.go.analysis.getValidMoves();
       const board = ns.go.getBoardState();
       const liberties = ns.go.analysis.getLiberties();
-
-      // Spielerfarbe ermitteln (Standard: "O" für Weiß, "X" für Schwarz)
-      const gameState = (ns.go as any).getGameState?.();
-      const myColor: "X" | "O" = gameState?.playerColor ?? "O";
 
       const move = NetburnerHeuristics.getBestMove(
         validMoves,
         board,
         liberties,
-        myColor,
       );
 
-      const result = move
-        ? await ns.go.makeMove(move.x, move.y)
-        : await ns.go.passTurn();
+      // SF14.2 Cheat-Anwendung bei 100% Erfolgschance
+      const canCheat = isCheatSafe(ns);
+
+      if (canCheat && move) {
+        const secondMove = NetburnerHeuristics.getSecondBestMove(
+          validMoves,
+          board,
+          liberties,
+          move,
+        );
+
+        if (secondMove) {
+          result = await ns.go.cheat.playTwoMoves(
+            move.x,
+            move.y,
+            secondMove.x,
+            secondMove.y,
+          );
+        } else {
+          result = await ns.go.makeMove(move.x, move.y);
+        }
+      } else if (move) {
+        result = await ns.go.makeMove(move.x, move.y);
+      } else {
+        result = await ns.go.passTurn();
+      }
 
       if (result.type === "gameOver") {
         inGame = false;
 
-        // In Bitburner IPvGo signalisiert (result as any).winner den Sieger
-        const winner = (result as any).winner;
-        const isWin =
-          winner === "Black" ||
-          winner === "White" ||
-          winner === ns.go.getOpponent();
-
-        if (isWin) {
-          opponentWins[currentOpponent]++;
-          logger.success(
-            `🏆 Match GEWONNEN gegen ${currentOpponent} | Gesamtsiege (Session): ${opponentWins[currentOpponent]}`,
-          );
-        } else {
-          logger.warn(`❌ Match verloren gegen ${currentOpponent}`);
+        // Aktualisierung der Siegeszahlen direkt aus ns.go.analysis.getStats() (0 GB RAM)
+        const stats = ns.go.analysis.getStats();
+        if (currentOpponent && stats[currentOpponent]) {
+          opponentWins[currentOpponent] = stats[currentOpponent]!.wins;
         }
+
+        logger.info(
+          `🏁 Match beendet gegen ${currentOpponent} | Siege (Gesamt): ${
+            opponentWins[currentOpponent] ?? 0
+          }`,
+        );
       }
 
       await ns.sleep(30);
@@ -88,14 +101,43 @@ export async function main(ns: NS): Promise<void> {
   }
 }
 
-function getInitialWins(ns: NS, opponent: GoOpponent): number {
+/**
+ * Liest die Siege aller Gegner direkt über die 0-RAM API ns.go.analysis.getStats().
+ */
+function getInitialWins(ns: NS): Record<GoOpponent, number> {
+  const wins: Record<GoOpponent, number> = {
+    Netburners: 0,
+    "Slum Snakes": 0,
+    Tetrads: 0,
+    "The Black Hand": 0,
+    Daedalus: 0,
+    Illuminati: 0,
+    "????????????": 0,
+    "No AI": 0,
+  };
+
   try {
-    // Versucht echte Sieganzahl aus Bitburner API zu lesen
-    const stats =
-      (ns.go as any).getGameState?.() || (ns.go as any).getStats?.();
-    return stats?.wins ?? 0;
+    const stats = ns.go.analysis.getStats();
+    for (const [opp, data] of Object.entries(stats)) {
+      if (data && opp in wins) {
+        wins[opp as GoOpponent] = data.wins;
+      }
+    }
   } catch {
-    return 0;
+    // Fallback falls Methode nicht verfügbar ist
+  }
+
+  return wins;
+}
+
+/**
+ * Prüft, ob SF14.2 Cheats risikolos (100% Erfolgschance) genutzt werden können.
+ */
+function isCheatSafe(ns: NS): boolean {
+  try {
+    return ns.go.cheat && ns.go.cheat.getCheatSuccessChance() >= 1.0;
+  } catch {
+    return false;
   }
 }
 

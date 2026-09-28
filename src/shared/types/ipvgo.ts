@@ -1,10 +1,12 @@
 export type GoOpponent =
+  | "No AI"
   | "Netburners"
   | "Slum Snakes"
   | "The Black Hand"
   | "Tetrads"
   | "Daedalus"
-  | "Illuminati";
+  | "Illuminati"
+  | "????????????";
 
 export type GoBoardSize = 5 | 7 | 9 | 13;
 
