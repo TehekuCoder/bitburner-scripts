@@ -1,6 +1,7 @@
-import { NS } from "@ns";
+import { NS, ActiveFragment } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client";
 import { loadState } from "/infrastructure/state/state";
+import { hasBladeburner } from "/lib/utils";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -58,8 +59,20 @@ export async function main(ns: NS): Promise<void> {
     }
 
     for (const fragment of fragments) {
-      await ns.stanek.chargeFragment(fragment.x, fragment.y);
-      totalCharges++;
+      // Booster-Fragmente (Typ 18) haben keine eigene Ladung
+      if (fragment.type === 18) continue;
+
+      // Eine valide, belegte Kachel auf dem Grid finden
+      const tile = getValidChargeTile(ns, fragment);
+
+      try {
+        await ns.stanek.chargeFragment(tile.x, tile.y);
+        totalCharges++;
+      } catch (err) {
+        logger.error(`Fehler beim Laden von Fragment ${fragment.id} bei [${tile.x}, ${tile.y}]:`, undefined, {
+          context: { error: String(err), fragmentId: fragment.id },
+        });
+      }
 
       if (totalCharges % 50 === 0) {
         logger.debug(
@@ -68,8 +81,8 @@ export async function main(ns: NS): Promise<void> {
           {
             context: {
               fragmentId: fragment.id,
-              x: fragment.x,
-              y: fragment.y,
+              x: tile.x,
+              y: tile.y,
               totalCharges,
             },
             tags: ["charge-cycle"],
@@ -83,39 +96,79 @@ export async function main(ns: NS): Promise<void> {
 }
 
 /**
- * Durchsucht das Stanek-Grid nach freien Plätzen und platziert universelle Fragmente.
+ * Ermittelt eine Koordinate, die tatsächlich vom Fragment belegt ist.
+ * Verhindert Fehler, wenn die Root-Koordinate (x, y) durch Form/Rotation leer ist.
  */
+function getValidChargeTile(ns: NS, fragment: ActiveFragment): { x: number; y: number } {
+  const direct = ns.stanek.getFragment(fragment.x, fragment.y);
+  if (direct && direct.id === fragment.id) {
+    return { x: fragment.x, y: fragment.y };
+  }
+
+  // Bounding-Box absuchen, bis ein belegtes Feld des Fragments gefunden wird
+  for (let dx = 0; dx < 5; dx++) {
+    for (let dy = 0; dy < 5; dy++) {
+      const testX = fragment.x + dx;
+      const testY = fragment.y + dy;
+      const placed = ns.stanek.getFragment(testX, testY);
+      if (placed && placed.id === fragment.id) {
+        return { x: testX, y: testY };
+      }
+    }
+  }
+
+  return { x: fragment.x, y: fragment.y };
+}
+
 function autoSetupFragments(ns: NS, logger: LoggerClient): void {
   try {
     const width = ns.stanek.giftWidth();
     const height = ns.stanek.giftHeight();
     const definitions = ns.stanek.fragmentDefinitions();
 
-    logger.info(`Grid-Größe erkannt: ${width}x${height}. Verarbeite Definitionen...`, undefined, {
-      context: { width, height },
+    const isBladeburnerActive =
+      hasBladeburner(ns) &&
+      (() => {
+        try {
+          return ns.bladeburner.inBladeburner();
+        } catch {
+          return false;
+        }
+      })();
+
+    logger.info(
+      `Grid-Größe erkannt: ${width}x${height}. Modus: ${
+        isBladeburnerActive ? "⚔️ Bladeburner / Combat" : "💻 Hacking"
+      }`,
+      undefined,
+      { context: { width, height, isBladeburnerActive } }
+    );
+
+    const priorityTypes = isBladeburnerActive
+      ? [17, 7, 8, 9, 10, 18, 6, 3, 5]
+      : [6, 3, 5, 18, 7, 8, 9, 10];
+
+    const sortedDefinitions = [...definitions].sort((a, b) => {
+      const indexA = priorityTypes.indexOf(a.type);
+      const indexB = priorityTypes.indexOf(b.type);
+      const prioA = indexA === -1 ? 999 : indexA;
+      const prioB = indexB === -1 ? 999 : indexB;
+      return prioA - prioB;
     });
 
-    // Nützliche Fragment-IDs priorisieren (z.B. Hacking Skill, Exp, Hacking Power)
-    // Fragment IDs in Bitburner: 0 = Hack Skill, 1 = Hack Exp, 5 = Faster Hack/Grow/Weaken, etc.
-    const priorityIds = [0, 1, 5, 6, 7, 25];
-
-    for (const id of priorityIds) {
-      const def = definitions.find((d) => d.id === id);
-      if (!def) continue;
-
+    for (const def of sortedDefinitions) {
       let placed = false;
 
-      // Rastersuche über alle X, Y und Rotationen (0-3)
       for (let x = 0; x < width && !placed; x++) {
         for (let y = 0; y < height && !placed; y++) {
           for (let rotation = 0; rotation < 4; rotation++) {
-            if (ns.stanek.canPlaceFragment(x, y, rotation, id)) {
-              const success = ns.stanek.placeFragment(x, y, rotation, id);
+            if (ns.stanek.canPlaceFragment(x, y, rotation, def.id)) {
+              const success = ns.stanek.placeFragment(x, y, rotation, def.id);
               if (success) {
                 logger.success(
-                  `🧩 Fragment ${id} (${def.type}) platziert bei [${x}, ${y}] mit Rotation ${rotation}`,
+                  `🧩 Fragment ${def.id} (Typ: ${def.type}) platziert bei [${x}, ${y}] mit Rotation ${rotation}`,
                   undefined,
-                  { context: { fragmentId: id, x, y, rotation } }
+                  { context: { fragmentId: def.id, type: def.type, x, y, rotation } }
                 );
                 placed = true;
                 break;
