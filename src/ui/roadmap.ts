@@ -1,4 +1,4 @@
-import { NS } from "@ns";
+import { BladeburnerActionName, NS } from "@ns";
 import { PATHS } from "/infrastructure/runtime/paths.js";
 import {
   getExactBitNode,
@@ -27,6 +27,120 @@ const CLR = {
   WHITE_BOLD: "\u001b[1;37m",
   MAGENTA: "\u001b[35m",
 };
+
+const BLACK_OP_NAMES = [
+  "Operation Retribution",
+  "Operation Imperial Eagle",
+  "Operation Shadow War",
+  "Operation Justice",
+  "Operation Vanguard",
+  "Operation Titan",
+  "Operation Horizon",
+  "Operation Aquila",
+  "Operation Zero",
+  "Operation Genesis",
+  "Operation Starfall",
+  "Operation Dawn",
+  "Operation Apollo",
+  "Operation Ares",
+  "Operation Artemis",
+  "Operation Prometheus",
+  "Operation Daedalus",
+];
+
+interface BladeburnerInfo {
+  inBladeburner: boolean;
+  currentRank: number;
+  nextOpName: string | null;
+  nextOpRank: number;
+  completedOps: number;
+  totalOps: number;
+  chanceMin: number;
+  chanceMax: number;
+  staminaCurrent: number;
+  staminaMax: number;
+  unmetReqs: string[];
+  isReady: boolean;
+}
+
+function getBladeburnerInfo(ns: NS): BladeburnerInfo | null {
+  if (!hasBladeburner(ns)) return null;
+  try {
+    if (!ns.bladeburner.inBladeburner()) return null;
+
+    const currentRank = ns.bladeburner.getRank();
+    const nextOp = ns.bladeburner.getNextBlackOp();
+
+    let completedOps = 0;
+    for (const op  of BLACK_OP_NAMES) {
+      try {
+        if (ns.bladeburner.getActionCountRemaining("Black Operations" , op as BladeburnerActionName) === 0) {
+          completedOps++;
+        }
+      } catch {
+        break;
+      }
+    }
+
+    const totalOps = BLACK_OP_NAMES.length;
+
+    let chanceMin = 0;
+    let chanceMax = 0;
+    if (nextOp && nextOp.name) {
+      try {
+        const chance = ns.bladeburner.getActionEstimatedSuccessChance(
+          "Black Operations",
+          nextOp.name,
+        );
+        chanceMin = chance[0];
+        chanceMax = chance[1];
+      } catch {}
+    }
+
+    let staminaCurrent = 0;
+    let staminaMax = 100;
+    try {
+      const stamina = ns.bladeburner.getStamina();
+      staminaCurrent = stamina[0];
+      staminaMax = stamina[1];
+    } catch {}
+
+    const unmetReqs: string[] = [];
+    const nextOpRank = nextOp?.rank ?? 0;
+
+    if (nextOp) {
+      if (currentRank < nextOpRank) {
+        const missing = Math.ceil(nextOpRank - currentRank);
+        unmetReqs.push(`Rank fehlt (${missing.toLocaleString("en-US")})`);
+      }
+      if (staminaMax > 0 && staminaCurrent / staminaMax < 0.5) {
+        unmetReqs.push(
+          `Stamina niedrig (${((staminaCurrent / staminaMax) * 100).toFixed(0)}%)`,
+        );
+      }
+      if (chanceMin < 0.9) {
+        unmetReqs.push(`Chance gering (${(chanceMin * 100).toFixed(0)}%)`);
+      }
+    }
+
+    return {
+      inBladeburner: true,
+      currentRank,
+      nextOpName: nextOp?.name ?? null,
+      nextOpRank,
+      completedOps,
+      totalOps,
+      chanceMin,
+      chanceMax,
+      staminaCurrent,
+      staminaMax,
+      unmetReqs,
+      isReady: nextOp !== null && unmetReqs.length === 0,
+    };
+  } catch {
+    return null;
+  }
+}
 
 function getVisibleLength(text: string): number {
   return text.replace(ANSI_REGEX, "").length;
@@ -88,7 +202,39 @@ function evaluateBitNodePhase(
   playerHacking: number,
   karma: number,
   hasRedPill: boolean,
+  bbInfo?: BladeburnerInfo | null,
 ): BitNodePhase {
+  // Wenn Bladeburner aktiv ist, bestimmt Bladeburner primär den BitNode-Fortschritt
+  if (bbInfo) {
+    if (bbInfo.nextOpName === null || bbInfo.completedOps >= bbInfo.totalOps) {
+      return {
+        phaseNumber: 5,
+        name: "BLADEBURNER / ENDGAME",
+        description: "Alle BlackOps abgeschlossen! BitNode-Sieg erreicht.",
+        targetProgress: 100,
+        isCompleted: true,
+      };
+    }
+
+    const completed = bbInfo.completedOps;
+    const total = bbInfo.totalOps;
+    const progress = Math.min(99, (completed / total) * 100);
+
+    let phaseNum = 1;
+    if (completed >= 14) phaseNum = 4;
+    else if (completed >= 8) phaseNum = 3;
+    else if (completed >= 3) phaseNum = 2;
+
+    return {
+      phaseNumber: phaseNum,
+      name: `BLADEBURNER OPS (${completed}/${total})`,
+      description: `Nächstes BlackOp: ${bbInfo.nextOpName} (Req. Rank: ${bbInfo.nextOpRank.toLocaleString("en-US")})`,
+      targetProgress: progress,
+      isCompleted: false,
+    };
+  }
+
+  // Standard Hacking / BitNode Phase Bewertung
   if (hasRedPill || playerHacking >= 3000) {
     const daemonServer = ns.serverExists("w0r1d_d34th")
       ? ns.getServer("w0r1d_d34th")
@@ -152,7 +298,7 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
   ns.ui.setTailTitle("🗺️ BIT-OS ROADMAP");
-  ns.ui.resizeTail(640, 560);
+  ns.ui.resizeTail(640, 680);
 
   while (true) {
     ns.clearLog();
@@ -181,11 +327,14 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
+    const bbInfo = getBladeburnerInfo(ns);
+
     const phase = evaluateBitNodePhase(
       ns,
       player.skills.hacking,
       karma,
       hasRedPill,
+      bbInfo,
     );
 
     // ------------------------------------------------------------
@@ -245,6 +394,47 @@ export async function main(ns: NS): Promise<void> {
     buffer.push(D_LINE);
 
     // ------------------------------------------------------------
+    // 3.5 BLADEBURNER DETAILS (falls aktiv)
+    // ------------------------------------------------------------
+    if (bbInfo) {
+      buffer.push(`${CLR.WHITE_BOLD}⚔️ BLADEBURNER BLACK OPS STATUS:${CLR.RESET}`);
+      if (bbInfo.nextOpName) {
+        const rankPct = bbInfo.nextOpRank > 0
+          ? Math.min(100, (bbInfo.currentRank / bbInfo.nextOpRank) * 100)
+          : 100;
+        const rankBar = makeProgressBar(bbInfo.currentRank, bbInfo.nextOpRank, 20);
+
+        buffer.push(
+          `Ziel Op:     ${CLR.CYAN}${bbInfo.nextOpName}${CLR.RESET} (${bbInfo.completedOps + 1}/${bbInfo.totalOps})`,
+        );
+        buffer.push(
+          `Rank:        [${CLR.GREEN}${rankBar}${CLR.RESET}] ${Math.floor(bbInfo.currentRank).toLocaleString("en-US")} / ${bbInfo.nextOpRank.toLocaleString("en-US")} (${rankPct.toFixed(1)}%)`,
+        );
+
+        const chanceStr = `${(bbInfo.chanceMin * 100).toFixed(0)}% - ${(bbInfo.chanceMax * 100).toFixed(0)}%`;
+        const staminaPct = bbInfo.staminaMax > 0 ? (bbInfo.staminaCurrent / bbInfo.staminaMax) * 100 : 0;
+        buffer.push(
+          `Chance:      ${CLR.YELLOW}${chanceStr}${CLR.RESET} | Stamina: ${staminaPct.toFixed(0)}%`,
+        );
+
+        if (bbInfo.isReady) {
+          buffer.push(
+            `Status:      ${CLR.GREEN}✓ BEREIT FÜR BLACK OP EXECUTION!${CLR.RESET}`,
+          );
+        } else {
+          buffer.push(
+            `Fehlt noch:  ${CLR.RED}${bbInfo.unmetReqs.join(" | ")}${CLR.RESET}`,
+          );
+        }
+      } else {
+        buffer.push(
+          `Status:      ${CLR.GREEN}✓ Alle 17 BlackOps erfolgreich abgeschlossen!${CLR.RESET}`,
+        );
+      }
+      buffer.push(D_LINE);
+    }
+
+    // ------------------------------------------------------------
     // 4. FREIGESCHALTETE SYSTEME & APIS
     // ------------------------------------------------------------
     buffer.push(`${CLR.WHITE_BOLD}SYSTEM- & API-STATUS:${CLR.RESET}`);
@@ -292,6 +482,25 @@ export async function main(ns: NS): Promise<void> {
 
     const nextSteps: string[] = [];
 
+    if (bbInfo && bbInfo.nextOpName) {
+      if (bbInfo.isReady) {
+        nextSteps.push(
+          `${CLR.GREEN}BlackOp '${bbInfo.nextOpName}' JETZT AUSFÜHREN!${CLR.RESET}`,
+        );
+      } else if (bbInfo.currentRank < bbInfo.nextOpRank) {
+        const diff = Math.ceil(bbInfo.nextOpRank - bbInfo.currentRank);
+        nextSteps.push(
+          `Bladeburner Rank farmen für '${bbInfo.nextOpName}' (Noch ${diff.toLocaleString("en-US")} Rank)`,
+        );
+      } else if (bbInfo.chanceMin < 0.9) {
+        nextSteps.push(
+          `Stats/Chance steigern für BlackOp '${bbInfo.nextOpName}' (Chance: ${(bbInfo.chanceMin * 100).toFixed(0)}%)`,
+        );
+      } else {
+        nextSteps.push(`Stamina regenerieren für BlackOp '${bbInfo.nextOpName}'`);
+      }
+    }
+
     if (!ns.hasTorRouter()) {
       nextSteps.push("Kaufe TOR-Router für $200.0k");
     }
@@ -300,15 +509,15 @@ export async function main(ns: NS): Promise<void> {
         `Karma reduzieren für Gang-Gründung (Noch ${(54 + karma).toFixed(1)} Karma)`,
       );
     }
-    if (kills < 30 && karma > -54) {
+    if (kills < 30 && karma > -54 && !bbInfo) {
       nextSteps.push(`Homicide/Morde farmen (Aktuell: ${kills}/30 Kills)`);
     }
-    if (hasSingularity(ns) && !hasRedPill) {
+    if (hasSingularity(ns) && !hasRedPill && !bbInfo) {
       nextSteps.push(
         "Daedalus-Einladung freischalten (30 Hacker-Level / $100m)",
       );
     }
-    if (hasRedPill) {
+    if (hasRedPill && !bbInfo) {
       nextSteps.push(
         "World Daemon Server (w0r1d_d34th) hacken & BitNode beenden!",
       );
