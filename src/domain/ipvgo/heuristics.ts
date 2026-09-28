@@ -5,16 +5,19 @@ export class NetburnerHeuristics {
     validMoves: boolean[][],
     board: string[],
     liberties: number[][],
+    myColor: "X" | "O" = "O",
   ): GoPoint | null {
     const size = validMoves.length;
     let bestMove: GoPoint | null = null;
     let highestScore = -Infinity;
 
+    const enemyColor = myColor === "O" ? "X" : "O";
+
     for (let x = 0; x < size; x++) {
       for (let y = 0; y < size; y++) {
         if (!validMoves[x][y]) continue;
 
-        const score = this.evaluateMove(x, y, size, board, liberties);
+        const score = this.evaluateMove(x, y, size, board, liberties, myColor, enemyColor);
         if (score > highestScore) {
           highestScore = score;
           bestMove = { x, y };
@@ -34,10 +37,12 @@ export class NetburnerHeuristics {
     size: number,
     board: string[],
     liberties: number[][],
+    myColor: string,
+    enemyColor: string,
   ): number {
     let score = 0;
 
-    // 1. Zentrumskontrolle (auf 5x5 besonders wichtig)
+    // 1. Zentrumskontrolle (besonders auf 5x5 und 7x7)
     const center = Math.floor(size / 2);
     const distToCenter = Math.abs(x - center) + Math.abs(y - center);
     score += (size - distToCenter) * 20;
@@ -57,10 +62,9 @@ export class NetburnerHeuristics {
         emptyCount++;
       } else if (cell === "#") {
         routerNeighbors++;
-      } else if (cell === "X") {
-        // "X" ist in Bitburner meist der gegnerische Stein (bzw. abweichend nach Farbe)
+      } else if (cell === enemyColor) {
         if (lib === 1) enemyAtariCount++;
-      } else if (cell === "O") {
+      } else if (cell === myColor) {
         ownNeighbors++;
         if (lib === 1) ownAtariCount++;
       }
@@ -68,7 +72,7 @@ export class NetburnerHeuristics {
 
     // 2. Taktische Prioritäten (Töten > Retten)
     if (enemyAtariCount > 0) score += 2000; // Gegnerischen Stein schlagen
-    if (ownAtariCount > 0) score += 1200; // Eigene Steine in Atari retten
+    if (ownAtariCount > 0) score += 1200;   // Eigene Steine in Atari retten
 
     // 3. Freiheiten belohnen
     score += emptyCount * 30;
@@ -91,7 +95,7 @@ export class NetburnerHeuristics {
     if (x > 0) res.push([x - 1, y]);
     if (x < size - 1) res.push([x + 1, y]);
     if (y > 0) res.push([x, y - 1]);
-    if (y < size - 1) res.push([x, y + 1]);
+    if (y < size - 1) res.push([x + 1, y]);
     return res;
   }
 }

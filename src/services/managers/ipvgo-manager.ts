@@ -2,7 +2,7 @@ import { NS } from "@ns";
 import { NetburnerHeuristics } from "/domain/ipvgo/heuristics.js";
 import { TargetSelector, GameContext } from "/domain/ipvgo/target-selector.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
-import { loadBnMults, hasGang } from "/lib/utils.js";
+import { loadBnMults, hasGang, hasBladeburner } from "/lib/utils.js";
 import { GoBoardSize, GoOpponent } from "/shared/types/ipvgo.js";
 
 export async function main(ns: NS): Promise<void> {
@@ -46,10 +46,15 @@ export async function main(ns: NS): Promise<void> {
       const board = ns.go.getBoardState();
       const liberties = ns.go.analysis.getLiberties();
 
+      // Spielerfarbe ermitteln (Standard: "O" für Weiß, "X" für Schwarz)
+      const gameState = (ns.go as any).getGameState?.();
+      const myColor: "X" | "O" = gameState?.playerColor ?? "O";
+
       const move = NetburnerHeuristics.getBestMove(
         validMoves,
         board,
         liberties,
+        myColor,
       );
 
       const result = move
@@ -59,11 +64,12 @@ export async function main(ns: NS): Promise<void> {
       if (result.type === "gameOver") {
         inGame = false;
 
-        // Nur bei tatsächlichem Gewinner den Zähler hochzählen
-        // In Bitburner IPvGo signalisiert (result as any).winner meist den Sieger
+        // In Bitburner IPvGo signalisiert (result as any).winner den Sieger
+        const winner = (result as any).winner;
         const isWin =
-          (result as any).winner === "Black" ||
-          (result as any).winner === ns.go.getOpponent();
+          winner === "Black" ||
+          winner === "White" ||
+          winner === ns.go.getOpponent();
 
         if (isWin) {
           opponentWins[currentOpponent]++;
@@ -101,7 +107,7 @@ function buildGameContext(
 
   let karma = 0;
   try {
-    karma = (ns as any).heart?.break() ?? 0;
+    karma = (ns as any).heart?.break() ?? ns.getPlayer().karma ?? 0;
   } catch {}
 
   let inGangStatus = false;
@@ -109,9 +115,20 @@ function buildGameContext(
     inGangStatus = hasGang(ns) && ns.gang.inGang();
   } catch {}
 
+  let inBladeburnerStatus = false;
+  let bbRank = 0;
+  try {
+    if (hasBladeburner(ns) && ns.bladeburner.inBladeburner()) {
+      inBladeburnerStatus = true;
+      bbRank = ns.bladeburner.getRank();
+    }
+  } catch {}
+
   return {
     playerKarma: karma,
     inGang: inGangStatus,
+    inBladeburner: inBladeburnerStatus,
+    bladeburnerRank: bbRank,
     hackingLevel: ns.getHackingLevel(),
     bnMults: bnMults,
     opponentWins: opponentWins,
