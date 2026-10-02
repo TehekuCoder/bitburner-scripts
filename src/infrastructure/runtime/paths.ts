@@ -161,6 +161,7 @@ export const PATHS = {
       grow: "services/payloads/grow.js",
       hack: "services/payloads/hack.js",
       share: "services/payloads/share.js",
+      stanekCharge: "services/payloads/stanek-charge.ts",
       weaken: "services/payloads/weaken.js",
       work: "services/payloads/work.js",
     },

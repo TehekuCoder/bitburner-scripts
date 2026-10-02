@@ -340,7 +340,8 @@ export function deployWorkerFleet(
   const pool: FleetNode[] = servers
     .map((host) => {
       const maxRam = ns.getServerMaxRam(host);
-      const usedRam = getScriptUsedRam(ns, host, workerScript);
+      // Echten genutzten RAM abfragen statt nur work.ts
+      const usedRam = ns.getServerUsedRam(host);
       const reserved = host === "home" ? 32 : 0;
       return { host, freeRam: Math.max(0, maxRam - usedRam - reserved) };
     })

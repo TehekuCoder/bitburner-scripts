@@ -1,7 +1,11 @@
 import { NS, ActiveFragment } from "@ns";
-import { LoggerClient } from "/infrastructure/logging/logger-client";
-import { loadState } from "/infrastructure/state/state";
-import { hasBladeburner } from "/lib/utils";
+import { LoggerClient } from "/infrastructure/logging/logger-client.js";
+import { loadState } from "/infrastructure/state/state.js";
+import { hasBladeburner } from "/lib/utils.js";
+import { getAllRootedServersIncludingPurchased } from "/infrastructure/network/network.js";
+import { PATHS } from "/infrastructure/runtime/paths.js";
+
+const CHARGE_PAYLOAD = PATHS.services.payloads.stanekCharge ?? "/services/payloads/stanek-charge.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -33,13 +37,12 @@ export async function main(ns: NS): Promise<void> {
     });
   }
 
-  let totalCharges = 0;
-
   while (true) {
     const state = loadState(ns);
 
     if (state?.disabledModules?.includes("stanek")) {
       logger.warn("⏸️ Stanek-Modul ist deaktiviert. Warte 60s...");
+      stopAllChargeWorkers(ns);
       await ns.sleep(60000);
       continue;
     }
@@ -58,54 +61,91 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
+    // Valide Lade-Kacheln (ohne Booster-Fragmente Typ 18) sammeln
+    const chargeTiles: { x: number; y: number; id: number }[] = [];
     for (const fragment of fragments) {
-      // Booster-Fragmente (Typ 18) haben keine eigene Ladung
       if (fragment.type === 18) continue;
-
-      // Eine valide, belegte Kachel auf dem Grid finden
       const tile = getValidChargeTile(ns, fragment);
-
-      try {
-        await ns.stanek.chargeFragment(tile.x, tile.y);
-        totalCharges++;
-      } catch (err) {
-        logger.error(`Fehler beim Laden von Fragment ${fragment.id} bei [${tile.x}, ${tile.y}]:`, undefined, {
-          context: { error: String(err), fragmentId: fragment.id },
-        });
-      }
-
-      if (totalCharges % 50 === 0) {
-        logger.debug(
-          `⚡ Charging aktiv [Meilenstein: ${totalCharges} Charges]`,
-          undefined,
-          {
-            context: {
-              fragmentId: fragment.id,
-              x: tile.x,
-              y: tile.y,
-              totalCharges,
-            },
-            tags: ["charge-cycle"],
-          }
-        );
-      }
+      chargeTiles.push({ x: tile.x, y: tile.y, id: fragment.id });
     }
 
-    await ns.sleep(100);
+    if (chargeTiles.length > 0) {
+      deployStanekFleet(ns, logger, chargeTiles);
+    }
+
+    await ns.sleep(15000);
   }
 }
 
-/**
- * Ermittelt eine Koordinate, die tatsächlich vom Fragment belegt ist.
- * Verhindert Fehler, wenn die Root-Koordinate (x, y) durch Form/Rotation leer ist.
- */
+function deployStanekFleet(
+  ns: NS,
+  logger: LoggerClient,
+  tiles: { x: number; y: number; id: number }[]
+): void {
+  const payloadPath = CHARGE_PAYLOAD.endsWith(".ts")
+    ? CHARGE_PAYLOAD.replace(/\.ts$/, ".js")
+    : CHARGE_PAYLOAD;
+
+  if (!ns.fileExists(payloadPath, "home")) {
+    logger.error(`Payload-Skript '${payloadPath}' nicht gefunden!`);
+    return;
+  }
+
+  const scriptRam = ns.getScriptRam(payloadPath, "home");
+  const servers = getAllRootedServersIncludingPurchased(ns);
+
+  let totalDeployedThreads = 0;
+  let tileIndex = 0;
+
+  for (const host of servers) {
+    if (host !== "home") {
+      ns.scp(payloadPath, host, "home");
+    }
+
+    const maxRam = ns.getServerMaxRam(host);
+    const usedRam = ns.getServerUsedRam(host);
+    // Auf 'home' reservieren wir RAM für Orchestrator/Andere Daemons
+    const reservedRam = host === "home" ? 64 : 0;
+    const freeRam = Math.max(0, maxRam - usedRam - reservedRam);
+
+    const threads = Math.floor(freeRam / scriptRam);
+    if (threads > 0) {
+      const targetTile = tiles[tileIndex % tiles.length];
+      const pid = ns.exec(payloadPath, host, threads, targetTile.x, targetTile.y);
+      if (pid > 0) {
+        totalDeployedThreads += threads;
+        tileIndex++;
+      }
+    }
+  }
+
+  if (totalDeployedThreads > 0) {
+    logger.debug(`⚡ Stanek-Fleet verteilt: ${totalDeployedThreads} Threads auf ${tiles.length} Ziel-Fragmente.`);
+  }
+}
+
+function stopAllChargeWorkers(ns: NS): void {
+  const payloadPath = CHARGE_PAYLOAD.endsWith(".ts")
+    ? CHARGE_PAYLOAD.replace(/\.ts$/, ".js")
+    : CHARGE_PAYLOAD;
+  const scriptName = payloadPath.replace(/^.*[\\/]/, "");
+  const servers = getAllRootedServersIncludingPurchased(ns);
+
+  for (const server of servers) {
+    for (const proc of ns.ps(server)) {
+      if (proc.filename.endsWith(scriptName)) {
+        ns.kill(proc.pid);
+      }
+    }
+  }
+}
+
 function getValidChargeTile(ns: NS, fragment: ActiveFragment): { x: number; y: number } {
   const direct = ns.stanek.getFragment(fragment.x, fragment.y);
   if (direct && direct.id === fragment.id) {
     return { x: fragment.x, y: fragment.y };
   }
 
-  // Bounding-Box absuchen, bis ein belegtes Feld des Fragments gefunden wird
   for (let dx = 0; dx < 5; dx++) {
     for (let dy = 0; dy < 5; dy++) {
       const testX = fragment.x + dx;
