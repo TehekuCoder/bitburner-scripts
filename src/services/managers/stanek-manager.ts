@@ -86,41 +86,49 @@ function deployStanekFleet(
     ? CHARGE_PAYLOAD.replace(/\.ts$/, ".js")
     : CHARGE_PAYLOAD;
 
-  if (!ns.fileExists(payloadPath, "home")) {
-    logger.error(`Payload-Skript '${payloadPath}' nicht gefunden!`);
-    return;
-  }
+  if (!ns.fileExists(payloadPath, "home")) return;
 
   const scriptRam = ns.getScriptRam(payloadPath, "home");
   const servers = getAllRootedServersIncludingPurchased(ns);
+
+  // 1️⃣ Gesamt-RAM des Netzwerks ermitteln & Stanek-Budget auf 20% deckeln
+  const totalNetworkRam = servers.reduce((sum, s) => sum + ns.getServerMaxRam(s), 0);
+  const STANEK_MAX_RATIO = 0.20; // Max. 20% des Netzwerks für Stanek
+  let remainingStanekRamBudget = totalNetworkRam * STANEK_MAX_RATIO;
 
   let totalDeployedThreads = 0;
   let tileIndex = 0;
 
   for (const host of servers) {
+    if (remainingStanekRamBudget < scriptRam) break; // Budget aufgebraucht
+
     if (host !== "home") {
       ns.scp(payloadPath, host, "home");
     }
 
     const maxRam = ns.getServerMaxRam(host);
     const usedRam = ns.getServerUsedRam(host);
-    // Auf 'home' reservieren wir RAM für Orchestrator/Andere Daemons
     const reservedRam = host === "home" ? 64 : 0;
     const freeRam = Math.max(0, maxRam - usedRam - reservedRam);
 
-    const threads = Math.floor(freeRam / scriptRam);
+    // Limitere den verfügbaren RAM auf das verbleibende Stanek-Budget
+    const allocatableRam = Math.min(freeRam, remainingStanekRamBudget);
+    const threads = Math.floor(allocatableRam / scriptRam);
+
     if (threads > 0) {
       const targetTile = tiles[tileIndex % tiles.length];
       const pid = ns.exec(payloadPath, host, threads, targetTile.x, targetTile.y);
       if (pid > 0) {
+        const used = threads * scriptRam;
         totalDeployedThreads += threads;
+        remainingStanekRamBudget -= used;
         tileIndex++;
       }
     }
   }
 
   if (totalDeployedThreads > 0) {
-    logger.debug(`⚡ Stanek-Fleet verteilt: ${totalDeployedThreads} Threads auf ${tiles.length} Ziel-Fragmente.`);
+    logger.debug(`⚡ Stanek-Fleet verteilt: ${totalDeployedThreads} Threads (Deckel: 20% Netz-RAM).`);
   }
 }
 
