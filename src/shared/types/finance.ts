@@ -33,6 +33,12 @@ export interface PurchaseRequest {
   };
 }
 
+export interface FinanceActionResult {
+  requestId: string;
+  success: boolean;
+  actualCost: number;
+}
+
 export interface PurchaseEvaluator {
   category: PurchaseCategory;
   getRequests(ns: NS): PurchaseRequest[];

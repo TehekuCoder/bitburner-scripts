@@ -110,7 +110,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
       const nfgTarget = getBestNeuroFluxTarget(ns);
       if (nfgTarget && currentMoney >= nfgTarget.price) {
         requests.push({
-          id: `player-aug-nfg-${Date.now()}`,
+          id: `player-aug-nfg-${nfgTarget.faction}`,
           category: "PLAYER_AUG",
           priority: PurchasePriority.CRITICAL, // ⚡ CRITICAL: Letztes Geld vor Reset sichern
           score: 99,
@@ -118,7 +118,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
           description: `[CRITICAL DUMP] NeuroFlux Governor via ${nfgTarget.faction}`,
           action: {
             script: PATHS.app.actions.singularity,
-            args: ["player-purchase-nfg", nfgTarget.faction],
+            args: ["player-purchase-nfg", nfgTarget.faction, nfgTarget.price],
           },
         });
         return requests;
@@ -174,8 +174,8 @@ export const PlayerEvaluator: PurchaseEvaluator = {
 
     if (selectedBatch.length === 0) return requests;
 
-    // Sortierung für Ausführung: Teuerstes zuerst
-    const affordableBatch = [...selectedBatch].sort((a, b) => b.price - a.price);
+    // Keep execution order aligned with the ascending-price cost projection above.
+    const affordableBatch = [...selectedBatch].sort((a, b) => a.price - b.price);
 
     // Kriterien für CRITICAL Evaluierung
     const isFullBatchReady = affordableBatch.length >= baseTargetBatch;

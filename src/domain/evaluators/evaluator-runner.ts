@@ -16,10 +16,10 @@ export function submitPurchaseRequests(
   const port = ns.getPortHandle(FINANCE_PORT);
   const batch: EvaluatorBatch = { category, requests };
 
-  try {
-    port.write(JSON.stringify(batch));
-  } catch {
-    ns.print(`[FINANCE-PORT] Batch konnte nicht auf Port ${FINANCE_PORT} geschrieben werden: ${category}`);
+  if (!port.tryWrite(JSON.stringify(batch))) {
+    ns.print(
+      `[FINANCE-PORT] Port ${FINANCE_PORT} ist voll; Batch für ${category} wurde nicht übertragen.`,
+    );
   }
 }
 

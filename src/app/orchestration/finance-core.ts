@@ -12,9 +12,13 @@ import { FINANCE_PORT } from "../../domain/evaluators/evaluator-runner";
 import { PATHS } from "/infrastructure/runtime/paths";
 import {
   BASE_CATEGORY_MARGINS,
+  CASH_BUFFER,
   CATEGORY_TO_EVALUATOR,
   CATEGORY_WEIGHTS,
+  FINANCE_REQUEST_ARG_PREFIX,
+  FINANCE_RESULT_PORT,
 } from "/shared/constants/finance";
+import { loadFinanceState } from "/infrastructure/state/state";
 
 interface EvaluatorCacheEntry {
   timestamp: number;
@@ -22,8 +26,90 @@ interface EvaluatorCacheEntry {
 }
 
 const evaluatorRequestCache = new Map<string, EvaluatorCacheEntry>();
+interface PendingAction {
+  category: PurchaseCategory;
+  requestId: string;
+  description: string;
+  reservedCost: number;
+  startedAt: number;
+}
+
+const pendingActions = new Map<string, PendingAction>();
+const retryAfter = new Map<string, number>();
 const CACHE_TTL_MS = 45000; // 45s TTL für Anfragen
-const BATCH_GAP_MS = 3000; // Nach 3s Inaktivität alten Lauf als neu betrachten
+const ACTION_TIMEOUT_MS = 60000;
+
+const PURCHASE_CATEGORIES: readonly PurchaseCategory[] = [
+  "HOME_SERVER",
+  "PURCHASED_SERVER",
+  "DARKNET_PROGRAM",
+  "PLAYER_AUG",
+  "SLEEVE_AUG",
+  "GANG_EQUIPMENT",
+  "HACKNET",
+  "COMPANY",
+  "STOCK_LICENSE",
+  "STOCK_TRADE",
+];
+
+const CATEGORY_ACTION_SCRIPTS: Record<PurchaseCategory, string> = {
+  HOME_SERVER: PATHS.app.actions.singularity,
+  PURCHASED_SERVER: PATHS.app.actions.cloud,
+  DARKNET_PROGRAM: PATHS.app.actions.singularity,
+  PLAYER_AUG: PATHS.app.actions.singularity,
+  SLEEVE_AUG: PATHS.app.actions.sleeve,
+  GANG_EQUIPMENT: PATHS.app.actions.gang,
+  HACKNET: PATHS.app.actions.hacknet,
+  COMPANY: PATHS.app.actions.corporation,
+  STOCK_LICENSE: PATHS.app.actions.stock,
+  STOCK_TRADE: PATHS.app.actions.stock,
+};
+
+function isPurchaseCategory(value: unknown): value is PurchaseCategory {
+  return (
+    typeof value === "string" &&
+    PURCHASE_CATEGORIES.includes(value as PurchaseCategory)
+  );
+}
+
+function parsePurchaseRequest(
+  value: unknown,
+  batchCategory?: PurchaseCategory,
+): PurchaseRequest | null {
+  if (typeof value !== "object" || value === null) return null;
+  const request = value as Partial<PurchaseRequest>;
+  const category = request.category ?? batchCategory;
+  if (
+    !request.id ||
+    typeof request.id !== "string" ||
+    request.id.length > 200 ||
+    !isPurchaseCategory(category) ||
+    (batchCategory !== undefined && category !== batchCategory) ||
+    !Number.isFinite(request.cost) ||
+    (request.cost ?? -1) < 0 ||
+    typeof request.priority !== "number" ||
+    !Object.values(PurchasePriority).some(
+      (priority) => typeof priority === "number" && priority === request.priority,
+    ) ||
+    typeof request.description !== "string" ||
+    typeof request.action?.script !== "string" ||
+    request.action.script !== CATEGORY_ACTION_SCRIPTS[category] ||
+    !Array.isArray(request.action.args) ||
+    !request.action.args.every(
+      (arg) =>
+        typeof arg === "string" ||
+        (typeof arg === "number" && Number.isFinite(arg)),
+    ) ||
+    (request.score !== undefined && !Number.isFinite(request.score))
+  ) {
+    return null;
+  }
+  return { ...request, category } as PurchaseRequest;
+}
+
+function trackingId(category: PurchaseCategory, requestId: string): string {
+  return `${category}:${requestId}`;
+}
 
 function pushBounded<T>(array: T[], item: T, maxSize: number = 6): void {
   array.push(item);
@@ -46,8 +132,6 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const now = Date.now();
-    const rawMoney = ns.getServerMoneyAvailable("home");
-    let availableMoney = rawMoney;
     const bnMults = loadBnMults(ns);
 
     // 1. BitNode-Multiplikatoren auswerten
@@ -71,50 +155,137 @@ export async function main(ns: NS): Promise<void> {
         try {
           const parsed = JSON.parse(reqData);
 
-          const registerBatch = (
-            reqs: PurchaseRequest[],
-            cat?: PurchaseCategory,
-          ) => {
-            for (const req of reqs) {
-              const reqCat =
-                req.category || cat || ("UNKNOWN" as PurchaseCategory);
-              req.category = reqCat;
-
-              const evalName = CATEGORY_TO_EVALUATOR[reqCat];
-              if (evalName) evaluatorLastSeen[evalName] = now;
-
-              let cacheEntry = evaluatorRequestCache.get(reqCat);
-
-              if (!cacheEntry || now - cacheEntry.timestamp > BATCH_GAP_MS) {
-                cacheEntry = {
-                  timestamp: now,
-                  requests: new Map<string, PurchaseRequest>(),
-                };
-                evaluatorRequestCache.set(reqCat, cacheEntry);
-              }
-
-              if (req?.id) {
-                cacheEntry.requests.set(req.id, req);
-                cacheEntry.timestamp = now;
-              }
-            }
-          };
-
           if (
             parsed &&
             typeof parsed === "object" &&
             Array.isArray(parsed.requests)
           ) {
-            registerBatch(parsed.requests, parsed.category);
+            if (!isPurchaseCategory(parsed.category)) {
+              ns.print("[ERROR] Ungültige Kategorie im Finance-Batch.");
+              continue;
+            }
+            const requests = parsed.requests.map((request: unknown) =>
+              parsePurchaseRequest(request, parsed.category),
+            );
+            if (requests.some((request: PurchaseRequest | null) => !request)) {
+              ns.print(
+                `[ERROR] Ungültiger Request im Finance-Batch (${parsed.category}); Batch verworfen.`,
+              );
+              continue;
+            }
+            const category = parsed.category as PurchaseCategory;
+            const requestMap = new Map<string, PurchaseRequest>();
+            for (const request of requests as PurchaseRequest[]) {
+              requestMap.set(request.id, request);
+            }
+            evaluatorRequestCache.set(category, { timestamp: now, requests: requestMap });
+            const evalName = CATEGORY_TO_EVALUATOR[category];
+            if (evalName) evaluatorLastSeen[evalName] = now;
           } else if (Array.isArray(parsed)) {
-            registerBatch(parsed as PurchaseRequest[]);
+            const requests = parsed.map((request: unknown) =>
+              parsePurchaseRequest(request),
+            );
+            if (requests.some((request: PurchaseRequest | null) => !request)) {
+              ns.print("[ERROR] Ungültiger Legacy-Request im Finance-Port.");
+              continue;
+            }
+            const byCategory = new Map<PurchaseCategory, PurchaseRequest[]>();
+            for (const request of requests as PurchaseRequest[]) {
+              const categoryRequests = byCategory.get(request.category) ?? [];
+              categoryRequests.push(request);
+              byCategory.set(request.category, categoryRequests);
+            }
+            for (const [category, categoryRequests] of byCategory) {
+              evaluatorRequestCache.set(category, {
+                timestamp: now,
+                requests: new Map(categoryRequests.map((request) => [request.id, request])),
+              });
+              const evalName = CATEGORY_TO_EVALUATOR[category];
+              if (evalName) evaluatorLastSeen[evalName] = now;
+            }
           } else if (parsed && typeof parsed === "object") {
-            registerBatch([parsed as PurchaseRequest]);
+            const request = parsePurchaseRequest(parsed);
+            if (!request) {
+              ns.print("[ERROR] Ungültiger Request im Finance-Port.");
+              continue;
+            }
+            const existing = evaluatorRequestCache.get(request.category);
+            const requests = existing?.requests ?? new Map<string, PurchaseRequest>();
+            requests.set(request.id, request);
+            evaluatorRequestCache.set(request.category, { timestamp: now, requests });
+            const evalName = CATEGORY_TO_EVALUATOR[request.category];
+            if (evalName) evaluatorLastSeen[evalName] = now;
           }
         } catch (e) {
           ns.print(`[ERROR] Ungültiges JSON im Finance-Port: ${e}`);
         }
       }
+    }
+
+    const resultPort = ns.getPortHandle(FINANCE_RESULT_PORT);
+    while (!resultPort.empty()) {
+      const resultData = resultPort.read();
+      if (typeof resultData !== "string" || resultData === "NULL PORT DATA") {
+        continue;
+      }
+      try {
+        const result = JSON.parse(resultData) as {
+          requestId?: unknown;
+          success?: unknown;
+          actualCost?: unknown;
+        };
+        if (
+          typeof result.requestId !== "string" ||
+          typeof result.success !== "boolean" ||
+          typeof result.actualCost !== "number" ||
+          !Number.isFinite(result.actualCost) ||
+          result.actualCost < 0
+        ) {
+          ns.print("[ERROR] Ungültiges Action-Ergebnis auf dem Finance-Result-Port.");
+          continue;
+        }
+
+        const pending = pendingActions.get(result.requestId);
+        if (!pending) continue;
+        pendingActions.delete(result.requestId);
+        if (result.success) {
+          const purchaseMsg = `🛒 [$${ns.format.number(result.actualCost)}] ${pending.description}`;
+          logger.success(purchaseMsg);
+          pushBounded(lastPurchases, purchaseMsg, 6);
+          evaluatorRequestCache
+            .get(pending.category)
+            ?.requests.delete(pending.requestId);
+          retryAfter.delete(result.requestId);
+        } else {
+          const errorMsg = `⚠️ Kauf fehlgeschlagen: ${pending.description}`;
+          logger.warn(errorMsg);
+          pushBounded(lastWarnings, errorMsg, 6);
+          retryAfter.set(result.requestId, now + 5000);
+        }
+      } catch (e) {
+        ns.print(`[ERROR] Ungültiges JSON auf dem Finance-Result-Port: ${e}`);
+      }
+    }
+
+    for (const [id, pending] of pendingActions) {
+      if (now - pending.startedAt > ACTION_TIMEOUT_MS) {
+        pendingActions.delete(id);
+        retryAfter.set(id, now + 5000);
+        const warning = `⚠️ Keine Rückmeldung von Kauf-Action erhalten: ${pending.description}`;
+        logger.warn(warning);
+        pushBounded(lastWarnings, warning, 6);
+      }
+    }
+
+    const rawMoney = ns.getServerMoneyAvailable("home");
+    const stateReserve = loadFinanceState(ns)?.moneyReserve ?? 0;
+    const reserve = Math.max(
+      CASH_BUFFER,
+      Number.isFinite(stateReserve) && stateReserve > 0 ? stateReserve : 0,
+    );
+    let availableMoney = Math.max(0, rawMoney - reserve);
+    for (const pending of pendingActions.values()) {
+      availableMoney = Math.max(0, availableMoney - pending.reservedCost);
     }
 
     // Veraltete Kategorien entfernen
@@ -205,6 +376,13 @@ export async function main(ns: NS): Promise<void> {
       let highestUnsatisfiedPriority = Number.MAX_SAFE_INTEGER;
 
       for (const req of allRequests) {
+        const requestTrackingId = trackingId(req.category, req.id);
+        if (
+          pendingActions.has(requestTrackingId) ||
+          (retryAfter.get(requestTrackingId) ?? 0) > now
+        ) {
+          continue;
+        }
         const margin = dynamicMargins[req.category] ?? 1.0;
         const requiredBudget = req.cost * margin;
 
@@ -220,19 +398,23 @@ export async function main(ns: NS): Promise<void> {
         }
 
         if (canAffordEasily) {
-          const pid = ns.exec(req.action.script, "home", 1, ...req.action.args);
+          const pid = ns.exec(
+            req.action.script,
+            "home",
+            1,
+            ...req.action.args,
+            `${FINANCE_REQUEST_ARG_PREFIX}${requestTrackingId}`,
+          );
 
           if (pid > 0) {
-            const purchaseMsg = `🛒 [$${ns.format.number(req.cost)}] ${req.description}`;
-            logger.success(purchaseMsg);
-            pushBounded(lastPurchases, purchaseMsg, 6);
-
-            const cacheEntry = evaluatorRequestCache.get(req.category);
-            if (cacheEntry && req.id) {
-              cacheEntry.requests.delete(req.id);
-            }
-
-            availableMoney -= req.cost;
+            pendingActions.set(requestTrackingId, {
+              category: req.category,
+              requestId: req.id,
+              description: req.description,
+              reservedCost: requiredBudget,
+              startedAt: now,
+            });
+            availableMoney = Math.max(0, availableMoney - requiredBudget);
             await ns.sleep(20);
           } else {
             const errorMsg = `⚠️ Script-Start fehlgeschlagen: ${req.action.script}`;

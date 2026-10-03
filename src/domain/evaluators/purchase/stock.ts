@@ -6,7 +6,6 @@ import {
   PurchaseCategory,
   PurchasePriority,
 } from "/shared/types/finance.js";
-import { TRANSACTION_FEE } from "../../../shared/constants/finance.js";
 import { runEvaluator } from "../evaluator-runner.js";
 import { loadBnMults, adjustPriorityByMult, isStockViable } from "/lib/utils.js";
 import { PATHS } from "/infrastructure/runtime/paths";
@@ -110,12 +109,6 @@ export const StockEvaluator: PurchaseEvaluator = {
 
     // --- 3. TRADING FEATURE CHECK & KAUFANFRAGEN ---
     const symbols = ns.stock.getSymbols();
-    let canShort = true;
-    try {
-      ns.stock.buyShort(symbols[0], 0);
-    } catch {
-      canShort = false;
-    }
 
     const buyCandidates: {
       sym: string;
@@ -136,7 +129,7 @@ export const StockEvaluator: PurchaseEvaluator = {
             type: "LONG",
             strength: forecast - 0.5,
           });
-        } else if (canShort && forecast < 0.4) {
+        } else if (forecast < 0.4) {
           buyCandidates.push({
             sym,
             forecast,
@@ -149,24 +142,32 @@ export const StockEvaluator: PurchaseEvaluator = {
 
     buyCandidates.sort((a, b) => b.strength - a.strength);
 
-    const tradeBudget = playerMoney * 0.2;
+    let remainingBudget = playerMoney * 0.2;
 
-    if (tradeBudget > TRANSACTION_FEE * 10) {
+    if (remainingBudget > 0) {
       for (const candidate of buyCandidates.slice(0, 2)) {
         const sym = candidate.sym;
-        const maxShares = ns.stock.getMaxShares(sym);
-        const sharePrice =
-          candidate.type === "LONG"
-            ? ns.stock.getAskPrice(sym)
-            : ns.stock.getBidPrice(sym);
+        const maxShares = Math.floor(ns.stock.getMaxShares(sym));
+        const positionType = candidate.type === "LONG" ? "L" : "S";
+        let low = 1;
+        let high = maxShares;
+        let affordableShares = 0;
+        let targetCost = 0;
 
-        const affordableShares = Math.min(
-          maxShares,
-          Math.floor((tradeBudget - TRANSACTION_FEE) / sharePrice),
-        );
+        while (low <= high) {
+          const shares = Math.floor((low + high) / 2);
+          const cost = ns.stock.getPurchaseCost(sym, shares, positionType);
+          if (Number.isFinite(cost) && cost > 0 && cost <= remainingBudget) {
+            affordableShares = shares;
+            targetCost = cost;
+            low = shares + 1;
+          } else {
+            high = shares - 1;
+          }
+        }
 
         if (affordableShares > 0) {
-          const targetCost = affordableShares * sharePrice + TRANSACTION_FEE;
+          remainingBudget -= targetCost;
           const score = Math.floor(candidate.strength * 100);
 
           const priority =

@@ -1,40 +1,42 @@
 // app/actions/act-cloud.ts
 import { NS } from "@ns";
+import { runTrackedFinanceAction } from "./finance-action.js";
 
 export async function main(ns: NS): Promise<void> {
-  const action = String(ns.args[0] ?? "");
-  const hostname = String(ns.args[1] ?? "");
-  const ram = Number(ns.args[2] ?? 0);
+  await runTrackedFinanceAction(ns, async () => {
+    const action = String(ns.args[0] ?? "");
+    const hostname = String(ns.args[1] ?? "");
+    const ram = Number(ns.args[2] ?? 0);
 
-  if (!hostname || ram <= 0) {
-    ns.tprint(`❌ [act-cloud] Ungültige Parameter: action=${action}, host=${hostname}, ram=${ram}`);
-    return;
-  }
+    if (!hostname || ram <= 0) {
+      ns.tprint(`❌ [act-cloud] Ungültige Parameter: action=${action}, host=${hostname}, ram=${ram}`);
+      return false;
+    }
 
-  switch (action) {
-    case "cloud-buy": {
-      // ns.cloud.purchaseServer gibt bei Erfolg den Hostnamen zurück, sonst ""
-      const boughtHost = ns.cloud.purchaseServer(hostname, ram);
+    switch (action) {
+      case "cloud-buy": {
+        const boughtHost = ns.cloud.purchaseServer(hostname, ram);
 
-      if (boughtHost && boughtHost !== "") {
-        ns.tprint(`✅ [act-cloud] Server gekauft: ${boughtHost} (${ram}GB)`);
-      } else {
+        if (boughtHost && boughtHost !== "") {
+          ns.tprint(`✅ [act-cloud] Server gekauft: ${boughtHost} (${ram}GB)`);
+          return true;
+        }
         ns.tprint(`❌ [act-cloud] Kauf FEHLGESCHLAGEN für ${hostname} (${ram}GB). Geld oder Limit erreicht?`);
+        return false;
       }
-      break;
-    }
-    case "cloud-upgrade": {
-      // ns.cloud.upgradeServer gibt boolean zurück
-      const success = ns.cloud.upgradeServer(hostname, ram);
+      case "cloud-upgrade": {
+        const success = ns.cloud.upgradeServer(hostname, ram);
 
-      if (success) {
-        ns.tprint(`✅ [act-cloud] Server aufgerüstet: ${hostname} ➔ ${ram}GB`);
-      } else {
-        ns.tprint(`❌ [act-cloud] Upgrade FEHLGESCHLAGEN für ${hostname} auf ${ram}GB.`);
+        if (success) {
+          ns.tprint(`✅ [act-cloud] Server aufgerüstet: ${hostname} ➔ ${ram}GB`);
+        } else {
+          ns.tprint(`❌ [act-cloud] Upgrade FEHLGESCHLAGEN für ${hostname} auf ${ram}GB.`);
+        }
+        return success;
       }
-      break;
+      default:
+        ns.tprint(`⚠️ [act-cloud] Unbekannte Aktion: ${action}`);
+        return false;
     }
-    default:
-      ns.tprint(`⚠️ [act-cloud] Unbekannte Aktion: ${action}`);
-  }
+  });
 }

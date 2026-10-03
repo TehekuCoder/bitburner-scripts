@@ -3,7 +3,6 @@ import {
   PurchaseEvaluator,
   PurchaseRequest,
   PurchasePriority,
-  PurchaseCategory,
 } from "/shared/types/finance.js";
 import { runEvaluator } from "../evaluator-runner.js";
 import {
@@ -16,7 +15,7 @@ import { PATHS } from "/infrastructure/runtime/paths";
 const CORP_NAME = "Philip Matrix";
 
 export const CorporationEvaluator: PurchaseEvaluator = {
-  category: "CORPORATION" as PurchaseCategory,
+  category: "COMPANY",
 
   getRequests(ns: NS): PurchaseRequest[] {
     // 🔴 1. Viability & API Check (nutzt die zentrale Logik)
@@ -51,7 +50,7 @@ export const CorporationEvaluator: PurchaseEvaluator = {
     return [
       {
         id: "corp-create-initial",
-        category: "CORPORATION" as PurchaseCategory,
+        category: "COMPANY",
         priority: basePriority,
         score: Math.max(1, baseScore),
         cost,

@@ -1,29 +1,32 @@
 import { NS } from "@ns";
+import { runTrackedFinanceAction } from "./finance-action.js";
 
 export async function main(ns: NS): Promise<void> {
-  const action = String(ns.args[0] ?? "");
-  const corpName = String(ns.args[1] ?? "Philip Matrix");
+  await runTrackedFinanceAction(ns, async () => {
+    const action = String(ns.args[0] ?? "");
+    const corpName = String(ns.args[1] ?? "Philip Matrix");
 
-  if (action === "corp-create") {
-    if (!Boolean(ns.corporation)) {
+    if (action !== "corp-create") {
+      ns.tprint(`⚠️ [act-corporation] Unbekannte Aktion: ${action}`);
+      return false;
+    }
+
+    if (!ns.corporation) {
       ns.tprint(`❌ [act-corporation] Corporation API ist nicht freigeschaltet.`);
-      return;
+      return false;
     }
 
     if (ns.corporation.hasCorporation()) {
       ns.tprint(`ℹ️ [act-corporation] Corporation existiert bereits.`);
-      return;
+      return false;
     }
 
-    // Erstellt die Corporation (Self-Funded = true)
     const success = ns.corporation.createCorporation(corpName, true);
-
     if (success) {
       ns.tprint(`✅ [act-corporation] Corporation "${corpName}" erfolgreich gegründet!`);
     } else {
       ns.tprint(`❌ [act-corporation] Gründung von "${corpName}" fehlgeschlagen. (Nicht genug Kapital?)`);
     }
-  } else {
-    ns.tprint(`⚠️ [act-corporation] Unbekannte Aktion: ${action}`);
-  }
+    return success;
+  });
 }

@@ -1,86 +1,93 @@
 import { NS, ProgramName, FactionName } from "@ns";
+import { runTrackedFinanceAction } from "./finance-action.js";
 
 export async function main(ns: NS): Promise<void> {
-  if (!ns.singularity) return;
-  const action = String(ns.args[0] ?? "");
+  await runTrackedFinanceAction(ns, async () => {
+    if (!ns.singularity) return false;
+    const action = String(ns.args[0] ?? "");
 
-  switch (action) {
-    case "home-upgrade-ram":
-      ns.singularity.upgradeHomeRam();
-      break;
+    switch (action) {
+      case "home-upgrade-ram":
+        return ns.singularity.upgradeHomeRam();
 
-    case "home-upgrade-cores":
-      ns.singularity.upgradeHomeCores();
-      break;
+      case "home-upgrade-cores":
+        return ns.singularity.upgradeHomeCores();
 
-    case "program-purchase-tor":
-      ns.singularity.purchaseTor();
-      break;
+      case "program-purchase-tor":
+        return ns.singularity.purchaseTor();
 
-    case "program-purchase": {
-      const prog = String(ns.args[1] ?? "") as ProgramName;
-      if (prog) ns.singularity.purchaseProgram(prog);
-      break;
-    }
+      case "program-purchase": {
+        const prog = String(ns.args[1] ?? "") as ProgramName;
+        return prog ? ns.singularity.purchaseProgram(prog) : false;
+      }
 
-    case "player-purchase-aug": {
-      const faction = String(ns.args[1] ?? "") as FactionName;
-      const aug = String(ns.args[2] ?? "");
-      if (faction && aug) ns.singularity.purchaseAugmentation(faction, aug);
-      break;
-    }
+      case "player-purchase-aug": {
+        const faction = String(ns.args[1] ?? "") as FactionName;
+        const aug = String(ns.args[2] ?? "");
+        return faction && aug
+          ? ns.singularity.purchaseAugmentation(faction, aug)
+          : false;
+      }
 
-    case "player-purchase-aug-batch": {
-      try {
+      case "player-purchase-aug-batch": {
         const batch = JSON.parse(String(ns.args[1] ?? "[]")) as {
           faction: FactionName;
           name: string;
         }[];
+        if (!Array.isArray(batch) || batch.length === 0) return false;
 
         for (const item of batch) {
-          if (!item.faction || !item.name) continue;
+          if (!item.faction || !item.name) return false;
 
           const currentMoney = ns.getServerMoneyAvailable("home");
           const currentPrice = ns.singularity.getAugmentationPrice(item.name);
-
-          // Budget-Absicherung vor jedem Kauf
           if (currentMoney < currentPrice) {
             ns.tprint(
               `[WARN] Batch abgebrochen für ${item.name}: Zu wenig Geld.`,
             );
-            break;
+            return false;
           }
 
-          const success = ns.singularity.purchaseAugmentation(
-            item.faction,
-            item.name,
-          );
-          if (!success) {
+          if (
+            !ns.singularity.purchaseAugmentation(item.faction, item.name)
+          ) {
             ns.tprint(`[ERROR] Kauf fehlgeschlagen für: ${item.name}`);
-            break;
+            return false;
           }
-
           ns.print(`[SUCCESS] Gekauft: ${item.name}`);
         }
-      } catch (e) {
-        ns.tprint(`[ERROR] Fehler beim Parsen des Augment-Batches: ${e}`);
+        return true;
       }
-      break;
-    }
 
-    case "player-purchase-nfg": {
-      const faction = String(ns.args[1] ?? "") as FactionName;
-      if (faction) {
-        while (
-          ns.singularity.purchaseAugmentation(faction, "NeuroFlux Governor")
-        ) {}
+      case "player-purchase-nfg": {
+        const faction = String(ns.args[1] ?? "") as FactionName;
+        const maximumPrice = Number(ns.args[2] ?? 0);
+        if (!faction || !Number.isFinite(maximumPrice) || maximumPrice <= 0) {
+          return false;
+        }
+        const currentPrice = ns.singularity.getAugmentationPrice(
+          "NeuroFlux Governor",
+        );
+        if (
+          currentPrice > maximumPrice ||
+          ns.getServerMoneyAvailable("home") < currentPrice
+        ) {
+          return false;
+        }
+        return ns.singularity.purchaseAugmentation(
+          faction,
+          "NeuroFlux Governor",
+        );
       }
-      break;
+
+      case "player-install-augs": {
+        const startScript = (ns.args[1] as string) || "init.js";
+        ns.singularity.installAugmentations(startScript);
+        return false;
+      }
+
+      default:
+        return false;
     }
-    case "player-install-augs": {
-      const startScript = (ns.args[1] as string) || "init.js";
-      ns.singularity.installAugmentations(startScript);
-      break;
-    }
-  }
+  });
 }
