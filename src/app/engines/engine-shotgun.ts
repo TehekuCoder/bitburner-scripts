@@ -2,8 +2,16 @@ import { NS } from "@ns";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
 import { PATHS } from "../../infrastructure/runtime/paths.js";
 import { getAllServers } from "/infrastructure/network/network.js";
+import { getWorkerFreeRam } from "/infrastructure/network/network.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
-import { formatPercent } from "/lib/utils.js";
+import { formatPercent, loadBnMults } from "/lib/utils.js";
+import {
+  GROW_SECURITY_PER_THREAD,
+  HACK_SECURITY_PER_THREAD,
+  getWeakenEffectPerThread,
+  getWeakenThreadsForSecurity,
+} from "/domain/hacking/weaken.js";
+import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -22,6 +30,13 @@ export async function main(ns: NS): Promise<void> {
   // Startzustand: Wenn wir neu starten, gehen wir erst von REPARATUR aus
   let currentState: "HEALTHY" | "REPAIR" = "REPAIR";
   let lastLoggedState: "HEALTHY" | "REPAIR" | null = null;
+  const weakenEffectPerThread = getWeakenEffectPerThread(
+    loadBnMults(ns).ServerWeakenRate,
+  );
+  if (weakenEffectPerThread <= 0) {
+    logger.error("ServerWeakenRate ist 0; Shotgun kann Security nicht ausgleichen.");
+    return;
+  }
 
   while (true) {
     if (!ns.serverExists(target)) {
@@ -81,13 +96,14 @@ export async function main(ns: NS): Promise<void> {
     });
 
     // 3. Dauerfeuer-Welle starten
-    deployShotgunWave(
+    await deployShotgunWave(
       ns,
       workerNodes,
       target,
       currentState === "REPAIR",
       scripts,
       logger,
+      weakenEffectPerThread,
     );
 
     await ns.sleep(2000);
@@ -97,14 +113,15 @@ export async function main(ns: NS): Promise<void> {
 /**
  * Verteilt Threads effizient auf alle verfügbaren Worker-Nodes ohne RAM-Verschnitt.
  */
-function deployShotgunWave(
+async function deployShotgunWave(
   ns: NS,
   workerNodes: string[],
   target: string,
   isRepairing: boolean,
   scripts: { hack: string; grow: string; weaken: string },
   logger: Logger,
-): void {
+  weakenEffectPerThread: number,
+): Promise<void> {
   if (workerNodes.length === 0) return;
 
   const hCost = ns.getScriptRam(scripts.hack, "home");
@@ -118,18 +135,10 @@ function deployShotgunWave(
   let activeNodes = 0;
 
   for (const node of workerNodes) {
-    if (node !== "home") {
-      for (const scriptPath of Object.values(scripts)) {
-        if (!ns.fileExists(scriptPath, node)) {
-          ns.scp(scriptPath, node, "home");
-        }
-      }
+    if (!(await ensureScriptsOnServer(ns, node, Object.values(scripts)))) {
+      continue;
     }
-
-    const maxRam = ns.getServerMaxRam(node);
-    const usedRam = ns.getServerUsedRam(node);
-    const reservedRam = node === "home" ? Math.min(20, maxRam * 0.2) : 0;
-    let freeRam = Math.max(0, maxRam - usedRam - reservedRam);
+    let freeRam = getWorkerFreeRam(ns, node);
 
     if (freeRam < minCost) continue;
 
@@ -138,86 +147,85 @@ function deployShotgunWave(
     let wThreads = 0;
 
     if (isRepairing) {
-      // 🛠️ REPARATUR-VERHÄLTNIS: 4x Grow, 1x Weaken
-      const unitCost = 4 * gCost + 1 * wCost;
+      const growPerWeaken = Math.max(
+        1,
+        Math.floor(weakenEffectPerThread / GROW_SECURITY_PER_THREAD),
+      );
+      const weakenPerGrow =
+        weakenEffectPerThread < GROW_SECURITY_PER_THREAD
+          ? Math.ceil(GROW_SECURITY_PER_THREAD / weakenEffectPerThread)
+          : 0;
+      const unitGrowThreads = weakenPerGrow > 0 ? 1 : growPerWeaken;
+      const unitWeakenThreads =
+        weakenPerGrow > 0 ? weakenPerGrow : 1;
+      const unitCost =
+        unitGrowThreads * gCost + unitWeakenThreads * wCost;
       const units = Math.floor(freeRam / unitCost);
 
       if (units > 0) {
-        gThreads += units * 4;
-        wThreads += units * 1;
+        gThreads += units * unitGrowThreads;
+        wThreads += units * unitWeakenThreads;
         freeRam -= units * unitCost;
       }
 
-      // Rest-RAM balanciert auffüllen (1x Weaken pro 4x Grow, um Security nicht steigen zu lassen)
-      while (freeRam >= gCost * 4 + wCost) {
-        gThreads += 4;
-        wThreads += 1;
-        freeRam -= gCost * 4 + wCost;
-      }
-      // Falls noch winziger Rest bleibt: Erst Weaken zum Absichern, dann Grow
-      if (freeRam >= wCost) {
-        wThreads++;
-        freeRam -= wCost;
-      }
-      while (freeRam >= gCost) {
-        gThreads++;
-        freeRam -= gCost;
-      }
+      wThreads += Math.floor(freeRam / wCost);
     } else {
-      // 💥 SHOTGUN-VERHÄLTNIS: 1x Hack (10%), 5x Grow (50%), 4x Weaken (40%)
-      const unitCost = 1 * hCost + 5 * gCost + 4 * wCost;
+      const unitWeakenThreads = getWeakenThreadsForSecurity(
+        HACK_SECURITY_PER_THREAD + 5 * GROW_SECURITY_PER_THREAD,
+        weakenEffectPerThread,
+      );
+      const unitCost = hCost + 5 * gCost + unitWeakenThreads * wCost;
       const units = Math.floor(freeRam / unitCost);
 
       if (units > 0) {
         hThreads += units * 1;
         gThreads += units * 5;
-        wThreads += units * 4;
+        wThreads += units * unitWeakenThreads;
         freeRam -= units * unitCost;
       }
 
-      // 🛑 OPTIMIERUNG REST-RAM:
-      // Keine sture Weaken-Schleife mehr! Wir füllen in Minipaketen auf (1G + 1W oder 1H + 1W).
-      while (freeRam >= gCost + wCost) {
+      const growWeakenThreads = getWeakenThreadsForSecurity(
+        GROW_SECURITY_PER_THREAD,
+        weakenEffectPerThread,
+      );
+      const safeGrowCost = gCost + growWeakenThreads * wCost;
+      while (freeRam >= safeGrowCost) {
         gThreads++;
-        wThreads++;
-        freeRam -= gCost + wCost;
-      }
-      if (freeRam >= hCost + wCost) {
-        hThreads++;
-        wThreads++;
-        freeRam -= hCost + wCost;
+        wThreads += growWeakenThreads;
+        freeRam -= safeGrowCost;
       }
       if (freeRam >= wCost) {
-        wThreads++;
-        freeRam -= wCost;
+        wThreads += Math.floor(freeRam / wCost);
       }
     }
 
-    // Skripte ausführen
-    let nodeUsed = false;
-    if (
-      hThreads > 0 &&
-      ns.exec(scripts.hack, node, hThreads, target, 0, Math.random()) > 0
-    ) {
-      totalHackThreads += hThreads;
-      nodeUsed = true;
+    const launched: number[] = [];
+    if (hThreads > 0) {
+      launched.push(
+        ns.exec(scripts.hack, node, hThreads, target, 0, Math.random()),
+      );
     }
-    if (
-      gThreads > 0 &&
-      ns.exec(scripts.grow, node, gThreads, target, 0, Math.random()) > 0
-    ) {
-      totalGrowThreads += gThreads;
-      nodeUsed = true;
+    if (gThreads > 0) {
+      launched.push(
+        ns.exec(scripts.grow, node, gThreads, target, 0, Math.random()),
+      );
     }
-    if (
-      wThreads > 0 &&
-      ns.exec(scripts.weaken, node, wThreads, target, 0, Math.random()) > 0
-    ) {
-      totalWeakenThreads += wThreads;
-      nodeUsed = true;
+    if (wThreads > 0) {
+      launched.push(
+        ns.exec(scripts.weaken, node, wThreads, target, 0, Math.random()),
+      );
     }
 
-    if (nodeUsed) activeNodes++;
+    if (launched.length > 0 && launched.every((pid) => pid > 0)) {
+      totalHackThreads += hThreads;
+      totalGrowThreads += gThreads;
+      totalWeakenThreads += wThreads;
+      activeNodes++;
+    } else {
+      for (const pid of launched) {
+        if (pid > 0) ns.kill(pid);
+      }
+    }
   }
 
   const grandTotal = totalHackThreads + totalGrowThreads + totalWeakenThreads;

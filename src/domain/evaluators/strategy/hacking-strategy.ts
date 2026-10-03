@@ -2,6 +2,7 @@ import { NS } from "@ns";
 import { BatchStrategy } from "/shared/types/batcher.js";
 import { evaluateTargets, getAllServers } from "./target-selection";
 import { loadBnMults } from "/lib/utils";
+import { getWorkerMaxUsableRam } from "/infrastructure/network/network";
 
 export interface StrategyRecommendation {
   strategy: BatchStrategy;
@@ -12,19 +13,12 @@ export interface StrategyRecommendation {
 }
 
 function getTotalNetworkRam(ns: NS): number {
-  const HOME_RESERVE_RAM = 32;
   const servers = getAllServers(ns);
   let totalRam = 0;
 
   for (const host of servers) {
     if (!ns.hasRootAccess(host)) continue;
-
-    const maxRam = ns.getServerMaxRam(host);
-    if (host === "home") {
-      totalRam += Math.max(0, maxRam - HOME_RESERVE_RAM);
-    } else {
-      totalRam += maxRam;
-    }
+    totalRam += getWorkerMaxUsableRam(ns, host);
   }
 
   return totalRam;
@@ -61,7 +55,6 @@ export function evaluateHackingStrategy(
   const serverMaxMoney = mults.ServerMaxMoney ?? 1.0;
   const scriptHackMoney = mults.ScriptHackMoney ?? 1.0;
   const scriptHackMoneyGain = mults.ScriptHackMoneyGain ?? 1.0;
-  const serverStartingSecurity = mults.ServerStartingSecurity ?? 1.0;
   const hackingSpeedMultiplier = mults.HackingSpeedMultiplier ?? 1.0;
   const serverWeakenRate = mults.ServerWeakenRate ?? 1.0;
 
@@ -69,7 +62,9 @@ export function evaluateHackingStrategy(
   const totalNetworkRam = getTotalNetworkRam(ns);
 
   const desyncRisk =
-    serverStartingSecurity / (hackingSpeedMultiplier * serverWeakenRate);
+    hackingSpeedMultiplier > 0 && serverWeakenRate > 0
+      ? 1 / (hackingSpeedMultiplier * serverWeakenRate)
+      : Infinity;
 
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
 
@@ -126,10 +121,11 @@ export function evaluateHackingStrategy(
 }
 
 function getBestXpTarget(ns: NS): string {
+  const purchasedServers = new Set(ns.cloud.getServerNames());
   const servers = getAllServers(ns).filter(
     (s) =>
       s !== "home" &&
-      !s.startsWith("cloud-") &&
+      !purchasedServers.has(s) &&
       !s.startsWith("hacknet-") &&
       ns.hasRootAccess(s) &&
       ns.getServerRequiredHackingLevel(s) <= ns.getHackingLevel(),

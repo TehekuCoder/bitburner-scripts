@@ -13,7 +13,10 @@ import { patchBatcherState } from "/infrastructure/state/state.js";
 import {
   getAllRootedServers,
   getAllRootedServersIncludingPurchased,
+  getWorkerFreeRam,
+  getWorkerMaxUsableRam,
 } from "/infrastructure/network/network.js";
+import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -172,7 +175,7 @@ export async function main(ns: NS): Promise<void> {
 
       const allServers = getAllRootedServersIncludingPurchased(ns);
       const totalNetworkRam = allServers.reduce(
-        (sum, s) => sum + ns.getServerMaxRam(s),
+        (sum, s) => sum + getWorkerMaxUsableRam(ns, s),
         0,
       );
 
@@ -187,7 +190,7 @@ export async function main(ns: NS): Promise<void> {
           ? evalTargets.slice(0, maxTargets).map((t) => t.hostname)
           : [finalTarget];
 
-      deployWorkerFleet(ns, logger, allServers, topTargets);
+      await deployWorkerFleet(ns, logger, allServers, topTargets);
     } else {
       stopNetworkWorkers(ns);
       ensureEngineRunning(ns, activeStrategy, finalTarget, logger);
@@ -323,30 +326,36 @@ interface FleetNode {
   freeRam: number;
 }
 
-export function deployWorkerFleet(
+export async function deployWorkerFleet(
   ns: NS,
   logger: LoggerClient,
   servers: string[],
   targets: string[],
   workerScript: string = PATHS.services.payloads.work,
-): void {
+): Promise<void> {
   if (targets.length === 0 || servers.length === 0) {
     logger.warn("Keine Targets oder Server für Fleet-Deployment übergeben.");
     return;
   }
 
-  const scriptRam = ns.getScriptRam(workerScript);
+  if (!ns.fileExists(workerScript, "home")) {
+    logger.warn(`Worker-Skript fehlt auf home: ${workerScript}`);
+    return;
+  }
+  const scriptRam = ns.getScriptRam(workerScript, "home");
+  if (!Number.isFinite(scriptRam) || scriptRam <= 0) {
+    logger.warn(`Worker-Skript hat ungültigen RAM-Verbrauch: ${workerScript}`);
+    return;
+  }
 
-  const pool: FleetNode[] = servers
-    .map((host) => {
-      const maxRam = ns.getServerMaxRam(host);
-      // Echten genutzten RAM abfragen statt nur work.ts
-      const usedRam = ns.getServerUsedRam(host);
-      const reserved = host === "home" ? 32 : 0;
-      return { host, freeRam: Math.max(0, maxRam - usedRam - reserved) };
-    })
-    .filter((node) => node.freeRam >= scriptRam)
-    .sort((a, b) => b.freeRam - a.freeRam);
+  const pool: FleetNode[] = [];
+  for (const host of servers) {
+    if (!ns.hasRootAccess(host)) continue;
+    if (!(await ensureScriptsOnServer(ns, host, [workerScript]))) continue;
+    const freeRam = getWorkerFreeRam(ns, host);
+    if (freeRam >= scriptRam) pool.push({ host, freeRam });
+  }
+  pool.sort((a, b) => b.freeRam - a.freeRam);
 
   const totalFleetRam = pool.reduce((sum, node) => sum + node.freeRam, 0);
   if (totalFleetRam <= 0) return;
@@ -393,7 +402,13 @@ export function deployWorkerFleet(
       const threads = Math.floor(allocatableRam / scriptRam);
 
       if (threads > 0) {
-        ns.exec(workerScript, node.host, threads, currentTarget.target);
+        const pid = ns.exec(workerScript, node.host, threads, currentTarget.target);
+        if (pid <= 0) {
+          logger.warn(
+            `Worker-Start fehlgeschlagen auf ${node.host} für ${currentTarget.target}; Kapazität bleibt unverplant.`,
+          );
+          break;
+        }
         const used = threads * scriptRam;
         node.freeRam -= used;
         currentTarget.remainingBudget -= used;

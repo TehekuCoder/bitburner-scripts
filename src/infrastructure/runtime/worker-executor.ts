@@ -11,8 +11,8 @@ const SCRIPT_RAM_MAP: Record<string, number> = {
   [PATH_WEAKEN]: 1.75,
 };
 
-// Statischer Max-RAM Cache vermeidet Hunderte ns.getServerMaxRam Calls pro Sekunde
-const MAX_RAM_CACHE = new Map<string, number>();
+const MAX_RAM_CACHE_TTL_MS = 10_000;
+const MAX_RAM_CACHE = new Map<string, { ram: number; checkedAt: number }>();
 
 /** Resettet den Cache bei gekauften/geupgradeten Servern */
 export function invalidateMaxRamCache(): void {
@@ -26,11 +26,16 @@ export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   for (const s of servers) {
     if (!ns.hasRootAccess(s)) continue;
 
-    let maxRam = MAX_RAM_CACHE.get(s);
-    if (maxRam === undefined) {
-      maxRam = Math.max(0, ns.getServerMaxRam(s));
-      MAX_RAM_CACHE.set(s, maxRam);
+    const now = Date.now();
+    let cached = MAX_RAM_CACHE.get(s);
+    if (!cached || now - cached.checkedAt >= MAX_RAM_CACHE_TTL_MS) {
+      cached = {
+        ram: Math.max(0, ns.getServerMaxRam(s)),
+        checkedAt: now,
+      };
+      MAX_RAM_CACHE.set(s, cached);
     }
+    const maxRam = cached.ram;
 
     if (maxRam <= 0) continue;
 
@@ -55,7 +60,7 @@ export function killWorkerPayloads(ns: NS, servers: string[]): void {
   const payloadScripts = [PATH_HACK, PATH_GROW, PATH_WEAKEN];
   for (const server of servers) {
     if (!ns.hasRootAccess(server)) continue;
-    if ((MAX_RAM_CACHE.get(server) ?? ns.getServerMaxRam(server)) === 0) continue;
+    if (ns.getServerMaxRam(server) === 0) continue;
 
     for (const proc of ns.ps(server)) {
       if (payloadScripts.some((path) => proc.filename.includes(path))) {
@@ -66,10 +71,22 @@ export function killWorkerPayloads(ns: NS, servers: string[]): void {
 }
 
 /** Synchronisiert Payload-Skripte im Netzwerk */
-export function syncPayloads(ns: NS, serverList: string[]): void {
+export async function syncPayloads(
+  ns: NS,
+  serverList: string[],
+): Promise<void> {
   for (const s of serverList) {
     if (s !== "home" && ns.hasRootAccess(s)) {
-      ns.scp([PATH_HACK, PATH_GROW, PATH_WEAKEN], s, "home");
+      const files = [PATH_HACK, PATH_GROW, PATH_WEAKEN];
+      const missing = files.filter((file) => !ns.fileExists(file, s));
+      if (missing.length === 0) continue;
+      const copied = await ns.scp(missing, s, "home");
+      const stillMissing = missing.filter((file) => !ns.fileExists(file, s));
+      if (!copied || stillMissing.length > 0) {
+        ns.print(
+          `[WORKER-EXECUTOR] Payload-Synchronisierung auf ${s} fehlgeschlagen: ${stillMissing.join(", ") || missing.join(", ")}`,
+        );
+      }
     }
   }
 }
@@ -78,11 +95,11 @@ export function syncPayloads(ns: NS, serverList: string[]): void {
  * Führt ein Event atomar auf den verfügbaren Workers aus (Thread-Splitting).
  * Gibt den exakten Grund zurück, falls die Ausführung scheitert.
  */
-export function executeOnWorkers(
+export async function executeOnWorkers(
   ns: NS,
   event: JitEvent,
   workers: WorkerNode[],
-): DispatchResult {
+): Promise<DispatchResult> {
   if (!Number.isFinite(event.threads) || event.threads <= 0) return "EXEC_FAIL";
 
   const scriptRam =
@@ -116,7 +133,17 @@ export function executeOnWorkers(
 
     // Auto-Sync Fallback: Stellt sicher, dass das Skript auf dem Worker existiert
     if (w.hostname !== "home" && !ns.fileExists(event.script, w.hostname)) {
-      ns.scp(event.script, w.hostname, "home");
+      const copied = await ns.scp(event.script, w.hostname, "home");
+      if (!copied || !ns.fileExists(event.script, w.hostname)) {
+        for (const item of launchedPids) {
+          ns.kill(item.pid);
+          item.worker.freeRam += item.allocatedRam;
+        }
+        ns.print(
+          `[ERROR] Skript ${event.script} konnte nicht auf ${w.hostname} bereitgestellt werden.`,
+        );
+        return "EXEC_FAIL";
+      }
     }
 
     const pid = ns.exec(

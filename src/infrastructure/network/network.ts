@@ -43,7 +43,24 @@ export function getAllServers(ns: NS): string[] {
     // Abfangen, falls ns.hacknet in früheren BitNodes noch nicht bereitsteht
   }
 
+  for (const serverName of ns.cloud.getServerNames()) {
+    if (ns.serverExists(serverName)) visited.add(serverName);
+  }
+
   return Array.from(visited);
+}
+
+export function getWorkerFreeRam(ns: NS, host: string): number {
+  const maxRam = Math.max(0, ns.getServerMaxRam(host));
+  const usedRam = Math.max(0, ns.getServerUsedRam(host));
+  const reserve = host === "home" ? HOME_RAM_RESERVE : 0;
+  return Math.max(0, maxRam - usedRam - reserve);
+}
+
+export function getWorkerMaxUsableRam(ns: NS, host: string): number {
+  const maxRam = Math.max(0, ns.getServerMaxRam(host));
+  const reserve = host === "home" ? HOME_RAM_RESERVE : 0;
+  return Math.max(0, maxRam - reserve);
 }
 
 /**
@@ -138,7 +155,7 @@ export function dispatchSimpleTask(
   script: string,
   target: string,
   threads: number,
-  bnMults: any,
+  _bnMults: any,
 ): void {
   let threadsRemaining = threads;
 
@@ -146,14 +163,9 @@ export function dispatchSimpleTask(
     if (!ns.hasRootAccess(server)) continue;
     if (ns.isRunning(script, server, target)) continue;
 
-    const homeBuffer =
-      bnMults?.ServerWeakenRate && bnMults.ServerWeakenRate < 1.0
-        ? Math.ceil(HOME_RAM_RESERVE / bnMults.ServerWeakenRate)
-        : HOME_RAM_RESERVE;
-
     const maxRam =
       server === "home"
-        ? Math.max(0, ns.getServerMaxRam("home") - homeBuffer)
+        ? Math.max(0, ns.getServerMaxRam("home") - HOME_RAM_RESERVE)
         : ns.getServerMaxRam(server);
 
     const freeRam = Math.max(0, maxRam - ns.getServerUsedRam(server));
@@ -237,6 +249,7 @@ export function findBestTarget(
 ): string {
   let best = "";
   let maxWeight = -1;
+  const purchasedServers = new Set(ns.cloud.getServerNames());
 
   const serverMaxMoneyMult = bnMults?.ServerMaxMoney ?? 1.0;
   const growthMult = bnMults?.ServerGrowthRate ?? 1.0;
@@ -246,6 +259,7 @@ export function findBestTarget(
     if (
       node === "home" ||
       node === "darkweb" ||
+      purchasedServers.has(node) ||
       node.startsWith("hacknet") ||
       node === blacklistTarget ||
       !ns.hasRootAccess(node)
@@ -297,7 +311,11 @@ export function getAllRootedServersIncludingPurchased(ns: NS): string[] {
  * Liefert nur gehackte Ziel-Server im Netzwerk (ohne home, purchased-servers, hacknet).
  */
 export function getAllRootedServers(ns: NS): string[] {
+  const purchasedServers = new Set(ns.cloud.getServerNames());
   return getAllRootedServersIncludingPurchased(ns).filter(
-    (s) => !s.startsWith("cloud-") && !s.startsWith("hacknet") && s !== "home",
+    (s) =>
+      !purchasedServers.has(s) &&
+      !s.startsWith("hacknet") &&
+      s !== "home",
   );
 }

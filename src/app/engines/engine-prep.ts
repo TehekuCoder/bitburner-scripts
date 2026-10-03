@@ -1,10 +1,18 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
 import { PATHS } from "../../infrastructure/runtime/paths.js";
-import { HOME_RAM_RESERVE } from "../../infrastructure/runtime/batcher.js";
-import { getAllServers } from "/infrastructure/network/network.js";
+import {
+  getAllServers,
+  getWorkerFreeRam,
+} from "/infrastructure/network/network.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
-import { formatPercent } from "/lib/utils.js";
+import { formatPercent, loadBnMults } from "/lib/utils.js";
+import {
+  GROW_SECURITY_PER_THREAD,
+  getWeakenEffectPerThread,
+  getWeakenThreadsForSecurity,
+} from "/domain/hacking/weaken.js";
+import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -41,12 +49,21 @@ export async function main(ns: NS): Promise<void> {
     const workerNodes = allNetwork.filter(
       (s) => ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0,
     );
+    const readyWorkerNodes: string[] = [];
+    for (const node of workerNodes) {
+      if (await ensureScriptsOnServer(ns, node, [weakenScript, growScript])) {
+        readyWorkerNodes.push(node);
+      }
+    }
 
     // 2. Ziel-Zustand analysieren
     const curSec = ns.getServerSecurityLevel(target);
     const minSec = ns.getServerMinSecurityLevel(target);
     const curMoney = ns.getServerMoneyAvailable(target);
     const maxMoney = ns.getServerMaxMoney(target);
+    const weakenEffectPerThread = getWeakenEffectPerThread(
+      loadBnMults(ns).ServerWeakenRate,
+    );
 
     const secDelta = curSec - minSec;
     const isSecMin = secDelta <= 0.05;
@@ -66,7 +83,7 @@ export async function main(ns: NS): Promise<void> {
         batcherProgress: "PREPPED 100%",
       });
 
-      stopAllWorkers(ns, workerNodes, [weakenScript, growScript]);
+      stopAllWorkers(ns, readyWorkerNodes, [weakenScript, growScript]);
       await ns.sleep(3000);
       continue;
     }
@@ -77,14 +94,15 @@ export async function main(ns: NS): Promise<void> {
     // 3. IN-FLIGHT-ANALYSE
     const { inFlightGrowThreads, inFlightWeakenThreads } = getInFlightThreads(
       ns,
-      workerNodes,
+      readyWorkerNodes,
       target,
       growScript,
       weakenScript,
     );
 
     const inFlightSecEffect =
-      inFlightWeakenThreads * 0.05 - inFlightGrowThreads * 0.004;
+      inFlightWeakenThreads * weakenEffectPerThread -
+      inFlightGrowThreads * GROW_SECURITY_PER_THREAD;
     const projectedSec = Math.max(minSec, curSec - inFlightSecEffect);
     const projectedSecDelta = projectedSec - minSec;
 
@@ -98,12 +116,16 @@ export async function main(ns: NS): Promise<void> {
       totalGrowNeeded - inFlightGrowThreads,
     );
 
-    const secIncreaseFromGrows = remainingGrowNeeded * 0.004;
+    const secIncreaseFromGrows =
+      remainingGrowNeeded * GROW_SECURITY_PER_THREAD;
     const totalSecToReduce = Math.max(
       0,
       curSec + secIncreaseFromGrows - minSec,
     );
-    const totalWeakenNeeded = Math.ceil(totalSecToReduce / 0.05);
+    const totalWeakenNeeded = getWeakenThreadsForSecurity(
+      totalSecToReduce,
+      weakenEffectPerThread,
+    );
     const remainingWeakenNeeded = Math.max(
       0,
       totalWeakenNeeded - inFlightWeakenThreads,
@@ -124,6 +146,14 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
+    if (weakenEffectPerThread <= 0) {
+      logger.error(
+        `ServerWeakenRate ist 0; Ziel [${target}] kann nicht vorbereitet werden.`,
+      );
+      await ns.sleep(5000);
+      continue;
+    }
+
     const moneyPct = formatPercent(curMoney, maxMoney, 1);
     const secStatus = `+${secDelta.toFixed(2)}`;
     patchBatcherState(ns, {
@@ -141,13 +171,14 @@ export async function main(ns: NS): Promise<void> {
 
     execCounter = (execCounter + 1) % 10000;
 
-    deployPrepWorkers(
+    await     await deployPrepWorkers(
       ns,
-      workerNodes,
+      readyWorkerNodes,
       target,
       mode,
       remainingWeakenNeeded,
       remainingGrowNeeded,
+      weakenEffectPerThread,
       weakenScript,
       growScript,
       execCounter,
@@ -188,17 +219,18 @@ function getInFlightThreads(
   return { inFlightGrowThreads, inFlightWeakenThreads };
 }
 
-function deployPrepWorkers(
+async function deployPrepWorkers(
   ns: NS,
   workerNodes: string[],
   target: string,
   mode: "WEAKEN_ONLY" | "GROW_AND_WEAKEN",
   maxWeakenNeeded: number,
   maxGrowNeeded: number,
+  weakenEffectPerThread: number,
   weakenScript: string,
   growScript: string,
   execCounter: number,
-): void {
+): Promise<void> {
   const weakenCost = ns.getScriptRam(weakenScript, "home");
   const growCost = ns.getScriptRam(growScript, "home");
 
@@ -214,10 +246,7 @@ function deployPrepWorkers(
     )
       break;
 
-    const maxRam = ns.getServerMaxRam(node);
-    const usedRam = ns.getServerUsedRam(node);
-    const reservedRam = node === "home" ? HOME_RAM_RESERVE : 0;
-    const freeRam = Math.max(0, maxRam - usedRam - reservedRam);
+    const freeRam = getWorkerFreeRam(ns, node);
 
     if (freeRam < Math.min(weakenCost, growCost)) continue;
 
@@ -226,7 +255,7 @@ function deployPrepWorkers(
       const threadsToRun = Math.min(threadsPossible, remainingWeakenCap);
 
       if (threadsToRun > 0) {
-        ns.exec(
+        const pid = ns.exec(
           weakenScript,
           node,
           threadsToRun,
@@ -234,7 +263,7 @@ function deployPrepWorkers(
           0,
           `${execCounter}_${Math.random()}`,
         );
-        remainingWeakenCap -= threadsToRun;
+        if (pid > 0) remainingWeakenCap -= threadsToRun;
       }
     } else {
       let remainingRam = freeRam;
@@ -251,7 +280,11 @@ function deployPrepWorkers(
         while (
           possibleGrows > 0 &&
           possibleGrows * growCost +
-            Math.ceil(possibleGrows * 0.08) * weakenCost >
+            getWeakenThreadsForSecurity(
+              possibleGrows * GROW_SECURITY_PER_THREAD,
+              weakenEffectPerThread,
+            ) *
+              weakenCost >
             remainingRam
         ) {
           possibleGrows--;
@@ -262,36 +295,49 @@ function deployPrepWorkers(
       }
 
       // 2. Weaken-Threads zur Ausgleichung der Grows + verbleibender Kapazität einplanen
-      const requiredWeakenForGrows = Math.ceil(gThreads * 0.08);
+      const requiredWeakenForGrows = getWeakenThreadsForSecurity(
+        gThreads * GROW_SECURITY_PER_THREAD,
+        weakenEffectPerThread,
+      );
       const maxWeakensPossible = Math.floor(remainingRam / weakenCost);
       const wThreads = Math.min(
         maxWeakensPossible,
         Math.max(requiredWeakenForGrows, remainingWeakenCap),
       );
 
-      if (gThreads > 0) {
-        ns.exec(
-          growScript,
-          node,
-          gThreads,
-          target,
-          0,
-          `${execCounter}_${Math.random()}`,
-        );
-        remainingGrowCap -= gThreads;
-      }
+      const growPid =
+        gThreads > 0
+          ? ns.exec(
+              growScript,
+              node,
+              gThreads,
+              target,
+              0,
+              `${execCounter}_${Math.random()}`,
+            )
+          : 0;
+      const weakenPid =
+        wThreads > 0
+          ? ns.exec(
+              weakenScript,
+              node,
+              wThreads,
+              target,
+              0,
+              `${execCounter}_${Math.random()}`,
+            )
+          : 0;
 
-      if (wThreads > 0) {
-        ns.exec(
-          weakenScript,
-          node,
-          wThreads,
-          target,
-          0,
-          `${execCounter}_${Math.random()}`,
-        );
-        remainingWeakenCap -= wThreads;
+      if (
+        (gThreads > 0 && growPid <= 0) ||
+        (wThreads > 0 && weakenPid <= 0)
+      ) {
+        if (growPid > 0) ns.kill(growPid);
+        if (weakenPid > 0) ns.kill(weakenPid);
+        continue;
       }
+      remainingGrowCap -= gThreads;
+      remainingWeakenCap -= wThreads;
     }
   }
 }

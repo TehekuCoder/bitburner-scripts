@@ -2,6 +2,12 @@ import { NS, Server, Player } from "@ns";
 import { BatchPlan } from "/shared/types/batcher.js";
 import { SPACER, PATH_HACK, PATH_GROW, PATH_WEAKEN } from "../../infrastructure/runtime/batcher";
 import { DEFAULT_MULTIPLIERS } from "/shared/constants/game-defaults";
+import {
+  GROW_SECURITY_PER_THREAD,
+  HACK_SECURITY_PER_THREAD,
+  getWeakenEffectPerThread,
+  getWeakenThreadsForSecurity,
+} from "./weaken.js";
 
 export function calculateBatch(
   ns: NS,
@@ -29,12 +35,17 @@ export function calculateBatch(
   if (hackThreads < 1) return null;
 
   // Weaken-Rate benötigt das BitNode-Multiplier-Verhältnis (Standard 0.05 pro Thread)
-  const weakenRate = bnMults?.ServerWeakenRate ?? 1.0;
-  const weakenPotency = 0.05 * weakenRate;
+  const weakenPotency = getWeakenEffectPerThread(
+    bnMults?.ServerWeakenRate,
+  );
+  if (weakenPotency <= 0) return null;
 
   // 3. Weaken 1 Phase
-  const hackSecIncrease = hackThreads * 0.002;
-  const weaken1Threads = Math.ceil((hackSecIncrease - 1e-9) / weakenPotency) + 1;
+  const hackSecIncrease = hackThreads * HACK_SECURITY_PER_THREAD;
+  const weaken1Threads = getWeakenThreadsForSecurity(
+    Math.max(0, hackSecIncrease - 1e-9),
+    weakenPotency,
+  ) + 1;
 
   // 4. Server-Zustand für Grow-Simulation modifizieren
   const actualStolenPct = Math.min(0.99, hackThreads * pctPerThread);
@@ -49,8 +60,11 @@ export function calculateBatch(
   if (rawGrowThreads === Infinity || isNaN(rawGrowThreads) || rawGrowThreads <= 0) return null;
 
   const growThreads = Math.ceil(rawGrowThreads) + 2;
-  const growSecIncrease = growThreads * 0.004;
-  const weaken2Threads = Math.ceil((growSecIncrease - 1e-9) / weakenPotency) + 1;
+  const growSecIncrease = growThreads * GROW_SECURITY_PER_THREAD;
+  const weaken2Threads = getWeakenThreadsForSecurity(
+    Math.max(0, growSecIncrease - 1e-9),
+    weakenPotency,
+  ) + 1;
 
   // 6. Laufzeiten ermitteln
   server.hackDifficulty = server.minDifficulty;

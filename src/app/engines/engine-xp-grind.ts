@@ -2,9 +2,12 @@ import { NS } from "@ns";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
 
 import { PATHS } from "../../infrastructure/runtime/paths.js";
-import { HOME_RAM_RESERVE } from "../../infrastructure/runtime/batcher.js";
-import { getAllServers } from "/infrastructure/network/network.js";
+import {
+  getAllServers,
+  getWorkerFreeRam,
+} from "/infrastructure/network/network.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
+import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
 
 /**
  * Ermittelt das optimale XP-Grind-Ziel basierend auf XP/Sekunde.
@@ -17,12 +20,13 @@ function findBestXpTarget(
   const player = ns.getPlayer();
   const playerSkill = player.skills.hacking;
   const hasFormulas = ns.fileExists("Formulas.exe", "home");
+  const purchasedServers = new Set(ns.cloud.getServerNames());
 
   const candidates = getAllServers(ns)
     .filter(
       (s) =>
         s !== "home" &&
-        !s.startsWith("cloud-") &&
+        !purchasedServers.has(s) &&
         !s.startsWith("hacknet-") &&
         ns.hasRootAccess(s) &&
         (ns.getServerRequiredHackingLevel(s) ?? 0) <= playerSkill,
@@ -96,14 +100,8 @@ export async function main(ns: NS): Promise<void> {
     let newlyLaunchedThreads = 0;
 
     for (const node of workerNodes) {
-      if (node !== "home" && !ns.fileExists(weakenScript, node)) {
-        ns.scp(weakenScript, node, "home");
-      }
-
-      const reservedRam = node === "home" ? HOME_RAM_RESERVE : 0;
-      const maxRam = ns.getServerMaxRam(node);
-      const usedRam = ns.getServerUsedRam(node);
-      const freeRam = Math.max(0, maxRam - usedRam - reservedRam);
+      if (!(await ensureScriptsOnServer(ns, node, [weakenScript]))) continue;
+      const freeRam = getWorkerFreeRam(ns, node);
 
       const threads = Math.floor(freeRam / weakenCost);
 

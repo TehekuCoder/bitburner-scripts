@@ -50,7 +50,7 @@ export async function main(ns: NS): Promise<void> {
   let lastServerScan = Date.now();
 
   killWorkerPayloads(ns, servers);
-  syncPayloads(ns, servers);
+  await syncPayloads(ns, servers);
 
   const eventQueue: JitEvent[] = [];
   const activeBatches = new Map<number, ActiveBatch>();
@@ -165,7 +165,7 @@ export async function main(ns: NS): Promise<void> {
 
     if (now - lastServerScan > 10000) {
       servers = getAllServers(ns);
-      syncPayloads(ns, servers);
+      await syncPayloads(ns, servers);
       bnMults = loadBnMults(ns);
       lastServerScan = now;
     }
@@ -454,7 +454,7 @@ export async function main(ns: NS): Promise<void> {
           }
         }
 
-        const result = executeOnWorkers(ns, event, workers);
+        const result = await executeOnWorkers(ns, event, workers);
 
         if (result === "SUCCESS") {
           if (batchState) batchState.executedEventsCount++;

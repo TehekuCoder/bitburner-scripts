@@ -1,6 +1,11 @@
 import { NS, BitNodeMultipliers, Player, Server } from "@ns";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
 import { HOME_RAM_RESERVE, BATCH_GAP } from "../../infrastructure/runtime/batcher";
+import {
+  GROW_SECURITY_PER_THREAD,
+  HACK_SECURITY_PER_THREAD,
+  getWeakenEffectPerThread,
+} from "./weaken.js";
 
 export interface BatchPlan {
   target: string;
@@ -68,7 +73,8 @@ export function internalPlanner(
 
   if (maxSingleHostRam < RAM_WEAKEN) return null;
 
-  const weakenRate = 0.05 * (bnMults?.ServerWeakenRate ?? 1.0);
+  const weakenRate = getWeakenEffectPerThread(bnMults?.ServerWeakenRate);
+  if (weakenRate <= 0) return null;
 
   let bestPlan: BatchPlan | null = null;
   let highestScore = -1;
@@ -144,7 +150,9 @@ export function internalPlanner(
           1,
           Math.ceil(rawGrowThreads || growthFactor),
         );
-        prepWeaken2Threads = Math.ceil((growPrepThreads * 0.004) / weakenRate);
+        prepWeaken2Threads = Math.ceil(
+          (growPrepThreads * GROW_SECURITY_PER_THREAD) / weakenRate,
+        );
       }
 
       // 🟢 Host-Cap Skalierung: Einzelne Task-Gruppen dürfen maxSingleHostRam nicht sprengen
@@ -171,7 +179,9 @@ export function internalPlanner(
           growPrepThreads = Math.floor(growPrepThreads * scale);
           prepWeaken2Threads =
             growPrepThreads > 0
-              ? Math.ceil((growPrepThreads * 0.004) / weakenRate)
+              ? Math.ceil(
+                  (growPrepThreads * GROW_SECURITY_PER_THREAD) / weakenRate,
+                )
               : 0;
         }
         prepRam =
@@ -243,7 +253,9 @@ export function internalPlanner(
       const actualGreed = hackThreads * hackChance;
       if (actualGreed >= 0.95 || actualGreed <= 0) return null;
 
-      const weaken1Threads = Math.ceil((hackThreads * 0.002) / weakenRate);
+      const weaken1Threads = Math.ceil(
+        (hackThreads * HACK_SECURITY_PER_THREAD) / weakenRate,
+      );
       const postHackMoney = Math.max(1, moneyMax * (1 - actualGreed));
 
       const postHackServerState = makeServerState(
@@ -262,7 +274,9 @@ export function internalPlanner(
           ) + 1
         : Math.ceil(ns.growthAnalyze(target, moneyMax / postHackMoney)) + 1;
 
-      const weaken2Threads = Math.ceil((growThreads * 0.004) / weakenRate);
+      const weaken2Threads = Math.ceil(
+        (growThreads * GROW_SECURITY_PER_THREAD) / weakenRate,
+      );
 
       // 🟢 Host-Cap Validierung: Jeder Teil-Task muss auf EINEN Host passen
       if (

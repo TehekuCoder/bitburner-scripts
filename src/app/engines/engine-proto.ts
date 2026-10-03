@@ -4,8 +4,21 @@ import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js
 
 import { PATHS } from "../../infrastructure/runtime/paths.js";
 import { EngineMode } from "/shared/types/batcher";
-import { getAllServers } from "/infrastructure/network/network.js";
-import { patchBatcherState } from "/infrastructure/state/state.js";import { formatPercent } from "/lib/utils.js";
+import {
+  getAllServers,
+  getWorkerFreeRam,
+  getWorkerMaxUsableRam,
+} from "/infrastructure/network/network.js";
+import { patchBatcherState } from "/infrastructure/state/state.js";
+import { formatPercent, loadBnMults } from "/lib/utils.js";
+import {
+  GROW_SECURITY_PER_THREAD,
+  HACK_SECURITY_PER_THREAD,
+  getWeakenEffectPerThread,
+  getWeakenThreadsForSecurity,
+} from "/domain/hacking/weaken.js";
+import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
 
@@ -64,6 +77,13 @@ export async function main(ns: NS): Promise<void> {
   let lastNetworkScan = 0;
   let workerNodes: string[] = [];
   let currentMode: EngineMode = "UNKNOWN";
+  const weakenEffectPerThread = getWeakenEffectPerThread(
+    loadBnMults(ns).ServerWeakenRate,
+  );
+  if (weakenEffectPerThread <= 0) {
+    logger.error("ServerWeakenRate ist 0; Proto kann Security nicht ausgleichen.");
+    return;
+  }
 
   while (true) {
     if (!ns.serverExists(target)) {
@@ -80,7 +100,7 @@ export async function main(ns: NS): Promise<void> {
       const scanDuration = logger.timeEnd("network-scan", "DEBUG", target);
 
       const totalRam = workerNodes.reduce(
-        (sum, node) => sum + ns.getServerMaxRam(node),
+        (sum, node) => sum + getWorkerMaxUsableRam(ns, node),
         0,
       );
       logger.debug(
@@ -150,7 +170,7 @@ export async function main(ns: NS): Promise<void> {
 
     execCounter = (execCounter + 1) % 10000;
 
-    deployProtoWorkers(
+    await deployProtoWorkers(
       ns,
       logger,
       workerNodes,
@@ -161,6 +181,7 @@ export async function main(ns: NS): Promise<void> {
       hackScript,
       growScript,
       weakenScript,
+      weakenEffectPerThread,
       execCounter,
     );
 
@@ -168,7 +189,7 @@ export async function main(ns: NS): Promise<void> {
   }
 }
 
-function deployProtoWorkers(
+async function deployProtoWorkers(
   ns: NS,
   logger: Logger,
   workerNodes: string[],
@@ -179,8 +200,9 @@ function deployProtoWorkers(
   hackScript: string,
   growScript: string,
   weakenScript: string,
+  weakenEffectPerThread: number,
   execCounter: number,
-): void {
+): Promise<void> {
   const hCost = ns.getScriptRam(hackScript, "home");
   const gCost = ns.getScriptRam(growScript, "home");
   const wCost = ns.getScriptRam(weakenScript, "home");
@@ -195,17 +217,17 @@ function deployProtoWorkers(
   let activeWorkers = 0;
 
   for (const node of workerNodes) {
-    if (node !== "home") {
-      if (!ns.fileExists(hackScript, node)) ns.scp(hackScript, node, "home");
-      if (!ns.fileExists(growScript, node)) ns.scp(growScript, node, "home");
-      if (!ns.fileExists(weakenScript, node))
-        ns.scp(weakenScript, node, "home");
+    if (
+      !(await ensureScriptsOnServer(ns, node, [
+        hackScript,
+        growScript,
+        weakenScript,
+      ]))
+    ) {
+      continue;
     }
 
-    const maxRam = ns.getServerMaxRam(node);
-    const usedRam = ns.getServerUsedRam(node);
-    const reservedRam = node === "home" ? (maxRam <= 32 ? 8 : 16) : 0;
-    const freeRam = Math.max(0, maxRam - usedRam - reservedRam);
+    const freeRam = getWorkerFreeRam(ns, node);
 
     if (freeRam < wCost) continue;
 
@@ -215,36 +237,97 @@ function deployProtoWorkers(
     if (mode === "WEAKEN") {
       const threads = Math.floor(freeRam / wCost);
       if (threads > 0) {
-        ns.exec(weakenScript, node, threads, target, 0, runId);
-        launchedWeaken += threads;
-        nodeUsed = true;
+        const pid = ns.exec(weakenScript, node, threads, target, 0, runId);
+        if (pid > 0) {
+          launchedWeaken += threads;
+          nodeUsed = true;
+        }
       }
     } else if (mode === "GROW") {
-      const gThreads = Math.floor((freeRam * 0.8) / gCost);
-      const wThreads = Math.floor((freeRam * 0.2) / wCost);
+      let gThreads = Math.floor(
+        freeRam /
+          (gCost +
+            (GROW_SECURITY_PER_THREAD / weakenEffectPerThread) * wCost),
+      );
+      let wThreads = getWeakenThreadsForSecurity(
+        gThreads * GROW_SECURITY_PER_THREAD,
+        weakenEffectPerThread,
+      );
+      while (gThreads > 0 && gThreads * gCost + wThreads * wCost > freeRam) {
+        gThreads--;
+        wThreads = getWeakenThreadsForSecurity(
+          gThreads * GROW_SECURITY_PER_THREAD,
+          weakenEffectPerThread,
+        );
+      }
 
-      if (gThreads > 0) ns.exec(growScript, node, gThreads, target, 0, runId);
-      if (wThreads > 0) ns.exec(weakenScript, node, wThreads, target, 0, runId);
-
-      launchedGrow += gThreads;
-      launchedWeaken += wThreads;
-      if (gThreads > 0 || wThreads > 0) nodeUsed = true;
+      if (gThreads > 0) {
+        const growPid = ns.exec(growScript, node, gThreads, target, 0, runId);
+        const weakenPid =
+          wThreads > 0
+            ? ns.exec(weakenScript, node, wThreads, target, 0, runId)
+            : 0;
+        if (growPid > 0 && (wThreads === 0 || weakenPid > 0)) {
+          launchedGrow += gThreads;
+          launchedWeaken += wThreads;
+          nodeUsed = true;
+        } else {
+          if (growPid > 0) ns.kill(growPid);
+          if (weakenPid > 0) ns.kill(weakenPid);
+        }
+      }
     } else {
-      let hThreads = Math.floor((freeRam * 0.15) / hCost);
-      hThreads = Math.min(hThreads, Math.max(1, maxHackThreads));
+      let hThreads = Math.min(
+        Math.floor((freeRam * 0.15) / hCost),
+        Math.max(1, maxHackThreads),
+      );
+      let gThreads = 0;
+      let wThreads = 0;
+      while (hThreads > 0) {
+        const hackSecurity = hThreads * HACK_SECURITY_PER_THREAD;
+        const remainingForGrowAndWeaken =
+          freeRam - hThreads * hCost -
+          getWeakenThreadsForSecurity(hackSecurity, weakenEffectPerThread) *
+            wCost;
+        gThreads = Math.max(
+          0,
+          Math.floor(
+            remainingForGrowAndWeaken /
+              (gCost +
+                (GROW_SECURITY_PER_THREAD / weakenEffectPerThread) * wCost),
+          ),
+        );
+        wThreads = getWeakenThreadsForSecurity(
+          hackSecurity + gThreads * GROW_SECURITY_PER_THREAD,
+          weakenEffectPerThread,
+        );
+        if (hThreads * hCost + gThreads * gCost + wThreads * wCost <= freeRam) {
+          break;
+        }
+        if (gThreads > 0) gThreads--;
+        else hThreads--;
+      }
 
-      const ramForHG = freeRam - hThreads * hCost;
-      const gThreads = Math.floor((ramForHG * 0.7) / gCost);
-      const wThreads = Math.floor((ramForHG * 0.3) / wCost);
-
-      if (hThreads > 0) ns.exec(hackScript, node, hThreads, target, 0, runId);
-      if (gThreads > 0) ns.exec(growScript, node, gThreads, target, 0, runId);
-      if (wThreads > 0) ns.exec(weakenScript, node, wThreads, target, 0, runId);
-
-      launchedHack += hThreads;
-      launchedGrow += gThreads;
-      launchedWeaken += wThreads;
-      if (hThreads > 0 || gThreads > 0 || wThreads > 0) nodeUsed = true;
+      const pids: number[] = [];
+      if (hThreads > 0) {
+        pids.push(ns.exec(hackScript, node, hThreads, target, 0, runId));
+      }
+      if (gThreads > 0) {
+        pids.push(ns.exec(growScript, node, gThreads, target, 0, runId));
+      }
+      if (wThreads > 0) {
+        pids.push(ns.exec(weakenScript, node, wThreads, target, 0, runId));
+      }
+      if (pids.length > 0 && pids.every((pid) => pid > 0)) {
+        launchedHack += hThreads;
+        launchedGrow += gThreads;
+        launchedWeaken += wThreads;
+        nodeUsed = true;
+      } else {
+        for (const pid of pids) {
+          if (pid > 0) ns.kill(pid);
+        }
+      }
     }
 
     if (nodeUsed) activeWorkers++;

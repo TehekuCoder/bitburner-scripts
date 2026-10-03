@@ -1,6 +1,7 @@
 import { NS, Server } from "@ns";
 import { BatchStrategy } from "/shared/types/batcher";
 import { loadBnMults } from "/lib/utils";
+import { getAllServers as getNetworkServers } from "/infrastructure/network/network";
 
 export interface TargetScore {
   hostname: string;
@@ -12,22 +13,7 @@ export interface TargetScore {
 }
 
 export function getAllServers(ns: NS): string[] {
-  const visited = new Set<string>(["home"]);
-  const queue = ["home"];
-
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    const neighbors = ns.scan(current);
-
-    for (const neighbor of neighbors) {
-      if (!visited.has(neighbor)) {
-        visited.add(neighbor);
-        queue.push(neighbor);
-      }
-    }
-  }
-
-  return Array.from(visited);
+  return getNetworkServers(ns);
 }
 
 export function evaluateTargets(
@@ -37,6 +23,7 @@ export function evaluateTargets(
   const player = ns.getPlayer();
   const playerSkill = player.skills.hacking;
   const allServers = getAllServers(ns);
+  const purchasedServers = new Set(ns.cloud.getServerNames());
   const targets: TargetScore[] = [];
 
   let serverGrowthMult = 1.0;
@@ -55,7 +42,7 @@ export function evaluateTargets(
   for (const host of allServers) {
     if (
       host === "home" ||
-      host.startsWith("cloud-") ||
+      purchasedServers.has(host) ||
       host.startsWith("hacknet-")
     )
       continue;

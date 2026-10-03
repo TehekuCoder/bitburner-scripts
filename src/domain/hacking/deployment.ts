@@ -60,18 +60,35 @@ interface ScriptList {
  * Verteilt Worker-Skripte auf einem Ziel-Server und maximiert die Thread-Auslastung.
  * Komplett synchron und ohne blockierenden Overhead!
  */
-export function deployWorker(
+export async function deployWorker(
   ns: NS,
   targetNode: string,
   scriptFilename: string,
   hackTarget: string,
   ramBuffer: number,
   scripts: ScriptList,
-): void {
+): Promise<void> {
   // 1. Quellcode-Validierung
-  if (!ns.fileExists(scriptFilename, "home")) return;
+  if (!ns.fileExists(scriptFilename, "home")) {
+    ns.print(`[DEPLOYMENT] Worker-Skript fehlt auf home: ${scriptFilename}`);
+    return;
+  }
 
-  // 2. Alte Prozesse identifizieren und restlos terminieren
+  // 2. Skript bereitstellen, bevor bestehende Worker beendet werden.
+  if (
+    targetNode !== "home" &&
+    !ns.fileExists(scriptFilename, targetNode)
+  ) {
+    const copied = await ns.scp(scriptFilename, targetNode, "home");
+    if (!copied || !ns.fileExists(scriptFilename, targetNode)) {
+      ns.print(
+        `[DEPLOYMENT] Worker-Skript konnte nicht auf ${targetNode} bereitgestellt werden: ${scriptFilename}`,
+      );
+      return;
+    }
+  }
+
+  // 3. Alte Prozesse identifizieren und restlos terminieren
   const procs = ns.ps(targetNode);
   const allWorkerScripts = [
     scripts.worker,
@@ -80,25 +97,21 @@ export function deployWorker(
     scripts.weaken,
   ];
 
-  let killedAny = false;
   for (const p of procs) {
     if (
       allWorkerScripts.includes(p.filename) &&
       (p.filename !== scriptFilename || p.args[0] !== hackTarget)
     ) {
       ns.kill(p.pid);
-      killedAny = true;
     }
-  }
-
-  // 3. Skript kopieren, falls es nicht auf dem Zielserver existiert
-  if (targetNode !== "home" && !ns.fileExists(scriptFilename, targetNode)) {
-    ns.scp(scriptFilename, targetNode, "home");
   }
 
   // 4. Exakte RAM-Berechnung (Nachdem die alten Prozesse gekillt wurden!)
   const scriptCost = ns.getScriptRam(scriptFilename);
-  if (scriptCost === 0) return;
+  if (!Number.isFinite(scriptCost) || scriptCost <= 0) {
+    ns.print(`[DEPLOYMENT] Ungültiger RAM-Verbrauch für ${scriptFilename}.`);
+    return;
+  }
 
   const maxRam = ns.getServerMaxRam(targetNode);
   const usedRam = ns.getServerUsedRam(targetNode);
@@ -108,6 +121,11 @@ export function deployWorker(
 
   // 5. Starten
   if (threads > 0) {
-    ns.exec(scriptFilename, targetNode, threads, hackTarget);
+    const pid = ns.exec(scriptFilename, targetNode, threads, hackTarget);
+    if (pid <= 0) {
+      ns.print(
+        `[DEPLOYMENT] Worker-Start fehlgeschlagen auf ${targetNode} für ${hackTarget}.`,
+      );
+    }
   }
 }
