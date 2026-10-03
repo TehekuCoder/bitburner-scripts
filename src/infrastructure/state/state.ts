@@ -1,6 +1,10 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
-import { STATE_PORT } from "../runtime/system";
+import {
+  STATE_BACKUP_PORT,
+  STATE_LOCK_PORT,
+  STATE_PORT,
+} from "../runtime/system";
 import { CorporationState } from "/shared/types/corporation.js";
 
 import {
@@ -18,6 +22,11 @@ type BotStateContent = Omit<
   BotState,
   "lastUpdate" | "playerHacking" | "sources"
 >;
+
+interface StoredBotState {
+  revision: number;
+  state: BotState;
+}
 
 export type BotStatePatch = Partial<BotStateContent>;
 export type BatcherStatePatch = Partial<BatcherState>;
@@ -283,21 +292,86 @@ function pick<T extends object, K extends keyof T>(
 
 export function loadState(ns: NS): BotState | null {
   try {
-    const port = ns.getPortHandle(STATE_PORT);
-    const data = port.peek();
-    if (isPortEmpty(data)) return null;
-    return data as BotState;
+    const primary = readStoredState(ns, STATE_PORT);
+    const backup = readStoredState(ns, STATE_BACKUP_PORT);
+    if (!primary) return backup?.state ?? null;
+    if (!backup) return primary.state;
+    return primary.revision >= backup.revision
+      ? primary.state
+      : backup.state;
   } catch (error) {
-    getLogger(ns).error(
-      `Port ${STATE_PORT} konnte nicht gelesen werden: ${error}`,
-    );
+    getLogger(ns).error(`Zustand konnte nicht gelesen werden: ${error}`);
     return null;
   }
 }
 
-export function saveState(ns: NS, state: BotStateContent): void {
+function readStoredState(ns: NS, portNumber: number): StoredBotState | null {
+  const data = ns.getPortHandle(portNumber).peek();
+  if (
+    isPortEmpty(data) ||
+    typeof data !== "object" ||
+    data === null ||
+    Array.isArray(data)
+  ) {
+    return null;
+  }
+
+  const stored = data as Partial<StoredBotState> & Partial<BotState>;
+  if (
+    typeof stored.revision === "number" &&
+    typeof stored.state === "object" &&
+    stored.state !== null
+  ) {
+    return { revision: stored.revision, state: stored.state };
+  }
+  if (typeof stored.lastUpdate !== "number") return null;
+  return { revision: 0, state: stored as BotState };
+}
+
+async function acquireStateLock(ns: NS): Promise<void> {
+  const lockPort = ns.getPortHandle(STATE_LOCK_PORT);
+  const owner = { pid: ns.pid, hostname: ns.getHostname() };
+
+  while (!ns.tryWritePort(STATE_LOCK_PORT, owner)) {
+    const currentOwner = lockPort.peek();
+    if (
+      isPortEmpty(currentOwner) ||
+      typeof currentOwner !== "object" ||
+      currentOwner === null ||
+      typeof currentOwner.pid !== "number" ||
+      typeof currentOwner.hostname !== "string" ||
+      !ns.isRunning(currentOwner.pid, currentOwner.hostname)
+    ) {
+      lockPort.clear();
+    } else {
+      await ns.sleep(1);
+    }
+  }
+}
+
+function writeStoredState(ns: NS, state: BotState): void {
+  const primary = readStoredState(ns, STATE_PORT);
+  const backup = readStoredState(ns, STATE_BACKUP_PORT);
+  const primaryRevision = primary?.revision ?? -1;
+  const backupRevision = backup?.revision ?? -1;
+  const activePort =
+    primaryRevision >= backupRevision ? STATE_PORT : STATE_BACKUP_PORT;
+  const inactivePort =
+    activePort === STATE_PORT ? STATE_BACKUP_PORT : STATE_PORT;
+  const revision = Math.max(primaryRevision, backupRevision, 0) + 1;
+  const snapshot: StoredBotState = { revision, state };
+  const port = ns.getPortHandle(inactivePort);
+
+  port.clear();
+  port.write(snapshot);
+}
+
+export async function saveState(
+  ns: NS,
+  state: BotStateContent,
+): Promise<void> {
+  await acquireStateLock(ns);
   try {
-    const port = ns.getPortHandle(STATE_PORT);
     const caller = getCallerName(ns);
 
     const sources: Record<string, string> = {};
@@ -312,23 +386,23 @@ export function saveState(ns: NS, state: BotStateContent): void {
       playerHacking: ns.getHackingLevel(),
     };
 
-    port.clear();
-    port.write(fullState);
+    writeStoredState(ns, fullState);
   } catch (error) {
     getLogger(ns).error(
       `Zustand konnte nicht in Port geschrieben werden: ${error}`,
     );
+  } finally {
+    ns.getPortHandle(STATE_LOCK_PORT).clear();
   }
 }
 
-export function patchState(ns: NS, partialState: BotStatePatch): void {
+export async function patchState(
+  ns: NS,
+  partialState: BotStatePatch,
+): Promise<void> {
+  await acquireStateLock(ns);
   try {
-    const port = ns.getPortHandle(STATE_PORT);
-    const data = port.read();
-
-    const currentState: Partial<BotState> = !isPortEmpty(data)
-      ? (data as BotState)
-      : {};
+    const currentState: Partial<BotState> = loadState(ns) ?? {};
 
     const mergedState: BotStateContent = {
       ...DEFAULT_BOT_STATE,
@@ -349,16 +423,23 @@ export function patchState(ns: NS, partialState: BotStatePatch): void {
       playerHacking: ns.getHackingLevel(),
     };
 
-    port.clear();
-    port.write(fullState);
+    writeStoredState(ns, fullState);
   } catch (error) {
     getLogger(ns).error(`Zustand konnte nicht gepatcht werden: ${error}`);
+  } finally {
+    ns.getPortHandle(STATE_LOCK_PORT).clear();
   }
 }
 
-export function clearState(ns: NS): void {
-  ns.getPortHandle(STATE_PORT).clear();
-  getLogger(ns).info(`Port ${STATE_PORT} erfolgreich geleert.`);
+export async function clearState(ns: NS): Promise<void> {
+  await acquireStateLock(ns);
+  try {
+    ns.getPortHandle(STATE_PORT).clear();
+    ns.getPortHandle(STATE_BACKUP_PORT).clear();
+    getLogger(ns).info("State-Ports erfolgreich geleert.");
+  } finally {
+    ns.getPortHandle(STATE_LOCK_PORT).clear();
+  }
 }
 
 // ============================================================================
@@ -369,82 +450,88 @@ export function loadBatcherState(ns: NS): BatcherState | null {
   const state = loadState(ns);
   return state ? pick(state, BATCHER_KEYS) : null;
 }
-export function patchBatcherState(
+export async function patchBatcherState(
   ns: NS,
   partialState: BatcherStatePatch,
-): void {
-  patchState(ns, partialState as BotStatePatch);
+): Promise<void> {
+  await patchState(ns, partialState as BotStatePatch);
 }
 
 export function loadStrategyState(ns: NS): StrategyState | null {
   const state = loadState(ns);
   return state ? pick(state, STRATEGY_KEYS) : null;
 }
-export function patchStrategyState(
+export async function patchStrategyState(
   ns: NS,
   partialState: StrategyStatePatch,
-): void {
-  patchState(ns, partialState as BotStatePatch);
+): Promise<void> {
+  await patchState(ns, partialState as BotStatePatch);
 }
 
 export function loadFinanceState(ns: NS): FinanceState | null {
   const state = loadState(ns);
   return state ? pick(state, FINANCE_KEYS) : null;
 }
-export function patchFinanceState(
+export async function patchFinanceState(
   ns: NS,
   partialState: FinanceStatePatch,
-): void {
-  patchState(ns, partialState as BotStatePatch);
+): Promise<void> {
+  await patchState(ns, partialState as BotStatePatch);
 }
 
 export function loadSleeveState(ns: NS): SleeveState | null {
   const state = loadState(ns);
   return state ? pick(state, SLEEVE_KEYS) : null;
 }
-export function patchSleeveState(ns: NS, partialState: SleeveStatePatch): void {
-  patchState(ns, partialState as BotStatePatch);
+export async function patchSleeveState(
+  ns: NS,
+  partialState: SleeveStatePatch,
+): Promise<void> {
+  await patchState(ns, partialState as BotStatePatch);
 }
 
 export function loadAugmentState(ns: NS): AugmentState | null {
   const state = loadState(ns);
   return state ? pick(state, AUGMENT_KEYS) : null;
 }
-export function patchAugmentState(
+export async function patchAugmentState(
   ns: NS,
   partialState: AugmentStatePatch,
-): void {
-  patchState(ns, partialState as BotStatePatch);
+): Promise<void> {
+  await patchState(ns, partialState as BotStatePatch);
 }
 
 export function loadFactionState(ns: NS): FactionState | null {
   const state = loadState(ns);
   return state ? pick(state, FACTION_KEYS) : null;
 }
-export function patchFactionState(
+export async function patchFactionState(
   ns: NS,
   partialState: FactionStatePatch,
-): void {
-  patchState(ns, partialState as BotStatePatch);
+): Promise<void> {
+  await patchState(ns, partialState as BotStatePatch);
 }
 
 export function loadProgressState(ns: NS): BotStateProgress | null {
   const state = loadState(ns);
   return state ? pick(state, PROGRESS_KEYS) : null;
 }
-export function patchProgressState(
+export async function patchProgressState(
   ns: NS,
   partialState: ProgressStatePatch,
-): void {
-  patchState(ns, partialState as BotStatePatch);
+): Promise<void> {
+  await patchState(ns, partialState as BotStatePatch);
 }
 
 export function loadGangState(ns: NS): GangState | null {
   const state = loadState(ns);
   return state ? pick(state, GANG_KEYS) : null;
 }
-export function patchGangState(ns: NS, partialState: GangStatePatch): void {
-  patchState(ns, partialState as BotStatePatch);
+export async function patchGangState(
+  ns: NS,
+  partialState: GangStatePatch,
+): Promise<void> {
+  await patchState(ns, partialState as BotStatePatch);
 }
 
 // 2. KEYS DEFINIEREN
@@ -465,9 +552,9 @@ export function loadCorporationState(ns: NS): CorporationState | null {
   return state ? (pick(state, CORPORATION_KEYS) as CorporationState) : null;
 }
 
-export function patchCorporationState(
+export async function patchCorporationState(
   ns: NS,
   partialState: CorporationStatePatch,
-): void {
-  patchState(ns, partialState as BotStatePatch);
+): Promise<void> {
+  await patchState(ns, partialState as BotStatePatch);
 }

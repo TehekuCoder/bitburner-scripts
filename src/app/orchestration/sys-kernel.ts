@@ -51,7 +51,7 @@ export async function main(ns: NS): Promise<void> {
   const existingState = (loadState(ns) || {}) as Record<string, any>;
 
   // Übernehme übergebene Konfigurationen (manualMode & disabledModules) aus dem Starter
-  patchState(ns, {
+  await patchState(ns, {
     currentBitNode: currentBitnode.node,
     currentBitNodeLevel: currentBitnode.level,
     strategy: existingState.strategy || "MONEY",
@@ -78,7 +78,7 @@ export async function main(ns: NS): Promise<void> {
     ) {
       await breakAndInfectNetwork(ns);
       const allServers = getAllServers(ns);
-      patchState(ns, { allServers });
+      await patchState(ns, { allServers });
       lastNetworkScan = now;
     }
 

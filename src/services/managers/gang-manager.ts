@@ -35,7 +35,7 @@ export async function main(ns: NS): Promise<void> {
     const members = ns.gang.getMemberNames();
 
     // 📊 State inklusive Logs und Gewinnchance für das UI sichern
-    patchGangState(ns, {
+    await patchGangState(ns, {
       hasGang: true,
       gangFaction: info.faction as FactionName,
       isHackingGang: info.isHacking,

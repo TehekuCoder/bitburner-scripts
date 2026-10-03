@@ -47,7 +47,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     const currentRep = sing.getCompanyRep(targetCompany);
-    patchProgressState(ns, {
+    await patchProgressState(ns, {
       progressBar: `💼 ${targetCompany}: ${currentJobTitle} (${ns.format.number(currentRep, 0)} Rep)`,
     });
 

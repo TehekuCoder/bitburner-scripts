@@ -40,7 +40,7 @@ export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, "JIT-Batcher");
 
   let bnMults: BitNodeMultipliers = loadBnMults(ns);
-  patchBatcherState(ns, {
+  await patchBatcherState(ns, {
     batcherActive: true,
     batcherProgress: "Initialisiere...",
     batcherTarget: "Suche...",
@@ -93,7 +93,7 @@ export async function main(ns: NS): Promise<void> {
     );
   }
 
-  function resetAllTargets(reason: string): void {
+  async function resetAllTargets(reason: string): Promise<void> {
     logger.warn(`🔄 Globaler State-Reset ausgelöst: ${reason}`);
     killWorkerPayloads(ns, servers);
     activeTargets.clear();
@@ -102,7 +102,7 @@ export async function main(ns: NS): Promise<void> {
     activeBatchIdsSet.clear();
     recentlyPreppedTargets.clear();
 
-    patchBatcherState(ns, {
+    await patchBatcherState(ns, {
       batcherTarget: "Reset...",
       batcherProgress: "State Reset",
       batcherRamNeeded: 0,
@@ -177,7 +177,7 @@ export async function main(ns: NS): Promise<void> {
 
     if (levelDelta >= minAbsDelta) {
       lastHackingLevel = currentLevel;
-      resetAllTargets(
+      await resetAllTargets(
         `Major Level-Up (${currentLevel - levelDelta} -> ${currentLevel})`,
       );
     }
@@ -409,7 +409,7 @@ export async function main(ns: NS): Promise<void> {
       0,
     );
 
-    patchBatcherState(ns, {
+    await patchBatcherState(ns, {
       batcherTarget: Array.from(activeTargets.keys()).join(", ") || "Suche...",
       batcherProgress: `Multi-Target (${activeTargets.size} aktiv)`,
       batcherRamNeeded: totalRamNeeded,

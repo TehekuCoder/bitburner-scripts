@@ -161,7 +161,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // In engine-proto.ts beim Start/Loop:
-    patchBatcherState(ns, {
+    await patchBatcherState(ns, {
       batchStrategy: "PROTO_BATCH",
       batcherActive: true,
       batcherTarget: target,

@@ -88,7 +88,7 @@ export async function main(ns: NS): Promise<void> {
       lastLoggedState = currentState;
     }
 
-    patchBatcherState(ns, {
+    await patchBatcherState(ns, {
       batchStrategy: "SHOTGUN_HWGW",
       batcherActive: true,
       batcherTarget: target,

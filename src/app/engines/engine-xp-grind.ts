@@ -122,7 +122,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     const currentLevel = ns.getPlayer().skills.hacking;
-    patchBatcherState(ns, {
+    await patchBatcherState(ns, {
             batchStrategy: "XP_GRIND",
       batcherActive: true,
       batcherTarget: target,

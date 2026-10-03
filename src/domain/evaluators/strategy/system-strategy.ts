@@ -12,13 +12,13 @@ import { loadBnMults, hasSingularity, hasBladeburner } from "/lib/utils";
 import { PATHS } from "../../../infrastructure/runtime/paths";
 import { BotStrategy } from "/shared/types/strategy";
 import { TargetFactionResult } from "/shared/types/factions";
-import { CITY_FACTIONS } from "../../../shared/constants/factions";
 import { COMBAT_STATS } from "/shared/types/game";
 import { REFRESH_INTERVALS } from "/shared/constants/game-defaults";
 import { getAllServers, evaluateTargets } from "./target-selection";
 import { loadState, loadGangState } from "/infrastructure/state/state";
 import { LoggerClient } from "/infrastructure/logging/logger-client";
 import { evaluateBladeburnerPreference } from "../../strategy/bladeburner-decision";
+import { getCurrentCityFaction } from "/domain/faction/faction-helpers";
 
 const MEGACORP_FACTIONS: string[] = [
   "ECorp",
@@ -168,7 +168,7 @@ export class SystemStrategyEvaluator {
     // 4️⃣ Factions & Roadmap-Bestimmung
     const isBN2GangMode =
       currentState?.isBN2GangMode ?? isGangOfferingAllAugs(ns);
-    const currentCity = CITY_FACTIONS.find((c) => p.factions.includes(c));
+    const currentCity = getCurrentCityFaction(ns);
     const augRoadmap = currentState?.augRoadMap ?? [];
 
     logger.debug("[STRATEGY] Augmentation-Roadmap Status", undefined, {
@@ -187,7 +187,6 @@ export class SystemStrategyEvaluator {
       ns,
       augRoadmap,
       gangFaction,
-      currentCity,
     );
 
     logger.debug("[STRATEGY] findNextRoadmapFaction Ergebnis", undefined, {

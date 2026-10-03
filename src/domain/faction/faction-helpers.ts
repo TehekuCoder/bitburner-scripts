@@ -3,10 +3,14 @@ import { NFG_WHITELIST_CONFIG } from "../../shared/constants/factions";
 import { GangState } from "shared/types/gang";
 import { CITY_FACTIONS } from "../../shared/constants/factions";
 
-/**
- * Gibt die aktuelle City-Fraktion zurück, in der der Spieler Mitglied ist (falls vorhanden).
- */
+/** Gibt die Stadtfraktion zurück, zu deren Stadt sich der Spieler gerade aufhält. */
 export function getCurrentCityFaction(ns: NS): FactionName | null {
+  const currentCity = ns.getPlayer().city as FactionName;
+  return CITY_FACTIONS.includes(currentCity) ? currentCity : null;
+}
+
+/** Gibt die Stadtfraktion zurück, der der Spieler bereits beigetreten ist. */
+export function getJoinedCityFaction(ns: NS): FactionName | null {
   const playerFactions = ns.getPlayer().factions as FactionName[];
   return CITY_FACTIONS.find((city) => playerFactions.includes(city)) ?? null;
 }
@@ -18,7 +22,7 @@ export function canJoinFaction(ns: NS, targetFaction: FactionName): boolean {
   // Keine City-Fraktion? Dann gibt es keine Sperre.
   if (!CITY_FACTIONS.includes(targetFaction)) return true;
 
-  const currentCity = getCurrentCityFaction(ns);
+  const currentCity = getJoinedCityFaction(ns);
   // Beitritt möglich wenn: Noch in keiner Stadt ODER bereits in genau dieser Stadt
   return currentCity === null || currentCity === targetFaction;
 }

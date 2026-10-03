@@ -623,7 +623,7 @@ export async function main(ns: NS): Promise<void> {
     );
 
     if (currentProgress && currentProgress !== lastStateProgress) {
-      patchSleeveState(ns, { sleeveProgress: currentProgress });
+      await patchSleeveState(ns, { sleeveProgress: currentProgress });
       logger.debug(`Fortschritt aktualisiert: ${currentProgress}`);
       lastStateProgress = currentProgress;
     }

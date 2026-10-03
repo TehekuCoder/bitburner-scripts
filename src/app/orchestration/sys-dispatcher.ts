@@ -7,6 +7,7 @@ import { loadState, patchState } from "/infrastructure/state/state";
 import { CITY_FACTIONS } from "/shared/constants/factions";
 import { REFRESH_INTERVALS } from "/shared/constants/game-defaults";
 import { hasSingularity, hasBladeburner, hasStanek } from "/lib/utils";
+import { getJoinedCityFaction } from "/domain/faction/faction-helpers";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -76,7 +77,7 @@ export async function main(ns: NS): Promise<void> {
     handleBladeburnerAutoJoin(ns, logger);
 
     // 📝 State-Patching
-    patchState(ns, {
+    await patchState(ns, {
       strategy: mode,
       isDominionActive: evalRes.isDominionActive,
       isBladeburnerParallel: evalRes.isBladeburnerParallel,
@@ -243,15 +244,14 @@ function handleFactionInvitations(ns: NS, logger: LoggerClient): void {
   const sing = ns.singularity;
   if (!sing) return;
 
-  const player = ns.getPlayer();
   const invites = sing.checkFactionInvitations();
   if (invites.length === 0) return;
 
-  const currentCity = CITY_FACTIONS.find((c) => player.factions.includes(c));
+  const joinedCityFaction = getJoinedCityFaction(ns);
 
   for (const invite of invites) {
     const isCity = CITY_FACTIONS.includes(invite as FactionName);
-    if (isCity && currentCity && currentCity !== invite) continue;
+    if (isCity && joinedCityFaction && joinedCityFaction !== invite) continue;
 
     if (sing.joinFaction(invite)) {
       logger.success(

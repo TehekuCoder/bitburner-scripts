@@ -132,7 +132,7 @@ export async function main(ns: NS): Promise<void> {
     (a, b) => a.repReq - b.repReq,
   );
 
-  patchAugmentState(ns, {
+  await patchAugmentState(ns, {
     augRoadMap: augRoadmap,
     isBN2GangMode: isBN2Gang,
   });

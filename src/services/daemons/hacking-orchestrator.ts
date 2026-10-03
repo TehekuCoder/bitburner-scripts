@@ -159,7 +159,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // 5️⃣ State aktualisieren
-    patchBatcherState(ns, {
+    await patchBatcherState(ns, {
       batchStrategy: activeStrategy,
       batcherTarget: finalTarget,
       batcherActive: true,

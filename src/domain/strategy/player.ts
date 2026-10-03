@@ -86,7 +86,6 @@ export function findNextRoadmapFaction(
   ns: NS,
   augRoadmap: AugmentTarget[] = [],
   gangFaction?: string | null,
-  currentCityParam?: string | null,
 ): TargetFactionResult | null {
   const player = ns.getPlayer();
   const playerFactions = player.factions;

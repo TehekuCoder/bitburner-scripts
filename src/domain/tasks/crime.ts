@@ -17,7 +17,8 @@ export async function main(ns: NS): Promise<void> {
       mode !== "CRIME" &&
       mode !== "MONEY" &&
       mode !== "KILLS" &&
-      mode !== "XP_SPRINT"
+      mode !== "XP_SPRINT" &&
+      mode !== "KARMA"
 
     ) {
       ns.print(`[EXIT] Modus ist nun ${mode}. Beende Crime-Worker.`);
@@ -37,6 +38,26 @@ export async function main(ns: NS): Promise<void> {
         }
       } else {
         bestCrime = ns.enums.CrimeType.homicide;
+      }
+    } else if (mode === "KARMA") {
+      let maxKarmaPerSecond = 0;
+      const crimes = Object.values(ns.enums.CrimeType) as CrimeType[];
+
+      for (const crime of crimes) {
+        const crimeStats = sing.getCrimeStats(crime);
+        if (crimeStats.karma >= 0) continue;
+
+        const chance = sing.getCrimeChance(crime);
+        if (chance < MIN_SUCCESS_CHANCE) continue;
+
+        const durationSeconds = crimeStats.time / 1000;
+        const karmaPerSecond =
+          (-crimeStats.karma * chance) / durationSeconds;
+
+        if (karmaPerSecond > maxKarmaPerSecond) {
+          maxKarmaPerSecond = karmaPerSecond;
+          bestCrime = crime;
+        }
       }
     } else {
       let maxMoneyPerSecond = 0;
@@ -78,7 +99,7 @@ export async function main(ns: NS): Promise<void> {
       progressStr = `🥷 ${bestCrime} (${chancePct}%) | Karma: ${ns.format.number(p.karma, 0)}`;
     }
 
-    patchProgressState(ns, {
+    await patchProgressState(ns, {
       progressBar: progressStr,
     });
 

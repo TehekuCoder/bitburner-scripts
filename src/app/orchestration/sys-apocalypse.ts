@@ -123,7 +123,7 @@ export async function main(ns: NS): Promise<void> {
           if (ready) {
             // --- 💥 ECHTER ERFOLG ---
             if (statusEl) statusEl.innerText = "SUCCESS: REDIRECTING...";
-            patchState(ns, { strategy: "APOCALYPSE" as any });
+            await patchState(ns, { strategy: "APOCALYPSE" as any });
 
             const possiblePaths = [
               PATHS.services.daemons.backdoor,

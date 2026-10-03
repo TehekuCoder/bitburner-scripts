@@ -13,7 +13,7 @@ export async function main(ns: NS): Promise<void> {
   const logger = new LoggerClient(ns, "Initializer");
 
   await ensureBitNodeMultipliers(ns, logger);
-  ensureInitialState(ns, logger);
+  await ensureInitialState(ns, logger);
   await ensureFactionRoadmap(ns, logger);
 }
 
@@ -43,11 +43,11 @@ async function ensureBitNodeMultipliers(ns: NS, logger: LoggerClient): Promise<v
 /**
  * Stellt sicher, dass ein Grund-State im Speicher existiert.
  */
-function ensureInitialState(ns: NS, logger: LoggerClient): void {
+async function ensureInitialState(ns: NS, logger: LoggerClient): Promise<void> {
   const currentState = loadState(ns);
   if (!currentState) {
     logger.info("Kein State gefunden. Initialisiere Basis-State...");
-    patchState(ns, { strategy: "MONEY", augRoadMap: [] });
+    await patchState(ns, { strategy: "MONEY", augRoadMap: [] });
   }
 }
 

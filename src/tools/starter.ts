@@ -105,7 +105,7 @@ export async function main(ns: NS): Promise<void> {
   }
 
   if (Object.keys(strategyPatch).length > 0) {
-    patchStrategyState(ns, strategyPatch);
+    await patchStrategyState(ns, strategyPatch);
   }
 
   // --- 1. PRE-BOOT CLEAN SWEEP ---

@@ -155,7 +155,7 @@ export async function main(ns: NS): Promise<void> {
     const corpInfo = corp.getCorporation();
     const offer = corp.getInvestmentOffer();
 
-    patchCorporationState(ns, {
+    await patchCorporationState(ns, {
       hasCorp: true,
       corpName: corpInfo.name,
       funds: corpInfo.funds,

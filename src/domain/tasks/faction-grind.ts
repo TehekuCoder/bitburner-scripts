@@ -1,6 +1,9 @@
 import { NS, FactionName } from "@ns";
 
-import { getNFGFallbackFaction } from "../faction/faction-helpers.js";
+import {
+  getJoinedCityFaction,
+  getNFGFallbackFaction,
+} from "../faction/faction-helpers.js";
 import {
   loadFactionState,
   loadGangState,
@@ -35,7 +38,7 @@ export async function main(ns: NS): Promise<void> {
       ns.print(
         `🛑 [INVALID-TARGET] 'Bladeburners' nutzt eigenes Subsystem. Setze Ziel zurück...`,
       );
-      patchFactionState(ns, { targetFaction: undefined });
+      await patchFactionState(ns, { targetFaction: undefined });
       await ns.sleep(2000);
       continue;
     }
@@ -59,7 +62,7 @@ export async function main(ns: NS): Promise<void> {
           `🔄 [NFG-REDIRECT] Gang/NFG-Ziel [${faction}] -> Nutze NFG-Provider [${fallbackFaction}]`,
         );
         faction = fallbackFaction;
-        patchFactionState(ns, { targetFaction: fallbackFaction });
+        await patchFactionState(ns, { targetFaction: fallbackFaction });
       }
     }
 
@@ -71,7 +74,7 @@ export async function main(ns: NS): Promise<void> {
       ns.print(
         `🛑 [GANG-WAIT] Fraktion [${faction}] ist ein Gang-Kandidat und Gang-Gründung steht aus (Karma: ${Math.round(player.karma)}). Stoppe Ruf-Grind!`,
       );
-      patchFactionState(ns, { targetFaction: undefined });
+      await patchFactionState(ns, { targetFaction: undefined });
       await ns.sleep(2000);
       continue;
     }
@@ -80,9 +83,7 @@ export async function main(ns: NS): Promise<void> {
     // 🛡️ LOCKOUT CHECKS
     // ------------------------------------------------------------------
     const isTargetCity = CITY_FACTIONS.includes(faction);
-    const currentCityFaction = CITY_FACTIONS.find((c) =>
-      player.factions.includes(c),
-    );
+    const currentCityFaction = getJoinedCityFaction(ns);
     const isCityLocked =
       isTargetCity && currentCityFaction && currentCityFaction !== faction;
 
@@ -90,7 +91,7 @@ export async function main(ns: NS): Promise<void> {
       ns.print(
         `🛑 [LOCKOUT] Stadt-Fraktion [${faction}] kollidiert mit [${currentCityFaction}]. Setze Ziel zurück...`,
       );
-      patchFactionState(ns, { targetFaction: undefined });
+      await patchFactionState(ns, { targetFaction: undefined });
       await ns.sleep(2000);
       continue;
     }
@@ -142,7 +143,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     const currentRep = sing.getFactionRep(faction);
-    patchFactionState(ns, {
+    await patchFactionState(ns, {
       factionCurrentReps: {
         ...(factionState.factionCurrentReps ?? {}),
         [faction]: currentRep,

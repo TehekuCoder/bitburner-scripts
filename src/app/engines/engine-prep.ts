@@ -76,7 +76,7 @@ export async function main(ns: NS): Promise<void> {
         hasLoggedPrepped = true;
       }
 
-      patchBatcherState(ns, {
+      await patchBatcherState(ns, {
         batchStrategy: "PREP",
         batcherActive: true,
         batcherTarget: target,
@@ -135,7 +135,7 @@ export async function main(ns: NS): Promise<void> {
       projectedSecDelta <= 0.05 && remainingGrowNeeded <= 0;
 
     if (isFullyInFlight) {
-      patchBatcherState(ns, {
+      await patchBatcherState(ns, {
         batchStrategy: "PREP",
         batcherActive: true,
         batcherTarget: target,
@@ -156,7 +156,7 @@ export async function main(ns: NS): Promise<void> {
 
     const moneyPct = formatPercent(curMoney, maxMoney, 1);
     const secStatus = `+${secDelta.toFixed(2)}`;
-    patchBatcherState(ns, {
+    await patchBatcherState(ns, {
       batchStrategy: "PREP",
       batcherActive: true,
       batcherTarget: target,

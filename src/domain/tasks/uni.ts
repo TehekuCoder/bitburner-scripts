@@ -27,7 +27,12 @@ export async function main(ns: NS): Promise<void> {
     const rawTarget = argTarget > 0 ? argTarget : (state?.targetStat ?? 0);
     const targetStat = typeof rawTarget === "number" ? rawTarget : (Number(rawTarget) || 0);
 
-    if (mode !== "MONEY" && mode !== "UNI" && mode !== "TRAIN") {
+    if (
+      mode !== "MONEY" &&
+      mode !== "UNI" &&
+      mode !== "TRAIN" &&
+      mode !== "DOMINION"
+    ) {
       logger.info(`Modus ist nun '${mode}'. Beende Uni-Worker.`);
       return;
     }
@@ -68,7 +73,7 @@ export async function main(ns: NS): Promise<void> {
     if (targetStat > 0 && currentSkillLevel >= targetStat) {
       if (lastProgressBar !== `🎓 ${statLabel} [DONE]`) {
         logger.success(`${statLabel}-Ziel-Level ${targetStat} erreicht!`);
-        patchProgressState(ns, { progressBar: `🎓 ${statLabel} [DONE]` });
+        await patchProgressState(ns, { progressBar: `🎓 ${statLabel} [DONE]` });
         lastProgressBar = `🎓 ${statLabel} [DONE]`;
         sing.stopAction();
       }
@@ -92,7 +97,7 @@ export async function main(ns: NS): Promise<void> {
       const nextProgressBar = `🎓 ${statLabel}: ${currentSkillLevel}${targetLabel}`;
 
       if (nextProgressBar !== lastProgressBar) {
-        patchProgressState(ns, { progressBar: nextProgressBar });
+        await patchProgressState(ns, { progressBar: nextProgressBar });
         lastProgressBar = nextProgressBar;
       }
     }
