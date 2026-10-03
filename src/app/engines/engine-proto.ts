@@ -100,7 +100,7 @@ export async function main(ns: NS): Promise<void> {
       const scanDuration = logger.timeEnd("network-scan", "DEBUG", target);
 
       const totalRam = workerNodes.reduce(
-        (sum, node) => sum + getWorkerMaxUsableRam(ns, node),
+        (sum, node) => sum + getWorkerMaxUsableRam(ns, node, "hacking"),
         0,
       );
       logger.debug(

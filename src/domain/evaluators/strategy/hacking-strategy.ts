@@ -18,7 +18,7 @@ function getTotalNetworkRam(ns: NS): number {
 
   for (const host of servers) {
     if (!ns.hasRootAccess(host)) continue;
-    totalRam += getWorkerMaxUsableRam(ns, host);
+    totalRam += getWorkerMaxUsableRam(ns, host, "hacking");
   }
 
   return totalRam;

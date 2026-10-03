@@ -1,8 +1,9 @@
 import { NS } from "@ns";
 import { DispatchResult, JitEvent } from "/shared/types/batcher.js";
 import { WorkerNode } from "/shared/types/network.js";
-import { PATH_HACK, PATH_GROW, PATH_WEAKEN, HOME_RAM_RESERVE } from "./batcher";
+import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "./batcher";
 import { getUsableThreads } from "../../domain/hacking/batcher-helpers";
+import { getWorkerFreeRam } from "../network/network";
 
 
 const SCRIPT_RAM_MAP: Record<string, number> = {
@@ -39,9 +40,7 @@ export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
 
     if (maxRam <= 0) continue;
 
-    const usedRam = Math.max(0, ns.getServerUsedRam(s));
-    let free = maxRam - usedRam;
-    if (s === "home") free -= HOME_RAM_RESERVE;
+    const free = getWorkerFreeRam(ns, s, "hacking");
 
     if (free > 0) {
       nodes.push({

@@ -1,75 +1,86 @@
 import { NS } from "@ns";
 import { PATHS } from "/infrastructure/runtime/paths.js";
 import { loadState } from "/infrastructure/state/state.js";
+import {
+  getAllRootedServersIncludingPurchased,
+  getWorkerFreeRam,
+  getWorkerMaxUsableRam,
+} from "/infrastructure/network/network.js";
+import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
+import { SHARE_POWER_SATURATION_CAP } from "/shared/constants/ram-allocation.js";
 
 export async function main(ns: NS): Promise<void> {
-  const target = ns.getHostname();
   ns.disableLog("ALL");
-
-  const SHARE_SCRIPT = PATHS.services.payloads.share;
-  const GLOBAL_SHARE_POWER_CAP = 1.42;
-
-  const maxRam = ns.getServerMaxRam(target);
-  const scriptRam = ns.getScriptRam(SHARE_SCRIPT, target);
-
-  if (maxRam < scriptRam || scriptRam === 0) return;
-
-  // Pfad-Säuberung für verlässlichen Filter-Vergleich
-  const cleanSharePath = SHARE_SCRIPT.replace(/^\//, "");
+  const shareScript = PATHS.services.payloads.share;
+  const cleanShareName = shareScript.replace(/\\/g, "/").split("/").pop()!;
 
   while (true) {
     const state = loadState(ns);
+    const hosts = getAllRootedServersIncludingPurchased(ns);
+    const sharePower = ns.getSharePower();
 
-    // 🛡️ 1. DYNAMISCHES RESERVE-RAM
-    let systemReserve = 0;
-    if (target === "home") {
-      // Mindestreserve auf 4 GB gesenkt, damit Early-Game (16/32 GB Home) nicht blockiert wird
-      systemReserve = Math.min(128, Math.max(4, maxRam * 0.05));
-    } else {
-      systemReserve = Math.min(4, maxRam * 0.02);
-    }
-
-    // 📊 2. PROZENTUALES CAP ERMITTELN
-    const currentSharePower = ns.getSharePower();
-    let maxAllowedPercent = 0.95;
-
+    let configuredPercent = 0.95;
     if (state?.fillerConfig?.shareMaxRamPercent !== undefined) {
-      maxAllowedPercent = state.fillerConfig.shareMaxRamPercent;
+      configuredPercent = state.fillerConfig.shareMaxRamPercent;
     } else if (state?.strategy === "REP") {
-      maxAllowedPercent = 0.98;
-    } else if (currentSharePower >= GLOBAL_SHARE_POWER_CAP) {
-      maxAllowedPercent = 0.20;
+      configuredPercent = 0.98;
+    } else if (sharePower >= SHARE_POWER_SATURATION_CAP) {
+      configuredPercent = 0.2;
     }
+    configuredPercent = Math.max(0, Math.min(1, configuredPercent));
 
-    // 💡 3. ECHTES FREIES RAM BERECHNEN
-    const totalUsedRam = ns.getServerUsedRam(target);
+    for (const host of hosts) {
+      if (!ns.hasRootAccess(host)) continue;
+      if (!(await ensureScriptsOnServer(ns, host, [shareScript]))) continue;
 
-    const currentShareThreads = ns
-      .ps(target)
-      .filter((proc) => proc.filename.replace(/^\//, "") === cleanSharePath)
-      .reduce((acc, proc) => acc + proc.threads, 0);
+      const scriptRam = ns.getScriptRam(shareScript, host);
+      if (!Number.isFinite(scriptRam) || scriptRam <= 0) continue;
 
-    const currentShareRam = currentShareThreads * scriptRam;
-    const nonShareUsedRam = totalUsedRam - currentShareRam;
+      const shareProcesses = ns
+        .ps(host)
+        .filter((process) => process.filename.endsWith(cleanShareName));
+      const currentThreads = shareProcesses.reduce(
+        (sum, process) => sum + process.threads,
+        0,
+      );
+      const currentShareRam = currentThreads * scriptRam;
+      const nonShareUsedRam = Math.max(
+        0,
+        ns.getServerUsedRam(host) - currentShareRam,
+      );
+      const hostMaxRam = ns.getServerMaxRam(host);
+      const physicalCapacity = Math.max(
+        0,
+        getWorkerMaxUsableRam(ns, host) - nonShareUsedRam,
+      );
+      const policyCapacity = Math.min(
+        getWorkerMaxUsableRam(ns, host, "share"),
+        hostMaxRam * configuredPercent,
+      );
+      const desiredThreads = Math.floor(
+        Math.min(physicalCapacity, policyCapacity) / scriptRam,
+      );
+      const availableThreads = Math.floor(
+        getWorkerFreeRam(ns, host, "share") / scriptRam,
+      );
+      const targetThreads = Math.min(
+        desiredThreads,
+        currentThreads + availableThreads,
+      );
 
-    const realFreeRamForShare = maxRam - nonShareUsedRam - systemReserve;
-    const maxShareRamByCap = maxRam * maxAllowedPercent;
-    const targetShareRam = Math.max(0, Math.min(realFreeRamForShare, maxShareRamByCap));
+      if (targetThreads === currentThreads) continue;
 
-    const targetThreads = Math.floor(targetShareRam / scriptRam);
-
-    // 🚀 4. PROZESS-ANPASSUNG
-    const threadDiff = Math.abs(targetThreads - currentShareThreads);
-    const shouldUpdate =
-      targetThreads !== currentShareThreads &&
-      (threadDiff > currentShareThreads * 0.05 || currentShareThreads === 0 || targetThreads === 0);
-
-    if (shouldUpdate) {
-      if (currentShareThreads > 0) {
-        ns.scriptKill(SHARE_SCRIPT, target);
+      for (const process of shareProcesses) {
+        ns.kill(process.pid);
       }
+
       if (targetThreads > 0) {
-        ns.exec(SHARE_SCRIPT, target, targetThreads);
+        const pid = ns.exec(shareScript, host, targetThreads);
+        if (pid <= 0) {
+          ns.print(
+            `[SHARE] Share-Worker-Start fehlgeschlagen auf ${host} (${targetThreads} Threads).`,
+          );
+        }
       }
     }
 

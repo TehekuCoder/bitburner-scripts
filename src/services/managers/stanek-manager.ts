@@ -2,8 +2,13 @@ import { NS, ActiveFragment } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import { loadState } from "/infrastructure/state/state.js";
 import { hasBladeburner } from "/lib/utils.js";
-import { getAllRootedServersIncludingPurchased } from "/infrastructure/network/network.js";
+import {
+  getAllRootedServersIncludingPurchased,
+  getWorkerFreeRam,
+  getWorkerMaxUsableRam,
+} from "/infrastructure/network/network.js";
 import { PATHS } from "/infrastructure/runtime/paths.js";
+import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
 
 const CHARGE_PAYLOAD = PATHS.services.payloads.stanekCharge ?? "/services/payloads/stanek-charge.js";
 
@@ -26,6 +31,8 @@ export async function main(ns: NS): Promise<void> {
     logger.error("❌ Stanek-API ist in diesem BitNode/Run nicht verfügbar.");
     return;
   }
+
+  stopAllChargeWorkers(ns);
 
   try {
     if (typeof ns.stanek.acceptGift === "function") {
@@ -70,18 +77,18 @@ export async function main(ns: NS): Promise<void> {
     }
 
     if (chargeTiles.length > 0) {
-      deployStanekFleet(ns, logger, chargeTiles);
+      await deployStanekFleet(ns, logger, chargeTiles);
     }
 
     await ns.sleep(15000);
   }
 }
 
-function deployStanekFleet(
+async function deployStanekFleet(
   ns: NS,
   logger: LoggerClient,
-  tiles: { x: number; y: number; id: number }[]
-): void {
+  tiles: { x: number; y: number; id: number }[],
+): Promise<void> {
   const payloadPath = CHARGE_PAYLOAD.endsWith(".ts")
     ? CHARGE_PAYLOAD.replace(/\.ts$/, ".js")
     : CHARGE_PAYLOAD;
@@ -91,44 +98,38 @@ function deployStanekFleet(
   const scriptRam = ns.getScriptRam(payloadPath, "home");
   const servers = getAllRootedServersIncludingPurchased(ns);
 
-  // 1️⃣ Gesamt-RAM des Netzwerks ermitteln & Stanek-Budget auf 20% deckeln
-  const totalNetworkRam = servers.reduce((sum, s) => sum + ns.getServerMaxRam(s), 0);
-  const STANEK_MAX_RATIO = 0.20; // Max. 20% des Netzwerks für Stanek
-  let remainingStanekRamBudget = totalNetworkRam * STANEK_MAX_RATIO;
-
+  const totalNetworkRam = servers.reduce(
+    (sum, host) => sum + getWorkerMaxUsableRam(ns, host, "stanek"),
+    0,
+  );
   let totalDeployedThreads = 0;
   let tileIndex = 0;
 
   for (const host of servers) {
-    if (remainingStanekRamBudget < scriptRam) break; // Budget aufgebraucht
+    if (!(await ensureScriptsOnServer(ns, host, [payloadPath]))) continue;
 
-    if (host !== "home") {
-      ns.scp(payloadPath, host, "home");
-    }
-
-    const maxRam = ns.getServerMaxRam(host);
-    const usedRam = ns.getServerUsedRam(host);
-    const reservedRam = host === "home" ? 64 : 0;
-    const freeRam = Math.max(0, maxRam - usedRam - reservedRam);
-
-    // Limitere den verfügbaren RAM auf das verbleibende Stanek-Budget
-    const allocatableRam = Math.min(freeRam, remainingStanekRamBudget);
-    const threads = Math.floor(allocatableRam / scriptRam);
+    const threads = Math.floor(
+      getWorkerFreeRam(ns, host, "stanek") / scriptRam,
+    );
 
     if (threads > 0) {
       const targetTile = tiles[tileIndex % tiles.length];
       const pid = ns.exec(payloadPath, host, threads, targetTile.x, targetTile.y);
       if (pid > 0) {
-        const used = threads * scriptRam;
         totalDeployedThreads += threads;
-        remainingStanekRamBudget -= used;
         tileIndex++;
+      } else {
+        logger.warn(
+          `Stanek-Charger konnte auf ${host} nicht gestartet werden (${threads} Threads).`,
+        );
       }
     }
   }
 
   if (totalDeployedThreads > 0) {
-    logger.debug(`⚡ Stanek-Fleet verteilt: ${totalDeployedThreads} Threads (Deckel: 20% Netz-RAM).`);
+    logger.debug(
+      `⚡ Stanek-Fleet verteilt: ${totalDeployedThreads} Threads (max. ${ns.format.ram(totalNetworkRam)} Netzwerk-RAM).`,
+    );
   }
 }
 

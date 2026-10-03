@@ -175,7 +175,7 @@ export async function main(ns: NS): Promise<void> {
 
       const allServers = getAllRootedServersIncludingPurchased(ns);
       const totalNetworkRam = allServers.reduce(
-        (sum, s) => sum + getWorkerMaxUsableRam(ns, s),
+        (sum, s) => sum + getWorkerMaxUsableRam(ns, s, "hacking"),
         0,
       );
 
@@ -352,7 +352,7 @@ export async function deployWorkerFleet(
   for (const host of servers) {
     if (!ns.hasRootAccess(host)) continue;
     if (!(await ensureScriptsOnServer(ns, host, [workerScript]))) continue;
-    const freeRam = getWorkerFreeRam(ns, host);
+    const freeRam = getWorkerFreeRam(ns, host, "hacking");
     if (freeRam >= scriptRam) pool.push({ host, freeRam });
   }
   pool.sort((a, b) => b.freeRam - a.freeRam);

@@ -2,6 +2,24 @@ import { NS } from "@ns";
 import { JitEvent } from "/shared/types/batcher.js";
 import { HOME_RAM_RESERVE } from "../runtime/batcher";
 import { provisionServer } from "../../domain/hacking/provision";
+import { PATHS } from "../runtime/paths";
+import {
+  RAM_ALLOCATION,
+  SHARE_POWER_SATURATION_CAP,
+} from "/shared/constants/ram-allocation";
+import { loadState } from "/infrastructure/state/state";
+
+export type RamConsumer = "hacking" | "stanek" | "share";
+
+interface ConsumerRatios {
+  hacking: number;
+  stanek: number;
+  share: number;
+  calculatedAt: number;
+}
+
+let cachedConsumerRatios: ConsumerRatios | null = null;
+const CONSUMER_RATIO_CACHE_MS = 1000;
 
 const MAX_REASONABLE_RAM_GB = 1_048_576; // Support bis 1PB für Late-Game / Clouds
 
@@ -50,17 +68,106 @@ export function getAllServers(ns: NS): string[] {
   return Array.from(visited);
 }
 
-export function getWorkerFreeRam(ns: NS, host: string): number {
+export function getWorkerFreeRam(
+  ns: NS,
+  host: string,
+  consumer: RamConsumer = "hacking",
+): number {
   const maxRam = Math.max(0, ns.getServerMaxRam(host));
   const usedRam = Math.max(0, ns.getServerUsedRam(host));
   const reserve = host === "home" ? HOME_RAM_RESERVE : 0;
-  return Math.max(0, maxRam - usedRam - reserve);
+  const physicalFreeRam = Math.max(0, maxRam - usedRam - reserve);
+  const consumerCapacity = getWorkerMaxUsableRam(ns, host, consumer);
+  const consumerUsedRam = getWorkerConsumerUsedRam(ns, host, consumer);
+  return Math.min(
+    physicalFreeRam,
+    Math.max(0, consumerCapacity - consumerUsedRam),
+  );
 }
 
-export function getWorkerMaxUsableRam(ns: NS, host: string): number {
+export function getWorkerMaxUsableRam(
+  ns: NS,
+  host: string,
+  consumer?: RamConsumer,
+): number {
   const maxRam = Math.max(0, ns.getServerMaxRam(host));
   const reserve = host === "home" ? HOME_RAM_RESERVE : 0;
-  return Math.max(0, maxRam - reserve);
+  const usableRam = Math.max(0, maxRam - reserve);
+  if (!consumer) return usableRam;
+  return usableRam * getConsumerRatio(ns, consumer);
+}
+
+function getConsumerRatio(ns: NS, consumer: RamConsumer): number {
+  const now = Date.now();
+  if (
+    !cachedConsumerRatios ||
+    now - cachedConsumerRatios.calculatedAt >= CONSUMER_RATIO_CACHE_MS
+  ) {
+    const state = loadState(ns);
+    const stanekEnabled =
+      Boolean(ns.stanek) &&
+      !state?.disabledModules?.includes("stanek") &&
+      ns.stanek.activeFragments().some((fragment) => fragment.type !== 18);
+    const stanekRatio = stanekEnabled
+      ? RAM_ALLOCATION.stanekMaxPercent
+      : 0;
+    const shareDisabled = state?.disabledModules?.some((module) =>
+      ["share", "filler"].includes(module),
+    );
+    const requestedShareRatio =
+      state?.fillerConfig?.shareMaxRamPercent ??
+      (ns.getSharePower() >= SHARE_POWER_SATURATION_CAP
+        ? RAM_ALLOCATION.shareSaturatedPercent
+        : RAM_ALLOCATION.shareMaxPercent);
+    const safeShareRatio = Number.isFinite(requestedShareRatio)
+      ? requestedShareRatio
+      : RAM_ALLOCATION.shareMaxPercent;
+    const shareRatio = shareDisabled
+      ? 0
+      : Math.max(
+          0,
+          Math.min(1 - stanekRatio, safeShareRatio),
+        );
+
+    cachedConsumerRatios = {
+      hacking: Math.max(0, 1 - stanekRatio - shareRatio),
+      stanek: stanekRatio,
+      share: shareRatio,
+      calculatedAt: now,
+    };
+  }
+  return cachedConsumerRatios[consumer];
+}
+
+function getWorkerConsumerUsedRam(
+  ns: NS,
+  host: string,
+  consumer: RamConsumer,
+): number {
+  const paths =
+    consumer === "stanek"
+      ? [PATHS.services.payloads.stanekCharge]
+      : consumer === "share"
+        ? [PATHS.services.payloads.share]
+        : [
+            PATHS.services.payloads.work,
+            PATHS.services.payloads.hack,
+            PATHS.services.payloads.grow,
+            PATHS.services.payloads.weaken,
+          ];
+  const scriptNames = paths.map((path) =>
+    path.replace(/\\/g, "/").split("/").pop()!.replace(/\.ts$/, ".js"),
+  );
+
+  return ns
+    .ps(host)
+    .filter((process) =>
+      scriptNames.some((name) => process.filename.endsWith(name)),
+    )
+    .reduce((sum, process) => {
+      const ram = ns.getScriptRam(process.filename, host);
+      return sum + (Number.isFinite(ram) && ram > 0 ? ram * process.threads : 0);
+    }, 0);
 }
 
 /**
@@ -190,43 +297,39 @@ export function dispatchSimpleTask(
 /**
  * Berechnet den gesamten maximal nutzbaren RAM im Netzwerk (unter Abzug der Home-Reserve).
  */
-export function getNetworkMaxRam(ns: NS, servers: string[]): number {
+export function getNetworkMaxRam(
+  ns: NS,
+  servers: string[],
+  consumer: RamConsumer = "hacking",
+): number {
   let total = servers
     .filter((s) => ns.hasRootAccess(s) && s !== "home")
     .reduce((sum, s) => {
-      const maxRam = sanitizeRamValue(ns.getServerMaxRam(s));
+      const maxRam = sanitizeRamValue(
+        getWorkerMaxUsableRam(ns, s, consumer),
+      );
       return sum + maxRam;
     }, 0);
 
-  const homeMaxRam = sanitizeRamValue(ns.getServerMaxRam("home"));
-  total += Math.max(0, homeMaxRam - HOME_RAM_RESERVE);
+  total += sanitizeRamValue(getWorkerMaxUsableRam(ns, "home", consumer));
   return total;
 }
 
 /**
  * Berechnet den tatsächlich freien RAM im Netzwerk (unter Berücksichtigung der Home-Reserve).
  */
-export function getNetworkRealFreeRam(ns: NS, servers: string[]): number {
+export function getNetworkRealFreeRam(
+  ns: NS,
+  servers: string[],
+  consumer: RamConsumer = "hacking",
+): number {
   let free = servers
     .filter((s) => ns.hasRootAccess(s) && s !== "home")
     .reduce((sum, s) => {
-      const maxRam = sanitizeRamValue(ns.getServerMaxRam(s));
-      const usedRam = sanitizeRamValue(ns.getServerUsedRam(s));
-      return sum + Math.max(0, maxRam - usedRam);
+      return sum + getWorkerFreeRam(ns, s, consumer);
     }, 0);
 
-  const homeMaxRam = sanitizeRamValue(ns.getServerMaxRam("home"));
-  const homeUsedRam = sanitizeRamValue(ns.getServerUsedRam("home"));
-  const homeEffectiveMax = Math.max(0, homeMaxRam - HOME_RAM_RESERVE);
-
-  // Zieht genutzten RAM auf home erst ab, wenn er über der gesetzten Reserve liegt
-  const homeEffectiveFree = Math.max(
-    0,
-    homeEffectiveMax - Math.max(0, homeUsedRam),
-  );
-  free += homeEffectiveFree;
-
-  return free;
+  return free + getWorkerFreeRam(ns, "home", consumer);
 }
 
 export function getQueueRam(ns: NS, queue: JitEvent[]): number {

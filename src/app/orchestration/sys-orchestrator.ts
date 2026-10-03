@@ -1,6 +1,9 @@
 import { NS } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client";
-import { getAllServers } from "/infrastructure/network/network";
+import {
+  getAllRootedServersIncludingPurchased,
+  getAllServers,
+} from "/infrastructure/network/network";
 import { PATHS } from "/infrastructure/runtime/paths";
 import { loadState } from "/infrastructure/state/state";
 import { hasSingularity, hasGang, hasSleeve, hasCorporation, isCorporationViable } from "/lib/utils";
@@ -325,6 +328,11 @@ export async function main(ns: NS): Promise<void> {
           );
           ns.scriptKill(execPath, "home");
         }
+        if (daemon.name === "Stanek Manager") {
+          stopNetworkPayload(ns, PATHS.services.payloads.stanekCharge);
+        } else if (daemon.name === "Share Filler") {
+          stopNetworkPayload(ns, PATHS.services.payloads.share);
+        }
         continue;
       }
 
@@ -356,3 +364,15 @@ export async function main(ns: NS): Promise<void> {
   }
 }
 
+function stopNetworkPayload(ns: NS, scriptPath: string): void {
+  const scriptName = scriptPath
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()!
+    .replace(/\.ts$/, ".js");
+  for (const host of getAllRootedServersIncludingPurchased(ns)) {
+    for (const process of ns.ps(host)) {
+      if (process.filename.endsWith(scriptName)) ns.kill(process.pid);
+    }
+  }
+}
