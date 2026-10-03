@@ -1,11 +1,14 @@
 import { NS } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
+import { DnetAuthAttemptState } from "/shared/types/network.js";
+import { authenticateDnet } from "/infrastructure/runtime/dnet-state.js";
 
 export async function solveDeepGreen(
   ns: NS,
   hostname: string,
   details: any,
-  logger?: LoggerClient
+  logger?: LoggerClient,
+  authAttemptState?: DnetAuthAttemptState,
 ): Promise<string | null> {
   const len = details?.passwordLength || 3;
   const currentGuess = new Array(len).fill("0");
@@ -20,9 +23,14 @@ export async function solveDeepGreen(
       currentGuess[pos] = String(digit);
       const guess = currentGuess.join("");
 
-      const result = (await ns.dnet.authenticate(hostname, guess)) as any;
+      const result = await authenticateDnet(
+        ns,
+        hostname,
+        guess,
+        authAttemptState,
+      );
       if (result?.success) {
-        logger?.success(`🎉 Direkt-Erfolg: ${guess}`);
+        logger?.success("🎉 Direkt-Authentifizierung erfolgreich.");
         return guess;
       }
 
@@ -56,7 +64,7 @@ export async function solveDeepGreen(
 
       if (parseInt(matches[0], 10) === targetCorrectCount) {
         posSolved = true;
-        logger?.debug(`Position ${pos} gelöst mit Ziffer '${digit}'`);
+        logger?.debug(`Position ${pos} gelöst.`);
         break;
       }
     }
@@ -67,10 +75,15 @@ export async function solveDeepGreen(
   }
 
   const finalGuess = currentGuess.join("");
-  const finalResult = (await ns.dnet.authenticate(hostname, finalGuess)) as any;
+  const finalResult = await authenticateDnet(
+    ns,
+    hostname,
+    finalGuess,
+    authAttemptState,
+  );
   
   if (finalResult?.success) {
-    logger?.success(`🎉 Erfolg! Passwort: ${finalGuess}`);
+    logger?.success("🎉 Authentifizierung erfolgreich.");
     return finalGuess;
   }
 

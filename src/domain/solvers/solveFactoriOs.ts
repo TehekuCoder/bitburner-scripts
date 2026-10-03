@@ -1,11 +1,14 @@
 import { NS } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
+import { DnetAuthAttemptState } from "/shared/types/network.js";
+import { authenticateDnet } from "/infrastructure/runtime/dnet-state.js";
 
 export async function solveFactoriOs(
   ns: NS,
   host: string,
   details: any,
-  logger?: LoggerClient
+  logger?: LoggerClient,
+  authAttemptState?: DnetAuthAttemptState,
 ): Promise<string | null> {
   logger?.info(`⚙️ Starte Krypto-Sieb für Factori-Os auf ${host}...`);
 
@@ -13,9 +16,14 @@ export async function solveFactoriOs(
 
   if (len === 1) {
     for (let num = 0; num <= 9; num++) {
-      const res = (await ns.dnet.authenticate(host, num.toString())) as any;
+      const res = await authenticateDnet(
+        ns,
+        host,
+        num.toString(),
+        authAttemptState,
+      );
       if (res?.success) {
-        logger?.success(`🎉 Blitz-Erfolg: ${num}`);
+        logger?.success("🎉 Kandidat erfolgreich authentifiziert.");
         return num.toString();
       }
     }
@@ -29,11 +37,16 @@ export async function solveFactoriOs(
   while (candidates.length > 0) {
     const nextAttempt = candidates[0];
 
-    logger?.debug(`Teste: ${nextAttempt} (Kandidaten verbleibend: ${candidates.length})`);
-    const result = (await ns.dnet.authenticate(host, nextAttempt.toString())) as any;
+    logger?.debug(`Teste Kandidat (${candidates.length} verbleibend).`);
+    const result = await authenticateDnet(
+      ns,
+      host,
+      nextAttempt.toString(),
+      authAttemptState,
+    );
 
     if (result?.success) {
-      logger?.success(`🎉 Erfolg! Passwort: ${nextAttempt}`);
+      logger?.success("🎉 Kandidat erfolgreich authentifiziert.");
       return nextAttempt.toString();
     }
 

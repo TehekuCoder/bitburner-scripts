@@ -122,6 +122,7 @@ export const PATHS = {
     runtime: {
       batcher: "infrastructure/runtime/batcher.js",
       workerExecutor: "infrastructure/runtime/worker-executor.js",
+      dnetState: "infrastructure/runtime/dnet-state.js",
       paths: "infrastructure/runtime/paths.js",
       system: "infrastructure/runtime/system.js",
     },

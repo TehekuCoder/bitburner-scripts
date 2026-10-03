@@ -1,5 +1,7 @@
 import { NS } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client";
+import { DnetAuthAttemptState } from "/shared/types/network.js";
+import { authenticateDnet } from "/infrastructure/runtime/dnet-state.js";
 
 /**
  * Solver für AccountsManager - Nutzt eine binäre Suche basierend auf Feedback.
@@ -8,7 +10,8 @@ export async function solveAccountsManager(
   ns: NS,
   host: string,
   details: any,
-  logger?: LoggerClient
+  logger?: LoggerClient,
+  authAttemptState?: DnetAuthAttemptState,
 ): Promise<string | null> {
   let low = 0;
   let high = 100; // Standard-Fallback
@@ -16,7 +19,7 @@ export async function solveAccountsManager(
   logger?.info(`🔢 Starte High/Low-Solver für AccountsManager auf ${host}...`);
 
   // 1. Testschuss abgeben, um Bereich und erste Meldung zu prüfen
-  const initResult = (await ns.dnet.authenticate(host, "0")) as any;
+  const initResult = await authenticateDnet(ns, host, "0", authAttemptState);
 
   if (initResult?.code === 351) {
     logger?.error(`❌ [AccountsManager] Fehler auf ${host}: Direct Connection Required!`);
@@ -42,9 +45,14 @@ export async function solveAccountsManager(
   // 2. Binäre Suche
   while (low <= high) {
     const guess = Math.floor((low + high) / 2);
-    logger?.debug(`Teste Zahl: ${guess} (Bereich: [${low}-${high}])`);
+    logger?.debug(`Teste Kandidat im Bereich [${low}-${high}].`);
 
-    const result = (await ns.dnet.authenticate(host, guess.toString())) as any;
+    const result = await authenticateDnet(
+      ns,
+      host,
+      guess.toString(),
+      authAttemptState,
+    );
 
     if (result?.code === 351) {
       logger?.error(`❌ Fehler auf ${host}: Direct Connection Required!`);
@@ -52,7 +60,7 @@ export async function solveAccountsManager(
     }
 
     if (result?.success) {
-      logger?.success(`🎉 Erfolg! Passwort ist: ${guess}`);
+      logger?.success("🎉 Kandidat erfolgreich authentifiziert.");
       return guess.toString();
     }
 

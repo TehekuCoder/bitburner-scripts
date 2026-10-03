@@ -1,11 +1,14 @@
 import { NS } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
+import { DnetAuthAttemptState } from "/shared/types/network.js";
+import { authenticateDnet } from "/infrastructure/runtime/dnet-state.js";
 
 export async function solvePr0verFl0(
   ns: NS,
   host: string,
   details: any,
-  logger?: LoggerClient
+  logger?: LoggerClient,
+  authAttemptState?: DnetAuthAttemptState,
 ): Promise<string | null> {
   const len = details?.passwordLength || 8;
 
@@ -20,7 +23,12 @@ export async function solvePr0verFl0(
   logger?.info(`🌊 Sende Buffer-Overflow Payloads an ${host}...`);
 
   for (const payload of payloads) {
-    const result = (await ns.dnet.authenticate(host, payload)) as any;
+    const result = await authenticateDnet(
+      ns,
+      host,
+      payload,
+      authAttemptState,
+    );
     if (result?.success) {
       logger?.success(`🎉 Overflow erfolgreich mit Payload-Länge ${payload.length}!`);
       return payload;

@@ -26,6 +26,7 @@ export const PAYLOADS = {
     PATHS.shared.constants.colors,
     PATHS.infrastructure.runtime.paths,
     PATHS.infrastructure.runtime.system,
+    PATHS.infrastructure.runtime.dnetState,
 
 
     // Alle Solver-Dateien einzeln entpacken!

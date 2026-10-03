@@ -1,11 +1,14 @@
 import { NS } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
+import { DnetAuthAttemptState } from "/shared/types/network.js";
+import { authenticateDnet } from "/infrastructure/runtime/dnet-state.js";
 
 export async function solveDeskMemo(
   ns: NS,
   host: string,
   details: any,
-  logger?: LoggerClient
+  logger?: LoggerClient,
+  authAttemptState?: DnetAuthAttemptState,
 ): Promise<string | null> {
   const hint = String(details?.passwordHint || details?.data || "").trim();
   const targetLen = details?.passwordLength;
@@ -36,15 +39,14 @@ export async function solveDeskMemo(
     });
   }
 
-  logger?.info(`📝 Teste ${uniqueCandidates.length} Kandidaten aus Hint: "${hint}"`);
+  logger?.info(`📝 Teste ${uniqueCandidates.length} Kandidaten aus dem Hint.`);
 
   for (const guess of uniqueCandidates) {
     // ⚡ Direktes Authentifizieren ohne Wrapper
-    const res = (await ns.dnet.authenticate(host, guess)) as any;
-    const success = typeof res === "boolean" ? res : Boolean(res?.success);
+    const res = await authenticateDnet(ns, host, guess, authAttemptState);
 
-    if (success) {
-      logger?.success(`🎉 Erfolgreich authentifiziert mit: "${guess}"`);
+    if (res.success) {
+      logger?.success("🎉 Erfolgreich authentifiziert.");
       return guess;
     }
   }

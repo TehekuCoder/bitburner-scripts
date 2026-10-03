@@ -1,13 +1,15 @@
 import { NS } from "@ns";
 import {
-  COOLDOWN_FILE,
   COOLDOWN_MS,
   LOOT_INTERVAL_MS,
   PROCESSED_FILE,
-  MASTER_DB_FILE,
 } from "../../shared/constants/darknet.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import { PATHS } from "../../infrastructure/runtime/paths.js";
+import {
+  loadDnetCooldowns,
+  loadDnetPasswords,
+} from "../../infrastructure/runtime/dnet-state.js";
 
 let lastLootTime = 0;
 
@@ -17,11 +19,7 @@ function isScriptRunningOnHost(
   targetHost: string,
   scriptName: string,
 ): boolean {
-  try {
-    return ns.ps(targetHost).some((proc) => proc.filename === scriptName);
-  } catch {
-    return false;
-  }
+  return ns.ps(targetHost).some((proc) => proc.filename === scriptName);
 }
 
 /** Schlanker Dateitransfer ohne schwere Hacking-/Share-Abhängigkeiten */
@@ -33,7 +31,9 @@ async function syncRequiredFiles(
 ): Promise<void> {
   for (const file of files) {
     if (!ns.fileExists(file, targetHost)) {
-      await ns.scp(file, targetHost, source);
+      if (!ns.scp(file, targetHost, source) || !ns.fileExists(file, targetHost)) {
+        throw new Error(`Datei ${file} konnte nicht nach ${targetHost} übertragen werden.`);
+      }
     }
   }
 }
@@ -67,39 +67,14 @@ function saveProcessedServer(
   }
 }
 
-function loadMasterDb(ns: NS, currentHost: string): Record<string, string> {
-  if (currentHost !== "home" && ns.fileExists(MASTER_DB_FILE, "home")) {
-    ns.scp(MASTER_DB_FILE, currentHost, "home");
-  }
-  if (!ns.fileExists(MASTER_DB_FILE)) return {};
-  try {
-    return JSON.parse(ns.read(MASTER_DB_FILE));
-  } catch {
-    return {};
-  }
-}
-
-function loadCooldowns(ns: NS, currentHost: string): Map<string, number> {
-  const cooldownMap = new Map<string, number>();
-  if (currentHost !== "home" && ns.fileExists(COOLDOWN_FILE, "home")) {
-    ns.scp(COOLDOWN_FILE, currentHost, "home");
-  }
-  if (!ns.fileExists(COOLDOWN_FILE)) return cooldownMap;
-
-  const lines = ns.read(COOLDOWN_FILE).split("\n");
-  for (const line of lines) {
-    const parts = line.split(",");
-    if (parts.length >= 2) {
-      cooldownMap.set(parts[0], Number(parts[1]));
-    }
-  }
-  return cooldownMap;
+function loadMasterDb(ns: NS): Record<string, string> {
+  return loadDnetPasswords(ns);
 }
 
 async function ensureSession(
   ns: NS,
   hostname: string,
-  details: any,
+  details: ReturnType<NS["dnet"]["getServerDetails"]>,
   masterDb: Record<string, string>,
   logger: LoggerClient,
 ): Promise<boolean> {
@@ -121,12 +96,8 @@ async function ensureSession(
     if (candidate === null) continue;
     try {
       const authResult = await ns.dnet.authenticate(hostname, candidate);
-      const authSuccess =
-        typeof authResult === "boolean"
-          ? authResult
-          : Boolean(authResult?.success);
 
-      if (authSuccess) {
+      if (authResult.success) {
         hostLogger.success(
           `✅ Authentifizierung erfolgreich auf ${hostname}.`,
           undefined,
@@ -136,8 +107,11 @@ async function ensureSession(
         );
         return true;
       }
+      hostLogger.debug(
+        `Authentifizierung abgelehnt (Code ${authResult.code}).`,
+      );
     } catch {
-      // Ignorieren
+      hostLogger.warn("Authentifizierungsanfrage ist fehlgeschlagen.");
     }
   }
   return false;
@@ -156,11 +130,14 @@ async function deployWorm(
   if (hostname === "home" || !ns.serverExists(hostname)) return false;
 
   const hostLogger = logger.forTarget(hostname);
-  let details: any = null;
+  let details: ReturnType<NS["dnet"]["getServerDetails"]> | null = null;
 
   try {
     details = ns.dnet.getServerDetails(hostname);
-  } catch {
+  } catch (error) {
+    logger.forTarget(hostname).warn(
+      `Darknet-Serverdetails konnten nicht geladen werden: ${String(error)}`,
+    );
     return false;
   }
 
@@ -183,7 +160,18 @@ async function deployWorm(
   if (maxRam < requiredRam) return false;
 
   // Kopiert Crawler + alle Imports & Hilfsskripte von 'home' auf das Ziel
-  await ns.scp(requiredFiles, hostname, "home");
+  const copied = ns.scp(requiredFiles, hostname, "home");
+  const missingFiles = requiredFiles.filter(
+    (file) => !ns.fileExists(file, hostname),
+  );
+  if (!copied || missingFiles.length > 0) {
+    hostLogger.error(
+      `Wurm-Abhängigkeiten konnten nicht vollständig übertragen werden${
+        missingFiles.length > 0 ? `: ${missingFiles.join(", ")}` : "."
+      }`,
+    );
+    return false;
+  }
 
   const freeRam = ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname);
   if (freeRam < requiredRam) return false;
@@ -229,8 +217,8 @@ export async function main(ns: NS): Promise<void> {
       const solverScript = PATHS.domain.tasks.dnetSolver;
 
       const processedSet = loadProcessedServers(ns, currentHost);
-      const masterDb = loadMasterDb(ns, currentHost);
-      const cooldowns = loadCooldowns(ns, currentHost);
+      const masterDb = loadMasterDb(ns);
+      const cooldowns = loadDnetCooldowns(ns);
 
       if (!ns.dnet || typeof ns.dnet.probe !== "function") {
         await ns.sleep(10000);
@@ -263,6 +251,7 @@ export async function main(ns: NS): Promise<void> {
           PATHS.shared.constants.colors,
           PATHS.infrastructure.runtime.paths,
           PATHS.infrastructure.runtime.system,
+          PATHS.infrastructure.runtime.dnetState,
 
           // Alle Solver-Dateien einzeln entpacken!
           ...Object.values(PATHS.domain.solvers),
@@ -280,10 +269,13 @@ export async function main(ns: NS): Promise<void> {
           saveProcessedServer(ns, currentHost, hostname, processedSet);
         }
 
-        let details: any = null;
+        let details: ReturnType<NS["dnet"]["getServerDetails"]> | null = null;
         try {
           details = ns.dnet.getServerDetails(hostname);
-        } catch {
+        } catch (error) {
+          logger.forTarget(hostname).warn(
+            `Serverdetails konnten nicht geladen werden: ${String(error)}`,
+          );
           continue;
         }
 
@@ -299,7 +291,7 @@ export async function main(ns: NS): Promise<void> {
           const isAnySolverRunning = isScriptRunningOnHost(
             ns,
             currentHost,
-            "dnet-solver",
+            solverScript,
           );
 
           if (isAnySolverRunning) continue;
@@ -311,7 +303,9 @@ export async function main(ns: NS): Promise<void> {
             ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
 
           if (freeRam >= totalRequiredRam) {
-            ns.exec(solverScript, currentHost, 1, hostname);
+            if (ns.exec(solverScript, currentHost, 1, hostname) === 0) {
+              logger.warn(`Solver für ${hostname} konnte nicht gestartet werden.`);
+            }
           }
         }
       }
@@ -333,12 +327,14 @@ export async function main(ns: NS): Promise<void> {
 
         if (freeRam >= requiredRam) {
           lastLootTime = now;
-          ns.exec(phishScript, currentHost, 1);
+          if (ns.exec(phishScript, currentHost, 1) === 0) {
+            logger.warn(`Phishing-Worker konnte auf ${currentHost} nicht gestartet werden.`);
+          }
         }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       logger.error(
-        `🚨 Fehler im Crawler-Loop auf ${currentHost}: ${err?.message || err}`,
+        `🚨 Fehler im Crawler-Loop auf ${currentHost}: ${String(err)}`,
       );
     }
 

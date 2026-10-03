@@ -8,16 +8,16 @@ export function solveCloudBlare(
   logger?: LoggerClient
 ): string | null {
   const data = details?.data || "";
-  logger?.debug(`Verarbeite Data-String: "${data}"`);
+  logger?.debug(`Verarbeite Data-String mit ${data.length} Zeichen.`);
 
   // Extrahiere nur Ziffern
   const cleaned = data.replace(/\D/g, "");
 
   if (cleaned.length > 0) {
-    logger?.success(`Lösung gefunden: ${cleaned}`);
+    logger?.success("Numerische Lösung gefunden.");
     return cleaned;
   }
 
-  logger?.warn(`Konnte keine Ziffern in "${data}" finden.`);
+  logger?.warn("Konnte keine Ziffern in den Serverdaten finden.");
   return null;
 }

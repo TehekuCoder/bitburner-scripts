@@ -1,16 +1,23 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
-import { ServerAuthDetails } from "/shared/types/network";
+import {
+  DnetAuthAttemptState,
+  ServerAuthDetails,
+} from "/shared/types/network.js";
 import { runSolver } from "../solvers/solveManager";
-import { COOLDOWN_FILE, COOLDOWN_MS } from "/shared/constants/darknet";
-
-function isAuthSuccess(result: unknown): boolean {
-  if (typeof result === "boolean") return result;
-  if (result && typeof result === "object" && "success" in result) {
-    return Boolean((result as { success?: boolean }).success);
-  }
-  return false;
-}
+import {
+  COOLDOWN_MS,
+  COOLDOWN_FILE,
+  DNET_MASTER_PORT,
+} from "/shared/constants/darknet";
+import { DnetMasterMessage } from "/shared/types/network";
+import {
+  loadDnetCooldowns,
+  loadDnetPasswords,
+  authenticateDnet,
+  recordDnetCooldown,
+  recordDnetPassword,
+} from "/infrastructure/runtime/dnet-state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -19,23 +26,26 @@ export async function main(ns: NS): Promise<void> {
   const host = String(ns.args[0]);
   const currentHost = ns.getHostname();
   const logger = new Logger(ns, `SOLVER-${host}`);
+  const authAttemptState: DnetAuthAttemptState = { inconclusive: false };
 
   if (isServerInCooldown(ns, host)) return;
 
-  let details: ServerAuthDetails | null = null;
+  let details: ReturnType<NS["dnet"]["getServerDetails"]> | null = null;
   try {
-    details = ns.dnet.getServerDetails(host) as ServerAuthDetails;
-  } catch (err: any) {
+    details = ns.dnet.getServerDetails(host);
+  } catch (error: unknown) {
     logger.error(
-      `❌ Konnte ServerDetails für '${host}' auf '${currentHost}' nicht abrufen: ${err?.message || err}`,
+      `❌ Konnte ServerDetails für '${host}' auf '${currentHost}' nicht abrufen: ${String(error)}`,
     );
-    await setServerCooldown(ns, host);
     return;
   }
 
   if (!details) {
     logger.error(`❌ Konnte ServerDetails für '${host}' nicht abrufen.`);
-    await setServerCooldown(ns, host);
+    return;
+  }
+  if (details.isOnline === false) {
+    logger.warn(`Darknet-Server ${host} ist offline; kein Cooldown gesetzt.`);
     return;
   }
 
@@ -47,22 +57,14 @@ export async function main(ns: NS): Promise<void> {
     return;
   }
 
-  const jsonDbFile = "/dnet-master-db.json";
-
-  if (currentHost !== "home" && ns.fileExists(jsonDbFile, "home")) {
-    ns.scp(jsonDbFile, currentHost, "home");
-  }
-
   // 1. Bekannte Passwörter aus Cache prüfen
-  if (ns.fileExists(jsonDbFile)) {
-    try {
-      const db = JSON.parse(ns.read(jsonDbFile));
-      const cachedPw = db[host];
-      if (cachedPw && (await tryAuthenticate(ns, host, cachedPw))) {
-        handleSuccess(ns, host, cachedPw, logger);
-        return;
-      }
-    } catch {}
+  const cachedPw = loadDnetPasswords(ns)[host];
+  if (
+    typeof cachedPw === "string" &&
+    (await tryAuthenticate(ns, host, cachedPw, logger, authAttemptState))
+  ) {
+    handleSuccess(ns, host, cachedPw, logger);
+    return;
   }
 
   logger.info(
@@ -76,6 +78,7 @@ export async function main(ns: NS): Promise<void> {
     details.modelId || "Unknown",
     details,
     logger,
+    authAttemptState,
   );
 
   // 3. Fallback: Wörterbuch- & Loot-Angriff
@@ -83,69 +86,98 @@ export async function main(ns: NS): Promise<void> {
     logger.warn(
       `⚠️ Kein Solver-Ergebnis für '${details.modelId}' auf ${host}. Starte Fallbacks.`,
     );
-    password =
-      (await dictionaryAttack(ns, host, details)) ||
-      (await fileLootAttack(ns, host, details));
+    password = await dictionaryAttack(
+      ns,
+      host,
+      details,
+      logger,
+      authAttemptState,
+    );
+    if (password === null) {
+      password = await fileLootAttack(
+        ns,
+        host,
+        details,
+        logger,
+        authAttemptState,
+      );
+    }
   }
 
   // 4. Passwort verifizieren & Anmelden
   if (password !== null) {
-    if (await tryAuthenticate(ns, host, password)) {
+    if (
+      await tryAuthenticate(ns, host, password, logger, authAttemptState)
+    ) {
       handleSuccess(ns, host, password, logger);
+    } else if (!authAttemptState.inconclusive) {
+      logger.error(`❌ Ermitteltes Passwort für ${host} wurde abgelehnt. Setze Cooldown.`);
+      await setServerCooldown(ns, host, logger);
     } else {
-      logger.error(
-        `❌ Passwort "${password}" ermittelt, aber Auth fehlgeschlagen. Setze Cooldown.`,
-      );
-      await setServerCooldown(ns, host);
+      logger.warn(`Authentifizierung bei ${host} war nicht aussagekräftig; kein Cooldown gesetzt.`);
     }
-  } else {
+  } else if (!authAttemptState.inconclusive) {
     logger.warn(`⏳ Konnte ${host} nicht knacken. Aktiviere Cooldown.`);
-    await setServerCooldown(ns, host);
+    await setServerCooldown(ns, host, logger);
+  } else {
+    logger.warn(`Authentifizierung bei ${host} war nicht aussagekräftig; kein Cooldown gesetzt.`);
   }
 }
 
 function handleSuccess(ns: NS, host: string, pw: string, logger: Logger): void {
-  ns.writePort(5, JSON.stringify({ host, password: pw }));
-  logger.success(`🎉 [SUCCESS] Server gebrochen! ${host} -> "${pw}"`);
+  recordDnetPassword(ns, host, pw);
+  const message: DnetMasterMessage = { type: "password", host, password: pw };
+  if (!ns.tryWritePort(DNET_MASTER_PORT, JSON.stringify(message))) {
+    logger.error(`Passwort für ${host} konnte nicht an den DNet-Master übermittelt werden.`);
+  }
+  logger.success(`🎉 [SUCCESS] Server gebrochen: ${host}.`);
 }
 
 function isServerInCooldown(ns: NS, host: string): boolean {
-  if (!ns.fileExists(COOLDOWN_FILE)) return false;
-  const lines = ns.read(COOLDOWN_FILE).split("\n");
-  const now = Date.now();
-
-  for (let i = 0; i < lines.length; i++) {
-    const parts = lines[i].split(",");
-    if (parts.length >= 2 && parts[0] === host) {
-      return now - Number(parts[1]) < COOLDOWN_MS;
-    }
-  }
-  return false;
+  const timestamp = loadDnetCooldowns(ns).get(host) ?? -Infinity;
+  return Date.now() - timestamp < COOLDOWN_MS;
 }
 
-async function setServerCooldown(ns: NS, host: string): Promise<void> {
-  await ns.write(COOLDOWN_FILE, `${host},${Date.now()}\n`, "a");
+async function setServerCooldown(
+  ns: NS,
+  host: string,
+  logger: Logger,
+): Promise<void> {
+  const timestamp = Date.now();
+  recordDnetCooldown(ns, host, timestamp);
+  await ns.write(COOLDOWN_FILE, `${host},${timestamp}\n`, "a");
+  const message: DnetMasterMessage = { type: "cooldown", host, timestamp };
+  if (!ns.tryWritePort(DNET_MASTER_PORT, JSON.stringify(message))) {
+    logger.warn(`Cooldown für ${host} konnte nicht an den DNet-Master übermittelt werden.`);
+  }
 }
 
 async function dictionaryAttack(
   ns: NS,
   host: string,
   details: ServerAuthDetails,
+  logger: Logger,
+  authAttemptState: DnetAuthAttemptState,
 ): Promise<string | null> {
-  const jsonDbFile = "/dnet-master-db.json";
-  if (!ns.fileExists(jsonDbFile)) return null;
-  try {
-    const db = JSON.parse(ns.read(jsonDbFile));
-    const targetLen = details.passwordLength;
+  const passwordDb = loadDnetPasswords(ns);
+  const targetLen = details.passwordLength;
 
-    for (const pw of Object.values(db) as string[]) {
-      if (!pw || pw.length >= 30 || pw.includes("You have discovered"))
-        continue;
-      if (targetLen !== undefined && pw.length !== targetLen) continue;
+  for (const candidate of Object.values(passwordDb)) {
+    if (
+      candidate.length >= 30 ||
+      candidate.includes("You have discovered")
+    )
+      continue;
+    if (
+      targetLen !== undefined &&
+      candidate.length !== targetLen &&
+      candidate !== ""
+    ) continue;
 
-      if (await tryAuthenticate(ns, host, pw)) return pw;
-    }
-  } catch {}
+    if (
+      await tryAuthenticate(ns, host, candidate, logger, authAttemptState)
+    ) return candidate;
+  }
   return null;
 }
 
@@ -153,25 +185,32 @@ async function fileLootAttack(
   ns: NS,
   host: string,
   details: ServerAuthDetails,
+  logger: Logger,
+  authAttemptState: DnetAuthAttemptState,
 ): Promise<string | null> {
   try {
     const currentHost = ns.getHostname();
     const files = ns.ls(host, ".txt");
-    const maxLen = details.passwordLength || 30;
+    const maxLen = details.passwordLength ?? 30;
 
     for (const file of files) {
-      ns.scp(file, currentHost, host);
-      const content = ns.read(file).trim();
+      if (!ns.scp(file, currentHost, host) || !ns.fileExists(file, currentHost)) {
+        logger.warn(`Loot-Datei ${file} konnte nicht von ${host} übertragen werden.`);
+        continue;
+      }
+      const content = ns.read(file).replace(/\r?\n$/, "");
       ns.rm(file, currentHost);
 
       if (
-        content.length <= maxLen &&
-        (await tryAuthenticate(ns, host, content))
+        (content.length <= maxLen || content === "") &&
+        (await tryAuthenticate(ns, host, content, logger, authAttemptState))
       ) {
         return content;
       }
     }
-  } catch {}
+  } catch (error) {
+    logger.warn(`Loot-Angriff auf ${host} fehlgeschlagen: ${String(error)}`);
+  }
   return null;
 }
 
@@ -179,11 +218,16 @@ async function tryAuthenticate(
   ns: NS,
   host: string,
   pw: string,
+  logger: Logger,
+  authAttemptState: DnetAuthAttemptState,
 ): Promise<boolean> {
   try {
-    const authResult = await ns.dnet.authenticate(host, pw);
-    return isAuthSuccess(authResult);
-  } catch {
+    const authResult = await authenticateDnet(ns, host, pw, authAttemptState);
+    if (authResult.success) return true;
+    logger.debug(`Authentifizierung auf ${host} abgelehnt (Code ${authResult.code}).`);
+    return false;
+  } catch (error) {
+    logger.warn(`Authentifizierungsanfrage an ${host} fehlgeschlagen: ${String(error)}`);
     return false;
   }
 }

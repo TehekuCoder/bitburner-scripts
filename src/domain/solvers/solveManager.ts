@@ -1,5 +1,7 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger, LoggerClient } from "/infrastructure/logging/logger-client.js";
+import { ServerAuthDetails } from "/shared/types/network.js";
+import { DnetAuthAttemptState } from "/shared/types/network.js";
 
 import { solveAccountsManager } from "./solveAccountsManager";
 import { solveAnagram } from "./solveAnagram";
@@ -21,8 +23,9 @@ import { solveZeroLogon } from "./solveZeroLogon";
 type SolverFunction = (
   ns: NS,
   host: string,
-  details: any,
+  details: ServerAuthDetails,
   logger?: LoggerClient,
+  authAttemptState?: DnetAuthAttemptState,
 ) => Promise<string | null> | string | null;
 
 const SOLVER_REGISTRY: Record<string, SolverFunction> = {
@@ -74,8 +77,9 @@ export async function runSolver(
   ns: NS,
   host: string,
   serverType: string,
-  details: any,
+  details: ServerAuthDetails,
   parentLogger?: Logger,
+  authAttemptState?: DnetAuthAttemptState,
 ): Promise<string | null> {
   const logger = parentLogger
     ? parentLogger.child("MANAGER", { serverType })
@@ -90,14 +94,7 @@ export async function runSolver(
     return null;
   }
 
-  let safeDetailsDump = "N/A";
-  try {
-    safeDetailsDump = JSON.stringify(details);
-  } catch {
-    safeDetailsDump = "[Unserializable Object]";
-  }
-
-  logger.info(`🚀 Starte Solver für '${cleanType}' auf Host '${host}'. Details: ${safeDetailsDump}`);
+  logger.info(`🚀 Starte Solver für '${cleanType}' auf Host '${host}'.`);
 
   const match = findSolver(cleanType);
   if (!match) {
@@ -112,19 +109,25 @@ export async function runSolver(
 
   try {
     const solverLogger = logger.child(matchedKey);
-    const password = await solver(ns, host, details, solverLogger);
+    const password = await solver(
+      ns,
+      host,
+      details,
+      solverLogger,
+      authAttemptState,
+    );
 
     if (password !== null) {
       logger.timeEnd(timerName, "SUCCESS");
-      logger.success(`🎉 [Success] ${host} geknackt! Passwort: ${password}`);
+      logger.success(`🎉 [Success] ${host} geknackt.`);
       return password;
     } else {
       logger.timeEnd(timerName, "WARN");
       logger.warn(`❌ [Failed] Solver für ${host} lief durch, konnte aber kein Passwort ermitteln.`);
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.timeEnd(timerName, "ERROR");
-    logger.error(`🔴 [Error] Schwerer Fehler im Solver für ${host}: ${error?.message || error}`);
+    logger.error(`🔴 [Error] Schwerer Fehler im Solver für ${host}: ${String(error)}`);
   }
 
   return null;

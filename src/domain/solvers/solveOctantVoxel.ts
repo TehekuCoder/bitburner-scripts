@@ -1,11 +1,14 @@
 import { NS } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
+import { DnetAuthAttemptState } from "/shared/types/network.js";
+import { authenticateDnet } from "/infrastructure/runtime/dnet-state.js";
 
 export async function solveOctantVoxel(
   ns: NS,
   host: string,
   details: any,
-  logger?: LoggerClient
+  logger?: LoggerClient,
+  authAttemptState?: DnetAuthAttemptState,
 ): Promise<string | null> {
   const rawData = String(details?.data || "").trim();
   if (!rawData) {
@@ -38,19 +41,19 @@ export async function solveOctantVoxel(
 
   const decimalValue = parseInt(valueStr, base);
   if (isNaN(decimalValue)) {
-    logger?.error(`🔴 Konnte '${valueStr}' nicht aus Basis ${base} konvertieren.`);
+    logger?.error(`🔴 Serverwert konnte nicht aus Basis ${base} konvertiert werden.`);
     return null;
   }
 
   const guess = decimalValue.toString();
-  logger?.info(`🔢 ${valueStr} (Basis ${base}) -> Dezimal: ${guess}`);
+  logger?.info(`🔢 Serverwert aus Basis ${base} konvertiert.`);
 
-  const result = (await ns.dnet.authenticate(host, guess)) as any;
+  const result = await authenticateDnet(ns, host, guess, authAttemptState);
   if (result?.success) {
-    logger?.success(`🎉 Korrekt! Passwort: ${guess}`);
+    logger?.success("🎉 Kandidat erfolgreich authentifiziert.");
     return guess;
   }
 
-  logger?.error(`🔴 Lösung '${guess}' abgelehnt.`);
+  logger?.error("🔴 Berechneter Kandidat wurde abgelehnt.");
   return null;
 }

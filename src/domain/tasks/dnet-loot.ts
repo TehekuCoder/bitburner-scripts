@@ -1,5 +1,8 @@
 import { NS } from "@ns";
+import { DNET_MASTER_PORT } from "/shared/constants/darknet.js";
+import { DnetMasterMessage } from "/shared/types/network.js";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
+import { recordDnetPassword } from "/infrastructure/runtime/dnet-state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -9,27 +12,28 @@ export async function main(ns: NS): Promise<void> {
   const logger = new Logger(ns, `LOOT-${currentHost}`);
   let totalSuckedCaches = 0;
 
-  const nearbyServers = ns.dnet.probe();
-  for (const host of nearbyServers) {
+  for (const host of ns.dnet.probe()) {
     if (host === "home" || host === currentHost) continue;
 
-    try {
-      const details = ns.dnet.getServerDetails(host) as any;
-      if (details?.hasSession) {
-        const remoteCaches = ns.ls(host, ".cache");
-        if (remoteCaches.length > 0) {
-          totalSuckedCaches += remoteCaches.length;
-          ns.scp(remoteCaches, currentHost, host);
-          for (const file of remoteCaches) {
-            ns.rm(file, host);
-          }
+    for (const file of ns.ls(host, ".cache")) {
+      try {
+        if (
+          ns.scp(file, currentHost, host) &&
+          ns.fileExists(file, currentHost)
+        ) {
+          ns.rm(file, host);
+          totalSuckedCaches++;
+        } else {
+          logger.warn(`Cache ${file} konnte nicht sicher von ${host} übertragen werden.`);
         }
+      } catch (error) {
+        logger.warn(`Cache-Transfer von ${host} fehlgeschlagen: ${String(error)}`);
       }
-    } catch {}
+    }
   }
 
   if (totalSuckedCaches > 0) {
-    logger.info(`🌪️ ${totalSuckedCaches} Caches von Nachbarn abgesaugt.`);
+    logger.info(`🌪️ ${totalSuckedCaches} Caches von Nachbarn übertragen.`);
   }
 
   const files = ns.ls(currentHost, ".cache");
@@ -39,18 +43,30 @@ export async function main(ns: NS): Promise<void> {
 
   for (const file of files) {
     try {
-      const result = ns.dnet.openCache(file) as any;
-      if (result?.success) {
-        const rawData = result.data || result.message;
-        if (typeof rawData === "string") {
-          const cleanPw = rawData.includes(":") ? rawData.split(":").pop()?.trim() : rawData.trim();
-          if (cleanPw) {
-            ns.write("/passwords.txt", `${cleanPw}\n`, "a");
-            ns.writePort(5, JSON.stringify({ host: currentHost, password: cleanPw }));
-          }
-        }
-        ns.rm(file, currentHost);
+      const result = ns.dnet.openCache(file);
+      if (!result.success) {
+        logger.warn(`Cache ${file} konnte nicht geöffnet werden: ${result.message}`);
+        continue;
       }
-    } catch {}
+
+      const rawData = result.message;
+      const cleanPassword = rawData.includes(":")
+        ? rawData.split(":").pop()?.trim()
+        : rawData.trim();
+      if (cleanPassword !== undefined) {
+        recordDnetPassword(ns, currentHost, cleanPassword);
+        const message: DnetMasterMessage = {
+          type: "password",
+          host: currentHost,
+          password: cleanPassword,
+        };
+        if (!ns.tryWritePort(DNET_MASTER_PORT, JSON.stringify(message))) {
+          logger.error(`Cache-Passwort für ${currentHost} konnte nicht an den DNet-Master übermittelt werden.`);
+        }
+      }
+      ns.rm(file, currentHost);
+    } catch (error) {
+      logger.warn(`Cache ${file} konnte nicht verarbeitet werden: ${String(error)}`);
+    }
   }
 }

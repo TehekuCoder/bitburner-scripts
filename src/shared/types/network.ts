@@ -1,3 +1,5 @@
+import type { NS } from "@ns";
+
 export interface WorkerNode {
   hostname: string;
   freeRam: number;
@@ -9,18 +11,12 @@ export interface NetworkInfo {
   parentMap: Record<string, string>;
 }
 
-export interface ServerAuthDetails {
-  isConnectedToCurrentServer: boolean;
-  hasSession: boolean;
-  modelId: string;
-  passwordHint: string;
-  data: string;
-  logTrafficInterval: number;
-  passwordLength: number;
-  passwordFormat:
-    | "numeric"
-    | "alphabetic"
-    | "alphanumeric"
-    | "ASCII"
-    | "unicode";
+export type ServerAuthDetails = ReturnType<NS["dnet"]["getServerDetails"]>;
+
+export type DnetMasterMessage =
+  | { type: "password"; host: string; password: string }
+  | { type: "cooldown"; host: string; timestamp: number };
+
+export interface DnetAuthAttemptState {
+  inconclusive: boolean;
 }

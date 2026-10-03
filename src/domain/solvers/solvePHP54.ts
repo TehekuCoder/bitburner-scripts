@@ -1,5 +1,7 @@
 import { NS } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
+import { DnetAuthAttemptState } from "/shared/types/network.js";
+import { authenticateDnet } from "/infrastructure/runtime/dnet-state.js";
 
 function* permute(str: string): Generator<string> {
   if (str.length <= 1) {
@@ -23,7 +25,8 @@ export async function solvePHP54(
   ns: NS,
   hostname: string,
   details: any,
-  logger?: LoggerClient
+  logger?: LoggerClient,
+  authAttemptState?: DnetAuthAttemptState,
 ): Promise<string | null> {
   const rawData = String(details?.data || "").trim();
 
@@ -37,7 +40,7 @@ export async function solvePHP54(
     return null;
   }
 
-  logger?.info(`🔢 Teste Permutationen für die sortierte Zahl: "${rawData}"`);
+  logger?.info(`🔢 Teste Permutationen einer ${rawData.length}-stelligen Zahl.`);
 
   let count = 0;
   for (const guess of permute(rawData)) {
@@ -47,9 +50,14 @@ export async function solvePHP54(
       await ns.asleep(1);
     }
 
-    const result = (await ns.dnet.authenticate(hostname, guess)) as any;
+    const result = await authenticateDnet(
+      ns,
+      hostname,
+      guess,
+      authAttemptState,
+    );
     if (result?.success) {
-      logger?.success(`🎉 Erfolg nach ${count} Versuchen! Passwort lautet: ${guess}`);
+      logger?.success(`🎉 Authentifizierung nach ${count} Versuchen erfolgreich.`);
       return guess;
     }
   }

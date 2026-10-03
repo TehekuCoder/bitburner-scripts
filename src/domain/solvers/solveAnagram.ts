@@ -1,5 +1,7 @@
 import { NS } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client";
+import { DnetAuthAttemptState } from "/shared/types/network.js";
+import { authenticateDnet } from "/infrastructure/runtime/dnet-state.js";
 
 function* permute(str: string): Generator<string> {
   if (str.length <= 1) {
@@ -23,7 +25,8 @@ export async function solveAnagram(
   ns: NS,
   hostname: string,
   details: any,
-  logger?: LoggerClient
+  logger?: LoggerClient,
+  authAttemptState?: DnetAuthAttemptState,
 ): Promise<string | null> {
   const rawData = String(details?.data || "").trim();
   if (!rawData) {
@@ -32,11 +35,11 @@ export async function solveAnagram(
   }
 
   if (rawData.length > 8) {
-    logger?.warn(`⚠️ Wort '${rawData}' ist zu lang (${rawData.length} Zeichen). Abbruch.`);
+    logger?.warn(`⚠️ Wort ist zu lang (${rawData.length} Zeichen). Abbruch.`);
     return null;
   }
 
-  logger?.info(`🔤 Teste Kombinationen für: "${rawData}"`);
+  logger?.info(`🔤 Teste Kombinationen aus ${rawData.length} Zeichen.`);
 
   let count = 0;
   for (const guess of permute(rawData)) {
@@ -46,9 +49,14 @@ export async function solveAnagram(
       await ns.asleep(1);
     }
 
-    const result = (await ns.dnet.authenticate(hostname, guess)) as any;
+    const result = await authenticateDnet(
+      ns,
+      hostname,
+      guess,
+      authAttemptState,
+    );
     if (result?.success) {
-      logger?.success(`🎉 Erfolg nach ${count} Versuchen! Passwort: ${guess}`);
+      logger?.success(`🎉 Authentifizierung nach ${count} Versuchen erfolgreich.`);
       return guess;
     }
   }

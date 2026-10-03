@@ -1,11 +1,14 @@
 import { NS } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
+import { DnetAuthAttemptState } from "/shared/types/network.js";
+import { authenticateDnet } from "/infrastructure/runtime/dnet-state.js";
 
 export async function solveLaika4(
   ns: NS,
   host: string,
   details: any,
-  logger?: LoggerClient
+  logger?: LoggerClient,
+  authAttemptState?: DnetAuthAttemptState,
 ): Promise<string | null> {
   const len = details?.passwordLength;
 
@@ -23,9 +26,9 @@ export async function solveLaika4(
   logger?.info(`🐕 Teste ${candidates.length} Wörterbuch-Einträge...`);
 
   for (const guess of candidates) {
-    const result = (await ns.dnet.authenticate(host, guess)) as any;
+    const result = await authenticateDnet(ns, host, guess, authAttemptState);
     if (result?.success) {
-      logger?.success(`🎉 Treffer: "${guess}"`);
+      logger?.success("🎉 Wörterbuch-Kandidat erfolgreich authentifiziert.");
       return guess;
     }
   }
