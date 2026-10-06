@@ -209,6 +209,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
               name: a.name,
             }))
           ),
+          cumulativeCost,
         ],
       },
     });

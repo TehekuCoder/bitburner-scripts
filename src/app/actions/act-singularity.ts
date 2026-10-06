@@ -36,16 +36,29 @@ export async function main(ns: NS): Promise<void> {
         }[];
         if (!Array.isArray(batch) || batch.length === 0) return false;
 
+        const expectedCost = Number(ns.args[2]);
+        const hasExpectedCost =
+          Number.isFinite(expectedCost) && expectedCost >= 0;
+        if (
+          hasExpectedCost &&
+          ns.getServerMoneyAvailable("home") < expectedCost
+        ) {
+          ns.tprint("[WARN] Augmentations-Batch abgebrochen: Zu wenig Geld.");
+          return false;
+        }
+
         for (const item of batch) {
           if (!item.faction || !item.name) return false;
 
-          const currentMoney = ns.getServerMoneyAvailable("home");
-          const currentPrice = ns.singularity.getAugmentationPrice(item.name);
-          if (currentMoney < currentPrice) {
-            ns.tprint(
-              `[WARN] Batch abgebrochen für ${item.name}: Zu wenig Geld.`,
-            );
-            return false;
+          if (!hasExpectedCost) {
+            const currentMoney = ns.getServerMoneyAvailable("home");
+            const currentPrice = ns.singularity.getAugmentationPrice(item.name);
+            if (currentMoney < currentPrice) {
+              ns.tprint(
+                `[WARN] Batch abgebrochen für ${item.name}: Zu wenig Geld.`,
+              );
+              return false;
+            }
           }
 
           if (
