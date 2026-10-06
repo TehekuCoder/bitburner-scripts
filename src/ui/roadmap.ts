@@ -1,4 +1,4 @@
-import { BladeburnerActionName, NS } from "@ns";
+import { NS } from "@ns";
 import { PATHS } from "/infrastructure/runtime/paths.js";
 import {
   getExactBitNode,
@@ -28,26 +28,6 @@ const CLR = {
   MAGENTA: "\u001b[35m",
 };
 
-const BLACK_OP_NAMES = [
-  "Operation Retribution",
-  "Operation Imperial Eagle",
-  "Operation Shadow War",
-  "Operation Justice",
-  "Operation Vanguard",
-  "Operation Titan",
-  "Operation Horizon",
-  "Operation Aquila",
-  "Operation Zero",
-  "Operation Genesis",
-  "Operation Starfall",
-  "Operation Dawn",
-  "Operation Apollo",
-  "Operation Ares",
-  "Operation Artemis",
-  "Operation Prometheus",
-  "Operation Daedalus",
-];
-
 interface BladeburnerInfo {
   inBladeburner: boolean;
   currentRank: number;
@@ -71,18 +51,12 @@ function getBladeburnerInfo(ns: NS): BladeburnerInfo | null {
     const currentRank = ns.bladeburner.getRank();
     const nextOp = ns.bladeburner.getNextBlackOp();
 
-    let completedOps = 0;
-    for (const op  of BLACK_OP_NAMES) {
-      try {
-        if (ns.bladeburner.getActionCountRemaining("Black Operations" , op as BladeburnerActionName) === 0) {
-          completedOps++;
-        }
-      } catch {
-        break;
-      }
-    }
-
-    const totalOps = BLACK_OP_NAMES.length;
+    const blackOps = ns.bladeburner.getBlackOpNames();
+    const completedOps = blackOps.filter(
+      (op) =>
+        ns.bladeburner.getActionCountRemaining("Black Operations", op) === 0,
+    ).length;
+    const totalOps = blackOps.length;
 
     let chanceMin = 0;
     let chanceMax = 0;
