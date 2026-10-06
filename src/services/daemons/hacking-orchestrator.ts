@@ -147,29 +147,8 @@ export async function main(ns: NS): Promise<void> {
       finalTarget = fallbackTarget;
     }
 
-    // 📊 Statusänderungen protokollieren
-    if (activeStrategy !== lastStrategy || finalTarget !== lastTarget) {
-      logger.info(
-        `Strategie-Wechsel: ${activeStrategy} | Target: ${finalTarget}`,
-        finalTarget,
-        { context: { strategy: activeStrategy, target: finalTarget } },
-      );
-      lastStrategy = activeStrategy;
-      lastTarget = finalTarget;
-    }
-
-    // 5️⃣ State aktualisieren
-    await patchBatcherState(ns, {
-      batchStrategy: activeStrategy,
-      batcherTarget: finalTarget,
-      batcherActive: true,
-      batcherProgress:
-        activeStrategy === "XP_GRIND"
-          ? `XP-Grind aktiv auf ${finalTarget}`
-          : `Laufende Strategie: ${activeStrategy}`,
-    });
-
     // 6️⃣ Engine starten ODER Multi-Target Worker verteilen
+    let executionActive: boolean;
     if (activeStrategy === "BOOTSTRAP" || activeStrategy === "WORKER") {
       stopAllEngines(ns, logger);
 
@@ -190,11 +169,62 @@ export async function main(ns: NS): Promise<void> {
           ? evalTargets.slice(0, maxTargets).map((t) => t.hostname)
           : [finalTarget];
 
-      await deployWorkerFleet(ns, logger, allServers, topTargets);
+      executionActive = await deployWorkerFleet(
+        ns,
+        logger,
+        allServers,
+        topTargets,
+      );
     } else {
       stopNetworkWorkers(ns);
-      ensureEngineRunning(ns, activeStrategy, finalTarget, logger);
+      const engineResult = ensureEngineRunning(
+        ns,
+        activeStrategy,
+        finalTarget,
+        logger,
+      );
+      executionActive = engineResult === "active";
+
+      if (engineResult === "waiting-for-ram") {
+        const allServers = getAllRootedServersIncludingPurchased(ns);
+        executionActive = await deployWorkerFleet(
+          ns,
+          logger,
+          allServers,
+          [finalTarget],
+        );
+        if (executionActive) {
+          logger.warn(
+            `Nicht genug Home-RAM für die Engine; wechsle vorübergehend auf Worker für ${finalTarget}.`,
+          );
+          activeStrategy = "WORKER";
+        }
+      }
     }
+
+    // 📊 Statusänderungen protokollieren
+    if (activeStrategy !== lastStrategy || finalTarget !== lastTarget) {
+      logger.info(
+        `Strategie-Wechsel: ${activeStrategy} | Target: ${finalTarget}`,
+        finalTarget,
+        { context: { strategy: activeStrategy, target: finalTarget } },
+      );
+      lastStrategy = activeStrategy;
+      lastTarget = finalTarget;
+    }
+
+    // Report the actual execution state; selecting a strategy alone does not mean
+    // its engine or workers could be started with the available RAM.
+    await patchBatcherState(ns, {
+      batchStrategy: activeStrategy,
+      batcherTarget: finalTarget,
+      batcherActive: executionActive,
+      batcherProgress: executionActive
+        ? activeStrategy === "XP_GRIND"
+          ? `XP-Grind aktiv auf ${finalTarget}`
+          : `Laufende Strategie: ${activeStrategy}`
+        : `Warten auf RAM für ${activeStrategy} (${finalTarget})`,
+    });
 
     // 7️⃣ Dashboards verwalten
     manageDashboards(
@@ -332,23 +362,32 @@ export async function deployWorkerFleet(
   servers: string[],
   targets: string[],
   workerScript: string = PATHS.services.payloads.work,
-): Promise<void> {
+): Promise<boolean> {
   if (targets.length === 0 || servers.length === 0) {
     logger.warn("Keine Targets oder Server für Fleet-Deployment übergeben.");
-    return;
+    return false;
   }
 
   if (!ns.fileExists(workerScript, "home")) {
     logger.warn(`Worker-Skript fehlt auf home: ${workerScript}`);
-    return;
+    return false;
   }
   const scriptRam = ns.getScriptRam(workerScript, "home");
   if (!Number.isFinite(scriptRam) || scriptRam <= 0) {
     logger.warn(`Worker-Skript hat ungültigen RAM-Verbrauch: ${workerScript}`);
-    return;
+    return false;
   }
 
   const pool: FleetNode[] = [];
+  const workerName = workerScript.replace(/^.*[\\/]/, "");
+  let deployedAny = servers.some((host) =>
+    ns.ps(host).some(
+      (proc) =>
+        proc.filename.endsWith(workerName) &&
+        targets.includes(String(proc.args[0])),
+    ),
+  );
+
   for (const host of servers) {
     if (!ns.hasRootAccess(host)) continue;
     if (!(await ensureScriptsOnServer(ns, host, [workerScript]))) continue;
@@ -358,33 +397,19 @@ export async function deployWorkerFleet(
   pool.sort((a, b) => b.freeRam - a.freeRam);
 
   const totalFleetRam = pool.reduce((sum, node) => sum + node.freeRam, 0);
-  if (totalFleetRam <= 0) return;
+  if (totalFleetRam <= 0) return deployedAny;
 
   const weights = [0.5, 0.25, 0.15, 0.05, 0.05];
-  const targetBudgets = targets
-    .slice(0, Math.min(targets.length, weights.length))
+  const weightedTargets = targets.slice(0, weights.length);
+  const selectedWeightTotal = weights
+    .slice(0, weightedTargets.length)
+    .reduce((sum, weight) => sum + weight, 0);
+  const targetBudgets = weightedTargets
     .map((target, idx) => ({
       target,
-      remainingBudget: totalFleetRam * weights[idx],
+      remainingBudget:
+        totalFleetRam * (weights[idx] / selectedWeightTotal),
     }));
-
-  const assignedBudget = targetBudgets.reduce(
-    (sum, item) => sum + item.remainingBudget,
-    0,
-  );
-  if (assignedBudget < totalFleetRam) {
-    const remainderTargets = targets.length - targetBudgets.length;
-    if (remainderTargets > 0) {
-      const remainderBudget = totalFleetRam - assignedBudget;
-      const extraShare = remainderBudget / remainderTargets;
-      for (let i = targetBudgets.length; i < targets.length; i++) {
-        targetBudgets.push({
-          target: targets[i],
-          remainingBudget: extraShare,
-        });
-      }
-    }
-  }
 
   logger.info(
     `Fleet-Pool: ${ns.format.number(totalFleetRam, 0)} GB RAM verfügbar für ${targetBudgets.length} Targets.`,
@@ -409,6 +434,7 @@ export async function deployWorkerFleet(
           );
           break;
         }
+        deployedAny = true;
         const used = threads * scriptRam;
         node.freeRam -= used;
         currentTarget.remainingBudget -= used;
@@ -419,6 +445,7 @@ export async function deployWorkerFleet(
       }
     }
   }
+  return deployedAny;
 }
 
 function getScriptUsedRam(ns: NS, server: string, script: string): number {
@@ -478,7 +505,7 @@ function ensureEngineRunning(
   strategy: BatchStrategy,
   target: string,
   logger: LoggerClient,
-): void {
+): "active" | "waiting-for-ram" | "failed" {
   const engineMap: Partial<Record<BatchStrategy, string>> = {
     XP_GRIND: PATHS.app.engines.proto,
     PREP: PATHS.app.engines.prep,
@@ -494,12 +521,12 @@ function ensureEngineRunning(
       `Keine Engine-Route für Strategie '${strategy}' konfiguriert!`,
       target,
     );
-    return;
+    return "failed";
   }
 
   if (!ns.fileExists(scriptPath)) {
     logger.error(`Engine-Datei '${scriptPath}' wurde nicht gefunden!`, target);
-    return;
+    return "failed";
   }
 
   const allEnginePaths = new Set(
@@ -513,6 +540,8 @@ function ensureEngineRunning(
   const isExactRunning = runningEngineProcs.some(
     (proc) => proc.filename === scriptPath && proc.args[0] === target,
   );
+
+  if (isExactRunning) return "active";
 
   if (!isExactRunning) {
     for (const proc of runningEngineProcs) {
@@ -535,8 +564,10 @@ function ensureEngineRunning(
           target,
           { context: { pid, strategy, scriptPath } },
         );
+        return "active";
       } else {
         logger.error(`Fehler beim Starten der Engine: ${scriptPath}`, target);
+        return "failed";
       }
     } else {
       logger.warn(
@@ -544,6 +575,8 @@ function ensureEngineRunning(
         target,
         { context: { requiredRam, freeRam } },
       );
+      return "waiting-for-ram";
     }
   }
+  return "failed";
 }

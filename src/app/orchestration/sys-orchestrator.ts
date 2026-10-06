@@ -12,7 +12,7 @@ interface DaemonConfig {
   name: string;
   path: string;
   args?: (string | number)[];
-  minHomeRam?: number;
+  priority?: number;
   condition?: (ns: NS) => boolean;
 }
 
@@ -37,7 +37,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "CCT Solver Task",
       path: PATHS.domain.tasks.cctSolver,
-      minHomeRam: 512,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["cct", "solver"])) return false;
@@ -55,6 +54,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Backdoor Service",
       path: PATHS.services.daemons.backdoor,
+      priority: 10,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["backdoor", "singularity"])) return false;
@@ -88,7 +88,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Finance Manager",
       path: PATHS.services.daemons.financeDispatcher,
-      minHomeRam: 128,
       condition: (ns) => {
         const state = loadState(ns);
         return !isModuleDisabled(state, ["finance", "stock"]);
@@ -99,7 +98,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Hash Manager",
       path: PATHS.services.managers.hash,
-      minHomeRam: 512,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, "hacknet")) return false;
@@ -115,7 +113,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "IPvGo Manager",
       path: PATHS.services.managers.ipvgo,
-      minHomeRam: 512,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["ipvgo", "go"])) return false;
@@ -134,7 +131,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Network Crawler",
       path: PATHS.services.daemons.crawler,
-      minHomeRam: 512,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["crawler", "darknet"])) return false;
@@ -144,7 +140,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Darknet Subsystem",
       path: PATHS.services.managers.dnet,
-      minHomeRam: 512,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["dnet", "darknet", "stock"])) return false;
@@ -156,7 +151,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Singularity Dispatcher",
       path: PATHS.app.orchestration.dispatcher,
-      minHomeRam: 512,
+      priority: 10,
       condition: (ns) => {
         const state = loadState(ns);
         if (isManualMode(state)) return false;
@@ -170,7 +165,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Roadmap UI",
       path: PATHS.ui.roadmap,
-      minHomeRam: 32,
       condition: (ns) => {
         const state = loadState(ns);
         return !isModuleDisabled(state, ["ui", "roadmap"]);
@@ -181,7 +175,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Gang Manager",
       path: PATHS.services.managers.gang,
-      minHomeRam: 512,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, "gang")) return false;
@@ -191,7 +184,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Gang UI",
       path: PATHS.ui.gang,
-      minHomeRam: 512,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["gang", "ui"])) return false;
@@ -203,7 +195,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Sleeve Manager",
       path: PATHS.services.managers.sleeve,
-      minHomeRam: 512,
+      priority: 20,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, "sleeve")) return false;
@@ -213,7 +205,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Sleeve UI",
       path: PATHS.ui.sleeve,
-      minHomeRam: 512,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["sleeve", "ui"])) return false;
@@ -225,7 +216,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Corporation Manager",
       path: PATHS.services.managers.corporation,
-      minHomeRam: 2048,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["corporation", "corp"])) return false;
@@ -235,7 +225,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Corporation UI",
       path: PATHS.ui.corporation,
-      minHomeRam: 2048,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["corporation", "corp", "ui"]))
@@ -248,7 +237,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Bladeburner Manager",
       path: PATHS.services.managers.bladeburner,
-      minHomeRam: 256,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, "bladeburner")) return false;
@@ -268,7 +256,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Stanek Manager",
       path: PATHS.services.managers.stanek,
-      minHomeRam: 128,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["stanek", "church"])) return false;
@@ -284,7 +271,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Batch Orchestrator",
       path: PATHS.services.daemons.hackingOrchestrator,
-      minHomeRam: 64,
+      priority: 30,
       condition: (ns) => {
         const state = loadState(ns);
         return !isModuleDisabled(state, ["batcher", "hacking"]);
@@ -295,7 +282,6 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Share Filler",
       path: PATHS.services.daemons.fillShare,
-      minHomeRam: 512,
       condition: (ns) => {
         const state = loadState(ns);
         return !isModuleDisabled(state, ["share", "filler"]);
@@ -304,11 +290,11 @@ export async function main(ns: NS): Promise<void> {
   ];
 
   while (true) {
-    const maxRam = ns.getServerMaxRam("home");
-    const usedRam = ns.getServerUsedRam("home");
-    let freeRam = maxRam - usedRam;
+    const orderedDaemons = [...daemons].sort(
+      (a, b) => (a.priority ?? 100) - (b.priority ?? 100),
+    );
 
-    for (const daemon of daemons) {
+    for (const daemon of orderedDaemons) {
       if (!daemon.path) continue;
 
       const execPath = daemon.path.endsWith(".ts")
@@ -337,17 +323,23 @@ export async function main(ns: NS): Promise<void> {
       }
 
       if (isRunning) continue;
-      if (daemon.minHomeRam && maxRam < daemon.minHomeRam) continue;
 
       const reqRam = ns.getScriptRam(execPath, "home");
+      if (!Number.isFinite(reqRam) || reqRam <= 0) {
+        logger.warn(
+          `Überspringe ${daemon.name}: ungültiger Skript-RAM (${reqRam}).`,
+        );
+        continue;
+      }
 
+      const freeRam =
+        ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
       if (freeRam >= reqRam) {
         const pid = ns.run(execPath, 1, ...args);
         if (pid > 0) {
           logger.success(
             `🚀 Daemon gestartet: ${daemon.name} [PID ${pid} | ${ns.format.ram(reqRam)}]`,
           );
-          freeRam -= reqRam;
         } else {
           logger.error(
             `❌ Fehlgeschlagen: ${daemon.name} konnte nicht gestartet werden.`,
