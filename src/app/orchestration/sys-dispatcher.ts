@@ -164,7 +164,12 @@ function manageMicroservices(
       .getOwnedAugmentations(false)
       .includes("The Blade's Simulacrum");
 
-  if (isBladeburnerActive && !hasSimulacrum && currentMode !== "TRAIN") {
+  if (
+    isBladeburnerActive &&
+    !hasSimulacrum &&
+    currentMode !== "TRAIN" &&
+    currentMode !== "KARMA"
+  ) {
     targetScript = undefined;
   }
 

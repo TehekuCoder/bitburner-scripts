@@ -224,7 +224,9 @@ export function determineStrategy(
 
   const hackExpMult = bnMults.HackExpGain ?? 1;
   const reqDaedalusAugs = Math.floor(30 * (bnMults.DaedalusAugsRequirement ?? 1));
-  const hasGang = currentState?.hasGang || (ns.gang?.inGang() ?? false);
+  const hasGang = ns.gang
+    ? ns.gang.inGang()
+    : (currentState?.hasGang ?? false);
   const redPillOwned = hasRedPill(ns);
   const daedalusRep = player.factions.includes("Daedalus")
     ? ns.singularity.getFactionRep("Daedalus")
@@ -233,6 +235,22 @@ export function determineStrategy(
   const daedalusDone =
     redPillOwned ||
     daedalusRep >= 2_500_000 * (bnMults.AugmentationRepCost ?? 1);
+
+  // Gang unlock takes precedence over optional hacking progression once the
+  // Gang API is available. Joining a gang remains a manual player decision.
+  if (ns.gang && !hasGang && currentKarma > -54000) {
+    const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
+    if (minCombat < 30) {
+      logger?.debug(
+        `[Strategie] Combat zu niedrig für Karma-Grind (${minCombat}/30) ➔ TRAIN`,
+      );
+      return { mode: "TRAIN", targetStat: 30 };
+    }
+    logger?.debug(
+      `[Strategie] Gang-Unlock priorisiert (Karma: ${Math.round(currentKarma)} / -54000) ➔ KARMA`,
+    );
+    return { mode: "KARMA" };
+  }
 
   // 1️⃣ BASIC HACKING LEVELING
   const targetHackLevel = hackExpMult < 0.25 ? 15 : 30;
@@ -269,22 +287,6 @@ export function determineStrategy(
         targetFaction: factionToWorkFor.name as FactionName,
       };
     }
-  }
-
-  // 4️⃣ PHASE 2: KARMA RUSH FÜR GANG-UNLOCK
-  const hasSleeves = (ns.sleeve?.getNumSleeves() ?? 0) > 0;
-  if (!hasGang && currentKarma > -54000 && !hasSleeves) {
-    const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
-    if (minCombat < 30) {
-      logger?.debug(
-        `[Strategie] Combat zu niedrig für Karma-Grind (${minCombat}/30) ➔ TRAIN`,
-      );
-      return { mode: "TRAIN", targetStat: 30 };
-    }
-    logger?.debug(
-      `[Strategie] Gang-Vorbereitung (Karma: ${Math.round(currentKarma)} / -54000) ➔ KARMA`,
-    );
-    return { mode: "KARMA" };
   }
 
   // 5️⃣ PHASE 3: Vor-Daedalus Stat-Grind

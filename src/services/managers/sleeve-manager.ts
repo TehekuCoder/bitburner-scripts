@@ -87,7 +87,7 @@ function checkSleeveGangStatus(ns: NS): ExtendedGangStatus {
   }
 
   const karma = ns.heart.break();
-  const shouldGrindKarma = !inGang && karma > -54000;
+  const shouldGrindKarma = hasGangApi && !inGang && karma > -54000;
 
   return {
     hasSleeves: hasSleevesApi,
@@ -152,6 +152,12 @@ function resolveSleeveAssignment(
 ): SleeveTaskAssignment {
   if (sleeveShock > 0) return { mode: "RECOVERY" };
   if (sleeveSync < 100) return { mode: "SYNCHRO" };
+
+  // Gang unlock is a run-wide priority. Recovery and synchronization remain
+  // first, then usable sleeves commit crime regardless of Bladeburner focus.
+  if (gangStatus.shouldGrindKarma) {
+    return { mode: "CRIME", target: "Homicide" };
+  }
 
   // 1️⃣ CHAOS OVERRIDE: Priorisierte Diplomatie bei hohem Chaos (> 50)
   if (hasBladeburner) {
