@@ -5,6 +5,7 @@ import { PATHS } from "../../infrastructure/runtime/paths.js";
 import {
   getAllServers,
   getWorkerFreeRam,
+  prioritizeHackingWorkers,
 } from "/infrastructure/network/network.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
 import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
@@ -92,14 +93,22 @@ export async function main(ns: NS): Promise<void> {
       lastTargetCheck = now;
     }
 
-    const workerNodes = getAllServers(ns).filter(
-      (s) => ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0,
+    const workerNodes = prioritizeHackingWorkers(ns, getAllServers(ns)).filter(
+      (s) => ns.getServerMaxRam(s) > 0,
     );
 
     execCounter = (execCounter + 1) % 10000;
     let newlyLaunchedThreads = 0;
+    const weakenName = weakenScript.replace(/^.*[\\/]/, "");
+    const inFlight = workerNodes.some((host) =>
+      ns.ps(host).some(
+        (process) =>
+          process.filename.endsWith(weakenName) &&
+          process.args[0] === target,
+      ),
+    );
 
-    for (const node of workerNodes) {
+    for (const node of inFlight ? [] : workerNodes) {
       if (!(await ensureScriptsOnServer(ns, node, [weakenScript]))) continue;
       const freeRam = getWorkerFreeRam(ns, node);
 

@@ -388,13 +388,24 @@ export async function deployWorkerFleet(
     ),
   );
 
-  for (const host of servers) {
+  const prioritizedServers = [...servers].sort((a, b) => {
+    const aHacknet = a.startsWith("hacknet-server-");
+    const bHacknet = b.startsWith("hacknet-server-");
+    if (aHacknet !== bHacknet) return aHacknet ? 1 : -1;
+    return ns.getServerMaxRam(b) - ns.getServerMaxRam(a);
+  });
+  for (const host of prioritizedServers) {
     if (!ns.hasRootAccess(host)) continue;
     if (!(await ensureScriptsOnServer(ns, host, [workerScript]))) continue;
     const freeRam = getWorkerFreeRam(ns, host, "hacking");
     if (freeRam >= scriptRam) pool.push({ host, freeRam });
   }
-  pool.sort((a, b) => b.freeRam - a.freeRam);
+  pool.sort((a, b) => {
+    const aHacknet = a.host.startsWith("hacknet-server-");
+    const bHacknet = b.host.startsWith("hacknet-server-");
+    if (aHacknet !== bHacknet) return aHacknet ? 1 : -1;
+    return b.freeRam - a.freeRam;
+  });
 
   const totalFleetRam = pool.reduce((sum, node) => sum + node.freeRam, 0);
   if (totalFleetRam <= 0) return deployedAny;

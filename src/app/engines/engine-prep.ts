@@ -3,6 +3,7 @@ import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js
 import { PATHS } from "../../infrastructure/runtime/paths.js";
 import {
   getAllServers,
+  prioritizeHackingWorkers,
   getWorkerFreeRam,
 } from "/infrastructure/network/network.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
@@ -46,8 +47,8 @@ export async function main(ns: NS): Promise<void> {
 
     const allNetwork = getAllServers(ns);
 
-    const workerNodes = allNetwork.filter(
-      (s) => ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0,
+    const workerNodes = prioritizeHackingWorkers(ns, allNetwork).filter(
+      (s) => ns.getServerMaxRam(s) > 0,
     );
     const readyWorkerNodes: string[] = [];
     for (const node of workerNodes) {

@@ -3,11 +3,12 @@ import { PATHS } from "/infrastructure/runtime/paths.js";
 import { loadState } from "/infrastructure/state/state.js";
 import {
   getAllRootedServersIncludingPurchased,
+  getShareRamPercent,
   getWorkerFreeRam,
   getWorkerMaxUsableRam,
 } from "/infrastructure/network/network.js";
 import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
-import { SHARE_POWER_SATURATION_CAP } from "/shared/constants/ram-allocation.js";
+import { RAM_ALLOCATION } from "/shared/constants/ram-allocation.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -17,17 +18,13 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     const state = loadState(ns);
     const hosts = getAllRootedServersIncludingPurchased(ns);
-    const sharePower = ns.getSharePower();
-
-    let configuredPercent = 0.95;
+    let configuredPercent: number = RAM_ALLOCATION.shareMaxPercent;
     if (state?.fillerConfig?.shareMaxRamPercent !== undefined) {
       configuredPercent = state.fillerConfig.shareMaxRamPercent;
     } else if (state?.strategy === "REP") {
-      configuredPercent = 0.98;
-    } else if (sharePower >= SHARE_POWER_SATURATION_CAP) {
-      configuredPercent = 0.2;
+      configuredPercent = 0.4;
     }
-    configuredPercent = Math.max(0, Math.min(1, configuredPercent));
+    configuredPercent = getShareRamPercent(ns, configuredPercent);
 
     for (const host of hosts) {
       if (!ns.hasRootAccess(host)) continue;

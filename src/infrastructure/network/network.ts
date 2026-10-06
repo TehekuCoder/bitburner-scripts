@@ -85,6 +85,20 @@ export function getWorkerFreeRam(
   );
 }
 
+export function prioritizeHackingWorkers(
+  ns: NS,
+  servers: string[],
+): string[] {
+  return [...servers]
+    .filter((server) => ns.hasRootAccess(server))
+    .sort((a, b) => {
+      const aHacknet = a.startsWith("hacknet-server-");
+      const bHacknet = b.startsWith("hacknet-server-");
+      if (aHacknet !== bHacknet) return aHacknet ? 1 : -1;
+      return ns.getServerMaxRam(b) - ns.getServerMaxRam(a);
+    });
+}
+
 export function getWorkerMaxUsableRam(
   ns: NS,
   host: string,
@@ -95,6 +109,19 @@ export function getWorkerMaxUsableRam(
   const usableRam = Math.max(0, maxRam - reserve);
   if (!consumer) return usableRam;
   return usableRam * getConsumerRatio(ns, consumer);
+}
+
+export function getShareRamPercent(
+  ns: NS,
+  requestedPercent: number,
+): number {
+  const safePercent = Number.isFinite(requestedPercent)
+    ? Math.max(0, Math.min(1, requestedPercent))
+    : RAM_ALLOCATION.shareMaxPercent;
+
+  return ns.getSharePower() >= SHARE_POWER_SATURATION_CAP
+    ? Math.min(safePercent, RAM_ALLOCATION.shareSaturatedPercent)
+    : safePercent;
 }
 
 function getConsumerRatio(ns: NS, consumer: RamConsumer): number {
@@ -116,12 +143,8 @@ function getConsumerRatio(ns: NS, consumer: RamConsumer): number {
     );
     const requestedShareRatio =
       state?.fillerConfig?.shareMaxRamPercent ??
-      (ns.getSharePower() >= SHARE_POWER_SATURATION_CAP
-        ? RAM_ALLOCATION.shareSaturatedPercent
-        : RAM_ALLOCATION.shareMaxPercent);
-    const safeShareRatio = Number.isFinite(requestedShareRatio)
-      ? requestedShareRatio
-      : RAM_ALLOCATION.shareMaxPercent;
+      RAM_ALLOCATION.shareMaxPercent;
+    const safeShareRatio = getShareRamPercent(ns, requestedShareRatio);
     const shareRatio = shareDisabled
       ? 0
       : Math.max(

@@ -3,7 +3,10 @@ import { DispatchResult, JitEvent } from "/shared/types/batcher.js";
 import { WorkerNode } from "/shared/types/network.js";
 import { PATH_HACK, PATH_GROW, PATH_WEAKEN } from "./batcher";
 import { getUsableThreads } from "../../domain/hacking/batcher-helpers";
-import { getWorkerFreeRam } from "../network/network";
+import {
+  getWorkerFreeRam,
+  prioritizeHackingWorkers,
+} from "../network/network";
 
 
 const SCRIPT_RAM_MAP: Record<string, number> = {
@@ -24,7 +27,7 @@ export function invalidateMaxRamCache(): void {
 export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
   const nodes: WorkerNode[] = [];
 
-  for (const s of servers) {
+  for (const s of prioritizeHackingWorkers(ns, servers)) {
     if (!ns.hasRootAccess(s)) continue;
 
     const now = Date.now();
@@ -51,7 +54,12 @@ export function getAvailableWorkers(ns: NS, servers: string[]): WorkerNode[] {
     }
   }
 
-  return nodes.sort((a, b) => b.freeRam - a.freeRam);
+  return nodes.sort((a, b) => {
+    const aHacknet = a.hostname.startsWith("hacknet-server-");
+    const bHacknet = b.hostname.startsWith("hacknet-server-");
+    if (aHacknet !== bHacknet) return aHacknet ? 1 : -1;
+    return b.freeRam - a.freeRam;
+  });
 }
 
 /** Killt gezielt Worker-Payloads auf allen Servern */

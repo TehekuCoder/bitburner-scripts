@@ -1,8 +1,11 @@
 import { NS } from "@ns";
 import { LoggerClient as Logger } from "/infrastructure/logging/logger-client.js";
 import { PATHS } from "../../infrastructure/runtime/paths.js";
-import { getAllServers } from "/infrastructure/network/network.js";
-import { getWorkerFreeRam } from "/infrastructure/network/network.js";
+import {
+  getAllServers,
+  getWorkerFreeRam,
+  prioritizeHackingWorkers,
+} from "/infrastructure/network/network.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
 import { formatPercent, loadBnMults } from "/lib/utils.js";
 import {
@@ -46,8 +49,8 @@ export async function main(ns: NS): Promise<void> {
 
     // 1. Netzwerk aktualisieren
     const allNetwork = getAllServers(ns);
-    const workerNodes = allNetwork.filter(
-      (s) => ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0,
+    const workerNodes = prioritizeHackingWorkers(ns, allNetwork).filter(
+      (s) => ns.getServerMaxRam(s) > 0,
     );
 
     // 2. Ziel-Zustand auslesen
@@ -95,6 +98,21 @@ export async function main(ns: NS): Promise<void> {
       batcherProgress: `SHOTGUN (${moneyPct}% | Sec: +${secDelta})`,
     });
 
+    const scriptNames = Object.values(scripts).map((script) =>
+      script.replace(/^.*[\\/]/, ""),
+    );
+    const inFlight = workerNodes.some((host) =>
+      ns.ps(host).some(
+        (process) =>
+          process.args[0] === target &&
+          scriptNames.some((name) => process.filename.endsWith(name)),
+      ),
+    );
+    if (inFlight) {
+      await ns.sleep(2000);
+      continue;
+    }
+
     // 3. Dauerfeuer-Welle starten
     await deployShotgunWave(
       ns,
@@ -133,6 +151,24 @@ async function deployShotgunWave(
   let totalGrowThreads = 0;
   let totalWeakenThreads = 0;
   let activeNodes = 0;
+  let repairWeakenRemaining = getWeakenThreadsForSecurity(
+    Math.max(
+      0,
+      ns.getServerSecurityLevel(target) -
+        ns.getServerMinSecurityLevel(target) -
+        0.5,
+    ),
+    weakenEffectPerThread,
+  );
+  const repairMoney = ns.getServerMoneyAvailable(target);
+  const repairMaxMoney = ns.getServerMaxMoney(target);
+  const analyzedRepairGrowth =
+    repairMoney > 0 && repairMaxMoney > 0
+      ? ns.growthAnalyze(target, (repairMaxMoney * 0.92) / repairMoney)
+      : 0;
+  let repairGrowRemaining = Number.isFinite(analyzedRepairGrowth)
+    ? Math.max(0, Math.ceil(analyzedRepairGrowth))
+    : Number.MAX_SAFE_INTEGER;
 
   for (const node of workerNodes) {
     if (!(await ensureScriptsOnServer(ns, node, Object.values(scripts)))) {
@@ -147,28 +183,30 @@ async function deployShotgunWave(
     let wThreads = 0;
 
     if (isRepairing) {
-      const growPerWeaken = Math.max(
-        1,
-        Math.floor(weakenEffectPerThread / GROW_SECURITY_PER_THREAD),
-      );
-      const weakenPerGrow =
-        weakenEffectPerThread < GROW_SECURITY_PER_THREAD
-          ? Math.ceil(GROW_SECURITY_PER_THREAD / weakenEffectPerThread)
-          : 0;
-      const unitGrowThreads = weakenPerGrow > 0 ? 1 : growPerWeaken;
-      const unitWeakenThreads =
-        weakenPerGrow > 0 ? weakenPerGrow : 1;
-      const unitCost =
-        unitGrowThreads * gCost + unitWeakenThreads * wCost;
-      const units = Math.floor(freeRam / unitCost);
-
-      if (units > 0) {
-        gThreads += units * unitGrowThreads;
-        wThreads += units * unitWeakenThreads;
-        freeRam -= units * unitCost;
+      const securityDelta =
+        ns.getServerSecurityLevel(target) -
+        ns.getServerMinSecurityLevel(target);
+      if (securityDelta > 0.5) {
+        wThreads = Math.min(
+          Math.floor(freeRam / wCost),
+          repairWeakenRemaining,
+        );
+      } else {
+        const growWeakenThreads = getWeakenThreadsForSecurity(
+          GROW_SECURITY_PER_THREAD,
+          weakenEffectPerThread,
+        );
+        const unitCost = gCost + growWeakenThreads * wCost;
+        const units =
+          unitCost > 0
+            ? Math.min(
+                repairGrowRemaining,
+                Math.floor(freeRam / unitCost),
+              )
+            : 0;
+        gThreads = units;
+        wThreads = units * growWeakenThreads;
       }
-
-      wThreads += Math.floor(freeRam / wCost);
     } else {
       const unitWeakenThreads = getWeakenThreadsForSecurity(
         HACK_SECURITY_PER_THREAD + 5 * GROW_SECURITY_PER_THREAD,
@@ -221,6 +259,17 @@ async function deployShotgunWave(
       totalGrowThreads += gThreads;
       totalWeakenThreads += wThreads;
       activeNodes++;
+      if (isRepairing) {
+        if (
+          ns.getServerSecurityLevel(target) -
+            ns.getServerMinSecurityLevel(target) >
+          0.5
+        ) {
+          repairWeakenRemaining -= wThreads;
+        } else {
+          repairGrowRemaining -= gThreads;
+        }
+      }
     } else {
       for (const pid of launched) {
         if (pid > 0) ns.kill(pid);

@@ -8,6 +8,7 @@ import {
   getAllServers,
   getWorkerFreeRam,
   getWorkerMaxUsableRam,
+  prioritizeHackingWorkers,
 } from "/infrastructure/network/network.js";
 import { patchBatcherState } from "/infrastructure/state/state.js";
 import { formatPercent, loadBnMults } from "/lib/utils.js";
@@ -94,8 +95,8 @@ export async function main(ns: NS): Promise<void> {
     const now = Date.now();
     // Netz-Infektion und Server-List-Update alle 15 Sekunden
     if (now - lastNetworkScan > 15_000 || workerNodes.length === 0) {
-      workerNodes = getAllServers(ns).filter(
-        (s) => ns.hasRootAccess(s) && ns.getServerMaxRam(s) > 0,
+      workerNodes = prioritizeHackingWorkers(ns, getAllServers(ns)).filter(
+        (s) => ns.getServerMaxRam(s) > 0,
       );
       const scanDuration = logger.timeEnd("network-scan", "DEBUG", target);
 
@@ -209,12 +210,57 @@ async function deployProtoWorkers(
 
   const hackAnalyzeResult = ns.hackAnalyze(target);
   const maxHackThreads =
-    hackAnalyzeResult > 0 ? Math.floor(0.3 / hackAnalyzeResult) : 10;
+    hackAnalyzeResult > 0 ? Math.max(1, Math.floor(0.1 / hackAnalyzeResult)) : 1;
+  let remainingHackThreads = mode === "HARVEST" ? maxHackThreads : 0;
+  const analyzedGrowThreads =
+    mode === "GROW" && moneyRatio > 0
+      ? ns.growthAnalyze(target, 1 / moneyRatio)
+      : Number.POSITIVE_INFINITY;
+  let remainingGrowThreads =
+    mode === "GROW"
+      ? Number.isFinite(analyzedGrowThreads)
+        ? Math.max(1, Math.ceil(analyzedGrowThreads))
+        : Number.MAX_SAFE_INTEGER
+      : 0;
+  let remainingWeakenThreads =
+    mode === "WEAKEN"
+      ? getWeakenThreadsForSecurity(
+          Math.max(0, secDelta - 0.5),
+          weakenEffectPerThread,
+        )
+      : 0;
+  const hackPercent = Math.min(0.99, Math.max(0, hackAnalyzeResult));
+  const analyzedGrowPerHack =
+    hackPercent > 0 && hackPercent < 1
+      ? ns.growthAnalyze(target, 1 / (1 - hackPercent))
+      : 0;
+  const growThreadsPerHack =
+    Number.isFinite(analyzedGrowPerHack) && analyzedGrowPerHack > 0
+      ? Math.ceil(analyzedGrowPerHack)
+      : 0;
 
   let launchedHack = 0;
   let launchedGrow = 0;
   let launchedWeaken = 0;
   let activeWorkers = 0;
+
+  const scriptNames = [hackScript, growScript, weakenScript].map((script) =>
+    script.replace(/^.*[\\/]/, ""),
+  );
+  const inFlight = workerNodes.flatMap((node) =>
+    ns.ps(node).filter(
+      (proc) =>
+        proc.args[0] === target &&
+        scriptNames.some((name) => proc.filename.endsWith(name)),
+    ),
+  );
+  if (inFlight.length > 0) {
+    logger.debug(
+      `Warte auf laufende ${target}-Aktionen (H:${inFlight.filter((p) => p.filename.endsWith(scriptNames[0])).reduce((sum, p) => sum + p.threads, 0)} G:${inFlight.filter((p) => p.filename.endsWith(scriptNames[1])).reduce((sum, p) => sum + p.threads, 0)} W:${inFlight.filter((p) => p.filename.endsWith(scriptNames[2])).reduce((sum, p) => sum + p.threads, 0)} Threads).`,
+      target,
+    );
+    return;
+  }
 
   for (const node of workerNodes) {
     if (
@@ -235,11 +281,15 @@ async function deployProtoWorkers(
     let nodeUsed = false;
 
     if (mode === "WEAKEN") {
-      const threads = Math.floor(freeRam / wCost);
+      const threads = Math.min(
+        Math.floor(freeRam / wCost),
+        remainingWeakenThreads,
+      );
       if (threads > 0) {
         const pid = ns.exec(weakenScript, node, threads, target, 0, runId);
         if (pid > 0) {
           launchedWeaken += threads;
+          remainingWeakenThreads -= threads;
           nodeUsed = true;
         }
       }
@@ -249,6 +299,7 @@ async function deployProtoWorkers(
           (gCost +
             (GROW_SECURITY_PER_THREAD / weakenEffectPerThread) * wCost),
       );
+      gThreads = Math.min(gThreads, remainingGrowThreads);
       let wThreads = getWeakenThreadsForSecurity(
         gThreads * GROW_SECURITY_PER_THREAD,
         weakenEffectPerThread,
@@ -270,6 +321,7 @@ async function deployProtoWorkers(
         if (growPid > 0 && (wThreads === 0 || weakenPid > 0)) {
           launchedGrow += gThreads;
           launchedWeaken += wThreads;
+          remainingGrowThreads -= gThreads;
           nodeUsed = true;
         } else {
           if (growPid > 0) ns.kill(growPid);
@@ -277,36 +329,19 @@ async function deployProtoWorkers(
         }
       }
     } else {
-      let hThreads = Math.min(
-        Math.floor((freeRam * 0.15) / hCost),
-        Math.max(1, maxHackThreads),
+      const weakenPerHackUnit = getWeakenThreadsForSecurity(
+        HACK_SECURITY_PER_THREAD +
+          growThreadsPerHack * GROW_SECURITY_PER_THREAD,
+        weakenEffectPerThread,
       );
-      let gThreads = 0;
-      let wThreads = 0;
-      while (hThreads > 0) {
-        const hackSecurity = hThreads * HACK_SECURITY_PER_THREAD;
-        const remainingForGrowAndWeaken =
-          freeRam - hThreads * hCost -
-          getWeakenThreadsForSecurity(hackSecurity, weakenEffectPerThread) *
-            wCost;
-        gThreads = Math.max(
-          0,
-          Math.floor(
-            remainingForGrowAndWeaken /
-              (gCost +
-                (GROW_SECURITY_PER_THREAD / weakenEffectPerThread) * wCost),
-          ),
-        );
-        wThreads = getWeakenThreadsForSecurity(
-          hackSecurity + gThreads * GROW_SECURITY_PER_THREAD,
-          weakenEffectPerThread,
-        );
-        if (hThreads * hCost + gThreads * gCost + wThreads * wCost <= freeRam) {
-          break;
-        }
-        if (gThreads > 0) gThreads--;
-        else hThreads--;
-      }
+      const unitRam =
+        hCost + growThreadsPerHack * gCost + weakenPerHackUnit * wCost;
+      const hThreads =
+        growThreadsPerHack > 0 && Number.isFinite(unitRam) && unitRam > 0
+          ? Math.min(remainingHackThreads, Math.floor(freeRam / unitRam))
+          : 0;
+      const gThreads = hThreads * growThreadsPerHack;
+      const wThreads = hThreads * weakenPerHackUnit;
 
       const pids: number[] = [];
       if (hThreads > 0) {
@@ -322,6 +357,7 @@ async function deployProtoWorkers(
         launchedHack += hThreads;
         launchedGrow += gThreads;
         launchedWeaken += wThreads;
+        remainingHackThreads -= hThreads;
         nodeUsed = true;
       } else {
         for (const pid of pids) {
