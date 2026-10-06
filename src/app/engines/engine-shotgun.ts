@@ -162,9 +162,12 @@ async function deployShotgunWave(
   );
   const repairMoney = ns.getServerMoneyAvailable(target);
   const repairMaxMoney = ns.getServerMaxMoney(target);
+  const repairTargetMoney = repairMaxMoney * 0.92;
+  const repairGrowthMultiplier =
+    repairTargetMoney / Math.max(1, repairMoney);
   const analyzedRepairGrowth =
-    repairMoney > 0 && repairMaxMoney > 0
-      ? ns.growthAnalyze(target, (repairMaxMoney * 0.92) / repairMoney)
+    repairMaxMoney > 0 && repairTargetMoney > repairMoney
+      ? ns.growthAnalyze(target, Math.max(1, repairGrowthMultiplier))
       : 0;
   let repairGrowRemaining = Number.isFinite(analyzedRepairGrowth)
     ? Math.max(0, Math.ceil(analyzedRepairGrowth))
