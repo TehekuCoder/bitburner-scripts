@@ -2,13 +2,10 @@ import { NS, BitNodeMultipliers } from "@ns";
 import { loadBnMults, hasSingularity, hasBladeburner } from "/lib/utils";
 
 export type BladeburnerExecutionMode = "PARALLEL" | "BLADEBURNER_ONLY" | "CLASSIC_ONLY";
-export type SleeveBladeburnerRole = "FACTION_REP" | "BLADEBURNER_CONTRACTS" | "BLADEBURNER_DIPLOMACY" | "INFILTRATION";
 
 export interface BladeburnerDecision {
   executionMode: BladeburnerExecutionMode;
   shouldOverrideFactionGrind: boolean;
-  recommendedSleeveRole: SleeveBladeburnerRole;
-  bladeburnerEfficiencyScore: number;
 }
 
 /**
@@ -33,10 +30,9 @@ export function evaluateBladeburnerPreference(ns: NS): BladeburnerDecision {
     return {
       executionMode: "CLASSIC_ONLY",
       shouldOverrideFactionGrind: false,
-      recommendedSleeveRole: "FACTION_REP",
-      bladeburnerEfficiencyScore: 0,
     };
   }
+
 
   const bnMults = loadBnMults(ns);
   const { bbScore, factionScore } = calculateEfficiencyRatio(bnMults);
@@ -50,16 +46,9 @@ export function evaluateBladeburnerPreference(ns: NS): BladeburnerDecision {
 
   // 1️⃣ PARALLELER MODUS (Simulacrum vorhanden)
   if (hasSimulacrum) {
-    // Wenn BB im BitNode extrem stark ist, unterstützen Sleeves Bladeburner, sonst Factions
-    const sleeveRole: SleeveBladeburnerRole = bbScore >= factionScore 
-      ? "BLADEBURNER_CONTRACTS" 
-      : "FACTION_REP";
-
     return {
       executionMode: "PARALLEL",
       shouldOverrideFactionGrind: false,
-      recommendedSleeveRole: sleeveRole,
-      bladeburnerEfficiencyScore: bbScore,
     };
   }
 
@@ -71,16 +60,11 @@ export function evaluateBladeburnerPreference(ns: NS): BladeburnerDecision {
     return {
       executionMode: "BLADEBURNER_ONLY",
       shouldOverrideFactionGrind: true,
-      // Main-Char macht Bladeburner -> Sleeves müssen den Faction-Rep-Grind übernehmen
-      recommendedSleeveRole: "FACTION_REP",
-      bladeburnerEfficiencyScore: bbScore,
     };
   }
 
   return {
     executionMode: "CLASSIC_ONLY",
     shouldOverrideFactionGrind: false,
-    recommendedSleeveRole: "FACTION_REP",
-    bladeburnerEfficiencyScore: bbScore,
   };
 }

@@ -148,7 +148,7 @@ function resolveSleeveAssignment(
   assignedCompanies: Set<string>,
   hasBladeburner: boolean,
   isBlackOpsActive: boolean,
-  bbDecision = evaluateBladeburnerPreference(ns),
+  bbDecision: ReturnType<typeof evaluateBladeburnerPreference>,
 ): SleeveTaskAssignment {
   if (sleeveShock > 0) return { mode: "RECOVERY" };
   if (sleeveSync < 100) return { mode: "SYNCHRO" };
@@ -258,21 +258,24 @@ function resolveSleeveAssignment(
         }
         break;
       }
+      case "BLADEBURNER":
+        break;
     }
   }
 
   // 4️⃣ STRATEGIE-REAKTION: BLADEBURNER (Mit BN6/BN7 Fokus)
   const isBbNode = isBladeburnerFocusedNode(ns);
-  const forceBladeburnerFocus = isBbNode || options.strategy === "BLADEBURNER";
+  const forceBladeburnerFocus =
+    isBbNode ||
+    options.strategy === "BLADEBURNER" ||
+    options.globalMode === "BLADEBURNER";
 
   if (
     (forceBladeburnerFocus || bbDecision.shouldOverrideFactionGrind) &&
     hasBladeburner
   ) {
-    // 🛑 In BN6/BN7 oder explizitem BLADEBURNER-Modus ignorieren wir den FACTION_REP Fallback!
     if (
       !forceBladeburnerFocus &&
-      bbDecision.recommendedSleeveRole === "FACTION_REP" &&
       availableFactions.length > 0
     ) {
       return {
@@ -282,7 +285,8 @@ function resolveSleeveAssignment(
       };
     }
 
-    // Fall B: Sleeves unterstützen Bladeburner voll und ganz
+    // Simulacrum does not make Bladeburner the default sleeve priority.
+    // Bladeburner support is reserved for explicit focus and urgent overrides.
     const bType = options.targetBladeburnerType ?? "General";
     let bAction = options.targetBladeburnerAction;
 
@@ -383,9 +387,10 @@ function manageAllSleeves(
   const bbDecision = evaluateBladeburnerPreference(ns);
   const isBbAssistActive =
     isBlackOpsActive ||
-    (hasBladeburner && (isBbNode || options.strategy === "BLADEBURNER")) ||
-    (options.strategy === "BLADEBURNER" &&
-      bbDecision.recommendedSleeveRole !== "FACTION_REP");
+    (hasBladeburner &&
+      (isBbNode ||
+        options.strategy === "BLADEBURNER" ||
+        options.globalMode === "BLADEBURNER"));
 
   // 1a. Bestehende valide Fraktions-Tasks beibehalten (wird im Bladeburner-Fokus übersprungen)
   for (const sleeve of statuses) {
@@ -441,6 +446,7 @@ function manageAllSleeves(
       assignedCompanies,
       hasBladeburner,
       isBlackOpsActive,
+      bbDecision,
     );
 
     if (assignment.mode === "FACTION" && assignment.target) {
