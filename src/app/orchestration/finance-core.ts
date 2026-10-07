@@ -46,6 +46,7 @@ const SINGULARITY_ACTION_RAM: Record<string, number> = {
   "player-purchase-aug": 5,
   "player-purchase-aug-batch": 5,
   "player-purchase-nfg": 7.5,
+  "player-donate-faction": 5,
   "player-install-augs": 5,
 };
 const ACTION_BASE_RAM = 1.6;
@@ -312,6 +313,31 @@ export async function main(ns: NS): Promise<void> {
     const allRequests: PurchaseRequest[] = [];
     for (const cache of evaluatorRequestCache.values()) {
       allRequests.push(...cache.requests.values());
+    }
+    const purchasedAugs =
+      ns.singularity?.getOwnedAugmentations(true) ?? [];
+    const installedAugs =
+      ns.singularity?.getOwnedAugmentations(false) ?? [];
+    const isAugmentationMode = purchasedAugs.some(
+      (aug) => !installedAugs.includes(aug),
+    );
+
+    if (isAugmentationMode) {
+      const installRequest = allRequests.find(
+        (request) => request.action.args[0] === "player-install-augs",
+      );
+      const allowedCategories = new Set<PurchaseCategory>([
+        "HOME_SERVER",
+        "PLAYER_AUG",
+      ]);
+      const filteredRequests = allRequests.filter((request) =>
+        allowedCategories.has(request.category),
+      );
+      allRequests.splice(
+        0,
+        allRequests.length,
+        ...(installRequest ? [installRequest] : filteredRequests),
+      );
     }
 
     // Status der System-Komponenten abfragen

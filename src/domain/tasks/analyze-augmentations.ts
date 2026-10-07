@@ -27,6 +27,7 @@ const ALL_KNOWN_FACTIONS: FactionName[] = [
   "Illuminati",
   "The Covenant",
   "Bladeburners",
+  "Church of the Machine God",
   "ECorp",
   "MegaCorp",
   "Bachman & Associates",
