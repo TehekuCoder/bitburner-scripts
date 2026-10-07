@@ -2,6 +2,27 @@ import { NS, Server } from "@ns";
 import { BatchStrategy } from "/shared/types/batcher";
 import { loadBnMults } from "/lib/utils";
 import { getAllServers as getNetworkServers } from "/infrastructure/network/network";
+import { PATHS } from "/infrastructure/runtime/paths";
+import {
+  GROW_SECURITY_PER_THREAD,
+  HACK_SECURITY_PER_THREAD,
+  getWeakenEffectPerThread,
+  getWeakenThreadsForSecurity,
+} from "/domain/hacking/weaken";
+
+const BATCH_HACK_FRACTION = 0.1;
+const MAX_HACK_FRACTION = 0.9;
+const DEFAULT_SCRIPT_RAM = {
+  hack: 1.7,
+  grow: 1.75,
+  weaken: 1.75,
+  work: 1.7,
+};
+
+function getScriptRam(ns: NS, script: string, fallback: number): number {
+  const ram = ns.getScriptRam(script, "home");
+  return Number.isFinite(ram) && ram > 0 ? ram : fallback;
+}
 
 export interface TargetScore {
   hostname: string;
@@ -26,18 +47,40 @@ export function evaluateTargets(
   const purchasedServers = new Set(ns.cloud.getServerNames());
   const targets: TargetScore[] = [];
 
-  let serverGrowthMult = 1.0;
-  let scriptHackMoney = 1.0;
   let scriptHackMoneyGain = 1.0;
+  let serverWeakenRate = 1.0;
 
   try {
     const bnMults = loadBnMults(ns);
-    serverGrowthMult = bnMults.ServerGrowthRate ?? 1.0;
-    scriptHackMoney = bnMults.ScriptHackMoney ?? 1.0;
     scriptHackMoneyGain = bnMults.ScriptHackMoneyGain ?? 1.0;
+    serverWeakenRate = bnMults.ServerWeakenRate ?? 1.0;
   } catch {
     // Fallback BitNode 1
   }
+
+  const weakenEffect = getWeakenEffectPerThread(serverWeakenRate);
+  if (weakenEffect <= 0) return targets;
+
+  const hackRam = getScriptRam(
+    ns,
+    PATHS.services.payloads.hack,
+    DEFAULT_SCRIPT_RAM.hack,
+  );
+  const growRam = getScriptRam(
+    ns,
+    PATHS.services.payloads.grow,
+    DEFAULT_SCRIPT_RAM.grow,
+  );
+  const weakenRam = getScriptRam(
+    ns,
+    PATHS.services.payloads.weaken,
+    DEFAULT_SCRIPT_RAM.weaken,
+  );
+  const workRam = getScriptRam(
+    ns,
+    PATHS.services.payloads.work,
+    DEFAULT_SCRIPT_RAM.work,
+  );
 
   for (const host of allServers) {
     if (
@@ -57,8 +100,11 @@ export function evaluateTargets(
     const minDiff = server.minDifficulty ?? 1;
     const curDiff = server.hackDifficulty ?? 100;
 
-    let weakenTime = 0;
-    let chance = 0;
+    let hackTime: number;
+    let growTime: number;
+    let weakenTime: number;
+    let hackPercent: number;
+    let chance: number;
 
     if (ns.formulas?.hacking) {
       const simulatedServer: Server = {
@@ -66,11 +112,17 @@ export function evaluateTargets(
         hackDifficulty: minDiff,
         moneyAvailable: maxMoney,
       };
+      hackTime = ns.formulas.hacking.hackTime(simulatedServer, player);
+      growTime = ns.formulas.hacking.growTime(simulatedServer, player);
       weakenTime = ns.formulas.hacking.weakenTime(simulatedServer, player);
       chance = ns.formulas.hacking.hackChance(simulatedServer, player);
+      hackPercent = ns.formulas.hacking.hackPercent(simulatedServer, player);
     } else {
       const currentWeakenTime = ns.getWeakenTime(host);
-      weakenTime = currentWeakenTime * ((minDiff + 50) / (curDiff + 50));
+      const difficultyRatio = (minDiff + 50) / (curDiff + 50);
+      hackTime = ns.getHackTime(host) * difficultyRatio;
+      growTime = ns.getGrowTime(host) * difficultyRatio;
+      weakenTime = currentWeakenTime * difficultyRatio;
 
       const reqHacking = Math.max(1, reqLevel);
       const skillMult = Math.max(
@@ -79,20 +131,83 @@ export function evaluateTargets(
       );
       const secMult = (100 - minDiff) / 100;
       chance = Math.min(1.0, Math.max(0.01, skillMult * secMult));
+      hackPercent = ns.hackAnalyze(host);
     }
 
-    let score = 0;
-
-    if (strategy === "WORKER") {
-      const moneyFactor = maxMoney * scriptHackMoney * scriptHackMoneyGain;
-      score = (moneyFactor * chance) / Math.max(1, weakenTime / 1000);
-    } else {
-      const effectiveGrowth = (server.serverGrowth ?? 1) * serverGrowthMult;
-      score =
-        ((maxMoney * (effectiveGrowth / 100) * scriptHackMoneyGain) /
-          Math.max(1, weakenTime / 1000)) *
-        Math.pow(chance, 2);
+    if (
+      !Number.isFinite(hackTime) ||
+      !Number.isFinite(growTime) ||
+      !Number.isFinite(weakenTime) ||
+      hackTime <= 0 ||
+      growTime <= 0 ||
+      weakenTime <= 0 ||
+      !Number.isFinite(chance) ||
+      chance <= 0 ||
+      !Number.isFinite(hackPercent) ||
+      hackPercent <= 0
+    ) {
+      continue;
     }
+
+    const maxHackThreads = Math.max(
+      1,
+      Math.floor(MAX_HACK_FRACTION / hackPercent),
+    );
+    const hackThreads =
+      strategy === "WORKER"
+        ? 1
+        : Math.max(
+            1,
+            Math.min(
+              maxHackThreads,
+              Math.floor(BATCH_HACK_FRACTION / hackPercent),
+            ),
+          );
+    const stolenFraction = Math.min(
+      MAX_HACK_FRACTION,
+      hackThreads * hackPercent,
+    );
+    const postHackMoney = Math.max(1, maxMoney * (1 - stolenFraction));
+    const postHackServer: Server = {
+      ...server,
+      hackDifficulty: minDiff,
+      moneyAvailable: postHackMoney,
+    };
+
+    const rawGrowThreads = ns.formulas?.hacking
+      ? ns.formulas.hacking.growThreads(postHackServer, player, maxMoney)
+      : ns.growthAnalyze(host, maxMoney / postHackMoney);
+    if (!Number.isFinite(rawGrowThreads) || rawGrowThreads <= 0) continue;
+
+    const growThreads = Math.ceil(rawGrowThreads);
+    const weaken1Threads = getWeakenThreadsForSecurity(
+      hackThreads * HACK_SECURITY_PER_THREAD,
+      weakenEffect,
+    );
+    const weaken2Threads = getWeakenThreadsForSecurity(
+      growThreads * GROW_SECURITY_PER_THREAD,
+      weakenEffect,
+    );
+    if (!Number.isFinite(weaken1Threads + weaken2Threads)) continue;
+
+    const expectedProfit =
+      maxMoney * stolenFraction * chance * scriptHackMoneyGain;
+    const ramSeconds =
+      strategy === "WORKER"
+        ? (hackThreads * hackTime +
+            chance * growThreads * growTime +
+            chance * (weaken1Threads + weaken2Threads) * weakenTime) *
+          workRam
+        : (hackThreads * hackRam * hackTime +
+            weaken1Threads * weakenRam * weakenTime +
+            growThreads * growRam * growTime +
+            weaken2Threads * weakenRam * weakenTime);
+    const score =
+      Number.isFinite(expectedProfit) &&
+      Number.isFinite(ramSeconds) &&
+      ramSeconds > 0
+        ? (expectedProfit * 1000) / ramSeconds
+        : 0;
 
     targets.push({
       hostname: host,
@@ -180,6 +295,14 @@ export function selectBestTarget(
   const effectiveMargin = needsPrep
     ? (options.switchMargin ?? 1.15) + 0.25
     : (options.switchMargin ?? 1.15);
+
+  if (currentTargetEntry.score <= 0 && topTarget.score > 0) {
+    return {
+      target: topTarget.hostname,
+      hasChanged: true,
+      reason: `Wechsel zu ${topTarget.hostname}: aktuelles Ziel hat keinen positiven Ertragsscore.`,
+    };
+  }
 
   if (topTarget.score > currentTargetEntry.score * effectiveMargin) {
     return {
