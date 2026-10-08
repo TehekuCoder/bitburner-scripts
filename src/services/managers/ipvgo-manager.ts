@@ -44,11 +44,13 @@ export async function main(ns: NS): Promise<void> {
       const validMoves = ns.go.analysis.getValidMoves();
       const board = ns.go.getBoardState();
       const liberties = ns.go.analysis.getLiberties();
+      const playerColor = "X";
 
       const move = NetburnerHeuristics.getBestMove(
         validMoves,
         board,
         liberties,
+        playerColor,
       );
 
       // SF14.2 Cheat-Anwendung bei 100% Erfolgschance
@@ -60,6 +62,7 @@ export async function main(ns: NS): Promise<void> {
           board,
           liberties,
           move,
+          playerColor,
         );
 
         if (secondMove) {
