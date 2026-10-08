@@ -10,6 +10,7 @@ import {
   isCorporationViable,
   isStockViable,
 } from "/lib/utils.js";
+import { loadState } from "/infrastructure/state/state.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -108,7 +109,10 @@ export async function main(ns: NS): Promise<void> {
     if (
       hasCorporation(ns) &&
       !ns.corporation.hasCorporation() &&
-      isCorporationViable(ns)
+      isCorporationViable(ns) &&
+      !loadState(ns)?.disabledModules?.some(
+        (module) => module === "corporation" || module === "corp",
+      )
     ) {
       await runAndWait(PATHS.domain.evaluators.purchase.corporation);
     }

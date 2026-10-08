@@ -124,7 +124,9 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
         "INFO",
       );
 
+      let offerAcceptanceAttempted = false;
       if (funds >= this.config.targetOffer) {
+        offerAcceptanceAttempted = true;
         if (corp.acceptInvestmentOffer()) {
           log(
             `Investment von $${ns.format.number(funds)} erfolgreich angenommen!`,
@@ -142,22 +144,33 @@ export class InvestorPhaseHandler implements CorpPhaseHandler {
           // Dynamischer Plateau-Akzeptanzwert (80% des Zielangebots)
           const minAcceptable = this.config.targetOffer * 0.8;
 
-          if (funds >= minAcceptable && corp.acceptInvestmentOffer()) {
+          if (!offerAcceptanceAttempted && funds >= minAcceptable) {
+            offerAcceptanceAttempted = true;
+            if (corp.acceptInvestmentOffer()) {
+              log(
+                `Ziel $${ns.format.number(this.config.targetOffer)} nicht erreicht, aber Plateau bei $${ns.format.number(funds)} erfolgreich angenommen!`,
+                "SUCCESS",
+              );
+              this.resetState(ns);
+              return this.config.nextPhase;
+            }
+          }
+
+          if (!offerAcceptanceAttempted && corp.acceptInvestmentOffer()) {
             log(
-              `Ziel $${ns.format.number(this.config.targetOffer)} nicht erreicht, aber Plateau bei $${ns.format.number(funds)} erfolgreich angenommen!`,
-              "SUCCESS",
+              `Angebot blieb nach 3 Profit-Spikes unter dem Ziel. Nehme $${ns.format.number(funds)} an, um mit der Corporation fortzufahren (Bestwert: $${ns.format.number(this.maxOfferSeen)}).`,
+              "WARN",
             );
             this.resetState(ns);
             return this.config.nextPhase;
           }
 
-          const fallback = this.config.fallbackPhase ?? ctx.currentPhase;
           log(
-            `Angebot stagnierte bei $${ns.format.number(funds)}. Kehre zu ${fallback} zurück...`,
+            `Investitionsangebot von $${ns.format.number(funds)} konnte nach 3 Profit-Spikes nicht angenommen werden. Prüfe es erneut, ohne weitere Spikes zu starten.`,
             "WARN",
           );
-          this.resetState(ns);
-          return fallback;
+          this.sellTicks = 0;
+          return ctx.currentPhase;
         }
 
         log(
