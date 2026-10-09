@@ -12,7 +12,6 @@ export async function main(ns: NS): Promise<void> {
     const state = loadStrategyState(ns);
     const mode = (state?.strategy || "IDLE") as string;
 
-    // 🟢 HIER: "Cloud_RUSH" zur Whitelist hinzugefügt!
     if (
       mode !== "CRIME" &&
       mode !== "MONEY" &&
@@ -45,14 +44,13 @@ export async function main(ns: NS): Promise<void> {
 
       for (const crime of crimes) {
         const crimeStats = sing.getCrimeStats(crime);
-        if (crimeStats.karma >= 0) continue;
-
+        if (crimeStats.karma <= 0) continue;
         const chance = sing.getCrimeChance(crime);
         if (chance < MIN_SUCCESS_CHANCE) continue;
 
         const durationSeconds = crimeStats.time / 1000;
         const karmaPerSecond =
-          (-crimeStats.karma * chance) / durationSeconds;
+          (crimeStats.karma * chance) / durationSeconds;
 
         if (karmaPerSecond > maxKarmaPerSecond) {
           maxKarmaPerSecond = karmaPerSecond;
@@ -72,6 +70,7 @@ export async function main(ns: NS): Promise<void> {
         const durationSeconds = crimeStats.time / 1000;
         const expectedMoney = crimeStats.money * chance;
         const moneyPerSecond = expectedMoney / durationSeconds;
+
 
         if (moneyPerSecond > maxMoneyPerSecond) {
           maxMoneyPerSecond = moneyPerSecond;
