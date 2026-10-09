@@ -1,6 +1,8 @@
 import { NS, ProgramName, FactionName } from "@ns";
 import { runTrackedFinanceAction } from "./finance-action.js";
 import { AUG_PRICE_MULT } from "/shared/constants/game-defaults.js";
+import { getPurchasedUninstalledAugs } from "/domain/strategy/player.js";
+import { hashString } from "/lib/hash.js";
 
 export async function main(ns: NS): Promise<void> {
   await runTrackedFinanceAction(ns, async () => {
@@ -169,6 +171,19 @@ export async function main(ns: NS): Promise<void> {
 
       case "player-install-augs": {
         const startScript = (ns.args[1] as string) || "init.js";
+        const expectedRequestId = String(ns.args[2] ?? "");
+        if (
+          expectedRequestId &&
+          expectedRequestId !==
+            `player-install-augs-${hashString(
+              JSON.stringify(getPurchasedUninstalledAugs(ns)),
+            )}`
+        ) {
+          ns.tprint(
+            "[WARN] Aug-Installation abgebrochen: Die gekauften Augmentations stimmen nicht mehr mit der Freigabe überein.",
+          );
+          return false;
+        }
         ns.singularity.installAugmentations(startScript);
         return false;
       }

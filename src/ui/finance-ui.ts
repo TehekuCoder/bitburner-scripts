@@ -35,6 +35,12 @@ export interface FinanceDashboardData {
     approved: boolean;
     running: boolean;
   };
+  proposedAugInstall?: {
+    id: string;
+    items: string[];
+    approved: boolean;
+    running: boolean;
+  };
   topPendingRequests: PendingRequestSummary[];
   lastPurchases: string[];
   lastWarnings: string[];
@@ -236,6 +242,31 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     });
     if (!batch.approved && !batch.running) {
       buffer.push(`Befehl: run tools/approve-aug-batch.js ${batch.id.slice(-8)}`);
+    }
+    buffer.push(D_LINE);
+  }
+
+  if (data.proposedAugInstall) {
+    const install = data.proposedAugInstall;
+    buffer.push(`${CLR.WHITE_BOLD}AUGMENTATIONS-INSTALLATION:${CLR.RESET}`);
+    buffer.push(
+      `Zwischenmodus: nur Sleeve- und Gang-Upgrades; Home-Upgrades pausieren.`,
+    );
+    const installStatus = install.running
+      ? `${CLR.CYAN}Installation läuft${CLR.RESET}`
+      : install.approved
+        ? `${CLR.GREEN}freigegeben${CLR.RESET}`
+        : `${CLR.YELLOW}Freigabe erforderlich${CLR.RESET}`;
+    buffer.push(
+      `Batch ${install.id.slice(-8)} | ${install.items.length} Augs | ${installStatus}`,
+    );
+    install.items.forEach((item, index) => {
+      buffer.push(` ${index + 1}. ${truncateANSI(item, 58)}`);
+    });
+    if (!install.approved && !install.running) {
+      buffer.push(
+        `Befehl: run tools/approve-aug-batch.js install ${install.id.slice(-8)}`,
+      );
     }
     buffer.push(D_LINE);
   }

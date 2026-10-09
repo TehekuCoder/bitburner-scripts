@@ -20,6 +20,8 @@ import {
   FINANCE_RESULT_PORT,
 } from "/shared/constants/finance";
 import { loadFinanceState } from "/infrastructure/state/state";
+import { getPurchasedUninstalledAugs } from "/domain/strategy/player.js";
+import { hashString } from "/lib/hash.js";
 
 interface EvaluatorCacheEntry {
   timestamp: number;
@@ -48,7 +50,7 @@ const SINGULARITY_ACTION_RAM: Record<string, number> = {
   "player-purchase-aug-batch": 5,
   "player-purchase-nfg": 7.5,
   "player-donate-faction": 5,
-  "player-install-augs": 5,
+  "player-install-augs": 7.5,
 };
 const ACTION_BASE_RAM = 1.6;
 const ACTION_RAM_HEADROOM = 0.5;
@@ -143,9 +145,10 @@ export async function main(ns: NS): Promise<void> {
   const lastPurchases: string[] = [];
   const lastWarnings: string[] = [];
   const evaluatorLastSeen: Record<string, number> = {};
-  const approvedAugBatchIds = new Set<string>();
+  const approvedAugActionIds = new Set<string>();
   let singularityRamMultiplier: number | null = null;
   let criticalAugBatchNotified = false;
+  let lastStaleInstallRequestId: string | null = null;
 
   while (true) {
     const now = Date.now();
@@ -338,54 +341,52 @@ export async function main(ns: NS): Promise<void> {
     for (const cache of evaluatorRequestCache.values()) {
       allRequests.push(...cache.requests.values());
     }
-    const purchasedAugs =
-      ns.singularity?.getOwnedAugmentations(true) ?? [];
-    const installedAugs =
-      ns.singularity?.getOwnedAugmentations(false) ?? [];
-    const isAugmentationMode = purchasedAugs.some(
-      (aug) => !installedAugs.includes(aug),
-    );
+    const uninstalledAugs = getPurchasedUninstalledAugs(ns);
+    const isAugmentationMode = uninstalledAugs.length > 0;
 
-    if (isAugmentationMode) {
-      const installRequest = allRequests.find(
-        (request) => request.action.args[0] === "player-install-augs",
-      );
-      const allowedCategories = new Set<PurchaseCategory>([
-        "HOME_SERVER",
-        "PLAYER_AUG",
-      ]);
-      const filteredRequests = allRequests.filter((request) =>
-        allowedCategories.has(request.category),
-      );
-      allRequests.splice(
-        0,
-        allRequests.length,
-        ...(installRequest ? [installRequest] : filteredRequests),
-      );
+    const proposedAugBatch = !isAugmentationMode
+      ? allRequests.find(
+          (request) =>
+            request.category === "PLAYER_AUG" &&
+            request.action.args[0] === "player-purchase-aug-batch",
+        )
+      : undefined;
+    const installRequestCandidate = isAugmentationMode
+      ? allRequests.find(
+          (request) =>
+            request.category === "PLAYER_AUG" &&
+            request.action.args[0] === "player-install-augs",
+        )
+      : undefined;
+    const expectedInstallRequestId = `player-install-augs-${hashString(
+      JSON.stringify(uninstalledAugs),
+    )}`;
+    const proposedAugInstall =
+      installRequestCandidate?.id === expectedInstallRequestId
+        ? installRequestCandidate
+        : undefined;
+    if (installRequestCandidate && !proposedAugInstall) {
+      if (lastStaleInstallRequestId !== installRequestCandidate.id) {
+        ns.print(
+          "[WARN] Veralteter Installationsvorschlag verworfen; die Augmentationsliste hat sich geändert.",
+        );
+      }
+      lastStaleInstallRequestId = installRequestCandidate.id;
+    } else {
+      lastStaleInstallRequestId = null;
     }
-
-    const criticalAugBatch = allRequests.find(
-      (request) =>
-        request.category === "PLAYER_AUG" &&
-        request.priority === PurchasePriority.CRITICAL &&
-        request.action.args[0] === "player-purchase-aug-batch",
-    );
-    const proposedAugBatch = allRequests.find(
-      (request) =>
-        request.category === "PLAYER_AUG" &&
-        request.action.args[0] === "player-purchase-aug-batch",
-    );
 
     const approvalPort = ns.getPortHandle(AUG_BATCH_APPROVAL_PORT);
     while (!approvalPort.empty()) {
       const approvedId = approvalPort.read();
       if (
         typeof approvedId === "string" &&
-        proposedAugBatch?.id === approvedId
+        (proposedAugBatch?.id === approvedId ||
+          proposedAugInstall?.id === approvedId)
       ) {
-        approvedAugBatchIds.add(approvedId);
+        approvedAugActionIds.add(approvedId);
         ns.toast(
-          `Aug-Batch ${approvedId.slice(-8)} freigegeben.`,
+          `${approvedId.startsWith("player-install-augs-") ? "Aug-Installation" : "Aug-Batch"} ${approvedId.slice(-8)} freigegeben.`,
           "success",
           5000,
         );
@@ -395,12 +396,40 @@ export async function main(ns: NS): Promise<void> {
         );
       }
     }
-    for (const approvedId of approvedAugBatchIds) {
-      if (proposedAugBatch?.id !== approvedId) {
-        approvedAugBatchIds.delete(approvedId);
+    for (const approvedId of approvedAugActionIds) {
+      if (
+        proposedAugBatch?.id !== approvedId &&
+        proposedAugInstall?.id !== approvedId
+      ) {
+        approvedAugActionIds.delete(approvedId);
       }
     }
 
+    if (isAugmentationMode) {
+      const installIsApproved =
+        proposedAugInstall !== undefined &&
+        approvedAugActionIds.has(proposedAugInstall.id);
+      const maintenanceRequests = allRequests.filter(
+        (request) =>
+          request.category === "SLEEVE_AUG" ||
+          request.category === "GANG_EQUIPMENT" ||
+          (request.id === proposedAugInstall?.id && !installIsApproved),
+      );
+      allRequests.splice(
+        0,
+        allRequests.length,
+        ...(installIsApproved && proposedAugInstall
+          ? [proposedAugInstall]
+          : maintenanceRequests),
+      );
+    }
+
+    const criticalAugBatch = allRequests.find(
+      (request) =>
+        request.category === "PLAYER_AUG" &&
+        request.priority === PurchasePriority.CRITICAL &&
+        request.action.args[0] === "player-purchase-aug-batch",
+    );
     if (criticalAugBatch && !criticalAugBatchNotified) {
       ns.toast(
         `Kritischer Aug-Batch erkannt: ${criticalAugBatch.description}. Andere Käufe pausieren, bis das Budget reicht.`,
@@ -499,8 +528,19 @@ export async function main(ns: NS): Promise<void> {
         }
         if (
           req.action.args[0] === "player-purchase-aug-batch" &&
-          !approvedAugBatchIds.has(req.id)
+          !approvedAugActionIds.has(req.id)
         ) {
+          continue;
+        }
+        if (
+          req.action.args[0] === "player-install-augs" &&
+          (!approvedAugActionIds.has(req.id) ||
+            req.id !==
+              `player-install-augs-${hashString(
+                JSON.stringify(getPurchasedUninstalledAugs(ns)),
+              )}`)
+        ) {
+          approvedAugActionIds.delete(req.id);
           continue;
         }
         const margin = dynamicMargins[req.category] ?? 1.0;
@@ -537,8 +577,11 @@ export async function main(ns: NS): Promise<void> {
           );
 
           if (pid > 0) {
-            if (req.action.args[0] === "player-purchase-aug-batch") {
-              approvedAugBatchIds.delete(req.id);
+            if (
+              req.action.args[0] === "player-purchase-aug-batch" ||
+              req.action.args[0] === "player-install-augs"
+            ) {
+              approvedAugActionIds.delete(req.id);
             }
             pendingActions.set(requestTrackingId, {
               category: req.category,
@@ -556,6 +599,12 @@ export async function main(ns: NS): Promise<void> {
             if (req.action.args[0] === "player-purchase-aug-batch") {
               ns.toast(
                 `Aug-Batch-Kauf konnte nicht gestartet werden.`,
+                "error",
+                7000,
+              );
+            } else if (req.action.args[0] === "player-install-augs") {
+              ns.toast(
+                `Aug-Installation konnte nicht gestartet werden.`,
                 "error",
                 7000,
               );
@@ -601,7 +650,7 @@ export async function main(ns: NS): Promise<void> {
             id: proposedAugBatch.id,
             items: items.map((item) => `${item.name} — ${item.faction}`),
             cost: proposedAugBatch.cost,
-            approved: approvedAugBatchIds.has(proposedAugBatch.id),
+            approved: approvedAugActionIds.has(proposedAugBatch.id),
             running: Array.from(pendingActions.values()).some(
               (pending) => pending.requestId === proposedAugBatch.id,
             ),
@@ -612,6 +661,17 @@ export async function main(ns: NS): Promise<void> {
       } catch (error) {
         ns.print(`[ERROR] Aug-Batch-Vorschlag konnte nicht gelesen werden: ${error}`);
       }
+    }
+    let proposedAugInstallData: FinanceDashboardData["proposedAugInstall"];
+    if (proposedAugInstall) {
+      proposedAugInstallData = {
+        id: proposedAugInstall.id,
+        items: uninstalledAugs,
+        approved: approvedAugActionIds.has(proposedAugInstall.id),
+        running: Array.from(pendingActions.values()).some(
+          (pending) => pending.requestId === proposedAugInstall.id,
+        ),
+      };
     }
 
     const dashboardData: FinanceDashboardData = {
@@ -634,6 +694,7 @@ export async function main(ns: NS): Promise<void> {
       inactiveEvaluators,
       nextPurchaseRequest: structuredRequests[0] ?? undefined,
       proposedAugBatch: proposedAugBatchData,
+      proposedAugInstall: proposedAugInstallData,
       topPendingRequests: structuredRequests.slice(0, 4),
       lastPurchases,
       lastWarnings,
