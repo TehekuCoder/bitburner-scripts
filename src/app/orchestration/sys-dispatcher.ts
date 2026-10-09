@@ -43,6 +43,8 @@ export async function main(ns: NS): Promise<void> {
     const now = Date.now();
 
     if (mode !== previousStrategy) {
+      const isLowBudgetTrainingFallback =
+        previousStrategy === "TRAIN" && mode === "MONEY";
       const isOscillating =
         ["MONEY", "CRIME", "REP", "COMPANY", "TRAIN"].includes(mode) &&
         ["MONEY", "CRIME", "REP", "COMPANY", "TRAIN"].includes(
@@ -51,6 +53,7 @@ export async function main(ns: NS): Promise<void> {
 
       if (
         isOscillating &&
+        !isLowBudgetTrainingFallback &&
         now - modeLockTime < REFRESH_INTERVALS.STRATEGY_COOLDOWN
       ) {
         logger.warn(

@@ -239,15 +239,26 @@ export function determineStrategy(
   // Gang unlock takes precedence over optional hacking progression once the
   // Gang API is available. Joining a gang remains a manual player decision.
   if (ns.gang && !hasGang && currentKarma > -54000) {
-    const minCombat = Math.min(...COMBAT_STATS.map((s) => player.skills[s]));
-    if (minCombat < 30) {
+    const mugChance = ns.singularity.getCrimeChance(ns.enums.CrimeType.mug);
+    if (mugChance < 0.7) {
+      const trainingMoneyThreshold =
+        currentState?.strategy === "TRAIN" ? 200_000 : 1_000_000;
+
+      if (player.money < trainingMoneyThreshold) {
+        logger?.debug(
+          `[Strategie] Mug-Erfolgschance (${Math.round(mugChance * 100)}%) unter 70%, aber Budget zu niedrig (${Math.round(player.money)}/${trainingMoneyThreshold}) ➔ MONEY`,
+        );
+        return { mode: "MONEY" };
+      }
+
       logger?.debug(
-        `[Strategie] Combat zu niedrig für Karma-Grind (${minCombat}/30) ➔ TRAIN`,
+        `[Strategie] Mug-Erfolgschance (${Math.round(mugChance * 100)}%) unter 70% ➔ TRAIN`,
       );
       return { mode: "TRAIN", targetStat: 30 };
     }
+
     logger?.debug(
-      `[Strategie] Gang-Unlock priorisiert (Karma: ${Math.round(currentKarma)} / -54000) ➔ KARMA`,
+      `[Strategie] Mug-Erfolgschance bei mindestens 70% (Karma: ${Math.round(currentKarma)} / -54000) ➔ KARMA`,
     );
     return { mode: "KARMA" };
   }

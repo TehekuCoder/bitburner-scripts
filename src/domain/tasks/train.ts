@@ -26,6 +26,8 @@ export async function main(ns: NS): Promise<void> {
 
   const targetStat = typeof ns.args[0] === "number" ? ns.args[0] : 1500;
   logger.info(`🏋️ Starte Combat-Training bis Target-Stat: ${targetStat}`);
+  const isEarlyGangTraining =
+    targetStat === 30 && ns.gang && !ns.gang.inGang();
 
   // Zuordnung der Stat-Namen zu den Bitburner GymType-Kürzeln
   const statToGymType: Record<string, GymType> = {
@@ -46,8 +48,19 @@ export async function main(ns: NS): Promise<void> {
 
     const lowest = stats[0];
 
-    if (lowest.value >= targetStat) {
-      logger.success(`🎉 Alle Combat-Stats haben ${targetStat} erreicht! Beende Training.`);
+    const mugChance = isEarlyGangTraining
+      ? ns.singularity.getCrimeChance(ns.enums.CrimeType.mug)
+      : 0;
+    const targetReached = isEarlyGangTraining
+      ? mugChance >= 0.7
+      : lowest.value >= targetStat;
+
+    if (targetReached) {
+      logger.success(
+        isEarlyGangTraining
+          ? `🎉 Mug-Erfolgschance von 70% erreicht (${Math.round(mugChance * 100)}%). Beende Training.`
+          : `🎉 Alle Combat-Stats haben ${targetStat} erreicht! Beende Training.`,
+      );
       ns.singularity.stopAction();
       break;
     }
@@ -70,16 +83,24 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    // 4. Workout starten (mit 'as any' Typecast für Bitburner API-Kompatibilität)
+    // 4. Workout nur starten, wenn nicht bereits die passende Gym-Aktivität läuft
     const gymStat = statToGymType[lowest.name] ?? (lowest.name as GymType);
-    const isWorkingOut = ns.singularity.gymWorkout(
-      selectedGym.name as any,
-      gymStat,
-      ns.singularity.isFocused(),
-    );
+    const currentWork = ns.singularity.getCurrentWork();
+    const isAlreadyTraining =
+      currentWork?.type === "CLASS" &&
+      currentWork.classType === gymStat &&
+      currentWork.location === selectedGym.name;
 
-    if (!isWorkingOut) {
-      logger.warn(`Konnte Training für ${lowest.name} im ${selectedGym.name} nicht starten.`);
+    if (!isAlreadyTraining) {
+      const isWorkingOut = ns.singularity.gymWorkout(
+        selectedGym.name as any,
+        gymStat,
+        ns.singularity.isFocused(),
+      );
+
+      if (!isWorkingOut) {
+        logger.warn(`Konnte Training für ${lowest.name} im ${selectedGym.name} nicht starten.`);
+      }
     }
 
     await ns.sleep(3000);
