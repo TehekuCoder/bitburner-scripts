@@ -75,7 +75,7 @@ export async function main(ns: NS): Promise<void> {
     const isWorkingOut = ns.singularity.gymWorkout(
       selectedGym.name as any,
       gymStat,
-      false,
+      ns.singularity.isFocused(),
     );
 
     if (!isWorkingOut) {

@@ -12,7 +12,6 @@ export async function main(ns: NS): Promise<void> {
   logger.info("🎓 Uni-Worker gestartet...");
 
   const sing = ns.singularity;
-  const useFocus = !sing.getOwnedAugmentations(false).includes("Neuroreceptor Management Implant");
 
   // Kurs flexibel über Args festlegen (Standard: Algorithms für Hacking, Alternativ: Leadership für Charisma)
   const argCourse = ns.args[1] as string | undefined;
@@ -90,7 +89,7 @@ export async function main(ns: NS): Promise<void> {
 
       if (!isAlreadyStudying) {
         logger.info(`Belege Kurs '${courseName}' (${statLabel}) an der '${targetUni}'...`);
-        sing.universityCourse(targetUni, courseName, useFocus);
+        sing.universityCourse(targetUni, courseName, sing.isFocused());
       }
 
       const targetLabel = targetStat > 0 ? `/${targetStat}` : "";
