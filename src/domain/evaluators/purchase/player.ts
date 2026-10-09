@@ -30,6 +30,18 @@ interface AugCandidate {
   etaSeconds: number;
 }
 
+function getAugBatchRequestId(
+  batch: Pick<AugCandidate, "faction" | "name">[],
+): string {
+  const batchData = JSON.stringify(batch);
+  let hash = 2166136261;
+  for (let i = 0; i < batchData.length; i++) {
+    hash ^= batchData.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `player-aug-batch-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
 function getFavorTarget(
   ns: NS,
   ownedAugs: string[],
@@ -344,7 +356,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
     }
 
     requests.push({
-      id: "player-aug-batch",
+      id: getAugBatchRequestId(affordableBatch),
       category: "PLAYER_AUG",
       priority,
       score: isCritical ? 100 : Math.max(1, Math.floor(85 * efficiencyMult)),

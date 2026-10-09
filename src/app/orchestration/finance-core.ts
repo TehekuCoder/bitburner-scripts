@@ -12,6 +12,7 @@ import { FINANCE_PORT } from "../../domain/evaluators/evaluator-runner";
 import { PATHS } from "/infrastructure/runtime/paths";
 import {
   BASE_CATEGORY_MARGINS,
+  AUG_BATCH_APPROVAL_PORT,
   CASH_BUFFER,
   CATEGORY_TO_EVALUATOR,
   CATEGORY_WEIGHTS,
@@ -142,7 +143,9 @@ export async function main(ns: NS): Promise<void> {
   const lastPurchases: string[] = [];
   const lastWarnings: string[] = [];
   const evaluatorLastSeen: Record<string, number> = {};
+  const approvedAugBatchIds = new Set<string>();
   let singularityRamMultiplier: number | null = null;
+  let criticalAugBatchNotified = false;
 
   while (true) {
     const now = Date.now();
@@ -266,6 +269,13 @@ export async function main(ns: NS): Promise<void> {
           const purchaseMsg = `🛒 [$${ns.format.number(result.actualCost)}] ${pending.description}`;
           logger.success(purchaseMsg);
           pushBounded(lastPurchases, purchaseMsg, 6);
+          if (pending.requestId.startsWith("player-aug-batch-")) {
+            ns.toast(
+              `Aug-Batch erfolgreich gekauft: ${pending.description}`,
+              "success",
+              5000,
+            );
+          }
           evaluatorRequestCache
             .get(pending.category)
             ?.requests.delete(pending.requestId);
@@ -274,6 +284,13 @@ export async function main(ns: NS): Promise<void> {
           const errorMsg = `⚠️ Kauf fehlgeschlagen: ${pending.description}`;
           logger.warn(errorMsg);
           pushBounded(lastWarnings, errorMsg, 6);
+          if (pending.requestId.startsWith("player-aug-batch-")) {
+            ns.toast(
+              `Aug-Batch-Kauf fehlgeschlagen: ${pending.description}`,
+              "error",
+              7000,
+            );
+          }
           retryAfter.set(result.requestId, now + 5000);
         }
       } catch (e) {
@@ -288,6 +305,13 @@ export async function main(ns: NS): Promise<void> {
         const warning = `⚠️ Keine Rückmeldung von Kauf-Action erhalten: ${pending.description}`;
         logger.warn(warning);
         pushBounded(lastWarnings, warning, 6);
+        if (pending.requestId.startsWith("player-aug-batch-")) {
+          ns.toast(
+            `Keine Rückmeldung zum Aug-Batch-Kauf: ${pending.description}`,
+            "warning",
+            7000,
+          );
+        }
       }
     }
 
@@ -338,6 +362,54 @@ export async function main(ns: NS): Promise<void> {
         allRequests.length,
         ...(installRequest ? [installRequest] : filteredRequests),
       );
+    }
+
+    const criticalAugBatch = allRequests.find(
+      (request) =>
+        request.category === "PLAYER_AUG" &&
+        request.priority === PurchasePriority.CRITICAL &&
+        request.action.args[0] === "player-purchase-aug-batch",
+    );
+    const proposedAugBatch = allRequests.find(
+      (request) =>
+        request.category === "PLAYER_AUG" &&
+        request.action.args[0] === "player-purchase-aug-batch",
+    );
+
+    const approvalPort = ns.getPortHandle(AUG_BATCH_APPROVAL_PORT);
+    while (!approvalPort.empty()) {
+      const approvedId = approvalPort.read();
+      if (
+        typeof approvedId === "string" &&
+        proposedAugBatch?.id === approvedId
+      ) {
+        approvedAugBatchIds.add(approvedId);
+        ns.toast(
+          `Aug-Batch ${approvedId.slice(-8)} freigegeben.`,
+          "success",
+          5000,
+        );
+      } else if (approvedId !== "NULL PORT DATA") {
+        ns.print(
+          `[WARN] Veraltete oder ungültige Aug-Batch-Freigabe ignoriert: ${String(approvedId)}`,
+        );
+      }
+    }
+    for (const approvedId of approvedAugBatchIds) {
+      if (proposedAugBatch?.id !== approvedId) {
+        approvedAugBatchIds.delete(approvedId);
+      }
+    }
+
+    if (criticalAugBatch && !criticalAugBatchNotified) {
+      ns.toast(
+        `Kritischer Aug-Batch erkannt: ${criticalAugBatch.description}. Andere Käufe pausieren, bis das Budget reicht.`,
+        "warning",
+        7000,
+      );
+      criticalAugBatchNotified = true;
+    } else if (!criticalAugBatch) {
+      criticalAugBatchNotified = false;
     }
 
     // Status der System-Komponenten abfragen
@@ -422,6 +494,15 @@ export async function main(ns: NS): Promise<void> {
         ) {
           continue;
         }
+        if (criticalAugBatch && req.category !== "PLAYER_AUG") {
+          continue;
+        }
+        if (
+          req.action.args[0] === "player-purchase-aug-batch" &&
+          !approvedAugBatchIds.has(req.id)
+        ) {
+          continue;
+        }
         const margin = dynamicMargins[req.category] ?? 1.0;
         const requiredBudget = req.cost * margin;
 
@@ -456,6 +537,9 @@ export async function main(ns: NS): Promise<void> {
           );
 
           if (pid > 0) {
+            if (req.action.args[0] === "player-purchase-aug-batch") {
+              approvedAugBatchIds.delete(req.id);
+            }
             pendingActions.set(requestTrackingId, {
               category: req.category,
               requestId: req.id,
@@ -469,6 +553,13 @@ export async function main(ns: NS): Promise<void> {
             const errorMsg = `⚠️ Script-Start fehlgeschlagen: ${req.action.script}`;
             logger.warn(errorMsg);
             pushBounded(lastWarnings, errorMsg, 6);
+            if (req.action.args[0] === "player-purchase-aug-batch") {
+              ns.toast(
+                `Aug-Batch-Kauf konnte nicht gestartet werden.`,
+                "error",
+                7000,
+              );
+            }
           }
         } else {
           // Beträge nach vorne gesetzt, damit sie beim Truncate nicht abgeschnitten werden!
@@ -492,6 +583,36 @@ export async function main(ns: NS): Promise<void> {
       cost: req.cost,
       score: req.score,
     }));
+    let proposedAugBatchData: FinanceDashboardData["proposedAugBatch"];
+    if (proposedAugBatch) {
+      try {
+        const items = JSON.parse(
+          String(proposedAugBatch.action.args[1] ?? ""),
+        ) as { faction: string; name: string }[];
+        if (
+          Array.isArray(items) &&
+          items.every(
+            (item) =>
+              typeof item?.faction === "string" &&
+              typeof item?.name === "string",
+          )
+        ) {
+          proposedAugBatchData = {
+            id: proposedAugBatch.id,
+            items: items.map((item) => `${item.name} — ${item.faction}`),
+            cost: proposedAugBatch.cost,
+            approved: approvedAugBatchIds.has(proposedAugBatch.id),
+            running: Array.from(pendingActions.values()).some(
+              (pending) => pending.requestId === proposedAugBatch.id,
+            ),
+          };
+        } else {
+          ns.print("[ERROR] Aug-Batch-Vorschlag enthält ungültige Einträge.");
+        }
+      } catch (error) {
+        ns.print(`[ERROR] Aug-Batch-Vorschlag konnte nicht gelesen werden: ${error}`);
+      }
+    }
 
     const dashboardData: FinanceDashboardData = {
       currentMoney: rawMoney,
@@ -512,6 +633,7 @@ export async function main(ns: NS): Promise<void> {
       activeEvaluators,
       inactiveEvaluators,
       nextPurchaseRequest: structuredRequests[0] ?? undefined,
+      proposedAugBatch: proposedAugBatchData,
       topPendingRequests: structuredRequests.slice(0, 4),
       lastPurchases,
       lastWarnings,

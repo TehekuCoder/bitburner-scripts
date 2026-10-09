@@ -28,6 +28,13 @@ export interface FinanceDashboardData {
   activeEvaluators: string[];
   inactiveEvaluators: string[];
   nextPurchaseRequest?: PendingRequestSummary;
+  proposedAugBatch?: {
+    id: string;
+    items: string[];
+    cost: number;
+    approved: boolean;
+    running: boolean;
+  };
   topPendingRequests: PendingRequestSummary[];
   lastPurchases: string[];
   lastWarnings: string[];
@@ -212,6 +219,26 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     `Home Cores:  ${data.homeCores} Core${data.homeCores > 1 ? "s" : ""}`,
   );
   buffer.push(D_LINE);
+
+  if (data.proposedAugBatch) {
+    const batch = data.proposedAugBatch;
+    buffer.push(`${CLR.WHITE_BOLD}AUGMENTATIONSVORSCHLAG (KAUFREIHENFOLGE):${CLR.RESET}`);
+    const batchStatus = batch.running
+      ? `${CLR.CYAN}Kauf läuft${CLR.RESET}`
+      : batch.approved
+        ? `${CLR.GREEN}freigegeben${CLR.RESET}`
+        : `${CLR.YELLOW}Freigabe erforderlich${CLR.RESET}`;
+    buffer.push(
+      `Batch ${batch.id.slice(-8)} | Gesamt: $${ns.format.number(batch.cost)} | ${batchStatus}`,
+    );
+    batch.items.forEach((item, index) => {
+      buffer.push(` ${index + 1}. ${truncateANSI(item, 58)}`);
+    });
+    if (!batch.approved && !batch.running) {
+      buffer.push(`Befehl: run tools/approve-aug-batch.js ${batch.id.slice(-8)}`);
+    }
+    buffer.push(D_LINE);
+  }
 
   // ------------------------------------------------------------
   // 2. SUPERVISOR & EVALUATOREN STATUS

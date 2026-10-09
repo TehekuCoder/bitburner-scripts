@@ -16,6 +16,7 @@ import { loadStrategyState } from "/infrastructure/state/state.js";
 import { StrategyState, BotStrategy } from "/shared/types/strategy.js";
 
 const ANSI_REGEX = /\u001b\[[0-9;]*m/g;
+const GANG_KARMA_REQUIREMENT = 54_000;
 
 const CLR = {
   RESET: "\u001b[0m",
@@ -249,7 +250,7 @@ function evaluateBitNodePhase(
     };
   }
 
-  if (karma <= -54) {
+  if (karma <= -GANG_KARMA_REQUIREMENT) {
     return {
       phaseNumber: 2,
       name: "FRAKTIONEN & GANG-START",
@@ -262,8 +263,11 @@ function evaluateBitNodePhase(
   return {
     phaseNumber: 1,
     name: "BOOTSTRAPPING & BOOTCAMP",
-    description: "Geld & Karma aufbauen (-54 Karma für Gang).",
-    targetProgress: Math.min(100, (Math.abs(karma) / 54) * 100),
+    description: `Geld & Karma aufbauen (-${GANG_KARMA_REQUIREMENT.toLocaleString("en-US")} Karma für Gang).`,
+    targetProgress: Math.min(
+      100,
+      (Math.abs(karma) / GANG_KARMA_REQUIREMENT) * 100,
+    ),
     isCompleted: false,
   };
 }
@@ -478,12 +482,19 @@ export async function main(ns: NS): Promise<void> {
     if (!ns.hasTorRouter()) {
       nextSteps.push("Kaufe TOR-Router für $200.0k");
     }
-    if (karma > -54 && (!hasGang(ns) || !ns.gang.inGang())) {
+    if (
+      karma > -GANG_KARMA_REQUIREMENT &&
+      (!hasGang(ns) || !ns.gang.inGang())
+    ) {
       nextSteps.push(
-        `Karma reduzieren für Gang-Gründung (Noch ${(54 + karma).toFixed(1)} Karma)`,
+        `Karma reduzieren für Gang-Gründung (Noch ${(GANG_KARMA_REQUIREMENT + karma).toFixed(1)} Karma)`,
       );
     }
-    if (kills < 30 && karma > -54 && !bbInfo) {
+    if (
+      kills < 30 &&
+      karma > -GANG_KARMA_REQUIREMENT &&
+      !bbInfo
+    ) {
       nextSteps.push(`Homicide/Morde farmen (Aktuell: ${kills}/30 Kills)`);
     }
     if (hasSingularity(ns) && !hasRedPill && !bbInfo) {
