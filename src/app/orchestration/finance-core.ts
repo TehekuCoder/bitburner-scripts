@@ -22,6 +22,10 @@ import {
 import { loadFinanceState } from "/infrastructure/state/state";
 import { getPurchasedUninstalledAugs } from "/domain/strategy/player.js";
 import { hashString } from "/lib/hash.js";
+import {
+  getSingularityActionRam,
+  getSingularityRamMultiplier,
+} from "/app/actions/singularity-action-ram.js";
 
 interface EvaluatorCacheEntry {
   timestamp: number;
@@ -41,20 +45,6 @@ const pendingActions = new Map<string, PendingAction>();
 const retryAfter = new Map<string, number>();
 const CACHE_TTL_MS = 45000; // 45s TTL für Anfragen
 const ACTION_TIMEOUT_MS = 60000;
-const SINGULARITY_ACTION_RAM: Record<string, number> = {
-  "home-upgrade-ram": 3,
-  "home-upgrade-cores": 3,
-  "program-purchase-tor": 2,
-  "program-purchase": 2,
-  "player-purchase-aug": 5,
-  "player-purchase-aug-batch": 5,
-  "player-purchase-nfg": 7.5,
-  "player-donate-faction": 5,
-  "player-install-augs": 7.5,
-};
-const ACTION_BASE_RAM = 1.6;
-const ACTION_RAM_HEADROOM = 0.5;
-
 const PURCHASE_CATEGORIES: readonly PurchaseCategory[] = [
   "HOME_SERVER",
   "PURCHASED_SERVER",
@@ -704,38 +694,4 @@ export async function main(ns: NS): Promise<void> {
 
     await ns.sleep(2000);
   }
-}
-
-function getSingularityRamMultiplier(ns: NS): number {
-  const resetInfo = ns.getResetInfo();
-  if (resetInfo.currentNode === 4) return 1;
-
-  const sourceFileLevel = resetInfo.ownedSF.get(4) ?? 0;
-  if (sourceFileLevel >= 3) return 1;
-  if (sourceFileLevel >= 2) return 4;
-  return 16;
-}
-
-function getSingularityActionRam(
-  args: readonly (string | number)[],
-  multiplier: number,
-): number | undefined {
-  const action = String(args[0] ?? "");
-  const hasExpectedBatchCost =
-    action === "player-purchase-aug-batch" &&
-    typeof args[2] === "number" &&
-    Number.isFinite(args[2]) &&
-    args[2] >= 0;
-  const singularityApiRam =
-    action === "player-purchase-aug-batch" && !hasExpectedBatchCost
-      ? 7.5
-      : SINGULARITY_ACTION_RAM[action];
-  if (singularityApiRam === undefined) return undefined;
-
-  const actionRam =
-    ACTION_BASE_RAM +
-    singularityApiRam * multiplier +
-    0.1 +
-    ACTION_RAM_HEADROOM;
-  return Math.ceil(actionRam * 100) / 100;
 }

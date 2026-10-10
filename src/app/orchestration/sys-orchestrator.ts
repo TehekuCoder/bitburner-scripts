@@ -7,6 +7,10 @@ import {
 import { PATHS } from "/infrastructure/runtime/paths";
 import { loadState } from "/infrastructure/state/state";
 import { hasSingularity, hasGang, hasSleeve, hasCorporation, isCorporationViable } from "/lib/utils";
+import {
+  getMaximumSingularityActionRam,
+  getSingularityRamMultiplier,
+} from "/app/actions/singularity-action-ram";
 
 interface DaemonConfig {
   name: string;
@@ -88,6 +92,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Finance Manager",
       path: PATHS.services.daemons.financeDispatcher,
+      priority: 1,
       condition: (ns) => {
         const state = loadState(ns);
         return !isModuleDisabled(state, ["finance", "stock"]);
@@ -113,6 +118,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "IPvGo Manager",
       path: PATHS.services.managers.ipvgo,
+      priority: 200,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["ipvgo", "go"])) return false;
@@ -151,7 +157,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Singularity Dispatcher",
       path: PATHS.app.orchestration.dispatcher,
-      priority: 10,
+      priority: 0,
       condition: (ns) => {
         const state = loadState(ns);
         if (isManualMode(state)) return false;
@@ -293,6 +299,7 @@ export async function main(ns: NS): Promise<void> {
     const orderedDaemons = [...daemons].sort(
       (a, b) => (a.priority ?? 100) - (b.priority ?? 100),
     );
+    reclaimRamForProtectedServices(ns, orderedDaemons, logger);
 
     for (const daemon of orderedDaemons) {
       if (!daemon.path) continue;
@@ -332,9 +339,36 @@ export async function main(ns: NS): Promise<void> {
         continue;
       }
 
-      const freeRam =
-        ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
-      if (freeRam >= reqRam) {
+      const isCriticalDaemon = (daemon.priority ?? 100) <= 1;
+      let state = loadState(ns);
+      let protectedRam = getFeasibleProtectedRam(ns, state, execPath);
+      let freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+
+      if (isCriticalDaemon && freeRam < reqRam) {
+        const lowerPriorityDaemons = orderedDaemons
+          .filter((candidate) => (candidate.priority ?? 100) > (daemon.priority ?? 100))
+          .reverse();
+        for (const candidate of lowerPriorityDaemons) {
+          const candidatePath = candidate.path.endsWith(".ts")
+            ? candidate.path.replace(/\.ts$/, ".js")
+            : candidate.path;
+          if (!ns.isRunning(candidatePath, "home")) continue;
+
+          ns.scriptKill(candidatePath, "home");
+          logger.warn(
+            `⏹️ Beende ${candidate.name}, um RAM für ${daemon.name} freizugeben.`,
+            undefined,
+            { context: { required: reqRam, free: freeRam } },
+          );
+          state = loadState(ns);
+          protectedRam = getFeasibleProtectedRam(ns, state, execPath);
+          freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+          if (freeRam >= reqRam) break;
+        }
+      }
+
+      const availableRam = freeRam - (isCriticalDaemon ? 0 : protectedRam);
+      if (availableRam >= reqRam) {
         const pid = ns.run(execPath, 1, ...args);
         if (pid > 0) {
           logger.success(
@@ -347,13 +381,130 @@ export async function main(ns: NS): Promise<void> {
         }
       } else {
         logger.debug(
-          `⏳ RAM-Engpass für ${daemon.name} (Benötigt: ${ns.format.ram(reqRam)} | Frei: ${ns.format.ram(freeRam)})`,
+          `⏳ RAM-Engpass für ${daemon.name} (Benötigt: ${ns.format.ram(reqRam)} | Frei: ${ns.format.ram(Math.max(availableRam, 0))}; geschützt: ${ns.format.ram(protectedRam)})`,
         );
       }
     }
 
     await ns.sleep(10000);
   }
+}
+
+function reclaimRamForProtectedServices(
+  ns: NS,
+  daemons: DaemonConfig[],
+  logger: LoggerClient,
+): void {
+  const maxRam = ns.getServerMaxRam("home");
+  let state = loadState(ns);
+  let protectedRam = getFeasibleProtectedRam(ns, state);
+
+  if (protectedRam <= 0 || maxRam < protectedRam) return;
+
+  let freeRam = maxRam - ns.getServerUsedRam("home");
+  const lowerPriorityDaemons = [...daemons]
+    .filter((daemon) => (daemon.priority ?? 100) > 1)
+    .sort((a, b) => (b.priority ?? 100) - (a.priority ?? 100));
+
+  for (const daemon of lowerPriorityDaemons) {
+    if (freeRam >= protectedRam) break;
+
+    const execPath = daemon.path.endsWith(".ts")
+      ? daemon.path.replace(/\.ts$/, ".js")
+      : daemon.path;
+    if (!ns.isRunning(execPath, "home")) continue;
+
+    ns.scriptKill(execPath, "home");
+    logger.warn(
+      `⏹️ Beende ${daemon.name}, um RAM für Dispatcher, Task und Aktion freizugeben.`,
+      undefined,
+      { context: { required: protectedRam, free: freeRam } },
+    );
+    state = loadState(ns);
+    protectedRam = getFeasibleProtectedRam(ns, state);
+    freeRam = maxRam - ns.getServerUsedRam("home");
+  }
+}
+
+function getFeasibleProtectedRam(
+  ns: NS,
+  state: any,
+  excludedScript?: string,
+): number {
+  const maxRam = ns.getServerMaxRam("home");
+  const fullReserve = getProtectedRam(ns, state, excludedScript);
+  return fullReserve <= maxRam
+    ? fullReserve
+    : getProtectedRam(ns, state, excludedScript, false);
+}
+
+function getProtectedRam(
+  ns: NS,
+  state: any,
+  excludedScript?: string,
+  includeSingularityAction = true,
+): number {
+  const isSingularityEnabled =
+    !isManualMode(state) &&
+    !isModuleDisabled(state, ["dispatcher", "singularity"]) &&
+    hasSingularity(ns);
+  const isFinanceEnabled =
+    !isModuleDisabled(state, ["finance", "stock"]);
+
+  let reservedRam = 0;
+  const reserveScript = (scriptPath: string): void => {
+    if (
+      scriptPath === excludedScript ||
+      !ns.fileExists(scriptPath, "home") ||
+      ns.isRunning(scriptPath, "home")
+    )
+      return;
+    const ram = ns.getScriptRam(scriptPath, "home");
+    if (Number.isFinite(ram) && ram > 0) reservedRam += ram;
+  };
+
+  if (!state) return 0;
+
+  if (isSingularityEnabled) {
+    reserveScript(PATHS.app.orchestration.dispatcher);
+
+    const strategyToTask: Record<string, string | undefined> = {
+      REP: PATHS.domain.tasks.faction,
+      COMPANY: PATHS.domain.tasks.company,
+      TRAIN: PATHS.domain.tasks.train,
+      UNI: PATHS.domain.tasks.uni,
+      CRIME: PATHS.domain.tasks.crime,
+      KILLS: PATHS.domain.tasks.crime,
+      KARMA: PATHS.domain.tasks.crime,
+      DOMINION: PATHS.domain.tasks.uni,
+    };
+    let taskPath = strategyToTask[String(state.strategy)];
+    if (state.strategy === "MONEY") {
+      const isBatcherActive =
+        state.batchStrategy === "SHOTGUN_HWGW" ||
+        state.batchStrategy === "JIT_HWGW";
+      taskPath =
+        state.hasGang && isBatcherActive ? undefined : PATHS.domain.tasks.crime;
+    }
+    if (taskPath) reserveScript(taskPath);
+  }
+
+  if (isFinanceEnabled) {
+    reserveScript(PATHS.services.daemons.financeDispatcher);
+  }
+
+  if (
+    isFinanceEnabled &&
+    includeSingularityAction &&
+    hasSingularity(ns) &&
+    ns.fileExists(PATHS.app.actions.singularity, "home")
+  ) {
+    reservedRam += getMaximumSingularityActionRam(
+      getSingularityRamMultiplier(ns),
+    );
+  }
+
+  return reservedRam;
 }
 
 function stopNetworkPayload(ns: NS, scriptPath: string): void {
