@@ -13,6 +13,7 @@ import { PATHS } from "/infrastructure/runtime/paths";
 import {
   BASE_CATEGORY_MARGINS,
   AUG_BATCH_APPROVAL_PORT,
+  AUG_BATCH_PLAN_FILE,
   CASH_BUFFER,
   CATEGORY_TO_EVALUATOR,
   CATEGORY_WEIGHTS,
@@ -355,6 +356,37 @@ export async function main(ns: NS): Promise<void> {
       installRequestCandidate?.id === expectedInstallRequestId
         ? installRequestCandidate
         : undefined;
+    if (proposedAugBatch) {
+      try {
+        const items = JSON.parse(
+          String(proposedAugBatch.action.args[1] ?? ""),
+        ) as { faction: string; name: string }[];
+        if (
+          !Array.isArray(items) ||
+          !items.every(
+            (item) =>
+              typeof item?.faction === "string" &&
+              typeof item?.name === "string",
+          )
+        ) {
+          ns.print("[ERROR] Aug-Batch-Plan enthält ungültige Einträge.");
+        } else {
+          const plan = [
+            `Augmentations-Kaufplan (${proposedAugBatch.id.slice(-8)})`,
+            `Gesamtkosten: $${ns.format.number(proposedAugBatch.cost)}`,
+            ...items.map(
+              (item, index) => `${index + 1}. ${item.name} — ${item.faction}`,
+            ),
+            "",
+          ].join("\n");
+          if (ns.read(AUG_BATCH_PLAN_FILE) !== plan) {
+            await ns.write(AUG_BATCH_PLAN_FILE, plan, "w");
+          }
+        }
+      } catch (error) {
+        ns.print(`[ERROR] Aug-Batch-Plan konnte nicht gespeichert werden: ${error}`);
+      }
+    }
     if (installRequestCandidate && !proposedAugInstall) {
       if (lastStaleInstallRequestId !== installRequestCandidate.id) {
         ns.print(
@@ -533,10 +565,21 @@ export async function main(ns: NS): Promise<void> {
           approvedAugActionIds.delete(req.id);
           continue;
         }
+        const isApprovedAugBatch =
+          req.action.args[0] === "player-purchase-aug-batch" &&
+          approvedAugActionIds.has(req.id);
+        const pendingReservedCost = Array.from(pendingActions.values()).reduce(
+          (total, pending) => total + pending.reservedCost,
+          0,
+        );
+        const canAffordApprovedAugBatch =
+          isApprovedAugBatch &&
+          rawMoney - pendingReservedCost >= req.cost;
         const margin = dynamicMargins[req.category] ?? 1.0;
         const requiredBudget = req.cost * margin;
 
-        const canAffordEasily = availableMoney >= requiredBudget;
+        const canAffordEasily =
+          canAffordApprovedAugBatch || availableMoney >= requiredBudget;
         const isPocketChange = req.cost <= rawMoney * pocketChangeRatio;
 
         if (blockedCategories.has(req.category) && !canAffordEasily) {
@@ -644,6 +687,13 @@ export async function main(ns: NS): Promise<void> {
             running: Array.from(pendingActions.values()).some(
               (pending) => pending.requestId === proposedAugBatch.id,
             ),
+            waitingForFunds:
+              rawMoney -
+                Array.from(pendingActions.values()).reduce(
+                  (total, pending) => total + pending.reservedCost,
+                  0,
+                ) <
+              proposedAugBatch.cost,
           };
         } else {
           ns.print("[ERROR] Aug-Batch-Vorschlag enthält ungültige Einträge.");

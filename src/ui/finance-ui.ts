@@ -1,5 +1,6 @@
 import { NS } from "@ns";
 import { formatPercent } from "/lib/utils.js";
+import { AUG_BATCH_PLAN_FILE } from "/shared/constants/finance.js";
 
 export interface PendingRequestSummary {
   description: string;
@@ -34,6 +35,7 @@ export interface FinanceDashboardData {
     cost: number;
     approved: boolean;
     running: boolean;
+    waitingForFunds: boolean;
   };
   proposedAugInstall?: {
     id: string;
@@ -231,12 +233,15 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     buffer.push(`${CLR.WHITE_BOLD}AUGMENTATIONSVORSCHLAG (KAUFREIHENFOLGE):${CLR.RESET}`);
     const batchStatus = batch.running
       ? `${CLR.CYAN}Kauf läuft${CLR.RESET}`
-      : batch.approved
-        ? `${CLR.GREEN}freigegeben${CLR.RESET}`
-        : `${CLR.YELLOW}Freigabe erforderlich${CLR.RESET}`;
+      : batch.approved && batch.waitingForFunds
+        ? `${CLR.YELLOW}freigegeben, wartet auf Geld${CLR.RESET}`
+        : batch.approved
+          ? `${CLR.GREEN}freigegeben${CLR.RESET}`
+          : `${CLR.YELLOW}Freigabe erforderlich${CLR.RESET}`;
     buffer.push(
       `Batch ${batch.id.slice(-8)} | Gesamt: $${ns.format.number(batch.cost)} | ${batchStatus}`,
     );
+    buffer.push(`Liste gespeichert: home/${AUG_BATCH_PLAN_FILE}`);
     batch.items.forEach((item, index) => {
       buffer.push(` ${index + 1}. ${truncateANSI(item, 58)}`);
     });

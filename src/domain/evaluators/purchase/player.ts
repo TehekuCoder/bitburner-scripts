@@ -136,7 +136,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
 
     // --- FALL 2: BATCH-EVALUIERUNG UND CRITICAL-PROMOTION ---
     const baseTargetBatch = Math.max(3, Math.min(8, Math.floor(6 / (costMult || 1))));
-    const sortedByPriceAsc = [...candidates].sort((a, b) => a.price - b.price);
+    const sortedByPriceDesc = [...candidates].sort((a, b) => b.price - a.price);
 
     const selectedBatch: AugCandidate[] = [];
     let cumulativeCost = 0;
@@ -145,7 +145,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
     const skippedNames = new Set<string>();
 
     while (selectedBatch.length < baseTargetBatch) {
-      const nextCandidate = sortedByPriceAsc.find((candidate) => {
+      const nextCandidate = sortedByPriceDesc.find((candidate) => {
         if (selectedNames.has(candidate.name) || skippedNames.has(candidate.name)) {
           return false;
         }
