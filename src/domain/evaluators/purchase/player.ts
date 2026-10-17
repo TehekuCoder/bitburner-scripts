@@ -50,24 +50,8 @@ export const PlayerEvaluator: PurchaseEvaluator = {
       ? (ns.gang.getGangInformation().faction as FactionName)
       : null;
 
-    if (uninstalled.length > 0) {
-      const installRequestId = `player-install-augs-${hashString(
-        JSON.stringify(uninstalled),
-      )}`;
-      requests.push({
-        id: installRequestId,
-        category: "PLAYER_AUG",
-        priority: PurchasePriority.CRITICAL,
-        score: 100,
-        cost: 0,
-        description: `Installiere Augmentations (${uninstalled.length} bereit)`,
-        action: {
-          script: PATHS.app.actions.singularity,
-          args: ["player-install-augs", "init.js", installRequestId],
-        },
-      });
-      return requests;
-    }
+    // Installing augmentations resets the game; the player performs that step manually.
+    if (uninstalled.length > 0) return requests;
 
     // --- 1. CANDIDATES SCANNEN ---
     const factionsToScan = new Set<FactionName>(ns.getPlayer().factions);

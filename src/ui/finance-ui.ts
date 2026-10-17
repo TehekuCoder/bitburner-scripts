@@ -38,10 +38,7 @@ export interface FinanceDashboardData {
     waitingForFunds: boolean;
   };
   proposedAugInstall?: {
-    id: string;
     items: string[];
-    approved: boolean;
-    running: boolean;
   };
   topPendingRequests: PendingRequestSummary[];
   lastPurchases: string[];
@@ -253,26 +250,13 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
 
   if (data.proposedAugInstall) {
     const install = data.proposedAugInstall;
-    buffer.push(`${CLR.WHITE_BOLD}AUGMENTATIONS-INSTALLATION:${CLR.RESET}`);
+    buffer.push(`${CLR.WHITE_BOLD}AUGMENTATIONS BEREIT ZUR INSTALLATION:${CLR.RESET}`);
     buffer.push(
-      `Zwischenmodus: nur Sleeve- und Gang-Upgrades; Home-Upgrades pausieren.`,
-    );
-    const installStatus = install.running
-      ? `${CLR.CYAN}Installation läuft${CLR.RESET}`
-      : install.approved
-        ? `${CLR.GREEN}freigegeben${CLR.RESET}`
-        : `${CLR.YELLOW}Freigabe erforderlich${CLR.RESET}`;
-    buffer.push(
-      `Batch ${install.id.slice(-8)} | ${install.items.length} Augs | ${installStatus}`,
+      `Bitte die Augmentations manuell im Spiel installieren; der Finance-Core startet keinen Soft-Reset.`,
     );
     install.items.forEach((item, index) => {
       buffer.push(` ${index + 1}. ${truncateANSI(item, 58)}`);
     });
-    if (!install.approved && !install.running) {
-      buffer.push(
-        `Befehl: run tools/approve-aug-batch.js install ${install.id.slice(-8)}`,
-      );
-    }
     buffer.push(D_LINE);
   }
 

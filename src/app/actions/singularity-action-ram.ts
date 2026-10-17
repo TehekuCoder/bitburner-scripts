@@ -9,7 +9,6 @@ const SINGULARITY_ACTION_RAM: Record<string, number> = {
   "player-purchase-aug-batch": 5,
   "player-purchase-nfg": 7.5,
   "player-donate-faction": 5,
-  "player-install-augs": 7.5,
 };
 
 const ACTION_BASE_RAM = 1.6;
