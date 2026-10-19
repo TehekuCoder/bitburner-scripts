@@ -12,7 +12,6 @@ import { FINANCE_PORT } from "../../domain/evaluators/evaluator-runner";
 import { PATHS } from "/infrastructure/runtime/paths";
 import {
   BASE_CATEGORY_MARGINS,
-  AUG_BATCH_APPROVAL_PORT,
   AUG_BATCH_PLAN_FILE,
   CASH_BUFFER,
   CATEGORY_TO_EVALUATOR,
@@ -135,8 +134,6 @@ export async function main(ns: NS): Promise<void> {
   const lastPurchases: string[] = [];
   const lastWarnings: string[] = [];
   const evaluatorLastSeen: Record<string, number> = {};
-  const approvedAugActionIds = new Set<string>();
-  const pendingAugApprovalIds = new Set<string>();
   let singularityRamMultiplier: number | null = null;
   let criticalAugBatchNotified = false;
 
@@ -372,46 +369,6 @@ export async function main(ns: NS): Promise<void> {
         ns.print(`[ERROR] Aug-Batch-Plan konnte nicht gespeichert werden: ${error}`);
       }
     }
-    const approvalPort = ns.getPortHandle(AUG_BATCH_APPROVAL_PORT);
-    while (!approvalPort.empty()) {
-      const approvedId = approvalPort.read();
-      if (
-        typeof approvedId === "string" &&
-        /^player-aug-batch-[0-9a-f]{8}$/.test(approvedId)
-      ) {
-        pendingAugApprovalIds.add(approvedId);
-      } else if (approvedId !== "NULL PORT DATA") {
-        ns.print(
-          `[WARN] Veraltete oder ungültige Aug-Batch-Freigabe ignoriert: ${String(approvedId)}`,
-        );
-      }
-    }
-    const playerEvaluatorCache = evaluatorRequestCache.get("PLAYER_AUG");
-    for (const approvedId of pendingAugApprovalIds) {
-      if (proposedAugBatch?.id === approvedId) {
-        approvedAugActionIds.add(approvedId);
-        pendingAugApprovalIds.delete(approvedId);
-        ns.toast(
-          `Aug-Batch ${approvedId.slice(-8)} freigegeben.`,
-          "success",
-          5000,
-        );
-      } else if (
-        playerEvaluatorCache &&
-        now - playerEvaluatorCache.timestamp <= CACHE_TTL_MS
-      ) {
-        pendingAugApprovalIds.delete(approvedId);
-        ns.print(
-          `[WARN] Veraltete Aug-Batch-Freigabe ignoriert: ${approvedId.slice(-8)}`,
-        );
-      }
-    }
-    for (const approvedId of approvedAugActionIds) {
-      if (proposedAugBatch?.id !== approvedId) {
-        approvedAugActionIds.delete(approvedId);
-      }
-    }
-
     if (isAugmentationMode) {
       const maintenanceRequests = allRequests.filter(
         (request) =>
@@ -527,27 +484,14 @@ export async function main(ns: NS): Promise<void> {
         if (criticalAugBatch && req.category !== "PLAYER_AUG") {
           continue;
         }
-        if (
-          req.action.args[0] === "player-purchase-aug-batch" &&
-          !approvedAugActionIds.has(req.id)
-        ) {
-          continue;
-        }
-        const isApprovedAugBatch =
-          req.action.args[0] === "player-purchase-aug-batch" &&
-          approvedAugActionIds.has(req.id);
         const pendingReservedCost = Array.from(pendingActions.values()).reduce(
           (total, pending) => total + pending.reservedCost,
           0,
         );
-        const canAffordApprovedAugBatch =
-          isApprovedAugBatch &&
-          rawMoney - pendingReservedCost >= req.cost;
         const margin = dynamicMargins[req.category] ?? 1.0;
         const requiredBudget = req.cost * margin;
 
-        const canAffordEasily =
-          canAffordApprovedAugBatch || availableMoney >= requiredBudget;
+        const canAffordEasily = availableMoney >= requiredBudget;
         const isPocketChange = req.cost <= rawMoney * pocketChangeRatio;
 
         if (blockedCategories.has(req.category) && !canAffordEasily) {
@@ -578,9 +522,6 @@ export async function main(ns: NS): Promise<void> {
           );
 
           if (pid > 0) {
-            if (req.action.args[0] === "player-purchase-aug-batch") {
-              approvedAugActionIds.delete(req.id);
-            }
             pendingActions.set(requestTrackingId, {
               category: req.category,
               requestId: req.id,
@@ -642,17 +583,18 @@ export async function main(ns: NS): Promise<void> {
             id: proposedAugBatch.id,
             items: items.map((item) => `${item.name} — ${item.faction}`),
             cost: proposedAugBatch.cost,
-            approved: approvedAugActionIds.has(proposedAugBatch.id),
             running: Array.from(pendingActions.values()).some(
               (pending) => pending.requestId === proposedAugBatch.id,
             ),
             waitingForFunds:
               rawMoney -
+                reserve -
                 Array.from(pendingActions.values()).reduce(
                   (total, pending) => total + pending.reservedCost,
                   0,
                 ) <
-              proposedAugBatch.cost,
+              proposedAugBatch.cost *
+                (dynamicMargins.PLAYER_AUG ?? 1.0),
           };
         } else {
           ns.print("[ERROR] Aug-Batch-Vorschlag enthält ungültige Einträge.");

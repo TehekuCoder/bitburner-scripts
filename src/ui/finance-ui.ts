@@ -33,7 +33,6 @@ export interface FinanceDashboardData {
     id: string;
     items: string[];
     cost: number;
-    approved: boolean;
     running: boolean;
     waitingForFunds: boolean;
   };
@@ -227,14 +226,12 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
 
   if (data.proposedAugBatch) {
     const batch = data.proposedAugBatch;
-    buffer.push(`${CLR.WHITE_BOLD}AUGMENTATIONSVORSCHLAG (KAUFREIHENFOLGE):${CLR.RESET}`);
+    buffer.push(`${CLR.WHITE_BOLD}AUTOMATISCHER AUGMENTATIONSKAUF:${CLR.RESET}`);
     const batchStatus = batch.running
       ? `${CLR.CYAN}Kauf läuft${CLR.RESET}`
-      : batch.approved && batch.waitingForFunds
-        ? `${CLR.YELLOW}freigegeben, wartet auf Geld${CLR.RESET}`
-        : batch.approved
-          ? `${CLR.GREEN}freigegeben${CLR.RESET}`
-          : `${CLR.YELLOW}Freigabe erforderlich${CLR.RESET}`;
+      : batch.waitingForFunds
+        ? `${CLR.YELLOW}automatischer Kauf wartet auf Budget${CLR.RESET}`
+        : `${CLR.GREEN}automatischer Kauf${CLR.RESET}`;
     buffer.push(
       `Batch ${batch.id.slice(-8)} | Gesamt: $${ns.format.number(batch.cost)} | ${batchStatus}`,
     );
@@ -242,9 +239,6 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     batch.items.forEach((item, index) => {
       buffer.push(` ${index + 1}. ${truncateANSI(item, 58)}`);
     });
-    if (!batch.approved && !batch.running) {
-      buffer.push(`Befehl: run tools/approve-aug-batch.js ${batch.id.slice(-8)}`);
-    }
     buffer.push(D_LINE);
   }
 
