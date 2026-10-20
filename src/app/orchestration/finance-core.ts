@@ -39,7 +39,6 @@ interface PendingAction {
   pid: number;
   reservedCost: number;
   startedAt: number;
-  timeoutWarningLogged?: boolean;
 }
 
 const pendingActions = new Map<string, PendingAction>();
@@ -292,19 +291,24 @@ export async function main(ns: NS): Promise<void> {
 
     for (const [id, pending] of pendingActions) {
       if (now - pending.startedAt > ACTION_TIMEOUT_MS) {
-        if (ns.isRunning(pending.pid, "home")) {
-          if (!pending.timeoutWarningLogged) {
-            const warning = `⚠️ Kauf-Action läuft ungewöhnlich lange (PID ${pending.pid}): ${pending.description}`;
-            logger.warn(warning);
-            pushBounded(lastWarnings, warning, 6);
-            pending.timeoutWarningLogged = true;
-          }
+        const runningScript = ns.getRunningScript(pending.pid, "home");
+        const isPendingActionRunning =
+          runningScript?.filename === CATEGORY_ACTION_SCRIPTS[pending.category] &&
+          runningScript.args[runningScript.args.length - 1] ===
+            `${FINANCE_REQUEST_ARG_PREFIX}${id}`;
+        const stopped = isPendingActionRunning && ns.kill(pending.pid);
+        if (isPendingActionRunning && !stopped) {
+          const warning = `⚠️ Kauf-Action konnte nach Timeout nicht beendet werden; Budget bleibt reserviert: ${pending.description}`;
+          logger.warn(warning);
+          pushBounded(lastWarnings, warning, 6);
           continue;
         }
 
         pendingActions.delete(id);
         retryAfter.set(id, now + 5000);
-        const warning = `⚠️ Keine Rückmeldung von beendeter Kauf-Action erhalten: ${pending.description}`;
+        const warning = isPendingActionRunning
+          ? `⚠️ Kauf-Action nach Timeout beendet; Budget-Reservierung freigegeben: ${pending.description}`
+          : `⚠️ Keine Rückmeldung von beendeter Kauf-Action erhalten: ${pending.description}`;
         logger.warn(warning);
         pushBounded(lastWarnings, warning, 6);
         if (pending.requestId.startsWith("player-aug-batch-")) {
