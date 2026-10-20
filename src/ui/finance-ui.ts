@@ -30,7 +30,6 @@ export interface FinanceDashboardData {
   inactiveEvaluators: string[];
   nextPurchaseRequest?: PendingRequestSummary;
   proposedAugBatch?: {
-    id: string;
     items: string[];
     cost: number;
     running: boolean;
@@ -50,18 +49,16 @@ const ANSI_REGEX = /\u001b\[[0-9;]*m/g;
  * Tag-Mapping für prägnante UI-Kategorie-Kürzel.
  */
 const CATEGORY_TAGS: Record<string, string> = {
-  HOME_RAM: "RAM",
-  HOME_CORES: "COR",
-  SERVER_BUY: "SRV",
-  SERVER_UPGRADE: "SRV",
+  HOME_SERVER: "HOME",
+  PURCHASED_SERVER: "SRV",
   HACKNET: "HNK",
   DARKNET_PROGRAM: "DRK",
   STOCK_LICENSE: "STK",
+  STOCK_TRADE: "TRADE",
   GANG_EQUIPMENT: "GNG",
-  GANG_AUG: "GAUG",
   SLEEVE_AUG: "SLV",
   PLAYER_AUG: "AUG",
-  CORP_FOUND: "CRP",
+  COMPANY: "CORP",
 };
 
 /**
@@ -233,7 +230,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
         ? `${CLR.YELLOW}automatischer Kauf wartet auf Budget${CLR.RESET}`
         : `${CLR.GREEN}automatischer Kauf${CLR.RESET}`;
     buffer.push(
-      `Batch ${batch.id.slice(-8)} | Gesamt: $${ns.format.number(batch.cost)} | ${batchStatus}`,
+      `Augmentations-Batch | Gesamt: $${ns.format.number(batch.cost)} | ${batchStatus}`,
     );
     buffer.push(`Liste gespeichert: home/${AUG_BATCH_PLAN_FILE}`);
     batch.items.forEach((item, index) => {

@@ -580,7 +580,6 @@ export async function main(ns: NS): Promise<void> {
           )
         ) {
           proposedAugBatchData = {
-            id: proposedAugBatch.id,
             items: items.map((item) => `${item.name} — ${item.faction}`),
             cost: proposedAugBatch.cost,
             running: Array.from(pendingActions.values()).some(
