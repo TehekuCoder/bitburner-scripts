@@ -20,19 +20,19 @@ export async function runTrackedFinanceAction(
   try {
     success = await action();
   } catch (error) {
-    publishResult(ns, requestId, false, startingMoney);
+    await publishResult(ns, requestId, false, startingMoney);
     throw error;
   }
 
-  publishResult(ns, requestId, success, startingMoney);
+  await publishResult(ns, requestId, success, startingMoney);
 }
 
-function publishResult(
+async function publishResult(
   ns: NS,
   requestId: string,
   success: boolean,
   startingMoney: number,
-): void {
+): Promise<void> {
   if (!requestId) return;
 
   const result: FinanceActionResult = {
@@ -40,9 +40,15 @@ function publishResult(
     success,
     actualCost: Math.max(0, startingMoney - ns.getServerMoneyAvailable("home")),
   };
-  if (!ns.tryWritePort(FINANCE_RESULT_PORT, JSON.stringify(result))) {
-    ns.print(
-      `[FINANCE-ACTION] Ergebnis für ${requestId} konnte nicht auf Port ${FINANCE_RESULT_PORT} geschrieben werden.`,
-    );
+  const serializedResult = JSON.stringify(result);
+  const maxAttempts = 50;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (ns.tryWritePort(FINANCE_RESULT_PORT, serializedResult)) return;
+    await ns.sleep(100);
   }
+
+  ns.print(
+    `[FINANCE-ACTION] Ergebnis für ${requestId} konnte nach ${maxAttempts} Versuchen nicht auf Port ${FINANCE_RESULT_PORT} geschrieben werden.`,
+  );
 }

@@ -36,8 +36,10 @@ interface PendingAction {
   category: PurchaseCategory;
   requestId: string;
   description: string;
+  pid: number;
   reservedCost: number;
   startedAt: number;
+  timeoutWarningLogged?: boolean;
 }
 
 const pendingActions = new Map<string, PendingAction>();
@@ -290,9 +292,19 @@ export async function main(ns: NS): Promise<void> {
 
     for (const [id, pending] of pendingActions) {
       if (now - pending.startedAt > ACTION_TIMEOUT_MS) {
+        if (ns.isRunning(pending.pid, "home")) {
+          if (!pending.timeoutWarningLogged) {
+            const warning = `⚠️ Kauf-Action läuft ungewöhnlich lange (PID ${pending.pid}): ${pending.description}`;
+            logger.warn(warning);
+            pushBounded(lastWarnings, warning, 6);
+            pending.timeoutWarningLogged = true;
+          }
+          continue;
+        }
+
         pendingActions.delete(id);
         retryAfter.set(id, now + 5000);
-        const warning = `⚠️ Keine Rückmeldung von Kauf-Action erhalten: ${pending.description}`;
+        const warning = `⚠️ Keine Rückmeldung von beendeter Kauf-Action erhalten: ${pending.description}`;
         logger.warn(warning);
         pushBounded(lastWarnings, warning, 6);
         if (pending.requestId.startsWith("player-aug-batch-")) {
@@ -526,6 +538,7 @@ export async function main(ns: NS): Promise<void> {
               category: req.category,
               requestId: req.id,
               description: req.description,
+              pid,
               reservedCost: requiredBudget,
               startedAt: now,
             });
