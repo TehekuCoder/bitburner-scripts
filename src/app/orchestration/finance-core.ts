@@ -497,7 +497,7 @@ export async function main(ns: NS): Promise<void> {
         ) {
           continue;
         }
-        if (criticalAugBatch && req.category !== "PLAYER_AUG") {
+        if (criticalAugBatch && req !== criticalAugBatch) {
           continue;
         }
         const pendingReservedCost = Array.from(pendingActions.values()).reduce(

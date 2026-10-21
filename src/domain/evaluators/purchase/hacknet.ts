@@ -21,6 +21,7 @@ interface HacknetRequest extends PurchaseRequest {
 }
 
 const HASH_TO_MONEY_VALUE = 250_000;
+const HASHES_PER_SERVER_LEVEL = 0.001;
 const MAX_PAYBACK_TIME_SECONDS = 7200; // 2 Stunden
 const MIN_ROI = 1 / MAX_PAYBACK_TIME_SECONDS;
 const MIN_TARGET_RAM = 16;
@@ -57,6 +58,7 @@ function getEstimatedMoneyGain(
   mult: number,
   isServerMode: boolean,
   hasFormulas: boolean,
+  moneyMultiplier: number,
 ): number {
   if (isServerMode) {
     let hashRate = 0;
@@ -70,11 +72,12 @@ function getEstimatedMoneyGain(
       );
     } else {
       hashRate =
-        0.25 *
+        HASHES_PER_SERVER_LEVEL *
         level *
-        Math.pow(1.6, Math.log2(ram)) *
-        (1 + (cores - 1) * 0.2) *
-        mult;
+        Math.pow(1.07, Math.log2(ram)) *
+        (1 + (cores - 1) / 5) *
+        mult *
+        moneyMultiplier;
     }
     return hashRate * HASH_TO_MONEY_VALUE;
   } else {
@@ -84,9 +87,10 @@ function getEstimatedMoneyGain(
     return (
       1.5 *
       level *
-      Math.pow(1.5, Math.log2(ram)) *
-      (1 + (cores - 1) * 0.2) *
-      mult
+      Math.pow(1.035, ram - 1) *
+      ((cores + 5) / 6) *
+      mult *
+      moneyMultiplier
     );
   }
 }
@@ -193,7 +197,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
       const newNodeCost = ns.hacknet.getPurchaseNodeCost();
       if (newNodeCost > 0 && Number.isFinite(newNodeCost)) {
         const newNodeGain = getEstimatedMoneyGain(
-          ns, 1, 1, 1, prodMult, isServerMode, hasFormulas,
+          ns, 1, 1, 1, prodMult, isServerMode, hasFormulas, moneyMult,
         );
         const roi = calculateRoi(newNodeCost, 0, newNodeGain);
 
@@ -233,7 +237,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
           cost: ns.hacknet.getLevelUpgradeCost(i, 1),
           ramGain: 0,
           nextGain: getEstimatedMoneyGain(
-            ns, stats.level + 1, stats.ram, stats.cores, prodMult, isServerMode, hasFormulas,
+            ns, stats.level + 1, stats.ram, stats.cores, prodMult, isServerMode, hasFormulas, moneyMult,
           ),
           desc: `Level (${stats.level} ➔ ${stats.level + 1})`,
           actArg: "hacknet-upgrade-level",
@@ -243,7 +247,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
           cost: ns.hacknet.getRamUpgradeCost(i, 1),
           ramGain: stats.ram,
           nextGain: getEstimatedMoneyGain(
-            ns, stats.level, stats.ram * 2, stats.cores, prodMult, isServerMode, hasFormulas,
+            ns, stats.level, stats.ram * 2, stats.cores, prodMult, isServerMode, hasFormulas, moneyMult,
           ),
           desc: `RAM (${stats.ram}GB ➔ ${stats.ram * 2}GB)`,
           actArg: "hacknet-upgrade-ram",
@@ -253,7 +257,7 @@ export const HacknetEvaluator: PurchaseEvaluator = {
           cost: ns.hacknet.getCoreUpgradeCost(i, 1),
           ramGain: 0,
           nextGain: getEstimatedMoneyGain(
-            ns, stats.level, stats.ram, stats.cores + 1, prodMult, isServerMode, hasFormulas,
+            ns, stats.level, stats.ram, stats.cores + 1, prodMult, isServerMode, hasFormulas, moneyMult,
           ),
           desc: `Core (${stats.cores} ➔ ${stats.cores + 1})`,
           actArg: "hacknet-upgrade-core",

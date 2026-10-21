@@ -74,7 +74,11 @@ export const HomeEvaluator: PurchaseEvaluator = {
         : Math.max(1, Math.floor(baseScore * Math.min(2.0, effectiveRamEfficiency)));
 
       // Notbremse bei extremem Missverhältnis zum Kontostand
-      if (ramCost > playerMoney * 50 && priority < PurchasePriority.LOW) {
+      if (
+        currentRam >= 64 &&
+        ramCost > playerMoney * 50 &&
+        priority < PurchasePriority.LOW
+      ) {
         priority = (priority + 1) as PurchasePriority;
       }
 

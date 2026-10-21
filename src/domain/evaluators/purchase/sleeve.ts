@@ -22,7 +22,7 @@ export const SleeveEvaluator: PurchaseEvaluator = {
 
     const bnMults = loadBnMults(ns);
     const costMult = bnMults.AugmentationMoneyCost ?? 1.0;
-    const efficiencyMult = Math.max(1.0, costMult * 1.2);
+    const efficiencyMult = costMult > 0 ? 1 / costMult : 1.0;
 
     const requests: SleevePurchaseRequest[] = [];
     const numSleeves = ns.sleeve.getNumSleeves();
