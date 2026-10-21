@@ -218,6 +218,7 @@ const SLEEVE_KEYS = [
 
 const AUGMENT_KEYS = [
   "augRoadMap",
+  "augPurchasePlan",
   "isBN2GangMode",
 ] as const satisfies readonly (keyof AugmentState)[];
 

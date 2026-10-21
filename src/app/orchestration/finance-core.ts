@@ -19,7 +19,10 @@ import {
   FINANCE_REQUEST_ARG_PREFIX,
   FINANCE_RESULT_PORT,
 } from "/shared/constants/finance";
-import { loadFinanceState } from "/infrastructure/state/state";
+import {
+  loadAugmentState,
+  loadFinanceState,
+} from "/infrastructure/state/state";
 import { getPurchasedUninstalledAugs } from "/domain/strategy/player.js";
 import {
   getSingularityActionRam,
@@ -354,7 +357,21 @@ export async function main(ns: NS): Promise<void> {
             request.action.args[0] === "player-purchase-aug-batch",
         )
       : undefined;
-    if (proposedAugBatch) {
+    const augPurchasePlan = loadAugmentState(ns)?.augPurchasePlan;
+    if (augPurchasePlan && Array.isArray(augPurchasePlan.items)) {
+      const plan = [
+        "Fester Augmentierungs-Kaufplan",
+        `Erstellt: ${new Date(augPurchasePlan.createdAt).toISOString()}`,
+        ...augPurchasePlan.items.map(
+          (item, index) =>
+            `${index + 1}. ${item.name} — Rep ${ns.format.number(item.repReq)} — $${ns.format.number(item.basePrice)} — ${item.factions.join(", ")}`,
+        ),
+        "",
+      ].join("\n");
+      if (ns.read(AUG_BATCH_PLAN_FILE) !== plan) {
+        await ns.write(AUG_BATCH_PLAN_FILE, plan, "w");
+      }
+    } else if (proposedAugBatch) {
       try {
         const items = JSON.parse(
           String(proposedAugBatch.action.args[1] ?? ""),
@@ -370,7 +387,7 @@ export async function main(ns: NS): Promise<void> {
           ns.print("[ERROR] Aug-Batch-Plan enthält ungültige Einträge.");
         } else {
           const plan = [
-            `Augmentations-Kaufplan (${proposedAugBatch.id.slice(-8)})`,
+            `Nächster Augmentierungs-Batch (${proposedAugBatch.id.slice(-8)})`,
             `Gesamtkosten: $${ns.format.number(proposedAugBatch.cost)}`,
             ...items.map(
               (item, index) => `${index + 1}. ${item.name} — ${item.faction}`,

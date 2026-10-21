@@ -1,5 +1,8 @@
 import { NS, FactionName } from "@ns";
-import { FACTION_ROADMAP, CITY_FACTIONS } from "/shared/constants/factions.js";
+import {
+  ALL_KNOWN_FACTIONS,
+  FACTION_ROADMAP,
+} from "/shared/constants/factions.js";
 import {
   getPurchasedUninstalledAugs,
   isGangOfferingAllAugs,
@@ -14,37 +17,6 @@ export interface AugmentTarget {
   factions: FactionName[];
   bestFaction: FactionName;
 }
-
-// 🌐 Vollständiges Register aller Bitburner-Fraktionen
-const ALL_KNOWN_FACTIONS: FactionName[] = [
-  "CyberSec",
-  "Tian Di Hui",
-  "Netburners",
-  "NiteSec",
-  "The Black Hand",
-  "BitRunners",
-  "Daedalus",
-  "Illuminati",
-  "The Covenant",
-  "Bladeburners",
-  "Church of the Machine God",
-  "ECorp",
-  "MegaCorp",
-  "Bachman & Associates",
-  "Blade Industries",
-  "NWO",
-  "Clarke Incorporated",
-  "OmniTek Incorporated",
-  "Four Sigma",
-  "KuaiGong International",
-  "Fulcrum Secret Technologies",
-  "Slum Snakes",
-  "Tetrads",
-  "Syndicate",
-  "The Dark Army",
-  "Speakers for the Dead",
-  ...CITY_FACTIONS,
-] as FactionName[];
 
 export async function main(ns: NS): Promise<void> {
   void ns.getHackingLevel;

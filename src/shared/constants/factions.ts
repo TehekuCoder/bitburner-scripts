@@ -93,6 +93,36 @@ export const CITY_FACTIONS: FactionName[] = [
   "Volhaven",
 ] as FactionName[];
 
+export const ALL_KNOWN_FACTIONS: FactionName[] = [
+  "CyberSec",
+  "Tian Di Hui",
+  "Netburners",
+  "NiteSec",
+  "The Black Hand",
+  "BitRunners",
+  "Daedalus",
+  "Illuminati",
+  "The Covenant",
+  "Bladeburners",
+  "Church of the Machine God",
+  "ECorp",
+  "MegaCorp",
+  "Bachman & Associates",
+  "Blade Industries",
+  "NWO",
+  "Clarke Incorporated",
+  "OmniTek Incorporated",
+  "Four Sigma",
+  "KuaiGong International",
+  "Fulcrum Secret Technologies",
+  "Slum Snakes",
+  "Tetrads",
+  "Syndicate",
+  "The Dark Army",
+  "Speakers for the Dead",
+  ...CITY_FACTIONS,
+] as FactionName[];
+
 export const GANG_CANDIDATE_FACTIONS: FactionName[] = [
   "Slum Snakes",
   "Tetrads",

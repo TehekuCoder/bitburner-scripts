@@ -23,6 +23,20 @@ export interface AugmentTarget {
   bestFaction: FactionName;
 }
 
+export interface AugPurchasePlanItem {
+  name: string;
+  repReq: number;
+  basePrice: number;
+  prereqs: string[];
+  factions: FactionName[];
+}
+
+export interface AugPurchasePlan {
+  createdAt: number;
+  installedAugs: string[];
+  items: AugPurchasePlanItem[];
+}
+
 export interface TargetFactionResult {
   name: FactionName;
   targetRep: number;
@@ -41,6 +55,7 @@ export interface AugShoppingItem {
 
 export interface AugmentState {
   augRoadMap?: AugmentTarget[];
+  augPurchasePlan?: AugPurchasePlan;
   isBN2GangMode?: boolean;
 }
 
