@@ -1,6 +1,6 @@
 import { NS, ActiveFragment } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
-import { loadState } from "/infrastructure/state/state.js";
+import { loadState, patchState } from "/infrastructure/state/state.js";
 import { hasBladeburner } from "/lib/utils.js";
 import {
   getAllRootedServersIncludingPurchased,
@@ -11,6 +11,7 @@ import { PATHS } from "/infrastructure/runtime/paths.js";
 import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
 
 const CHARGE_PAYLOAD = PATHS.services.payloads.stanekCharge ?? "/services/payloads/stanek-charge.js";
+const HACKING_FRAGMENT_TYPES = [3, 4, 5, 6];
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -54,12 +55,33 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
+    const isBladeburnerActive =
+      hasBladeburner(ns) && ns.bladeburner.inBladeburner();
+    const layoutProfile = isBladeburnerActive ? "BLADEBURNER" : "HACKING";
     let fragments = ns.stanek.activeFragments();
 
     if (fragments.length === 0) {
       logger.info("📐 Keines der Fragmente ist platziert. Versuche Auto-Setup...");
-      autoSetupFragments(ns, logger);
+      autoSetupFragments(ns, logger, isBladeburnerActive);
       fragments = ns.stanek.activeFragments();
+    } else if (
+      state?.stanekLayoutProfile
+        ? state.stanekLayoutProfile !== layoutProfile
+        : layoutDoesNotMatchProfile(fragments, isBladeburnerActive)
+    ) {
+      logger.warn(
+        `🔄 Bladeburner-Status geändert. Stanek-Grid wird auf ${
+          isBladeburnerActive ? "Kampf" : "Hacking"
+        } umgestellt; vorhandene Ladung geht dabei verloren.`,
+      );
+      stopAllChargeWorkers(ns);
+      ns.stanek.clearGift();
+      autoSetupFragments(ns, logger, isBladeburnerActive);
+      fragments = ns.stanek.activeFragments();
+    }
+
+    if (fragments.length > 0 && state?.stanekLayoutProfile !== layoutProfile) {
+      await patchState(ns, { stanekLayoutProfile: layoutProfile });
     }
 
     if (fragments.length === 0) {
@@ -169,21 +191,24 @@ function getValidChargeTile(ns: NS, fragment: ActiveFragment): { x: number; y: n
   return { x: fragment.x, y: fragment.y };
 }
 
-function autoSetupFragments(ns: NS, logger: LoggerClient): void {
+function layoutDoesNotMatchProfile(
+  fragments: ActiveFragment[],
+  isBladeburnerActive: boolean,
+): boolean {
+  return isBladeburnerActive
+    ? fragments.some((fragment) => HACKING_FRAGMENT_TYPES.includes(fragment.type))
+    : fragments.some((fragment) => fragment.type === 17);
+}
+
+function autoSetupFragments(
+  ns: NS,
+  logger: LoggerClient,
+  isBladeburnerActive: boolean,
+): void {
   try {
     const width = ns.stanek.giftWidth();
     const height = ns.stanek.giftHeight();
     const definitions = ns.stanek.fragmentDefinitions();
-
-    const isBladeburnerActive =
-      hasBladeburner(ns) &&
-      (() => {
-        try {
-          return ns.bladeburner.inBladeburner();
-        } catch {
-          return false;
-        }
-      })();
 
     logger.info(
       `Grid-Größe erkannt: ${width}x${height}. Modus: ${
@@ -194,37 +219,52 @@ function autoSetupFragments(ns: NS, logger: LoggerClient): void {
     );
 
     const priorityTypes = isBladeburnerActive
-      ? [17, 7, 8, 9, 10, 18, 6, 3, 5]
-      : [6, 3, 5, 18, 7, 8, 9, 10];
+      ? [17, 7, 8, 9, 10, 18]
+      : [6, 3, 5, 4, 7, 8, 9, 10, 18];
 
-    const sortedDefinitions = [...definitions].sort((a, b) => {
+    const compatibleDefinitions = definitions.filter((def) =>
+      isBladeburnerActive
+        ? !HACKING_FRAGMENT_TYPES.includes(def.type)
+        : def.type !== 17,
+    );
+    const sortedDefinitions = compatibleDefinitions.sort((a, b) => {
+      if (a.type === 18 && b.type !== 18) return 1;
+      if (b.type === 18 && a.type !== 18) return -1;
+
       const indexA = priorityTypes.indexOf(a.type);
       const indexB = priorityTypes.indexOf(b.type);
       const prioA = indexA === -1 ? 999 : indexA;
       const prioB = indexB === -1 ? 999 : indexB;
-      return prioA - prioB;
+      return prioA - prioB || b.power - a.power;
     });
 
     for (const def of sortedDefinitions) {
-      let placed = false;
+      const placementLimit =
+        def.type === 18 ? Math.max(1, Math.floor(def.limit)) : 1;
 
-      for (let x = 0; x < width && !placed; x++) {
-        for (let y = 0; y < height && !placed; y++) {
-          for (let rotation = 0; rotation < 4; rotation++) {
-            if (ns.stanek.canPlaceFragment(x, y, rotation, def.id)) {
-              const success = ns.stanek.placeFragment(x, y, rotation, def.id);
-              if (success) {
-                logger.success(
-                  `🧩 Fragment ${def.id} (Typ: ${def.type}) platziert bei [${x}, ${y}] mit Rotation ${rotation}`,
-                  undefined,
-                  { context: { fragmentId: def.id, type: def.type, x, y, rotation } }
-                );
-                placed = true;
-                break;
+      for (let count = 0; count < placementLimit; count++) {
+        let placed = false;
+
+        for (let x = 0; x < width && !placed; x++) {
+          for (let y = 0; y < height && !placed; y++) {
+            for (let rotation = 0; rotation < 4; rotation++) {
+              if (ns.stanek.canPlaceFragment(x, y, rotation, def.id)) {
+                const success = ns.stanek.placeFragment(x, y, rotation, def.id);
+                if (success) {
+                  logger.success(
+                    `🧩 Fragment ${def.id} (Typ: ${def.type}) platziert bei [${x}, ${y}] mit Rotation ${rotation}`,
+                    undefined,
+                    { context: { fragmentId: def.id, type: def.type, x, y, rotation } }
+                  );
+                  placed = true;
+                  break;
+                }
               }
             }
           }
         }
+
+        if (!placed) break;
       }
     }
   } catch (err) {

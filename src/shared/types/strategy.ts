@@ -30,6 +30,7 @@ export interface StrategyState {
   isGrindingNFG?: boolean;
   isDominionActive?: boolean;
   isBladeburnerParallel?: boolean;
+  stanekLayoutProfile?: "HACKING" | "BLADEBURNER";
   /** Liste der aktuell deaktivierten Subsysteme/Module (z. B. ["gang", "sleeve"]) */
   disabledModules?: string[];
 }
