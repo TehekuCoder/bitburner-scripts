@@ -1,6 +1,6 @@
 import { NS } from "@ns";
 import { formatPercent } from "/lib/utils.js";
-import { AUG_BATCH_PLAN_FILE } from "/shared/constants/finance.js";
+import { AUG_PURCHASE_PLAN_FILE } from "/shared/constants/finance.js";
 
 export interface PendingRequestSummary {
   description: string;
@@ -29,11 +29,20 @@ export interface FinanceDashboardData {
   activeEvaluators: string[];
   inactiveEvaluators: string[];
   nextPurchaseRequest?: PendingRequestSummary;
-  proposedAugBatch?: {
-    items: string[];
+  proposedAugPurchase?: {
+    name: string;
     cost: number;
+    faction?: string;
     running: boolean;
     waitingForFunds: boolean;
+    waitingForFactionRep: boolean;
+    factions: {
+      name: string;
+      rep: number;
+      favor: number;
+      estimatedRemainingRep: number;
+      available: boolean;
+    }[];
   };
   proposedAugInstall?: {
     items: string[];
@@ -221,21 +230,31 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   );
   buffer.push(D_LINE);
 
-  if (data.proposedAugBatch) {
-    const batch = data.proposedAugBatch;
-    buffer.push(`${CLR.WHITE_BOLD}AUTOMATISCHER AUGMENTATIONSKAUF:${CLR.RESET}`);
-    const batchStatus = batch.running
+  if (data.proposedAugPurchase) {
+    const purchase = data.proposedAugPurchase;
+    buffer.push(`${CLR.WHITE_BOLD}AUGMENTATIONEN: EINZELKAUF NACH PLAN:${CLR.RESET}`);
+    const purchaseStatus = purchase.running
       ? `${CLR.CYAN}Kauf läuft${CLR.RESET}`
-      : batch.waitingForFunds
-        ? `${CLR.YELLOW}automatischer Kauf wartet auf Budget${CLR.RESET}`
-        : `${CLR.GREEN}automatischer Kauf${CLR.RESET}`;
+      : purchase.waitingForFunds
+        ? `${CLR.YELLOW}wartet auf Budget${CLR.RESET}`
+        : purchase.waitingForFactionRep
+          ? `${CLR.YELLOW}wartet auf Fraktions-Rep${CLR.RESET}`
+          : `${CLR.GREEN}bereit${CLR.RESET}`;
     buffer.push(
-      `Augmentations-Batch | Gesamt: $${ns.format.number(batch.cost)} | ${batchStatus}`,
+      `${truncateANSI(purchase.name, 30)} | $${ns.format.number(purchase.cost)} | ${purchaseStatus}`,
     );
-    buffer.push(`Liste gespeichert: home/${AUG_BATCH_PLAN_FILE}`);
-    batch.items.forEach((item, index) => {
-      buffer.push(` ${index + 1}. ${truncateANSI(item, 58)}`);
-    });
+    if (purchase.faction) buffer.push(`Kauffraktion: ${purchase.faction}`);
+    buffer.push(`Plan: home/${AUG_PURCHASE_PLAN_FILE}`);
+    if (purchase.factions.length === 0) {
+      buffer.push("Keine beigetretene Angebotsfraktion gefunden.");
+    } else {
+      purchase.factions.slice(0, 3).forEach((faction, index) => {
+        const availability = faction.available ? "verfügbar" : "Rep fehlt";
+        buffer.push(
+          ` ${index + 1}. ${truncateANSI(faction.name, 15)} Rep ${ns.format.number(faction.rep)} | Favor ${ns.format.number(faction.favor)} | Aufwand~ ${ns.format.number(faction.estimatedRemainingRep)} | ${availability}`,
+        );
+      });
+    }
     buffer.push(D_LINE);
   }
 

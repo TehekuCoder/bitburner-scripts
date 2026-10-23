@@ -6,7 +6,6 @@ const SINGULARITY_ACTION_RAM: Record<string, number> = {
   "program-purchase-tor": 2,
   "program-purchase": 2,
   "player-purchase-aug": 5,
-  "player-purchase-aug-batch": 5,
   "player-purchase-nfg": 7.5,
   "player-donate-faction": 5,
 };
@@ -29,15 +28,7 @@ export function getSingularityActionRam(
   multiplier: number,
 ): number | undefined {
   const action = String(args[0] ?? "");
-  const hasExpectedBatchCost =
-    action === "player-purchase-aug-batch" &&
-    typeof args[2] === "number" &&
-    Number.isFinite(args[2]) &&
-    args[2] >= 0;
-  const singularityApiRam =
-    action === "player-purchase-aug-batch" && !hasExpectedBatchCost
-      ? 7.5
-      : SINGULARITY_ACTION_RAM[action];
+  const singularityApiRam = SINGULARITY_ACTION_RAM[action];
   if (singularityApiRam === undefined) return undefined;
 
   const actionRam =

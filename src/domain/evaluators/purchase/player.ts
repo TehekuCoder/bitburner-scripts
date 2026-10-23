@@ -13,7 +13,6 @@ import {
   adjustPriorityByMult,
 } from "/lib/utils.js";
 import { runEvaluator } from "../evaluator-runner.js";
-import { AUG_PRICE_MULT } from "../../../shared/constants/game-defaults";
 import { PATHS } from "/infrastructure/runtime/paths.js";
 import { hashString } from "/lib/hash.js";
 import {
@@ -25,15 +24,9 @@ import {
   patchAugmentState,
 } from "/infrastructure/state/state.js";
 
-interface ReadyAugCandidate extends AugPurchasePlanItem {
-  faction: FactionName;
-  price: number;
-}
-
-function getAugBatchRequestId(
-  batch: Pick<ReadyAugCandidate, "faction" | "name">[],
-): string {
-  return `player-aug-batch-${hashString(JSON.stringify(batch))}`;
+function getCurrentGangFaction(ns: NS): FactionName | undefined {
+  if (!ns.gang?.inGang()) return undefined;
+  return ns.gang.getGangInformation().faction;
 }
 
 function sameNames(left: string[], right: string[]): boolean {
@@ -46,9 +39,11 @@ function sameNames(left: string[], right: string[]): boolean {
 function isValidPurchasePlan(
   value: AugPurchasePlan | undefined,
   installedAugs: string[],
+  gangFaction: FactionName | undefined,
 ): value is AugPurchasePlan {
   return (
     !!value &&
+    value.gangFaction === gangFaction &&
     Array.isArray(value.installedAugs) &&
     sameNames(
       [...value.installedAugs].sort(),
@@ -66,13 +61,19 @@ function isValidPurchasePlan(
   );
 }
 
-function buildPurchasePlan(ns: NS, installedAugs: string[]): AugPurchasePlan {
+function buildPurchasePlan(
+  ns: NS,
+  installedAugs: string[],
+  gangFaction: FactionName | undefined,
+): AugPurchasePlan {
   const sing = ns.singularity;
   const ownedAugs = sing.getOwnedAugmentations(true);
   const itemsByName = new Map<string, AugPurchasePlanItem>();
   let successfulFactionReads = 0;
 
-  for (const faction of ALL_KNOWN_FACTIONS) {
+  const factionsToScan = new Set(ALL_KNOWN_FACTIONS);
+  if (gangFaction) factionsToScan.add(gangFaction);
+  for (const faction of factionsToScan) {
     try {
       const augmentations = sing.getAugmentationsFromFaction(faction);
       successfulFactionReads++;
@@ -127,6 +128,7 @@ function buildPurchasePlan(ns: NS, installedAugs: string[]): AugPurchasePlan {
   return {
     createdAt: Date.now(),
     installedAugs: [...installedAugs].sort(),
+    gangFaction,
     items: orderedItems,
   };
 }
@@ -135,11 +137,12 @@ async function ensureAugPurchasePlan(ns: NS): Promise<void> {
   if (!hasSingularity(ns) || getPurchasedUninstalledAugs(ns).length > 0) return;
 
   const installedAugs = ns.singularity.getOwnedAugmentations(false);
+  const gangFaction = getCurrentGangFaction(ns);
   const existingPlan = loadAugmentState(ns)?.augPurchasePlan;
-  if (isValidPurchasePlan(existingPlan, installedAugs)) return;
+  if (isValidPurchasePlan(existingPlan, installedAugs, gangFaction)) return;
 
   try {
-    const plan = buildPurchasePlan(ns, installedAugs);
+    const plan = buildPurchasePlan(ns, installedAugs, gangFaction);
     await patchAugmentState(ns, { augPurchasePlan: plan });
     ns.print(
       `[AUG] Fester Kaufplan erstellt: ${plan.items.length} Augmentierungen.`,
@@ -159,9 +162,13 @@ function getAvailableFaction(
     .map((faction) => ({
       faction,
       rep: ns.singularity.getFactionRep(faction),
+      favor: ns.singularity.getFactionFavor(faction),
     }))
     .filter(({ rep }) => rep >= item.repReq)
-    .sort((a, b) => b.rep - a.rep || a.faction.localeCompare(b.faction));
+    .sort(
+      (a, b) =>
+        b.favor - a.favor || b.rep - a.rep || a.faction.localeCompare(b.faction),
+    );
 
   return eligibleFactions[0]?.faction ?? null;
 }
@@ -180,129 +187,54 @@ export const PlayerEvaluator: PurchaseEvaluator = {
 
     const ownedAugs = sing.getOwnedAugmentations(true);
     const uninstalled = getPurchasedUninstalledAugs(ns);
-    const currentMoney = ns.getServerMoneyAvailable("home");
 
     // Installing augmentations resets the game; the player performs that step manually.
     if (uninstalled.length > 0) return requests;
 
     const plan = loadAugmentState(ns)?.augPurchasePlan;
-    if (!isValidPurchasePlan(plan, sing.getOwnedAugmentations(false))) {
+    const gangFaction = getCurrentGangFaction(ns);
+    if (
+      !isValidPurchasePlan(
+        plan,
+        sing.getOwnedAugmentations(false),
+        gangFaction,
+      )
+    ) {
       return requests;
     }
 
     const playerFactions = new Set<FactionName>(ns.getPlayer().factions);
-    try {
-      if (ns.gang?.inGang()) {
-        playerFactions.add(
-          ns.gang.getGangInformation().faction as FactionName,
-        );
-      }
-    } catch {
-      // The player faction list remains sufficient if the gang API is unavailable.
-    }
+    if (gangFaction) playerFactions.add(gangFaction);
 
-    const availableCandidates: ReadyAugCandidate[] = [];
-    const availableNames = new Set(ownedAugs);
-    for (const item of plan.items) {
-      if (ownedAugs.includes(item.name)) continue;
-      const faction = getAvailableFaction(ns, item, playerFactions);
-      if (!faction) continue;
-      const price = sing.getAugmentationPrice(item.name);
-      if (!Number.isFinite(price) || price <= 0) continue;
-      if (!item.prereqs.every((prereq) => availableNames.has(prereq))) continue;
+    const nextItem = plan.items.find((item) => !ownedAugs.includes(item.name));
+    if (!nextItem) return requests;
 
-      availableCandidates.push({ ...item, faction, price });
-      availableNames.add(item.name);
-    }
-
-    if (availableCandidates.length === 0) return requests;
-
-    // The Red Pill stays an explicit exception to the normal purchase batch.
-    const redPill = availableCandidates.find(
-      (item) =>
-        item.name === "The Red Pill" &&
-        item.prereqs.every((prereq) => ownedAugs.includes(prereq)),
-    );
-    if (redPill && redPill.price <= currentMoney) {
-      requests.push({
-        id: "player-aug-redpill",
-        category: "PLAYER_AUG",
-        priority: PurchasePriority.CRITICAL, // ⚡ CRITICAL: Win-Condition
-        score: 100,
-        cost: redPill.price,
-        description: "CRITICAL: The Red Pill Purchase",
-        action: {
-          script: PATHS.app.actions.singularity,
-          args: [
-            "player-purchase-aug",
-            redPill.faction,
-            redPill.name,
-            redPill.price,
-          ],
-        },
-      });
+    const ownedAugSet = new Set(ownedAugs);
+    if (!nextItem.prereqs.every((prereq) => ownedAugSet.has(prereq))) {
       return requests;
     }
 
-    const baseTargetBatch = Math.max(3, Math.min(8, Math.floor(6 / (costMult || 1))));
-    const selectedBatch: ReadyAugCandidate[] = [];
-    let cumulativeCost = 0;
-    let currentMultiplier = 1.0;
-    const selectedNames = new Set<string>();
-    for (const candidate of availableCandidates) {
-      if (selectedBatch.length >= baseTargetBatch) break;
-      if (
-        !candidate.prereqs.every(
-          (prereq) => ownedAugs.includes(prereq) || selectedNames.has(prereq),
-        )
-      ) {
-        continue;
-      }
+    const faction = getAvailableFaction(ns, nextItem, playerFactions);
+    if (!faction) return requests;
 
-      const stepCost = candidate.price * currentMultiplier;
-      if (cumulativeCost + stepCost > currentMoney) continue;
-
-      selectedBatch.push(candidate);
-      selectedNames.add(candidate.name);
-      cumulativeCost += stepCost;
-      currentMultiplier *= AUG_PRICE_MULT;
-    }
-
-    if (selectedBatch.length === 0) return requests;
-
-    const isFullBatchReady = selectedBatch.length >= baseTargetBatch;
-    const isAllRemainingAugs =
-      selectedBatch.length === availableCandidates.length;
-    
-    let priority = PurchasePriority.HIGH;
-    let isCritical = false;
-
-    if (isFullBatchReady || isAllRemainingAugs) {
-      priority = PurchasePriority.CRITICAL;
-      isCritical = true;
-    } else {
-      priority = adjustPriorityByMult(PurchasePriority.HIGH, efficiencyMult);
-    }
+    const price = sing.getAugmentationPrice(nextItem.name);
+    if (!Number.isFinite(price) || price <= 0) return requests;
+    const isRedPill = nextItem.name === "The Red Pill";
 
     requests.push({
-      id: getAugBatchRequestId(selectedBatch),
+      id: `player-aug-${hashString(
+        JSON.stringify([faction, nextItem.name, price]),
+      )}`,
       category: "PLAYER_AUG",
-      priority,
-      score: isCritical ? 100 : Math.max(1, Math.floor(85 * efficiencyMult)),
-      cost: cumulativeCost,
-      description: `${isCritical ? "CRITICAL " : ""}Aug Batch (${selectedBatch.length}/${baseTargetBatch} Items, Total: $${ns.format.number(cumulativeCost)})`,
+      priority: isRedPill
+        ? PurchasePriority.CRITICAL
+        : adjustPriorityByMult(PurchasePriority.HIGH, efficiencyMult),
+      score: isRedPill ? 100 : Math.max(1, Math.floor(85 * efficiencyMult)),
+      cost: price,
+      description: `${isRedPill ? "CRITICAL " : ""}Augmentation: ${nextItem.name} (${faction})`,
       action: {
         script: PATHS.app.actions.singularity,
-        args: [
-          "player-purchase-aug-batch",
-          JSON.stringify(
-            selectedBatch.map((a) => ({
-              faction: a.faction,
-              name: a.name,
-            }))
-          ),
-          cumulativeCost,
-        ],
+        args: ["player-purchase-aug", faction, nextItem.name, price],
       },
     });
 

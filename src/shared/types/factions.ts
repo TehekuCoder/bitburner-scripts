@@ -34,6 +34,7 @@ export interface AugPurchasePlanItem {
 export interface AugPurchasePlan {
   createdAt: number;
   installedAugs: string[];
+  gangFaction?: FactionName;
   items: AugPurchasePlanItem[];
 }
 

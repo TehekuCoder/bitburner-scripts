@@ -6,13 +6,13 @@ import {
 } from "/shared/types/finance.js";
 import { drawFinanceDashboard, FinanceDashboardData } from "/ui/finance-ui.js";
 
-import { loadBnMults } from "/lib/utils.js";
+import { hasSingularity, loadBnMults } from "/lib/utils.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client";
 import { FINANCE_PORT } from "../../domain/evaluators/evaluator-runner";
 import { PATHS } from "/infrastructure/runtime/paths";
 import {
   BASE_CATEGORY_MARGINS,
-  AUG_BATCH_PLAN_FILE,
+  AUG_PURCHASE_PLAN_FILE,
   CASH_BUFFER,
   CATEGORY_TO_EVALUATOR,
   CATEGORY_WEIGHTS,
@@ -139,7 +139,7 @@ export async function main(ns: NS): Promise<void> {
   const lastWarnings: string[] = [];
   const evaluatorLastSeen: Record<string, number> = {};
   let singularityRamMultiplier: number | null = null;
-  let criticalAugBatchNotified = false;
+  let criticalAugPurchaseNotified = false;
 
   while (true) {
     const now = Date.now();
@@ -263,9 +263,9 @@ export async function main(ns: NS): Promise<void> {
           const purchaseMsg = `🛒 [$${ns.format.number(result.actualCost)}] ${pending.description}`;
           logger.success(purchaseMsg);
           pushBounded(lastPurchases, purchaseMsg, 6);
-          if (pending.requestId.startsWith("player-aug-batch-")) {
+          if (pending.requestId.startsWith("player-aug-")) {
             ns.toast(
-              `Aug-Batch erfolgreich gekauft: ${pending.description}`,
+              `Augmentation erfolgreich gekauft: ${pending.description}`,
               "success",
               5000,
             );
@@ -278,9 +278,9 @@ export async function main(ns: NS): Promise<void> {
           const errorMsg = `⚠️ Kauf fehlgeschlagen: ${pending.description}`;
           logger.warn(errorMsg);
           pushBounded(lastWarnings, errorMsg, 6);
-          if (pending.requestId.startsWith("player-aug-batch-")) {
+          if (pending.requestId.startsWith("player-aug-")) {
             ns.toast(
-              `Aug-Batch-Kauf fehlgeschlagen: ${pending.description}`,
+              `Augmentationskauf fehlgeschlagen: ${pending.description}`,
               "error",
               7000,
             );
@@ -314,9 +314,9 @@ export async function main(ns: NS): Promise<void> {
           : `⚠️ Keine Rückmeldung von beendeter Kauf-Action erhalten: ${pending.description}`;
         logger.warn(warning);
         pushBounded(lastWarnings, warning, 6);
-        if (pending.requestId.startsWith("player-aug-batch-")) {
+        if (pending.requestId.startsWith("player-aug-")) {
           ns.toast(
-            `Keine Rückmeldung zum Aug-Batch-Kauf: ${pending.description}`,
+            `Keine Rückmeldung zum Augmentationskauf: ${pending.description}`,
             "warning",
             7000,
           );
@@ -350,13 +350,6 @@ export async function main(ns: NS): Promise<void> {
     const uninstalledAugs = getPurchasedUninstalledAugs(ns);
     const isAugmentationMode = uninstalledAugs.length > 0;
 
-    const proposedAugBatch = !isAugmentationMode
-      ? allRequests.find(
-          (request) =>
-            request.category === "PLAYER_AUG" &&
-            request.action.args[0] === "player-purchase-aug-batch",
-        )
-      : undefined;
     const augPurchasePlan = loadAugmentState(ns)?.augPurchasePlan;
     if (augPurchasePlan && Array.isArray(augPurchasePlan.items)) {
       const plan = [
@@ -368,38 +361,8 @@ export async function main(ns: NS): Promise<void> {
         ),
         "",
       ].join("\n");
-      if (ns.read(AUG_BATCH_PLAN_FILE) !== plan) {
-        await ns.write(AUG_BATCH_PLAN_FILE, plan, "w");
-      }
-    } else if (proposedAugBatch) {
-      try {
-        const items = JSON.parse(
-          String(proposedAugBatch.action.args[1] ?? ""),
-        ) as { faction: string; name: string }[];
-        if (
-          !Array.isArray(items) ||
-          !items.every(
-            (item) =>
-              typeof item?.faction === "string" &&
-              typeof item?.name === "string",
-          )
-        ) {
-          ns.print("[ERROR] Aug-Batch-Plan enthält ungültige Einträge.");
-        } else {
-          const plan = [
-            `Nächster Augmentierungs-Batch (${proposedAugBatch.id.slice(-8)})`,
-            `Gesamtkosten: $${ns.format.number(proposedAugBatch.cost)}`,
-            ...items.map(
-              (item, index) => `${index + 1}. ${item.name} — ${item.faction}`,
-            ),
-            "",
-          ].join("\n");
-          if (ns.read(AUG_BATCH_PLAN_FILE) !== plan) {
-            await ns.write(AUG_BATCH_PLAN_FILE, plan, "w");
-          }
-        }
-      } catch (error) {
-        ns.print(`[ERROR] Aug-Batch-Plan konnte nicht gespeichert werden: ${error}`);
+      if (ns.read(AUG_PURCHASE_PLAN_FILE) !== plan) {
+        await ns.write(AUG_PURCHASE_PLAN_FILE, plan, "w");
       }
     }
     if (isAugmentationMode) {
@@ -415,21 +378,21 @@ export async function main(ns: NS): Promise<void> {
       );
     }
 
-    const criticalAugBatch = allRequests.find(
+    const criticalAugPurchase = allRequests.find(
       (request) =>
         request.category === "PLAYER_AUG" &&
         request.priority === PurchasePriority.CRITICAL &&
-        request.action.args[0] === "player-purchase-aug-batch",
+        request.action.args[0] === "player-purchase-aug",
     );
-    if (criticalAugBatch && !criticalAugBatchNotified) {
+    if (criticalAugPurchase && !criticalAugPurchaseNotified) {
       ns.toast(
-        `Kritischer Aug-Batch erkannt: ${criticalAugBatch.description}. Andere Käufe pausieren, bis das Budget reicht.`,
+        `Kritische Augmentation erkannt: ${criticalAugPurchase.description}. Andere Käufe pausieren, bis das Budget reicht.`,
         "warning",
         7000,
       );
-      criticalAugBatchNotified = true;
-    } else if (!criticalAugBatch) {
-      criticalAugBatchNotified = false;
+      criticalAugPurchaseNotified = true;
+    } else if (!criticalAugPurchase) {
+      criticalAugPurchaseNotified = false;
     }
 
     // Status der System-Komponenten abfragen
@@ -514,7 +477,7 @@ export async function main(ns: NS): Promise<void> {
         ) {
           continue;
         }
-        if (criticalAugBatch && req !== criticalAugBatch) {
+        if (criticalAugPurchase && req !== criticalAugPurchase) {
           continue;
         }
         const pendingReservedCost = Array.from(pendingActions.values()).reduce(
@@ -569,9 +532,9 @@ export async function main(ns: NS): Promise<void> {
             const errorMsg = `⚠️ Script-Start fehlgeschlagen: ${req.action.script}`;
             logger.warn(errorMsg);
             pushBounded(lastWarnings, errorMsg, 6);
-            if (req.action.args[0] === "player-purchase-aug-batch") {
+            if (req.action.args[0] === "player-purchase-aug") {
               ns.toast(
-                `Aug-Batch-Kauf konnte nicht gestartet werden.`,
+                `Augmentationskauf konnte nicht gestartet werden.`,
                 "error",
                 7000,
               );
@@ -599,42 +562,70 @@ export async function main(ns: NS): Promise<void> {
       cost: req.cost,
       score: req.score,
     }));
-    let proposedAugBatchData: FinanceDashboardData["proposedAugBatch"];
-    if (proposedAugBatch) {
-      try {
-        const items = JSON.parse(
-          String(proposedAugBatch.action.args[1] ?? ""),
-        ) as { faction: string; name: string }[];
-        if (
-          Array.isArray(items) &&
-          items.every(
-            (item) =>
-              typeof item?.faction === "string" &&
-              typeof item?.name === "string",
-          )
-        ) {
-          proposedAugBatchData = {
-            items: items.map((item) => `${item.name} — ${item.faction}`),
-            cost: proposedAugBatch.cost,
-            running: Array.from(pendingActions.values()).some(
-              (pending) => pending.requestId === proposedAugBatch.id,
-            ),
-            waitingForFunds:
-              rawMoney -
-                reserve -
-                Array.from(pendingActions.values()).reduce(
-                  (total, pending) => total + pending.reservedCost,
-                  0,
-                ) <
-              proposedAugBatch.cost *
-                (dynamicMargins.PLAYER_AUG ?? 1.0),
-          };
-        } else {
-          ns.print("[ERROR] Aug-Batch-Vorschlag enthält ungültige Einträge.");
-        }
-      } catch (error) {
-        ns.print(`[ERROR] Aug-Batch-Vorschlag konnte nicht gelesen werden: ${error}`);
+    let proposedAugPurchaseData: FinanceDashboardData["proposedAugPurchase"];
+    const nextPlannedAug = !isAugmentationMode && hasSingularity(ns)
+      ? augPurchasePlan?.items.find(
+          (item) => !ns.singularity.getOwnedAugmentations(true).includes(item.name),
+        )
+      : undefined;
+    if (nextPlannedAug && hasSingularity(ns)) {
+      const memberFactions = new Set(ns.getPlayer().factions);
+      if (ns.gang?.inGang()) {
+        memberFactions.add(ns.gang.getGangInformation().faction);
       }
+      const factionProgress = nextPlannedAug.factions
+        .filter((faction) => memberFactions.has(faction))
+        .map((faction) => {
+          const rep = ns.singularity.getFactionRep(faction);
+          const favor = ns.singularity.getFactionFavor(faction);
+          const repGap = Math.max(0, nextPlannedAug.repReq - rep);
+          return {
+            name: faction,
+            rep,
+            favor,
+            estimatedRemainingRep: repGap / (1 + Math.max(0, favor) / 100),
+            available: rep >= nextPlannedAug.repReq,
+          };
+        })
+        .sort(
+          (a, b) =>
+            a.estimatedRemainingRep - b.estimatedRemainingRep ||
+            b.favor - a.favor ||
+            a.name.localeCompare(b.name),
+        );
+      const augRequest = allRequests.find(
+        (request) =>
+          request.category === "PLAYER_AUG" &&
+          request.action.args[0] === "player-purchase-aug" &&
+          request.action.args[2] === nextPlannedAug.name,
+      );
+      const purchaseCost = augRequest?.cost ??
+        ns.singularity.getAugmentationPrice(nextPlannedAug.name);
+      const availableForPurchase =
+        rawMoney -
+        reserve -
+        Array.from(pendingActions.values()).reduce(
+          (total, pending) => total + pending.reservedCost,
+          0,
+        );
+      proposedAugPurchaseData = {
+        name: nextPlannedAug.name,
+        cost: purchaseCost,
+        faction:
+          typeof augRequest?.action.args[1] === "string"
+            ? augRequest.action.args[1]
+            : undefined,
+        running: augRequest
+          ? pendingActions.has(trackingId(augRequest.category, augRequest.id))
+          : false,
+        waitingForFunds:
+          !!augRequest &&
+          availableForPurchase <
+            augRequest.cost * (dynamicMargins.PLAYER_AUG ?? 1.0),
+        waitingForFactionRep:
+          !augRequest && !factionProgress.some((faction) => faction.available),
+        factions: factionProgress,
+      };
     }
     const proposedAugInstallData = uninstalledAugs.length > 0
       ? { items: uninstalledAugs }
@@ -659,7 +650,7 @@ export async function main(ns: NS): Promise<void> {
       activeEvaluators,
       inactiveEvaluators,
       nextPurchaseRequest: structuredRequests[0] ?? undefined,
-      proposedAugBatch: proposedAugBatchData,
+      proposedAugPurchase: proposedAugPurchaseData,
       proposedAugInstall: proposedAugInstallData,
       topPendingRequests: structuredRequests.slice(0, 4),
       lastPurchases,

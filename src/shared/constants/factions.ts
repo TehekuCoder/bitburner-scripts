@@ -117,7 +117,7 @@ export const ALL_KNOWN_FACTIONS: FactionName[] = [
   "Fulcrum Secret Technologies",
   "Slum Snakes",
   "Tetrads",
-  "Syndicate",
+  "The Syndicate",
   "The Dark Army",
   "Speakers for the Dead",
   ...CITY_FACTIONS,
@@ -126,7 +126,7 @@ export const ALL_KNOWN_FACTIONS: FactionName[] = [
 export const GANG_CANDIDATE_FACTIONS: FactionName[] = [
   "Slum Snakes",
   "Tetrads",
-  "Syndicate",
+  "The Syndicate",
   "The Dark Army",
   "Speakers for the Dead",
   "NiteSec",
