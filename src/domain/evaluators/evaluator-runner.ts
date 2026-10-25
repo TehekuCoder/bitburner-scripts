@@ -1,5 +1,6 @@
 import { NS } from "@ns";
 import { PurchaseCategory, PurchaseRequest, PurchaseEvaluator } from "/shared/types/finance.js";
+import { groupRequestsByCategory } from "./request-batches.js";
 
 export const FINANCE_PORT = 10;
 
@@ -14,12 +15,16 @@ export function submitPurchaseRequests(
   requests: PurchaseRequest[]
 ): void {
   const port = ns.getPortHandle(FINANCE_PORT);
-  const batch: EvaluatorBatch = { category, requests };
-
-  if (!port.tryWrite(JSON.stringify(batch))) {
-    ns.print(
-      `[FINANCE-PORT] Port ${FINANCE_PORT} ist voll; Batch für ${category} wurde nicht übertragen.`,
-    );
+  for (const batch of groupRequestsByCategory(category, requests)) {
+    const serializedBatch: EvaluatorBatch = {
+      category: batch.category as PurchaseCategory,
+      requests: batch.requests,
+    };
+    if (!port.tryWrite(JSON.stringify(serializedBatch))) {
+      ns.print(
+        `[FINANCE-PORT] Port ${FINANCE_PORT} ist voll; Batch für ${batch.category} wurde nicht übertragen.`,
+      );
+    }
   }
 }
 
