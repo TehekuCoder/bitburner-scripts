@@ -81,16 +81,16 @@ export async function main(ns: NS): Promise<void> {
       },
     },
 
-    // // 3. Finance Manager
-    // {
-    //   name: "Finance Manager",
-    //   path: PATHS.services.daemons.financeDispatcher,
-    //   priority: 1,
-    //   condition: (ns) => {
-    //     const state = loadState(ns);
-    //     return !isModuleDisabled(state, ["finance", "stock"]);
-    //   },
-    // },
+    // 3. Finance Manager
+    {
+      name: "Finance Manager",
+      path: PATHS.services.daemons.financeDispatcher,
+      priority: 1,
+      condition: (ns) => {
+        const state = loadState(ns);
+        return !isModuleDisabled(state, ["finance", "stock"]);
+      },
+    },
 
     // 4. Hash Manager
     {
@@ -107,44 +107,44 @@ export async function main(ns: NS): Promise<void> {
       },
     },
 
-    // // 4b. IPvGo Manager
-    // {
-    //   name: "IPvGo Manager",
-    //   path: PATHS.services.managers.ipvgo,
-    //   priority: 200,
-    //   condition: (ns) => {
-    //     const state = loadState(ns);
-    //     if (isModuleDisabled(state, ["ipvgo", "go"])) return false;
-    //     try {
-    //       return (
-    //         typeof ns.go !== "undefined" &&
-    //         typeof ns.go.getBoardState === "function"
-    //       );
-    //     } catch {
-    //       return false;
-    //     }
-    //   },
-    // },
+    // 4b. IPvGo Manager
+    {
+      name: "IPvGo Manager",
+      path: PATHS.services.managers.ipvgo,
+      priority: 200,
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["ipvgo", "go"])) return false;
+        try {
+          return (
+            typeof ns.go !== "undefined" &&
+            typeof ns.go.getBoardState === "function"
+          );
+        } catch {
+          return false;
+        }
+      },
+    },
 
-    // // 5. Network Crawler & Darknet Subsystem
-    // {
-    //   name: "Network Crawler",
-    //   path: PATHS.services.daemons.crawler,
-    //   condition: (ns) => {
-    //     const state = loadState(ns);
-    //     if (isModuleDisabled(state, ["crawler", "darknet"])) return false;
-    //     return ns.fileExists("DarkscapeNavigator.exe", "home");
-    //   },
-    // },
-    // {
-    //   name: "Darknet Subsystem",
-    //   path: PATHS.services.managers.dnet,
-    //   condition: (ns) => {
-    //     const state = loadState(ns);
-    //     if (isModuleDisabled(state, ["dnet", "darknet", "stock"])) return false;
-    //     return ns.fileExists("DarkscapeNavigator.exe", "home");
-    //   },
-    // },
+    // 5. Network Crawler & Darknet Subsystem
+    {
+      name: "Network Crawler",
+      path: PATHS.services.daemons.crawler,
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["crawler", "darknet"])) return false;
+        return ns.fileExists("DarkscapeNavigator.exe", "home");
+      },
+    },
+    {
+      name: "Darknet Subsystem",
+      path: PATHS.services.managers.dnet,
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["dnet", "darknet", "stock"])) return false;
+        return ns.fileExists("DarkscapeNavigator.exe", "home");
+      },
+    },
 
     // 6. Singularity Dispatcher (im Manual Mode automatisch inaktiv)
     {
@@ -170,25 +170,25 @@ export async function main(ns: NS): Promise<void> {
       },
     },
 
-    // // 7. Gang Manager & UI
-    // {
-    //   name: "Gang Manager",
-    //   path: PATHS.services.managers.gang,
-    //   condition: (ns) => {
-    //     const state = loadState(ns);
-    //     if (isModuleDisabled(state, "gang")) return false;
-    //     return hasGang(ns) && ns.gang.inGang();
-    //   },
-    // },
-    // {
-    //   name: "Gang UI",
-    //   path: PATHS.ui.gang,
-    //   condition: (ns) => {
-    //     const state = loadState(ns);
-    //     if (isModuleDisabled(state, ["gang", "ui"])) return false;
-    //     return hasGang(ns) && ns.gang.inGang();
-    //   },
-    // },
+    // 7. Gang Manager & UI
+    {
+      name: "Gang Manager",
+      path: PATHS.services.managers.gang,
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, "gang")) return false;
+        return hasGang(ns) && ns.gang.inGang();
+      },
+    },
+    {
+      name: "Gang UI",
+      path: PATHS.ui.gang,
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["gang", "ui"])) return false;
+        return hasGang(ns) && ns.gang.inGang();
+      },
+    },
 
     // 8. Sleeve Manager & UI
     {
@@ -211,81 +211,81 @@ export async function main(ns: NS): Promise<void> {
       },
     },
 
-    // // 9. Corporation Manager & UI
-    // {
-    //   name: "Corporation Manager",
-    //   path: PATHS.services.managers.corporation,
-    //   condition: (ns) => {
-    //     const state = loadState(ns);
-    //     if (isModuleDisabled(state, ["corporation", "corp"])) return false;
-    //     return isCorporationViable(ns);
-    //   },
-    // },
-    // {
-    //   name: "Corporation UI",
-    //   path: PATHS.ui.corporation,
-    //   condition: (ns) => {
-    //     const state = loadState(ns);
-    //     if (isModuleDisabled(state, ["corporation", "corp", "ui"]))
-    //       return false;
-    //     return hasCorporation(ns) && ns.corporation.hasCorporation();
-    //   },
-    // },
+    // 9. Corporation Manager & UI
+    {
+      name: "Corporation Manager",
+      path: PATHS.services.managers.corporation,
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["corporation", "corp"])) return false;
+        return isCorporationViable(ns);
+      },
+    },
+    {
+      name: "Corporation UI",
+      path: PATHS.ui.corporation,
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["corporation", "corp", "ui"]))
+          return false;
+        return hasCorporation(ns) && ns.corporation.hasCorporation();
+      },
+    },
 
-    // // 10. Bladeburner Manager & Daemon
-    // {
-    //   name: "Bladeburner Manager",
-    //   path: PATHS.services.managers.bladeburner,
-    //   condition: (ns) => {
-    //     const state = loadState(ns);
-    //     if (isModuleDisabled(state, "bladeburner")) return false;
-    //     try {
-    //       return (
-    //         typeof ns.bladeburner !== "undefined" &&
-    //         (ns.bladeburner.inBladeburner() ||
-    //           ns.getPlayer().skills.strength >= 100)
-    //       );
-    //     } catch {
-    //       return false;
-    //     }
-    //   },
-    // },
+    // 10. Bladeburner Manager & Daemon
+    {
+      name: "Bladeburner Manager",
+      path: PATHS.services.managers.bladeburner,
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, "bladeburner")) return false;
+        try {
+          return (
+            typeof ns.bladeburner !== "undefined" &&
+            (ns.bladeburner.inBladeburner() ||
+              ns.getPlayer().skills.strength >= 100)
+          );
+        } catch {
+          return false;
+        }
+      },
+    },
 
-    // // 10b. Stanek Manager & Charger
-    // {
-    //   name: "Stanek Manager",
-    //   path: PATHS.services.managers.stanek,
-    //   condition: (ns) => {
-    //     const state = loadState(ns);
-    //     if (isModuleDisabled(state, ["stanek", "church"])) return false;
-    //     try {
-    //       return typeof ns.stanek !== "undefined";
-    //     } catch {
-    //       return false;
-    //     }
-    //   },
-    // },
+    // 10b. Stanek Manager & Charger
+    {
+      name: "Stanek Manager",
+      path: PATHS.services.managers.stanek,
+      condition: (ns) => {
+        const state = loadState(ns);
+        if (isModuleDisabled(state, ["stanek", "church"])) return false;
+        try {
+          return typeof ns.stanek !== "undefined";
+        } catch {
+          return false;
+        }
+      },
+    },
 
-    // // 11. Batch Orchestrator
-    // {
-    //   name: "Batch Orchestrator",
-    //   path: PATHS.services.daemons.hackingOrchestrator,
-    //   priority: 30,
-    //   condition: (ns) => {
-    //     const state = loadState(ns);
-    //     return !isModuleDisabled(state, ["batcher", "hacking"]);
-    //   },
-    // },
+    // 11. Batch Orchestrator
+    {
+      name: "Batch Orchestrator",
+      path: PATHS.services.daemons.hackingOrchestrator,
+      priority: 30,
+      condition: (ns) => {
+        const state = loadState(ns);
+        return !isModuleDisabled(state, ["batcher", "hacking"]);
+      },
+    },
 
-    // // 12. Background Share Filler
-    // {
-    //   name: "Share Filler",
-    //   path: PATHS.services.daemons.fillShare,
-    //   condition: (ns) => {
-    //     const state = loadState(ns);
-    //     return !isModuleDisabled(state, ["share", "filler"]);
-    //   },
-    // },
+    // 12. Background Share Filler
+    {
+      name: "Share Filler",
+      path: PATHS.services.daemons.fillShare,
+      condition: (ns) => {
+        const state = loadState(ns);
+        return !isModuleDisabled(state, ["share", "filler"]);
+      },
+    },
   ];
 
   while (true) {

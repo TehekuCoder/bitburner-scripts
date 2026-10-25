@@ -19,6 +19,7 @@ import { GangState } from "/shared/types/gang.js";
 import { FinanceState } from "/shared/types/finance.js";
 import {
   isBotStateShape,
+  getBotStateShapeErrors,
   parseStoredState,
   STATE_SCHEMA_VERSION,
 } from "./state-schema.js";
@@ -326,8 +327,52 @@ function readStoredState(ns: NS, portNumber: number): StoredBotState | null {
     isBotState,
   );
   if (!parsed) {
+    const rawSnapshot =
+      typeof data === "object" && data !== null
+        ? (data as Record<string, unknown>)
+        : null;
+    const schemaVersion =
+      rawSnapshot && "schemaVersion" in rawSnapshot
+        ? rawSnapshot.schemaVersion
+        : 0;
+    let details: string;
+
+    if (rawSnapshot && "state" in rawSnapshot) {
+      if (
+        !Number.isSafeInteger(rawSnapshot.revision) ||
+        (rawSnapshot.revision as number) < 0
+      ) {
+        details = "revision fehlt oder ist ungültig";
+      } else if (
+        !Number.isSafeInteger(schemaVersion) ||
+        (schemaVersion as number) < 0 ||
+        (schemaVersion as number) > STATE_SCHEMA_VERSION
+      ) {
+        details = `nicht unterstützte schemaVersion ${String(schemaVersion)}`;
+      } else {
+        const rawState =
+          (schemaVersion as number) === 0 &&
+          typeof rawSnapshot.state === "object" &&
+          rawSnapshot.state !== null &&
+          !Array.isArray(rawSnapshot.state)
+            ? { ...DEFAULT_BOT_STATE, ...rawSnapshot.state }
+            : rawSnapshot.state;
+        const stateErrors = getBotStateShapeErrors(rawState);
+        details =
+          stateErrors.length > 0
+            ? stateErrors.join("; ")
+            : "ungültige Snapshot-Metadaten";
+      }
+    } else {
+      const stateErrors = getBotStateShapeErrors(data);
+      details =
+        stateErrors.length > 0
+          ? stateErrors.join("; ")
+          : "ungültiges Snapshot-Format";
+    }
+
     getLogger(ns).warn(
-      `Ungültiges oder nicht unterstütztes State-Schema auf Port ${portNumber}; Snapshot wird ignoriert.`,
+      `Ungültiger State-Snapshot auf Port ${portNumber}; Snapshot wird ignoriert: ${details}.`,
     );
     return null;
   }

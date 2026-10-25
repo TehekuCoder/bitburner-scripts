@@ -98,9 +98,10 @@ function isAugPurchasePlan(value: unknown): boolean {
   );
 }
 
-export function isBotStateShape(value: unknown): value is StateRecord {
-  if (!isRecord(value)) return false;
+export function getBotStateShapeErrors(value: unknown): string[] {
+  if (!isRecord(value)) return ["state root is not an object"];
 
+  const errors: string[] = [];
   const requiredStrings = [
     "batcherProgress",
     "traderProgress",
@@ -134,14 +135,20 @@ export function isBotStateShape(value: unknown): value is StateRecord {
   ];
   const requiredStringArrays = ["divisions", "corpRecentLogs", "recentLogs"];
 
-  if (
-    !requiredStrings.every((key) => typeof value[key] === "string") ||
-    !requiredNumbers.every((key) => isFiniteNumber(value[key])) ||
-    !requiredBooleans.every((key) => typeof value[key] === "boolean") ||
-    !requiredStringArrays.every((key) => isStringArray(value[key])) ||
-    !isNumberRecord(value.sourceFiles)
-  ) {
-    return false;
+  for (const key of requiredStrings) {
+    if (typeof value[key] !== "string") errors.push(`${key} must be a string`);
+  }
+  for (const key of requiredNumbers) {
+    if (!isFiniteNumber(value[key])) errors.push(`${key} must be a finite number`);
+  }
+  for (const key of requiredBooleans) {
+    if (typeof value[key] !== "boolean") errors.push(`${key} must be a boolean`);
+  }
+  for (const key of requiredStringArrays) {
+    if (!isStringArray(value[key])) errors.push(`${key} must be a string array`);
+  }
+  if (!isNumberRecord(value.sourceFiles)) {
+    errors.push("sourceFiles must contain only finite numbers");
   }
 
   const optionalChecks: Record<string, (item: unknown) => boolean> = {
@@ -216,10 +223,9 @@ export function isBotStateShape(value: unknown): value is StateRecord {
         item.every(
           (entry) =>
             isRecord(entry) &&
-            typeof entry.faction === "string" &&
-            typeof entry.augmentation === "string" &&
-            isFiniteNumber(entry.repRequired) &&
-            isFiniteNumber(entry.cost) &&
+            typeof entry.name === "string" &&
+            isFiniteNumber(entry.repReq) &&
+            isFiniteNumber(entry.basePrice) &&
             isStringArray(entry.prereqs) &&
             isStringArray(entry.factions) &&
             typeof entry.bestFaction === "string",
@@ -256,9 +262,16 @@ export function isBotStateShape(value: unknown): value is StateRecord {
     disabledModules: (item) => item === undefined || isStringArray(item),
   };
 
-  return Object.entries(optionalChecks).every(
-    ([key, validator]) => !(key in value) || validator(value[key]),
-  );
+  for (const [key, validator] of Object.entries(optionalChecks)) {
+    if (key in value && !validator(value[key])) {
+      errors.push(`${key} has an invalid value`);
+    }
+  }
+  return errors;
+}
+
+export function isBotStateShape(value: unknown): value is StateRecord {
+  return getBotStateShapeErrors(value).length === 0;
 }
 
 export function parseStoredState<T>(

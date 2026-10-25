@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  getBotStateShapeErrors,
   isBotStateShape,
   parseStoredState,
   STATE_SCHEMA_VERSION,
@@ -36,6 +37,16 @@ const validState = {
   corpRecentLogs: [],
   recentLogs: [],
   sourceFiles: {},
+  augRoadMap: [
+    {
+      name: "Neuroreceptor Management Implant",
+      repReq: 2750,
+      basePrice: 450000,
+      prereqs: [],
+      factions: ["CyberSec"],
+      bestFaction: "CyberSec",
+    },
+  ],
 };
 
 test("schema-v0 snapshots migrate missing values from defaults", () => {
@@ -61,6 +72,19 @@ test("current-version snapshots are validated without silently defaulting bad va
   );
 
   assert.equal(parsed, null);
+});
+
+test("state shape diagnostics identify invalid fields", () => {
+  const errors = getBotStateShapeErrors({
+    ...validState,
+    strategy: "UNKNOWN",
+  });
+
+  assert.deepEqual(errors, ["strategy has an invalid value"]);
+});
+
+test("augmentation roadmap validates the shape written by its analyzer", () => {
+  assert.deepEqual(getBotStateShapeErrors(validState), []);
 });
 
 test("unknown future schemas are rejected", () => {
