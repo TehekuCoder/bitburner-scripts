@@ -28,6 +28,15 @@ import {
   getSingularityActionRam,
   getSingularityRamMultiplier,
 } from "/app/actions/singularity-action-ram.js";
+import {
+  canAffordFinanceRequest,
+  compareFinanceRequests,
+  findCachedFinanceRequest,
+  findRunningFinanceAction,
+  isFinanceRequestRecentlyCompleted,
+  isFinanceActionTimedOut,
+  pruneExpiredFinanceRetries,
+} from "./finance-runtime.js";
 
 interface EvaluatorCacheEntry {
   timestamp: number;
@@ -46,6 +55,7 @@ interface PendingAction {
 
 const pendingActions = new Map<string, PendingAction>();
 const retryAfter = new Map<string, number>();
+const completedRequests = new Map<string, number>();
 const CACHE_TTL_MS = 45000; // 45s TTL für Anfragen
 const ACTION_TIMEOUT_MS = 60000;
 const PURCHASE_CATEGORIES: readonly PurchaseCategory[] = [
@@ -257,33 +267,57 @@ export async function main(ns: NS): Promise<void> {
         }
 
         const pending = pendingActions.get(result.requestId);
-        if (!pending) continue;
-        pendingActions.delete(result.requestId);
-        if (result.success) {
-          const purchaseMsg = `🛒 [$${ns.format.number(result.actualCost)}] ${pending.description}`;
-          logger.success(purchaseMsg);
-          pushBounded(lastPurchases, purchaseMsg, 6);
-          if (pending.requestId.startsWith("player-aug-")) {
-            ns.toast(
-              `Augmentation erfolgreich gekauft: ${pending.description}`,
-              "success",
-              5000,
+        const cachedRequest = pending
+          ? undefined
+          : findCachedFinanceRequest(
+              evaluatorRequestCache.values(),
+              result.requestId,
             );
+        if (!pending && !cachedRequest) {
+          if (result.success) {
+            completedRequests.set(
+              result.requestId,
+              now + CACHE_TTL_MS,
+            );
+          } else {
+            retryAfter.set(result.requestId, now + 5000);
           }
-          evaluatorRequestCache
-            .get(pending.category)
-            ?.requests.delete(pending.requestId);
+          continue;
+        }
+        pendingActions.delete(result.requestId);
+        const category = pending?.category ?? cachedRequest?.category;
+        const requestId = pending?.requestId ?? cachedRequest?.id;
+        const description = pending?.description ?? cachedRequest?.description;
+        if (result.success) {
+          if (description !== undefined) {
+            const purchaseMsg = `🛒 [$${ns.format.number(result.actualCost)}] ${description}`;
+            logger.success(purchaseMsg);
+            pushBounded(lastPurchases, purchaseMsg, 6);
+            if (requestId?.startsWith("player-aug-")) {
+              ns.toast(
+                `Augmentation erfolgreich gekauft: ${description}`,
+                "success",
+                5000,
+              );
+            }
+          }
+          if (category && requestId !== undefined) {
+            evaluatorRequestCache.get(category)?.requests.delete(requestId);
+          }
           retryAfter.delete(result.requestId);
+          completedRequests.set(result.requestId, now + CACHE_TTL_MS);
         } else {
-          const errorMsg = `⚠️ Kauf fehlgeschlagen: ${pending.description}`;
-          logger.warn(errorMsg);
-          pushBounded(lastWarnings, errorMsg, 6);
-          if (pending.requestId.startsWith("player-aug-")) {
-            ns.toast(
-              `Augmentationskauf fehlgeschlagen: ${pending.description}`,
-              "error",
-              7000,
-            );
+          if (description !== undefined) {
+            const errorMsg = `⚠️ Kauf fehlgeschlagen: ${description}`;
+            logger.warn(errorMsg);
+            pushBounded(lastWarnings, errorMsg, 6);
+            if (requestId?.startsWith("player-aug-")) {
+              ns.toast(
+                `Augmentationskauf fehlgeschlagen: ${description}`,
+                "error",
+                7000,
+              );
+            }
           }
           retryAfter.set(result.requestId, now + 5000);
         }
@@ -293,7 +327,9 @@ export async function main(ns: NS): Promise<void> {
     }
 
     for (const [id, pending] of pendingActions) {
-      if (now - pending.startedAt > ACTION_TIMEOUT_MS) {
+      if (
+        isFinanceActionTimedOut(now, pending.startedAt, ACTION_TIMEOUT_MS)
+      ) {
         const runningScript = ns.getRunningScript(pending.pid, "home");
         const isPendingActionRunning =
           runningScript?.filename === CATEGORY_ACTION_SCRIPTS[pending.category] &&
@@ -306,7 +342,6 @@ export async function main(ns: NS): Promise<void> {
           pushBounded(lastWarnings, warning, 6);
           continue;
         }
-
         pendingActions.delete(id);
         retryAfter.set(id, now + 5000);
         const warning = isPendingActionRunning
@@ -323,6 +358,8 @@ export async function main(ns: NS): Promise<void> {
         }
       }
     }
+    pruneExpiredFinanceRetries(retryAfter, now);
+    pruneExpiredFinanceRetries(completedRequests, now);
 
     const rawMoney = ns.getServerMoneyAvailable("home");
     const stateReserve = loadFinanceState(ns)?.moneyReserve ?? 0;
@@ -451,43 +488,59 @@ export async function main(ns: NS): Promise<void> {
 
     // 3. Sortierung der Anfragen
     if (allRequests.length > 0) {
-      allRequests.sort((a, b) => {
-        if (a.priority !== b.priority) return a.priority - b.priority;
-
-        const weightA = CATEGORY_WEIGHTS[a.category] ?? 0;
-        const weightB = CATEGORY_WEIGHTS[b.category] ?? 0;
-        if (weightA !== weightB) return weightB - weightA;
-
-        const scoreA = a.score ?? 0;
-        const scoreB = b.score ?? 0;
-        if (scoreA !== scoreB) return scoreB - scoreA;
-
-        return a.cost - b.cost;
-      });
+      allRequests.sort((a, b) =>
+        compareFinanceRequests(a, b, CATEGORY_WEIGHTS),
+      );
 
       // 4. Käufe verarbeiten
       const blockedCategories = new Set<PurchaseCategory>();
       let highestUnsatisfiedPriority = Number.MAX_SAFE_INTEGER;
+      const runningProcesses = ns.ps("home");
 
       for (const req of allRequests) {
         const requestTrackingId = trackingId(req.category, req.id);
         if (
           pendingActions.has(requestTrackingId) ||
-          (retryAfter.get(requestTrackingId) ?? 0) > now
+          (retryAfter.get(requestTrackingId) ?? 0) > now ||
+          isFinanceRequestRecentlyCompleted(
+            completedRequests,
+            requestTrackingId,
+            now,
+          )
         ) {
+          continue;
+        }
+        const runningAction = findRunningFinanceAction(
+          runningProcesses,
+          req.action.script,
+          requestTrackingId,
+          FINANCE_REQUEST_ARG_PREFIX,
+        );
+        if (runningAction) {
+          const margin = dynamicMargins[req.category] ?? 1.0;
+          const reservedCost = req.cost * margin;
+          pendingActions.set(requestTrackingId, {
+            category: req.category,
+            requestId: req.id,
+            description: req.description,
+            pid: runningAction.pid,
+            reservedCost,
+            startedAt: now,
+          });
+          availableMoney = Math.max(0, availableMoney - reservedCost);
           continue;
         }
         if (criticalAugPurchase && req !== criticalAugPurchase) {
           continue;
         }
-        const pendingReservedCost = Array.from(pendingActions.values()).reduce(
-          (total, pending) => total + pending.reservedCost,
-          0,
-        );
         const margin = dynamicMargins[req.category] ?? 1.0;
         const requiredBudget = req.cost * margin;
 
-        const canAffordEasily = availableMoney >= requiredBudget;
+        const canAffordEasily = canAffordFinanceRequest(
+          availableMoney,
+          req.cost,
+          margin,
+        );
         const isPocketChange = req.cost <= rawMoney * pocketChangeRatio;
 
         if (blockedCategories.has(req.category) && !canAffordEasily) {

@@ -11,6 +11,10 @@ import {
   getMaximumSingularityActionRam,
   getSingularityRamMultiplier,
 } from "/app/actions/singularity-action-ram";
+import {
+  isManualMode,
+  isModuleDisabled,
+} from "./orchestrator-policy.js";
 
 interface DaemonConfig {
   name: string;
@@ -18,17 +22,6 @@ interface DaemonConfig {
   args?: (string | number)[];
   priority?: number;
   condition?: (ns: NS) => boolean;
-}
-
-function isModuleDisabled(state: any, moduleName: string | string[]): boolean {
-  if (!state?.disabledModules || !Array.isArray(state.disabledModules))
-    return false;
-  const names = Array.isArray(moduleName) ? moduleName : [moduleName];
-  return names.some((name) => state.disabledModules.includes(name));
-}
-
-function isManualMode(state: any): boolean {
-  return Boolean(state?.manualMode || state?.strategy === "MANUAL");
 }
 
 export async function main(ns: NS): Promise<void> {

@@ -8,6 +8,10 @@ import {
   getWeakenEffectPerThread,
   getWeakenThreadsForSecurity,
 } from "./weaken.js";
+import {
+  isNonNegativeFiniteNumber,
+  isPositiveFiniteNumber,
+} from "./batch-validation.js";
 
 export function calculateBatch(
   ns: NS,
@@ -16,6 +20,12 @@ export function calculateBatch(
   hackPercent = 0.04,
   spacer = SPACER,
 ): BatchPlan | null {
+  if (
+    !isPositiveFiniteNumber(hackPercent) ||
+    !isNonNegativeFiniteNumber(spacer)
+  ) {
+    return null;
+  }
   if (!ns.formulas || !ns.formulas.hacking) return null;
 
   const player: Player = ns.getPlayer();
@@ -29,16 +39,16 @@ export function calculateBatch(
 
   // 2. Hack-Phase berechnen
   const pctPerThread = ns.formulas.hacking.hackPercent(server, player);
-  if (pctPerThread <= 0) return null;
+  if (!isPositiveFiniteNumber(pctPerThread)) return null;
 
   let hackThreads = Math.floor(hackPercent / pctPerThread);
-  if (hackThreads < 1) return null;
+  if (!Number.isSafeInteger(hackThreads) || hackThreads < 1) return null;
 
   // Weaken-Rate benötigt das BitNode-Multiplier-Verhältnis (Standard 0.05 pro Thread)
   const weakenPotency = getWeakenEffectPerThread(
     bnMults?.ServerWeakenRate,
   );
-  if (weakenPotency <= 0) return null;
+  if (!isPositiveFiniteNumber(weakenPotency)) return null;
 
   // 3. Weaken 1 Phase
   const hackSecIncrease = hackThreads * HACK_SECURITY_PER_THREAD;
@@ -57,7 +67,7 @@ export function calculateBatch(
     player,
     server.moneyMax,
   );
-  if (rawGrowThreads === Infinity || isNaN(rawGrowThreads) || rawGrowThreads <= 0) return null;
+  if (!isPositiveFiniteNumber(rawGrowThreads)) return null;
 
   const growThreads = Math.ceil(rawGrowThreads) + 2;
   const growSecIncrease = growThreads * GROW_SECURITY_PER_THREAD;
@@ -71,6 +81,16 @@ export function calculateBatch(
   const tW = Math.round(ns.formulas.hacking.weakenTime(server, player));
   const tG = Math.round(ns.formulas.hacking.growTime(server, player));
   const tH = Math.round(ns.formulas.hacking.hackTime(server, player));
+  if (
+    !isPositiveFiniteNumber(tW) ||
+    !isPositiveFiniteNumber(tG) ||
+    !isPositiveFiniteNumber(tH) ||
+    !Number.isSafeInteger(weaken1Threads) ||
+    !Number.isSafeInteger(growThreads) ||
+    !Number.isSafeInteger(weaken2Threads)
+  ) {
+    return null;
+  }
 
   // 7. Relativer Versatz
   const hackDelay = tW - spacer - tH;
@@ -78,18 +98,32 @@ export function calculateBatch(
   const growDelay = tW + spacer - tG;
   const weaken2Delay = spacer * 2;
 
-  if (hackDelay < 0 || growDelay < 0 || tW <= 0) return null;
+  if (
+    !isNonNegativeFiniteNumber(hackDelay) ||
+    !isNonNegativeFiniteNumber(growDelay) ||
+    !isNonNegativeFiniteNumber(weaken2Delay)
+  ) {
+    return null;
+  }
 
   // 8. RAM-Kosten
   const ramHack = ns.getScriptRam(PATH_HACK);
   const ramGrow = ns.getScriptRam(PATH_GROW);
   const ramWeaken = ns.getScriptRam(PATH_WEAKEN);
+  if (
+    !isPositiveFiniteNumber(ramHack) ||
+    !isPositiveFiniteNumber(ramGrow) ||
+    !isPositiveFiniteNumber(ramWeaken)
+  ) {
+    return null;
+  }
 
   const totalRam =
     hackThreads * ramHack +
     weaken1Threads * ramWeaken +
     growThreads * ramGrow +
     weaken2Threads * ramWeaken;
+  if (!isPositiveFiniteNumber(totalRam)) return null;
 
   return {
     target: targetName,

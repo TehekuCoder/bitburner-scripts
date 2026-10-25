@@ -17,6 +17,11 @@ import { SleeveState } from "/shared/types/sleeves.js";
 import { AugmentState, FactionState } from "/shared/types/factions.js";
 import { GangState } from "/shared/types/gang.js";
 import { FinanceState } from "/shared/types/finance.js";
+import {
+  isBotStateShape,
+  parseStoredState,
+  STATE_SCHEMA_VERSION,
+} from "./state-schema.js";
 
 type BotStateContent = Omit<
   BotState,
@@ -24,8 +29,13 @@ type BotStateContent = Omit<
 >;
 
 interface StoredBotState {
+  schemaVersion: number;
   revision: number;
   state: BotState;
+}
+
+function isBotState(value: unknown): value is BotState {
+  return isBotStateShape(value);
 }
 
 export type BotStatePatch = Partial<BotStateContent>;
@@ -308,25 +318,24 @@ export function loadState(ns: NS): BotState | null {
 
 function readStoredState(ns: NS, portNumber: number): StoredBotState | null {
   const data = ns.getPortHandle(portNumber).peek();
-  if (
-    isPortEmpty(data) ||
-    typeof data !== "object" ||
-    data === null ||
-    Array.isArray(data)
-  ) {
+  if (isPortEmpty(data)) return null;
+
+  const parsed = parseStoredState(
+    data,
+    { ...DEFAULT_BOT_STATE },
+    isBotState,
+  );
+  if (!parsed) {
+    getLogger(ns).warn(
+      `Ungültiges oder nicht unterstütztes State-Schema auf Port ${portNumber}; Snapshot wird ignoriert.`,
+    );
     return null;
   }
-
-  const stored = data as Partial<StoredBotState> & Partial<BotState>;
-  if (
-    typeof stored.revision === "number" &&
-    typeof stored.state === "object" &&
-    stored.state !== null
-  ) {
-    return { revision: stored.revision, state: stored.state };
-  }
-  if (typeof stored.lastUpdate !== "number") return null;
-  return { revision: 0, state: stored as BotState };
+  return {
+    schemaVersion: STATE_SCHEMA_VERSION,
+    revision: parsed.revision,
+    state: parsed.state,
+  };
 }
 
 async function acquireStateLock(ns: NS): Promise<void> {
@@ -360,7 +369,11 @@ function writeStoredState(ns: NS, state: BotState): void {
   const inactivePort =
     activePort === STATE_PORT ? STATE_BACKUP_PORT : STATE_PORT;
   const revision = Math.max(primaryRevision, backupRevision, 0) + 1;
-  const snapshot: StoredBotState = { revision, state };
+  const snapshot: StoredBotState = {
+    schemaVersion: STATE_SCHEMA_VERSION,
+    revision,
+    state,
+  };
   const port = ns.getPortHandle(inactivePort);
 
   port.clear();
