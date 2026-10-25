@@ -96,3 +96,13 @@ export function isFinanceRequestRecentlyCompleted(
   }
   return true;
 }
+
+export function hasPendingFinanceCategory(
+  pending: Iterable<{ category: string }>,
+  category: string,
+): boolean {
+  for (const action of pending) {
+    if (action.category === category) return true;
+  }
+  return false;
+}

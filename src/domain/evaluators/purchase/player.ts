@@ -19,6 +19,7 @@ import {
   AugPurchasePlan,
   AugPurchasePlanItem,
 } from "/shared/types/factions.js";
+import { getEligibleAugmentations } from "./augmentation-plan.js";
 import {
   loadAugmentState,
   patchAugmentState,
@@ -206,37 +207,33 @@ export const PlayerEvaluator: PurchaseEvaluator = {
     const playerFactions = new Set<FactionName>(ns.getPlayer().factions);
     if (gangFaction) playerFactions.add(gangFaction);
 
-    const nextItem = plan.items.find((item) => !ownedAugs.includes(item.name));
-    if (!nextItem) return requests;
-
     const ownedAugSet = new Set(ownedAugs);
-    if (!nextItem.prereqs.every((prereq) => ownedAugSet.has(prereq))) {
-      return requests;
+    const eligibleItems = getEligibleAugmentations(plan.items, ownedAugSet);
+    for (const item of eligibleItems) {
+      const faction = getAvailableFaction(ns, item, playerFactions);
+      if (!faction) continue;
+
+      const price = sing.getAugmentationPrice(item.name);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      const isRedPill = item.name === "The Red Pill";
+
+      requests.push({
+        id: `player-aug-${hashString(
+          JSON.stringify([faction, item.name, price]),
+        )}`,
+        category: "PLAYER_AUG",
+        priority: isRedPill
+          ? PurchasePriority.CRITICAL
+          : adjustPriorityByMult(PurchasePriority.HIGH, efficiencyMult),
+        score: isRedPill ? 100 : price,
+        cost: price,
+        description: `${isRedPill ? "CRITICAL " : ""}Augmentation: ${item.name} (${faction})`,
+        action: {
+          script: PATHS.app.actions.singularity,
+          args: ["player-purchase-aug", faction, item.name, price],
+        },
+      });
     }
-
-    const faction = getAvailableFaction(ns, nextItem, playerFactions);
-    if (!faction) return requests;
-
-    const price = sing.getAugmentationPrice(nextItem.name);
-    if (!Number.isFinite(price) || price <= 0) return requests;
-    const isRedPill = nextItem.name === "The Red Pill";
-
-    requests.push({
-      id: `player-aug-${hashString(
-        JSON.stringify([faction, nextItem.name, price]),
-      )}`,
-      category: "PLAYER_AUG",
-      priority: isRedPill
-        ? PurchasePriority.CRITICAL
-        : adjustPriorityByMult(PurchasePriority.HIGH, efficiencyMult),
-      score: isRedPill ? 100 : Math.max(1, Math.floor(85 * efficiencyMult)),
-      cost: price,
-      description: `${isRedPill ? "CRITICAL " : ""}Augmentation: ${nextItem.name} (${faction})`,
-      action: {
-        script: PATHS.app.actions.singularity,
-        args: ["player-purchase-aug", faction, nextItem.name, price],
-      },
-    });
 
     return requests;
   },

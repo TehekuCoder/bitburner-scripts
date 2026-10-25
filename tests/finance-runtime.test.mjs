@@ -5,6 +5,7 @@ import {
   compareFinanceRequests,
   findCachedFinanceRequest,
   findRunningFinanceAction,
+  hasPendingFinanceCategory,
   isFinanceRequestRecentlyCompleted,
   isFinanceActionTimedOut,
   pruneExpiredFinanceRetries,
@@ -28,6 +29,22 @@ test("finance requests sort by priority, category weight, score, then cost", () 
 test("finance budget includes the configured margin at its exact boundary", () => {
   assert.equal(canAffordFinanceRequest(120, 100, 1.2), true);
   assert.equal(canAffordFinanceRequest(119.99, 100, 1.2), false);
+});
+
+test("augmentation dispatch chooses the most expensive candidate that fits", () => {
+  const candidates = [
+    { id: "cheap", category: "PLAYER_AUG", priority: 2, cost: 30, score: 30 },
+    { id: "unaffordable", category: "PLAYER_AUG", priority: 2, cost: 100, score: 100 },
+    { id: "fits", category: "PLAYER_AUG", priority: 2, cost: 60, score: 60 },
+  ];
+  const ordered = candidates.sort((a, b) =>
+    compareFinanceRequests(a, b, { PLAYER_AUG: 1 }),
+  );
+  const selected = ordered.find((candidate) =>
+    canAffordFinanceRequest(70, candidate.cost, 1),
+  );
+
+  assert.equal(selected?.id, "fits");
 });
 
 test("a restarted core can identify the already-running action for a request", () => {
@@ -97,4 +114,11 @@ test("recently completed requests are suppressed until their dedupe window expir
     false,
   );
   assert.equal(completed.has("PLAYER_AUG:one"), false);
+});
+
+test("only one augmentation purchase runs at a time", () => {
+  const pending = [{ category: "HACKNET" }, { category: "PLAYER_AUG" }];
+
+  assert.equal(hasPendingFinanceCategory(pending, "PLAYER_AUG"), true);
+  assert.equal(hasPendingFinanceCategory(pending, "COMPANY"), false);
 });

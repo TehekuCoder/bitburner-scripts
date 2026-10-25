@@ -33,6 +33,7 @@ import {
   compareFinanceRequests,
   findCachedFinanceRequest,
   findRunningFinanceAction,
+  hasPendingFinanceCategory,
   isFinanceRequestRecentlyCompleted,
   isFinanceActionTimedOut,
   pruneExpiredFinanceRetries,
@@ -423,7 +424,7 @@ export async function main(ns: NS): Promise<void> {
     );
     if (criticalAugPurchase && !criticalAugPurchaseNotified) {
       ns.toast(
-        `Kritische Augmentation erkannt: ${criticalAugPurchase.description}. Andere Käufe pausieren, bis das Budget reicht.`,
+        `Kritische Augmentation erkannt: ${criticalAugPurchase.description}. Sie wird priorisiert; falls sie noch nicht bezahlbar ist, können günstigere Augs gekauft werden.`,
         "warning",
         7000,
       );
@@ -496,11 +497,22 @@ export async function main(ns: NS): Promise<void> {
       const blockedCategories = new Set<PurchaseCategory>();
       let highestUnsatisfiedPriority = Number.MAX_SAFE_INTEGER;
       const runningProcesses = ns.ps("home");
+      const canAffordCriticalAug =
+        criticalAugPurchase !== undefined &&
+        canAffordFinanceRequest(
+          availableMoney,
+          criticalAugPurchase.cost,
+          dynamicMargins.PLAYER_AUG ?? 1.0,
+        );
 
       for (const req of allRequests) {
         const requestTrackingId = trackingId(req.category, req.id);
+        const isPlayerAugAlreadyPending =
+          req.category === "PLAYER_AUG" &&
+          hasPendingFinanceCategory(pendingActions.values(), "PLAYER_AUG");
         if (
           pendingActions.has(requestTrackingId) ||
+          isPlayerAugAlreadyPending ||
           (retryAfter.get(requestTrackingId) ?? 0) > now ||
           isFinanceRequestRecentlyCompleted(
             completedRequests,
@@ -530,7 +542,11 @@ export async function main(ns: NS): Promise<void> {
           availableMoney = Math.max(0, availableMoney - reservedCost);
           continue;
         }
-        if (criticalAugPurchase && req !== criticalAugPurchase) {
+        if (
+          canAffordCriticalAug &&
+          criticalAugPurchase &&
+          req !== criticalAugPurchase
+        ) {
           continue;
         }
         const margin = dynamicMargins[req.category] ?? 1.0;
@@ -600,7 +616,10 @@ export async function main(ns: NS): Promise<void> {
 
           blockedCategories.add(req.category);
 
-          if (req.priority < highestUnsatisfiedPriority) {
+          if (
+            req.priority < highestUnsatisfiedPriority &&
+            !(req === criticalAugPurchase && !canAffordCriticalAug)
+          ) {
             highestUnsatisfiedPriority = req.priority;
           }
         }
