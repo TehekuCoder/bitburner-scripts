@@ -68,8 +68,6 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     const now = Date.now();
     const homeMax = ns.getServerMaxRam("home");
-    const homeUsed = ns.getServerUsedRam("home");
-    const homeFree = homeMax - homeUsed;
     const currentState = loadState(ns);
 
     if (
@@ -91,9 +89,30 @@ export async function main(ns: NS): Promise<void> {
         PATHS.app.orchestration.orchestrator,
         "home",
       );
-      if (homeFree >= reqRam) {
-        logger.info("Starte System Orchestrator...");
-        ns.run(PATHS.app.orchestration.orchestrator, 1);
+      const homeFree =
+        ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+      if (!Number.isFinite(reqRam) || reqRam <= 0) {
+        logger.error(
+          `System Orchestrator kann nicht gestartet werden: ungültiger Skript-RAM (${reqRam}).`,
+        );
+      } else if (homeFree >= reqRam) {
+        const orchestratorPid = ns.run(
+          PATHS.app.orchestration.orchestrator,
+          1,
+        );
+        if (orchestratorPid > 0) {
+          logger.info(
+            `System Orchestrator gestartet (PID ${orchestratorPid}).`,
+          );
+        } else {
+          logger.error(
+            `System Orchestrator konnte nicht gestartet werden (PID 0; ${homeFree.toFixed(2)} GB frei, ${reqRam.toFixed(2)} GB benötigt).`,
+          );
+        }
+      } else {
+        logger.warn(
+          `System Orchestrator wartet auf RAM (${homeFree.toFixed(2)} GB frei, ${reqRam.toFixed(2)} GB benötigt).`,
+        );
       }
     }
 
@@ -127,7 +146,7 @@ export async function main(ns: NS): Promise<void> {
         workExecPath,
         logger,
         homeMax,
-        homeFree,
+        homeMax - ns.getServerUsedRam("home"),
       );
     }
 

@@ -50,20 +50,20 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     const bnMults = loadBnMults(ns);
 
-    // 0. Finance-Core als Dauerläufer (UI & Kauf-Abwicklung)
-    if (
-      ns.fileExists(PATHS.app.orchestration.financeCore, "home") &&
-      !ns.isRunning(PATHS.app.orchestration.financeCore, "home")
-    ) {
-      const coreRam = ns.getScriptRam(
-        PATHS.app.orchestration.financeCore,
-        "home",
-      );
-      const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
-      if (freeRam >= coreRam) {
-        ns.run(PATHS.app.orchestration.financeCore, 1);
-      }
-    }
+    // // 0. Finance-Core als Dauerläufer (UI & Kauf-Abwicklung)
+    // if (
+    //   ns.fileExists(PATHS.app.orchestration.financeCore, "home") &&
+    //   !ns.isRunning(PATHS.app.orchestration.financeCore, "home")
+    // ) {
+    //   const coreRam = ns.getScriptRam(
+    //     PATHS.app.orchestration.financeCore,
+    //     "home",
+    //   );
+    //   const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+    //   if (freeRam >= coreRam) {
+    //     ns.run(PATHS.app.orchestration.financeCore, 1);
+    //   }
+    // }
 
     // 1. Purchased Servers (cloud.js - ~6.05 GB)
     const CloudLimit = ns.cloud?.getServerLimit() ?? 0;
