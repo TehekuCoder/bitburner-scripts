@@ -5,6 +5,7 @@ import { COMBAT_STATS } from "/shared/types/game.js";
 import { BotState, StrategyResult } from "/shared/types/strategy.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import { loadBnMults, hasSingularity } from "/lib/utils.js";
+import { shouldContinueFactionReputation } from "./strategy-stability.js";
 
 const MEGACORP_FACTION_TO_COMPANY: Record<string, CompanyName> = {
   ECorp: "ECorp" as CompanyName,
@@ -281,6 +282,28 @@ export function determineStrategy(
       );
       return { mode: "REP", targetFaction: "Daedalus" as FactionName };
     }
+  }
+
+  if (
+    factionToWorkFor &&
+    shouldContinueFactionReputation({
+      previousMode: currentState?.strategy,
+      previousFaction: currentState?.targetFaction ?? undefined,
+      nextFaction: factionToWorkFor.name,
+      playerFactions: player.factions,
+      currentReputation: ns.singularity.getFactionRep(
+        factionToWorkFor.name as FactionName,
+      ),
+      targetReputation: factionToWorkFor.targetRep,
+    })
+  ) {
+    logger?.debug(
+      `[Strategie] Offener Rufauftrag für ${factionToWorkFor.name} bleibt aktiv ➔ REP`,
+    );
+    return {
+      mode: "REP",
+      targetFaction: factionToWorkFor.name as FactionName,
+    };
   }
 
   // 3️⃣ PHASE 1: Early-Game Fraktionen (CyberSec, etc.)
