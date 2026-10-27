@@ -33,6 +33,7 @@ import {
   compareFinanceRequests,
   findCachedFinanceRequest,
   findRunningFinanceAction,
+  getCompletedAugmentationPurchaseOutcome,
   hasPendingFinanceCategory,
   isFinanceRequestRecentlyCompleted,
   isFinanceActionTimedOut,
@@ -49,7 +50,9 @@ interface PendingAction {
   category: PurchaseCategory;
   requestId: string;
   description: string;
+  augmentation?: string;
   pid: number;
+  requestCost: number;
   reservedCost: number;
   startedAt: number;
 }
@@ -129,6 +132,14 @@ function parsePurchaseRequest(
 
 function trackingId(category: PurchaseCategory, requestId: string): string {
   return `${category}:${requestId}`;
+}
+
+function getAugmentationName(request: PurchaseRequest): string | undefined {
+  return request.category === "PLAYER_AUG" &&
+    request.action.args[0] === "player-purchase-aug" &&
+    typeof request.action.args[2] === "string"
+    ? request.action.args[2]
+    : undefined;
 }
 
 function pushBounded<T>(array: T[], item: T, maxSize: number = 6): void {
@@ -324,6 +335,47 @@ export async function main(ns: NS): Promise<void> {
         }
       } catch (e) {
         ns.print(`[ERROR] Ungültiges JSON auf dem Finance-Result-Port: ${e}`);
+      }
+    }
+
+    for (const [id, pending] of pendingActions) {
+      if (pending.category !== "PLAYER_AUG" || !pending.augmentation) continue;
+
+      const isRunning = ns.isRunning(pending.pid, "home");
+      const purchaseOutcome = getCompletedAugmentationPurchaseOutcome(
+        isRunning,
+        !isRunning && hasSingularity(ns)
+          ? ns.singularity.getOwnedAugmentations(true)
+          : [],
+        pending.augmentation,
+      );
+      if (purchaseOutcome === undefined) continue;
+
+      pendingActions.delete(id);
+      if (purchaseOutcome) {
+        const purchaseMsg = `🛒 [$${ns.format.number(pending.requestCost)}] ${pending.description}`;
+        logger.success(purchaseMsg);
+        pushBounded(lastPurchases, purchaseMsg, 6);
+        ns.toast(
+          `Augmentation erfolgreich gekauft: ${pending.description}`,
+          "success",
+          5000,
+        );
+        evaluatorRequestCache.get(pending.category)?.requests.delete(
+          pending.requestId,
+        );
+        retryAfter.delete(id);
+        completedRequests.set(id, now + CACHE_TTL_MS);
+      } else {
+        const errorMsg = `⚠️ Kauf fehlgeschlagen: ${pending.description}`;
+        logger.warn(errorMsg);
+        pushBounded(lastWarnings, errorMsg, 6);
+        ns.toast(
+          `Augmentationskauf fehlgeschlagen: ${pending.description}`,
+          "error",
+          7000,
+        );
+        retryAfter.set(id, now + 5000);
       }
     }
 
@@ -535,7 +587,9 @@ export async function main(ns: NS): Promise<void> {
             category: req.category,
             requestId: req.id,
             description: req.description,
+            augmentation: getAugmentationName(req),
             pid: runningAction.pid,
+            requestCost: req.cost,
             reservedCost,
             startedAt: now,
           });
@@ -591,7 +645,9 @@ export async function main(ns: NS): Promise<void> {
               category: req.category,
               requestId: req.id,
               description: req.description,
+              augmentation: getAugmentationName(req),
               pid,
+              requestCost: req.cost,
               reservedCost: requiredBudget,
               startedAt: now,
             });

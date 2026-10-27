@@ -46,6 +46,14 @@ export function isFinanceActionTimedOut(
   return now - startedAt > timeoutMs;
 }
 
+export function getCompletedAugmentationPurchaseOutcome(
+  isRunning: boolean,
+  ownedAugmentations: readonly string[],
+  augmentation: string,
+): boolean | undefined {
+  return isRunning ? undefined : ownedAugmentations.includes(augmentation);
+}
+
 export function findRunningFinanceAction<T extends FinanceProcessLike>(
   processes: readonly T[],
   script: string,

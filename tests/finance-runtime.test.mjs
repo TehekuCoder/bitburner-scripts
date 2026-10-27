@@ -5,6 +5,7 @@ import {
   compareFinanceRequests,
   findCachedFinanceRequest,
   findRunningFinanceAction,
+  getCompletedAugmentationPurchaseOutcome,
   hasPendingFinanceCategory,
   isFinanceRequestRecentlyCompleted,
   isFinanceActionTimedOut,
@@ -80,6 +81,25 @@ test("a restarted core can identify the already-running action for a request", (
 test("timeouts start only after the timeout boundary", () => {
   assert.equal(isFinanceActionTimedOut(60_000, 0, 60_000), false);
   assert.equal(isFinanceActionTimedOut(60_001, 0, 60_000), true);
+});
+
+test("augmentation purchase completion is inferred after the action exits", () => {
+  assert.equal(
+    getCompletedAugmentationPurchaseOutcome(true, [], "NeuroFlux Governor"),
+    undefined,
+  );
+  assert.equal(
+    getCompletedAugmentationPurchaseOutcome(
+      false,
+      ["NeuroFlux Governor"],
+      "NeuroFlux Governor",
+    ),
+    true,
+  );
+  assert.equal(
+    getCompletedAugmentationPurchaseOutcome(false, [], "NeuroFlux Governor"),
+    false,
+  );
 });
 
 test("a late result can still be matched to its cached request after restart", () => {
