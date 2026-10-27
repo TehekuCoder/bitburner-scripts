@@ -1,11 +1,11 @@
-import { NS } from "@ns";
+import type { NS } from "@ns";
 
 const SINGULARITY_ACTION_RAM: Record<string, number> = {
   "home-upgrade-ram": 3,
   "home-upgrade-cores": 3,
   "program-purchase-tor": 2,
   "program-purchase": 2,
-  "player-purchase-aug": 5,
+  "player-purchase-aug": 26,
   "player-purchase-nfg": 7.5,
   "player-donate-faction": 5,
 };

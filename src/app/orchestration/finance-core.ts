@@ -63,6 +63,7 @@ const retryAfter = new Map<string, number>();
 const completedRequests = new Map<string, number>();
 const CACHE_TTL_MS = 45000; // 45s TTL für Anfragen
 const ACTION_TIMEOUT_MS = 60000;
+const AUGMENTATION_FAILURE_RETRY_MS = 30000;
 const PURCHASE_CATEGORIES: readonly PurchaseCategory[] = [
   "HOME_SERVER",
   "PURCHASED_SERVER",
@@ -302,6 +303,7 @@ export async function main(ns: NS): Promise<void> {
               evaluatorRequestCache.values(),
               result.requestId,
             );
+        const category = pending?.category ?? cachedRequest?.category;
         if (!pending && !cachedRequest) {
           if (result.success) {
             completedRequests.set(
@@ -309,12 +311,17 @@ export async function main(ns: NS): Promise<void> {
               now + CACHE_TTL_MS,
             );
           } else {
-            retryAfter.set(result.requestId, now + 5000);
+            retryAfter.set(
+              result.requestId,
+              now +
+                (category === "PLAYER_AUG"
+                  ? AUGMENTATION_FAILURE_RETRY_MS
+                  : 5000),
+            );
           }
           continue;
         }
         pendingActions.delete(result.requestId);
-        const category = pending?.category ?? cachedRequest?.category;
         const requestId = pending?.requestId ?? cachedRequest?.id;
         const description = pending?.description ?? cachedRequest?.description;
         if (result.success) {
@@ -413,7 +420,7 @@ export async function main(ns: NS): Promise<void> {
           7000,
         );
         removeCompletedRequest(pending.category, pending.requestId);
-        retryAfter.set(id, now + 5000);
+        retryAfter.set(id, now + AUGMENTATION_FAILURE_RETRY_MS);
       }
     }
 
@@ -748,9 +755,22 @@ export async function main(ns: NS): Promise<void> {
       score: req.score,
     }));
     let proposedAugPurchaseData: FinanceDashboardData["proposedAugPurchase"];
+    const augRequest = !isAugmentationMode
+      ? allRequests.find(
+          (request) =>
+            request.category === "PLAYER_AUG" &&
+            request.action.args[0] === "player-purchase-aug",
+        )
+      : undefined;
+    const requestedAugmentation =
+      typeof augRequest?.action.args[2] === "string"
+        ? augRequest.action.args[2]
+        : undefined;
     const nextPlannedAug = !isAugmentationMode && hasSingularity(ns)
-      ? augPurchasePlan?.items.find(
-          (item) => !ns.singularity.getOwnedAugmentations(true).includes(item.name),
+      ? augPurchasePlan?.items.find((item) =>
+          requestedAugmentation
+            ? item.name === requestedAugmentation
+            : !ns.singularity.getOwnedAugmentations(true).includes(item.name),
         )
       : undefined;
     if (nextPlannedAug && hasSingularity(ns)) {
@@ -778,12 +798,6 @@ export async function main(ns: NS): Promise<void> {
             b.favor - a.favor ||
             a.name.localeCompare(b.name),
         );
-      const augRequest = allRequests.find(
-        (request) =>
-          request.category === "PLAYER_AUG" &&
-          request.action.args[0] === "player-purchase-aug" &&
-          request.action.args[2] === nextPlannedAug.name,
-      );
       const purchaseCost = augRequest?.cost ??
         ns.singularity.getAugmentationPrice(nextPlannedAug.name);
       const availableForPurchase =

@@ -33,7 +33,7 @@ test("finance budget includes the configured margin at its exact boundary", () =
   assert.equal(canAffordFinanceRequest(119.99, 100, 1.2), false);
 });
 
-test("augmentation dispatch chooses the most expensive candidate that fits", () => {
+test("finance dispatch finds the highest-scoring candidate within budget", () => {
   const candidates = [
     { id: "cheap", category: "PLAYER_AUG", priority: 2, cost: 30, score: 30 },
     { id: "unaffordable", category: "PLAYER_AUG", priority: 2, cost: 100, score: 100 },
