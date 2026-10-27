@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  getEligibleAugmentations,
-  selectNextAugmentationRequest,
-} from "../src/domain/evaluators/purchase/augmentation-plan.ts";
+import { getEligibleAugmentations } from "../src/domain/evaluators/purchase/augmentation-plan.ts";
 
 test("eligible plan items skip missing prerequisites but include later affordable candidates", () => {
   const items = [
@@ -28,19 +25,4 @@ test("purchasing a prerequisite unlocks its planned upgrade", () => {
     getEligibleAugmentations(items, new Set(["Base"])).map((item) => item.name),
     ["Upgrade"],
   );
-});
-
-test("augmentation requests are selected one at a time by priority then lowest price", () => {
-  const requests = [
-    { description: "Expensive", priority: 2, cost: 200 },
-    { description: "Cheap", priority: 2, cost: 100 },
-    { description: "Critical", priority: 1, cost: 500 },
-  ];
-
-  assert.equal(selectNextAugmentationRequest(requests)?.description, "Critical");
-  assert.equal(
-    selectNextAugmentationRequest(requests.slice(0, 2))?.description,
-    "Cheap",
-  );
-  assert.equal(requests.length, 3);
 });

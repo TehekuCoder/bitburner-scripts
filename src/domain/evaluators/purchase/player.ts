@@ -19,10 +19,7 @@ import {
   AugPurchasePlan,
   AugPurchasePlanItem,
 } from "/shared/types/factions.js";
-import {
-  getEligibleAugmentations,
-  selectNextAugmentationRequest,
-} from "./augmentation-plan.js";
+import { getEligibleAugmentations } from "./augmentation-plan.js";
 import {
   loadAugmentState,
   patchAugmentState,
@@ -238,8 +235,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
       });
     }
 
-    const nextRequest = selectNextAugmentationRequest(requests);
-    return nextRequest ? [nextRequest] : [];
+    return requests;
   },
 };
 

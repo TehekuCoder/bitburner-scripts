@@ -33,17 +33,17 @@ test("finance budget includes the configured margin at its exact boundary", () =
   assert.equal(canAffordFinanceRequest(119.99, 100, 1.2), false);
 });
 
-test("finance dispatch finds the highest-scoring candidate within budget", () => {
+test("augmentation dispatch buys the most expensive candidate within budget", () => {
   const candidates = [
-    { id: "cheap", category: "PLAYER_AUG", priority: 2, cost: 30, score: 30 },
-    { id: "unaffordable", category: "PLAYER_AUG", priority: 2, cost: 100, score: 100 },
-    { id: "fits", category: "PLAYER_AUG", priority: 2, cost: 60, score: 60 },
+    { id: "cheap", category: "PLAYER_AUG", priority: 2, cost: 100, score: 100 },
+    { id: "fits", category: "PLAYER_AUG", priority: 2, cost: 200, score: 200 },
+    { id: "unaffordable", category: "PLAYER_AUG", priority: 2, cost: 300, score: 300 },
   ];
   const ordered = candidates.sort((a, b) =>
     compareFinanceRequests(a, b, { PLAYER_AUG: 1 }),
   );
   const selected = ordered.find((candidate) =>
-    canAffordFinanceRequest(70, candidate.cost, 1),
+    canAffordFinanceRequest(225, candidate.cost, 1),
   );
 
   assert.equal(selected?.id, "fits");
