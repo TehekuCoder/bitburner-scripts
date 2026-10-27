@@ -7,6 +7,7 @@ import {
   findRunningFinanceAction,
   getCompletedAugmentationPurchaseOutcome,
   hasPendingFinanceCategory,
+  isAugmentationPurchasePriceStale,
   isFinanceRequestRecentlyCompleted,
   isFinanceActionTimedOut,
   pruneExpiredFinanceRetries,
@@ -100,6 +101,12 @@ test("augmentation purchase completion is inferred after the action exits", () =
     getCompletedAugmentationPurchaseOutcome(false, [], "NeuroFlux Governor"),
     false,
   );
+});
+
+test("augmentation requests with pre-inflation prices are treated as stale", () => {
+  assert.equal(isAugmentationPurchasePriceStale(100, 100, 100), false);
+  assert.equal(isAugmentationPurchasePriceStale(100, 100, 190), true);
+  assert.equal(isAugmentationPurchasePriceStale(100, 90, 100), true);
 });
 
 test("a late result can still be matched to its cached request after restart", () => {

@@ -54,6 +54,20 @@ export function getCompletedAugmentationPurchaseOutcome(
   return isRunning ? undefined : ownedAugmentations.includes(augmentation);
 }
 
+export function isAugmentationPurchasePriceStale(
+  requestCost: number,
+  maximumPrice: number,
+  currentPrice: number,
+): boolean {
+  return (
+    !Number.isFinite(requestCost) ||
+    !Number.isFinite(maximumPrice) ||
+    !Number.isFinite(currentPrice) ||
+    requestCost !== currentPrice ||
+    maximumPrice !== currentPrice
+  );
+}
+
 export function findRunningFinanceAction<T extends FinanceProcessLike>(
   processes: readonly T[],
   script: string,

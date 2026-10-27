@@ -35,6 +35,7 @@ import {
   findRunningFinanceAction,
   getCompletedAugmentationPurchaseOutcome,
   hasPendingFinanceCategory,
+  isAugmentationPurchasePriceStale,
   isFinanceRequestRecentlyCompleted,
   isFinanceActionTimedOut,
   pruneExpiredFinanceRetries,
@@ -140,6 +141,22 @@ function getAugmentationName(request: PurchaseRequest): string | undefined {
     typeof request.action.args[2] === "string"
     ? request.action.args[2]
     : undefined;
+}
+
+function removeCompletedRequest(
+  category: PurchaseCategory | undefined,
+  requestId: string | undefined,
+): void {
+  if (!category || requestId === undefined) return;
+
+  const requests = evaluatorRequestCache.get(category)?.requests;
+  if (!requests) return;
+
+  if (category === "PLAYER_AUG") {
+    requests.clear();
+  } else {
+    requests.delete(requestId);
+  }
 }
 
 function pushBounded<T>(array: T[], item: T, maxSize: number = 6): void {
@@ -313,12 +330,34 @@ export async function main(ns: NS): Promise<void> {
               );
             }
           }
-          if (category && requestId !== undefined) {
-            evaluatorRequestCache.get(category)?.requests.delete(requestId);
-          }
+          removeCompletedRequest(category, requestId);
           retryAfter.delete(result.requestId);
           completedRequests.set(result.requestId, now + CACHE_TTL_MS);
         } else {
+          const augmentationRequestCost =
+            pending?.requestCost ?? cachedRequest?.cost;
+          const augmentationMaximumPrice = cachedRequest
+            ? Number(cachedRequest.action.args[3])
+            : augmentationRequestCost;
+          const augmentationName =
+            pending?.augmentation ??
+            (cachedRequest ? getAugmentationName(cachedRequest) : undefined);
+          if (
+            category === "PLAYER_AUG" &&
+            augmentationName &&
+            augmentationRequestCost !== undefined &&
+            hasSingularity(ns) &&
+            isAugmentationPurchasePriceStale(
+              augmentationRequestCost,
+              augmentationMaximumPrice ?? Number.NaN,
+              ns.singularity.getAugmentationPrice(augmentationName),
+            )
+          ) {
+            removeCompletedRequest(category, requestId);
+            retryAfter.delete(result.requestId);
+            continue;
+          }
+          removeCompletedRequest(category, requestId);
           if (description !== undefined) {
             const errorMsg = `⚠️ Kauf fehlgeschlagen: ${description}`;
             logger.warn(errorMsg);
@@ -361,9 +400,7 @@ export async function main(ns: NS): Promise<void> {
           "success",
           5000,
         );
-        evaluatorRequestCache.get(pending.category)?.requests.delete(
-          pending.requestId,
-        );
+        removeCompletedRequest(pending.category, pending.requestId);
         retryAfter.delete(id);
         completedRequests.set(id, now + CACHE_TTL_MS);
       } else {
@@ -375,6 +412,7 @@ export async function main(ns: NS): Promise<void> {
           "error",
           7000,
         );
+        removeCompletedRequest(pending.category, pending.requestId);
         retryAfter.set(id, now + 5000);
       }
     }
@@ -595,6 +633,25 @@ export async function main(ns: NS): Promise<void> {
           });
           availableMoney = Math.max(0, availableMoney - reservedCost);
           continue;
+        }
+        if (
+          req.category === "PLAYER_AUG" &&
+          req.action.args[0] === "player-purchase-aug"
+        ) {
+          const augmentation = getAugmentationName(req);
+          const maximumPrice = Number(req.action.args[3]);
+          if (
+            augmentation &&
+            hasSingularity(ns) &&
+            isAugmentationPurchasePriceStale(
+              req.cost,
+              maximumPrice,
+              ns.singularity.getAugmentationPrice(augmentation),
+            )
+          ) {
+            evaluatorRequestCache.get("PLAYER_AUG")?.requests.clear();
+            break;
+          }
         }
         if (
           canAffordCriticalAug &&
