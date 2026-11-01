@@ -3,6 +3,7 @@ import {
   PurchaseRequest,
   PurchasePriority,
   PurchaseCategory,
+  StockDashboardSnapshot,
 } from "/shared/types/finance.js";
 import { drawFinanceDashboard, FinanceDashboardData } from "/ui/finance-ui.js";
 
@@ -18,6 +19,7 @@ import {
   CATEGORY_WEIGHTS,
   FINANCE_REQUEST_ARG_PREFIX,
   FINANCE_RESULT_PORT,
+  STOCK_DASHBOARD_FILE,
 } from "/shared/constants/finance";
 import {
   loadAugmentState,
@@ -69,6 +71,7 @@ const CACHE_TTL_MS = 45000; // 45s TTL für Anfragen
 const ACTION_TIMEOUT_MS = 60000;
 const AUGMENTATION_FAILURE_RETRY_MS = 30000;
 const AUGMENTATION_SHORTLIST_SIZE = 5;
+let lastInvalidStockDashboard = "";
 const PURCHASE_CATEGORIES: readonly PurchaseCategory[] = [
   "HOME_SERVER",
   "PURCHASED_SERVER",
@@ -202,6 +205,60 @@ function pushBounded<T>(array: T[], item: T, maxSize: number = 6): void {
   array.push(item);
   while (array.length > maxSize) {
     array.shift();
+  }
+}
+
+function loadStockDashboard(
+  ns: NS,
+  logger: LoggerClient,
+): StockDashboardSnapshot | undefined {
+  const raw = ns.read(STOCK_DASHBOARD_FILE);
+  if (!raw) {
+    lastInvalidStockDashboard = "";
+    return undefined;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) {
+      throw new Error("Dashboard muss ein Objekt sein.");
+    }
+    const snapshot = parsed as Partial<StockDashboardSnapshot>;
+    if (
+      !Number.isFinite(snapshot.updatedAt) ||
+      (snapshot.mode !== "LOCKED" &&
+        snapshot.mode !== "ESTIMATE" &&
+        snapshot.mode !== "4S") ||
+      typeof snapshot.status !== "string" ||
+      !Number.isFinite(snapshot.tradingBudget) ||
+      (snapshot.tradingBudget ?? -1) < 0 ||
+      !Number.isFinite(snapshot.samplesRequired) ||
+      (snapshot.samplesRequired ?? 0) <= 0 ||
+      !Array.isArray(snapshot.symbols) ||
+      !snapshot.symbols.every(
+        (symbol) =>
+          typeof symbol === "object" &&
+          symbol !== null &&
+          typeof symbol.symbol === "string" &&
+          (symbol.forecast === null ||
+            (typeof symbol.forecast === "number" &&
+              Number.isFinite(symbol.forecast))) &&
+          Number.isFinite(symbol.samples) &&
+          Number.isFinite(symbol.longShares) &&
+          Number.isFinite(symbol.shortShares) &&
+          typeof symbol.decision === "string",
+      )
+    ) {
+      throw new Error("Dashboard enthält ungültige Daten.");
+    }
+    lastInvalidStockDashboard = "";
+    return snapshot as StockDashboardSnapshot;
+  } catch (error) {
+    if (lastInvalidStockDashboard !== raw) {
+      logger.warn(`Aktien-Dashboard nicht lesbar: ${String(error)}`);
+      lastInvalidStockDashboard = raw;
+    }
+    return undefined;
   }
 }
 
@@ -929,6 +986,7 @@ export async function main(ns: NS): Promise<void> {
       topPendingRequests: structuredRequests.slice(0, 4),
       lastPurchases,
       lastWarnings,
+      stockDashboard: loadStockDashboard(ns, logger),
     };
 
     drawFinanceDashboard(ns, dashboardData);

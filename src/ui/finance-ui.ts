@@ -1,6 +1,7 @@
 import { NS } from "@ns";
 import { formatPercent } from "/lib/utils.js";
 import { AUG_PURCHASE_PLAN_FILE } from "/shared/constants/finance.js";
+import { StockDashboardSnapshot } from "/shared/types/finance.js";
 
 export interface PendingRequestSummary {
   description: string;
@@ -50,6 +51,7 @@ export interface FinanceDashboardData {
   topPendingRequests: PendingRequestSummary[];
   lastPurchases: string[];
   lastWarnings: string[];
+  stockDashboard?: StockDashboardSnapshot;
 }
 
 const ANSI_REGEX = /\u001b\[[0-9;]*m/g;
@@ -305,6 +307,62 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   }
 
   buffer.push(D_LINE);
+
+  if (data.stockDashboard) {
+    const stock = data.stockDashboard;
+    const modeLabel =
+      stock.mode === "4S"
+        ? "4S"
+        : stock.mode === "ESTIMATE"
+          ? "BN8-SCHÄTZUNG"
+          : "GESPERRT";
+    const ageSeconds = Math.max(
+      0,
+      Math.floor((Date.now() - stock.updatedAt) / 1000),
+    );
+    buffer.push(`${CLR.WHITE_BOLD}AKTIENHANDEL: ${modeLabel}${CLR.RESET}`);
+    buffer.push(truncateANSI(stock.status, W));
+    buffer.push(
+      `Budget: $${ns.format.number(stock.tradingBudget)} | ${ageSeconds > 30 ? `${CLR.YELLOW}Daten ${ageSeconds}s alt${CLR.RESET}` : `Update vor ${ageSeconds}s`}`,
+    );
+
+    const rankedSymbols = [...stock.symbols].sort((a, b) => {
+      const priority = (symbol: StockDashboardSnapshot["symbols"][number]) =>
+        symbol.longShares > 0 || symbol.shortShares > 0
+          ? 0
+          : symbol.decision.startsWith("ANFRAGE") ||
+              symbol.decision.startsWith("KAUF") ||
+              symbol.decision.startsWith("Kaufkandidat") ||
+              symbol.decision.startsWith("Kein Kauf")
+            ? 1
+            : 2;
+      return priority(a) - priority(b) || a.symbol.localeCompare(b.symbol);
+    });
+
+    if (rankedSymbols.length === 0) {
+      buffer.push(`> ${CLR.GRAY}Noch keine Aktien-Signale verfügbar.${CLR.RESET}`);
+    } else {
+      for (const symbol of rankedSymbols.slice(0, 7)) {
+        const forecast =
+          stock.mode === "ESTIMATE" && symbol.forecast === null
+            ? `Daten ${symbol.samples}/${stock.samplesRequired}`
+            : symbol.forecast === null
+              ? "Forecast --"
+              : `${(symbol.forecast * 100).toFixed(1)}%`;
+        const position = `L:${ns.format.number(symbol.longShares)} S:${ns.format.number(symbol.shortShares)}`;
+        buffer.push(
+          truncateANSI(
+            `${symbol.symbol.padEnd(6)} ${forecast.padEnd(13)} ${position.padEnd(15)} ${symbol.decision}`,
+            W,
+          ),
+        );
+      }
+      if (rankedSymbols.length > 7) {
+        buffer.push(`... und ${rankedSymbols.length - 7} weitere Symbole`);
+      }
+    }
+    buffer.push(D_LINE);
+  }
 
   // ------------------------------------------------------------
   // 3. NÄCHSTER GEPLANTER KAUF

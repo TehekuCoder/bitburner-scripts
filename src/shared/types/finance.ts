@@ -53,3 +53,21 @@ export interface FinanceState {
   isRushModeActive?: boolean;
   homeCores?: number;
 }
+
+export interface StockDashboardSymbol {
+  symbol: string;
+  forecast: number | null;
+  samples: number;
+  longShares: number;
+  shortShares: number;
+  decision: string;
+}
+
+export interface StockDashboardSnapshot {
+  updatedAt: number;
+  mode: "LOCKED" | "ESTIMATE" | "4S";
+  status: string;
+  tradingBudget: number;
+  samplesRequired: number;
+  symbols: StockDashboardSymbol[];
+}

@@ -17,6 +17,7 @@ export const TRANSACTION_FEE = 100_000;
 export const MIN_INVESTMENT = 5_000_000;
 export const CASH_BUFFER = 2_000_000;
 export const AUG_PURCHASE_PLAN_FILE = "aug-purchase-plan.txt";
+export const STOCK_DASHBOARD_FILE = "stock-dashboard.txt";
 export const FINANCE_RESULT_PORT = 11;
 export const FINANCE_REQUEST_ARG_PREFIX = "__finance_request__:";
 
