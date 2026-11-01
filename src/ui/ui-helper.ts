@@ -2,8 +2,8 @@ import { FactionName, NS} from "@ns";
 import { BotStrategy } from "/shared/types/strategy";
 import { PATHS } from "/infrastructure/runtime/paths";
 import { formatPercent } from "/lib/utils.js";
-import { wrapText } from "./ui-text.js";
-export { wrapText } from "./ui-text.js";
+import { wrapText } from "ui/ui-text.js"
+export { wrapText } from "ui/ui-text.js";
 
 export function printWrapped(
   ns: NS,

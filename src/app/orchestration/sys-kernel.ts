@@ -14,6 +14,7 @@ import {
   HOME_RESERVED_RAM_ULTRA,
 } from "/shared/constants/game-defaults";
 import { getExactBitNode } from "/lib/utils";
+import { canRunHackingWorkersOnHome } from "/domain/evaluators/strategy/hacking-policy.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -220,6 +221,14 @@ function runFallbackWorkers(
   }
 
   const financeExecPath = PATHS.services.daemons.financeDispatcher;
+  if (!canRunHackingWorkersOnHome(ns.getResetInfo().currentNode)) {
+    if (ns.isRunning(workExecPath, "home")) {
+      logger.info("BN8: Stoppe Worker auf home, um RAM freizuhalten.");
+      ns.scriptKill(workExecPath, "home");
+    }
+    return;
+  }
+
   const isFinanceWaiting =
     homeMax >= 128 &&
     ns.fileExists(financeExecPath, "home") &&

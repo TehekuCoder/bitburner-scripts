@@ -17,6 +17,7 @@ import {
   getWorkerMaxUsableRam,
 } from "/infrastructure/network/network.js";
 import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
+import { canRunHackingWorkersOnHome } from "/domain/evaluators/strategy/hacking-policy.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -380,7 +381,18 @@ export async function deployWorkerFleet(
 
   const pool: FleetNode[] = [];
   const workerName = workerScript.replace(/^.*[\\/]/, "");
-  let deployedAny = servers.some((host) =>
+  const canUseHome = canRunHackingWorkersOnHome(
+    ns.getResetInfo().currentNode,
+  );
+  if (!canUseHome) {
+    for (const proc of ns.ps("home")) {
+      if (proc.filename.endsWith(workerName)) ns.kill(proc.pid);
+    }
+  }
+  const eligibleServers = canUseHome
+    ? servers
+    : servers.filter((host) => host !== "home");
+  let deployedAny = eligibleServers.some((host) =>
     ns.ps(host).some(
       (proc) =>
         proc.filename.endsWith(workerName) &&
@@ -388,7 +400,7 @@ export async function deployWorkerFleet(
     ),
   );
 
-  const prioritizedServers = [...servers].sort((a, b) => {
+  const prioritizedServers = [...eligibleServers].sort((a, b) => {
     const aHacknet = a.startsWith("hacknet-server-");
     const bHacknet = b.startsWith("hacknet-server-");
     if (aHacknet !== bHacknet) return aHacknet ? 1 : -1;

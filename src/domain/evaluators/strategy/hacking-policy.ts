@@ -5,6 +5,10 @@ export interface HackingStrategyOverride {
   reason: string;
 }
 
+export function canRunHackingWorkersOnHome(currentNode: number): boolean {
+  return currentNode !== 8;
+}
+
 export function getHackingStrategyOverride(
   currentNode: number,
 ): HackingStrategyOverride | null {
