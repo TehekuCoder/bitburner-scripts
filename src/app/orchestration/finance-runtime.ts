@@ -38,6 +38,32 @@ export function canAffordFinanceRequest(
   return availableMoney >= cost * margin;
 }
 
+export function getAffordableAugmentationShortlist<
+  T extends FinanceRequestLike,
+>(
+  requests: readonly T[],
+  availableMoney: number,
+  margin: number,
+  maxItems: number,
+): T[] {
+  const augmentationRequests = requests.filter(
+    (request) => request.category === "PLAYER_AUG",
+  );
+  const affordableRequests = augmentationRequests.filter((request) =>
+    canAffordFinanceRequest(availableMoney, request.cost, margin),
+  );
+  if (affordableRequests.length > 0) {
+    return affordableRequests.slice(0, Math.max(0, maxItems));
+  }
+
+  const cheapestRequest = augmentationRequests.reduce<T | undefined>(
+    (cheapest, request) =>
+      !cheapest || request.cost < cheapest.cost ? request : cheapest,
+    undefined,
+  );
+  return cheapestRequest ? [cheapestRequest] : [];
+}
+
 export function isFinanceActionTimedOut(
   now: number,
   startedAt: number,

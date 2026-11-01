@@ -33,6 +33,7 @@ import {
   compareFinanceRequests,
   findCachedFinanceRequest,
   findRunningFinanceAction,
+  getAffordableAugmentationShortlist,
   getCompletedAugmentationPurchaseOutcome,
   hasPendingFinanceCategory,
   isAugmentationPurchasePriceStale,
@@ -64,6 +65,7 @@ const completedRequests = new Map<string, number>();
 const CACHE_TTL_MS = 45000; // 45s TTL für Anfragen
 const ACTION_TIMEOUT_MS = 60000;
 const AUGMENTATION_FAILURE_RETRY_MS = 30000;
+const AUGMENTATION_SHORTLIST_SIZE = 5;
 const PURCHASE_CATEGORIES: readonly PurchaseCategory[] = [
   "HOME_SERVER",
   "PURCHASED_SERVER",
@@ -589,6 +591,19 @@ export async function main(ns: NS): Promise<void> {
       allRequests.sort((a, b) =>
         compareFinanceRequests(a, b, CATEGORY_WEIGHTS),
       );
+      const augmentationShortlist = new Set(
+        getAffordableAugmentationShortlist(
+          allRequests,
+          availableMoney,
+          dynamicMargins.PLAYER_AUG ?? 1.0,
+          AUGMENTATION_SHORTLIST_SIZE,
+        ),
+      );
+      const dispatchRequests = allRequests.filter(
+        (request) =>
+          request.category !== "PLAYER_AUG" ||
+          augmentationShortlist.has(request),
+      );
 
       // 4. Käufe verarbeiten
       const blockedCategories = new Set<PurchaseCategory>();
@@ -602,7 +617,7 @@ export async function main(ns: NS): Promise<void> {
           dynamicMargins.PLAYER_AUG ?? 1.0,
         );
 
-      for (const req of allRequests) {
+      for (const req of dispatchRequests) {
         const requestTrackingId = trackingId(req.category, req.id);
         const isPlayerAugAlreadyPending =
           req.category === "PLAYER_AUG" &&

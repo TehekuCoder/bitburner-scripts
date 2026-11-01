@@ -5,6 +5,7 @@ import {
   compareFinanceRequests,
   findCachedFinanceRequest,
   findRunningFinanceAction,
+  getAffordableAugmentationShortlist,
   getCompletedAugmentationPurchaseOutcome,
   hasPendingFinanceCategory,
   isAugmentationPurchasePriceStale,
@@ -47,6 +48,42 @@ test("augmentation dispatch buys the most expensive candidate within budget", ()
   );
 
   assert.equal(selected?.id, "fits");
+});
+
+test("augmentation shortlist contains up to five affordable candidates in priority order", () => {
+  const candidates = [
+    { id: "best-fit", category: "PLAYER_AUG", priority: 2, cost: 200, score: 200 },
+    { id: "second-fit", category: "PLAYER_AUG", priority: 2, cost: 150, score: 150 },
+    { id: "third-fit", category: "PLAYER_AUG", priority: 2, cost: 125, score: 125 },
+    { id: "fourth-fit", category: "PLAYER_AUG", priority: 2, cost: 100, score: 100 },
+    { id: "fifth-fit", category: "PLAYER_AUG", priority: 2, cost: 75, score: 75 },
+    { id: "sixth-fit", category: "PLAYER_AUG", priority: 2, cost: 50, score: 50 },
+    { id: "unaffordable", category: "PLAYER_AUG", priority: 2, cost: 300, score: 300 },
+    { id: "other-category", category: "HACKNET", priority: 2, cost: 10 },
+  ].sort((a, b) =>
+    compareFinanceRequests(a, b, { PLAYER_AUG: 1, HACKNET: 0 }),
+  );
+
+  assert.deepEqual(
+    getAffordableAugmentationShortlist(candidates, 225, 1, 5).map(
+      ({ id }) => id,
+    ),
+    ["best-fit", "second-fit", "third-fit", "fourth-fit", "fifth-fit"],
+  );
+});
+
+test("augmentation shortlist keeps the cheapest request visible when none fit the budget", () => {
+  const candidates = [
+    { id: "expensive", category: "PLAYER_AUG", priority: 2, cost: 200 },
+    { id: "cheapest", category: "PLAYER_AUG", priority: 2, cost: 100 },
+  ];
+
+  assert.deepEqual(
+    getAffordableAugmentationShortlist(candidates, 50, 1, 5).map(
+      ({ id }) => id,
+    ),
+    ["cheapest"],
+  );
 });
 
 test("a restarted core can identify the already-running action for a request", () => {
