@@ -12,6 +12,45 @@ export interface FinanceProcessLike {
   pid: number;
 }
 
+export interface StockFinanceActionRoutes {
+  tixLicense: string;
+  fourSigmaLicense: string;
+  buyLong: string;
+  buyShort: string;
+  sellLong: string;
+  sellShort: string;
+}
+
+export function isStockFinanceActionAllowed(
+  category: string,
+  args: readonly unknown[],
+  script: string,
+  routes: StockFinanceActionRoutes,
+): boolean {
+  let expectedScript: string | undefined;
+
+  if (category === "STOCK_LICENSE" && args[0] === "stock-purchase-license") {
+    expectedScript =
+      args[1] === "tix"
+        ? routes.tixLicense
+        : args[1] === "4s-tix"
+          ? routes.fourSigmaLicense
+          : undefined;
+  } else if (category === "STOCK_TRADE") {
+    if (args[0] === "stock-buy" && args[2] === "LONG") {
+      expectedScript = routes.buyLong;
+    } else if (args[0] === "stock-buy" && args[2] === "SHORT") {
+      expectedScript = routes.buyShort;
+    } else if (args[0] === "stock-sell" && args[2] === "LONG") {
+      expectedScript = routes.sellLong;
+    } else if (args[0] === "stock-sell" && args[2] === "SHORT") {
+      expectedScript = routes.sellShort;
+    }
+  }
+
+  return expectedScript === script;
+}
+
 export function isFinanceCategoryAllowedInBitNode(
   category: string,
   bitNode: number,

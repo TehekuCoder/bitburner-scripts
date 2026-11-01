@@ -36,6 +36,7 @@ import {
   getAffordableAugmentationShortlist,
   getCompletedAugmentationPurchaseOutcome,
   hasPendingFinanceCategory,
+  isStockFinanceActionAllowed,
   isFinanceCategoryAllowedInBitNode,
   isAugmentationPurchasePriceStale,
   isFinanceRequestRecentlyCompleted,
@@ -55,6 +56,7 @@ interface PendingAction {
   description: string;
   augmentation?: string;
   pid: number;
+  actionScript: string;
   requestCost: number;
   reservedCost: number;
   startedAt: number;
@@ -93,6 +95,31 @@ const CATEGORY_ACTION_SCRIPTS: Record<PurchaseCategory, string> = {
   STOCK_TRADE: PATHS.app.actions.stock,
 };
 
+const STOCK_ACTION_ROUTES = {
+  tixLicense: PATHS.app.actions.stockTixLicense,
+  fourSigmaLicense: PATHS.app.actions.stockFourSigmaLicense,
+  buyLong: PATHS.app.actions.stockBuyLong,
+  buyShort: PATHS.app.actions.stockBuyShort,
+  sellLong: PATHS.app.actions.stockSellLong,
+  sellShort: PATHS.app.actions.stockSellShort,
+};
+
+function isAllowedActionScript(
+  category: PurchaseCategory,
+  args: readonly unknown[],
+  script: string,
+): boolean {
+  if (category === "STOCK_LICENSE" || category === "STOCK_TRADE") {
+    return isStockFinanceActionAllowed(
+      category,
+      args,
+      script,
+      STOCK_ACTION_ROUTES,
+    );
+  }
+  return script === CATEGORY_ACTION_SCRIPTS[category];
+}
+
 function isPurchaseCategory(value: unknown): value is PurchaseCategory {
   return (
     typeof value === "string" &&
@@ -121,7 +148,6 @@ function parsePurchaseRequest(
     ) ||
     typeof request.description !== "string" ||
     typeof request.action?.script !== "string" ||
-    request.action.script !== CATEGORY_ACTION_SCRIPTS[category] ||
     !Array.isArray(request.action.args) ||
     !request.action.args.every(
       (arg) =>
@@ -129,6 +155,15 @@ function parsePurchaseRequest(
         (typeof arg === "number" && Number.isFinite(arg)),
     ) ||
     (request.score !== undefined && !Number.isFinite(request.score))
+  ) {
+    return null;
+  }
+  if (
+    !isAllowedActionScript(
+      category,
+      request.action.args,
+      request.action.script,
+    )
   ) {
     return null;
   }
@@ -438,7 +473,7 @@ export async function main(ns: NS): Promise<void> {
       ) {
         const runningScript = ns.getRunningScript(pending.pid, "home");
         const isPendingActionRunning =
-          runningScript?.filename === CATEGORY_ACTION_SCRIPTS[pending.category] &&
+          runningScript?.filename === pending.actionScript &&
           runningScript.args[runningScript.args.length - 1] ===
             `${FINANCE_REQUEST_ARG_PREFIX}${id}`;
         const stopped = isPendingActionRunning && ns.kill(pending.pid);
@@ -672,6 +707,7 @@ export async function main(ns: NS): Promise<void> {
             description: req.description,
             augmentation: getAugmentationName(req),
             pid: runningAction.pid,
+            actionScript: req.action.script,
             requestCost: req.cost,
             reservedCost,
             startedAt: now,
@@ -749,6 +785,7 @@ export async function main(ns: NS): Promise<void> {
               description: req.description,
               augmentation: getAugmentationName(req),
               pid,
+              actionScript: req.action.script,
               requestCost: req.cost,
               reservedCost: requiredBudget,
               startedAt: now,

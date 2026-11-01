@@ -28,9 +28,12 @@ export function submitPurchaseRequests(
   }
 }
 
-export async function runEvaluator(ns: NS, evaluator: PurchaseEvaluator): Promise<void> {
+export async function runEvaluator(
+  ns: NS,
+  evaluator: PurchaseEvaluator,
+): Promise<void> {
   ns.disableLog("ALL");
-  const requests = evaluator.getRequests(ns);
+  const requests = await evaluator.getRequests(ns);
 
   // Sende das Paket IMMER (auch leere [] als Heartbeat [✓] fürs UI)
   submitPurchaseRequests(ns, evaluator.category, requests);

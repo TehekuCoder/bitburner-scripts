@@ -7,132 +7,202 @@ import {
   PurchasePriority,
 } from "/shared/types/finance.js";
 import { runEvaluator } from "../evaluator-runner.js";
-import { loadBnMults, isStockViable } from "/lib/utils.js";
+import { isStockViable } from "/lib/utils.js";
 import { PATHS } from "/infrastructure/runtime/paths";
-import {
-  CASH_BUFFER,
-  STOCK_TRADE_MARGIN,
-} from "/shared/constants/finance.js";
+import { CASH_BUFFER } from "/shared/constants/finance.js";
 import { loadFinanceState } from "/infrastructure/state/state.js";
 import {
+  ESTIMATED_STOCK_LONG_ENTRY_FORECAST,
+  ESTIMATED_STOCK_MIN_SAMPLES,
+  ESTIMATED_STOCK_SHORT_ENTRY_FORECAST,
+  STOCK_PRICE_HISTORY_FILE,
   getStockTradeBudgetRatio,
   getStockTradingBudget,
+  estimateStockForecast,
+  parseStockPriceHistory,
   STOCK_LONG_ENTRY_FORECAST,
   STOCK_SHORT_ENTRY_FORECAST,
   shouldExitStockPosition,
+  updateStockPriceHistory,
 } from "./stock-runtime.js";
 
 export const StockEvaluator: PurchaseEvaluator = {
   category: "STOCK_LICENSE" as PurchaseCategory,
 
-  getRequests(ns: NS): PurchaseRequest[] {
+  async getRequests(ns: NS): Promise<PurchaseRequest[]> {
     const requests: PurchaseRequest[] = [];
-    
-    // 🔴 1. Viability Check
-    if (!isStockViable(ns)) return requests;
+    const isBitNode8 = ns.getResetInfo().currentNode === 8;
+    if (!ns.stock || (!isBitNode8 && !isStockViable(ns))) return requests;
 
-    const bnMults = loadBnMults(ns);
-    const fourSigmaApiCostMult = bnMults.FourSigmaMarketDataApiCost ?? 1.0;
-
-    const tixCost = 5_000_000_000;
-    const fourSigmaTixCost = 25_000_000_000 * fourSigmaApiCostMult;
-
+    const stockConstants = ns.stock.getConstants();
+    const tixCost = stockConstants.TixApiCost;
+    const fourSigmaTixCost = stockConstants.MarketDataTixApi4SCost;
     const playerMoney = ns.getServerMoneyAvailable("home");
-
-    // TIX API works without a WSE account; 4S API is the only market data required.
-    const canAffordSafely = (cost: number) => playerMoney >= cost * 3.33;
+    const availableMoney = Math.max(0, playerMoney - CASH_BUFFER);
 
     if (!ns.stock.hasTixApiAccess()) {
-      if (playerMoney >= 20_000_000_000) {
+      if (availableMoney >= tixCost) {
         requests.push({
           id: "stock-tix-api",
           category: "STOCK_LICENSE" as PurchaseCategory,
-          priority: playerMoney >= 35_000_000_000 ? PurchasePriority.HIGH : PurchasePriority.MEDIUM,
+          priority: PurchasePriority.HIGH,
           score: 60,
           cost: tixCost,
           description: "TIX API (Börsen-Automatisierung)",
           action: {
-            script: PATHS.app.actions.stock,
+            script: PATHS.app.actions.stockTixLicense,
             args: ["stock-purchase-license", "tix"],
           },
         });
       }
-    } else if (!ns.stock.has4SDataTixApi()) {
-      if (canAffordSafely(fourSigmaTixCost) || playerMoney >= fourSigmaTixCost * 1.2) {
+      return requests;
+    }
+
+    const hasFourSigmaApi = ns.stock.has4SDataTixApi();
+    if (!hasFourSigmaApi) {
+      if (availableMoney >= fourSigmaTixCost * 1.2) {
         requests.push({
           id: "stock-4s-tix-api",
           category: "STOCK_LICENSE" as PurchaseCategory,
           priority: PurchasePriority.HIGH,
           score: 90,
           cost: fourSigmaTixCost,
-          description: `4S TIX API (Forecast) [Mult: ${fourSigmaApiCostMult.toFixed(2)}x]`,
+          description: "4S TIX API (Forecast)",
           action: {
-            script: PATHS.app.actions.stock,
+            script: PATHS.app.actions.stockFourSigmaLicense,
             args: ["stock-purchase-license", "4s-tix"],
           },
         });
       }
     }
-
-    if (!ns.stock.has4SDataTixApi()) return requests;
+    if (!hasFourSigmaApi && !isBitNode8) return requests;
 
     const symbols = ns.stock.getSymbols();
+    let estimatedForecasts: Map<string, number> | null = null;
+    if (!hasFourSigmaApi) {
+      const resetInfo = ns.getResetInfo();
+      let history;
+      try {
+        history = parseStockPriceHistory(
+          ns.read(STOCK_PRICE_HISTORY_FILE),
+          resetInfo.lastAugReset,
+        );
+      } catch (error) {
+        ns.print(
+          `[STOCK] Kursverlauf konnte nicht gelesen werden; starte neue Schätzung: ${String(error)}`,
+        );
+        history = parseStockPriceHistory("", resetInfo.lastAugReset);
+      }
+
+      const prices = Object.fromEntries(
+        symbols.map((symbol) => [symbol, ns.stock.getAskPrice(symbol)]),
+      );
+      const tickCycleMs =
+        stockConstants.msPerStockUpdateMin * stockConstants.TicksPerCycle;
+      const maxHistoryAgeMs =
+        Number.isFinite(tickCycleMs) && tickCycleMs > 0
+          ? tickCycleMs
+          : 450_000;
+      const update = updateStockPriceHistory(
+        history,
+        prices,
+        Date.now(),
+        maxHistoryAgeMs,
+      );
+      if (update.changed) {
+        ns.write(
+          STOCK_PRICE_HISTORY_FILE,
+          JSON.stringify(update.history),
+          "w",
+        );
+      }
+
+      estimatedForecasts = new Map(
+        Object.entries(update.history.symbols)
+          .map(([symbol, entry]) => [
+            symbol,
+            estimateStockForecast(entry.samples, ESTIMATED_STOCK_MIN_SAMPLES),
+          ] as const)
+          .filter(
+            (entry): entry is readonly [string, number] => entry[1] !== null,
+          ),
+      );
+    }
 
     const buyCandidates: {
       sym: string;
       forecast: number;
       type: "LONG" | "SHORT";
       strength: number;
+      estimated: boolean;
     }[] = [];
 
     for (const sym of symbols) {
-      const forecast = ns.stock.getForecast(sym);
+      const forecast = hasFourSigmaApi
+        ? ns.stock.getForecast(sym)
+        : estimatedForecasts?.get(sym);
+      if (forecast === undefined) continue;
       const [shares, , sharesShort] = ns.stock.getPosition(sym);
+      const exitThreshold = hasFourSigmaApi ? undefined : 0.5;
 
-      if (shares > 0 && shouldExitStockPosition("LONG", forecast)) {
+      if (
+        shares > 0 &&
+        shouldExitStockPosition("LONG", forecast, exitThreshold)
+      ) {
         requests.push({
           id: `stock-exit-${sym}-LONG`,
           category: "STOCK_TRADE" as PurchaseCategory,
           priority: PurchasePriority.HIGH,
           score: Math.round((0.5 - forecast) * 100),
           cost: 0,
-          description: `Aktien-Ausstieg: ${sym} LONG [Forecast: ${(forecast * 100).toFixed(1)}%]`,
+          description: `Aktien-Ausstieg: ${sym} LONG [${hasFourSigmaApi ? "Forecast" : "Schätzung"}: ${(forecast * 100).toFixed(1)}%]`,
           action: {
-            script: PATHS.app.actions.stock,
+            script: PATHS.app.actions.stockSellLong,
             args: ["stock-sell", sym, "LONG", shares],
           },
         });
       }
 
-      if (sharesShort > 0 && shouldExitStockPosition("SHORT", forecast)) {
+      if (
+        sharesShort > 0 &&
+        shouldExitStockPosition("SHORT", forecast, exitThreshold)
+      ) {
         requests.push({
           id: `stock-exit-${sym}-SHORT`,
           category: "STOCK_TRADE" as PurchaseCategory,
           priority: PurchasePriority.HIGH,
           score: Math.round((forecast - 0.5) * 100),
           cost: 0,
-          description: `Aktien-Ausstieg: ${sym} SHORT [Forecast: ${(forecast * 100).toFixed(1)}%]`,
+          description: `Aktien-Ausstieg: ${sym} SHORT [${hasFourSigmaApi ? "Forecast" : "Schätzung"}: ${(forecast * 100).toFixed(1)}%]`,
           action: {
-            script: PATHS.app.actions.stock,
+            script: PATHS.app.actions.stockSellShort,
             args: ["stock-sell", sym, "SHORT", sharesShort],
           },
         });
       }
 
       if (shares === 0 && sharesShort === 0) {
-        if (forecast > STOCK_LONG_ENTRY_FORECAST) {
+        const longEntryThreshold = hasFourSigmaApi
+          ? STOCK_LONG_ENTRY_FORECAST
+          : ESTIMATED_STOCK_LONG_ENTRY_FORECAST;
+        const shortEntryThreshold = hasFourSigmaApi
+          ? STOCK_SHORT_ENTRY_FORECAST
+          : ESTIMATED_STOCK_SHORT_ENTRY_FORECAST;
+        if (forecast > longEntryThreshold) {
           buyCandidates.push({
             sym,
             forecast,
             type: "LONG",
             strength: forecast - 0.5,
+            estimated: !hasFourSigmaApi,
           });
-        } else if (forecast < STOCK_SHORT_ENTRY_FORECAST) {
+        } else if (forecast < shortEntryThreshold) {
           buyCandidates.push({
             sym,
             forecast,
             type: "SHORT",
             strength: 0.5 - forecast,
+            estimated: !hasFourSigmaApi,
           });
         }
       }
@@ -147,11 +217,10 @@ export const StockEvaluator: PurchaseEvaluator = {
         ? configuredReserve
         : 0,
     );
-    const availableMoney = Math.max(0, playerMoney - reserve);
+    const tradingMoney = Math.max(0, playerMoney - reserve);
     const remainingBudget = getStockTradingBudget(
-      availableMoney,
+      tradingMoney,
       getStockTradeBudgetRatio(ns.getResetInfo().currentNode),
-      STOCK_TRADE_MARGIN,
     );
     let budgetLeft = remainingBudget;
 
@@ -192,9 +261,12 @@ export const StockEvaluator: PurchaseEvaluator = {
             priority,
             score,
             cost: targetCost,
-            description: `Aktien-Kauf: ${sym} (${candidate.type}) [Forecast: ${(candidate.forecast * 100).toFixed(1)}%]`,
+            description: `Aktien-Kauf: ${sym} (${candidate.type}) [${candidate.estimated ? "Schätzung" : "Forecast"}: ${(candidate.forecast * 100).toFixed(1)}%]`,
             action: {
-              script: PATHS.app.actions.stock,
+              script:
+                candidate.type === "LONG"
+                  ? PATHS.app.actions.stockBuyLong
+                  : PATHS.app.actions.stockBuyShort,
               args: ["stock-buy", sym, candidate.type, affordableShares],
             },
           });

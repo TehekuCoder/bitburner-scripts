@@ -3,12 +3,17 @@ import test from "node:test";
 import {
   BITNODE_8_STOCK_TRADE_BUDGET_RATIO,
   DEFAULT_STOCK_TRADE_BUDGET_RATIO,
+  ESTIMATED_STOCK_MIN_SAMPLES,
+  estimateStockForecast,
   getStockTradeBudgetRatio,
   getStockTradingBudget,
+  parseStockPriceHistory,
+  updateStockPriceHistory,
   STOCK_LONG_ENTRY_FORECAST,
   STOCK_SHORT_ENTRY_FORECAST,
   shouldExitStockPosition,
 } from "../src/domain/evaluators/purchase/stock-runtime.ts";
+import { isStockFinanceActionAllowed } from "../src/app/orchestration/finance-runtime.ts";
 
 test("BitNode 8 allocates a larger stock trading budget than the default", () => {
   assert.equal(getStockTradeBudgetRatio(8), BITNODE_8_STOCK_TRADE_BUDGET_RATIO);
@@ -23,8 +28,89 @@ test("stock exits require a clear opposite signal", () => {
   assert.equal(shouldExitStockPosition("LONG", Number.NaN), false);
 });
 
-test("stock budget reserves cash and accounts for the finance margin", () => {
-  assert.equal(getStockTradingBudget(1000, 0.2, 1.5), 1000 / 7.5);
-  assert.equal(getStockTradingBudget(1000, 0.2, 0), 0);
-  assert.equal(getStockTradingBudget(-100, 0.2, 1.5), 0);
+test("stock budget applies its allocation ratio once", () => {
+  assert.equal(getStockTradingBudget(1000, 0.8), 800);
+  assert.equal(getStockTradingBudget(1000, 0), 0);
+  assert.equal(getStockTradingBudget(-100, 0.8), 0);
+});
+
+test("pre-4S price history samples only price changes and expires old samples", () => {
+  const history = parseStockPriceHistory("", 100);
+  const baseline = updateStockPriceHistory(history, { ECP: 100 }, 1000, 10000);
+  assert.equal(baseline.history.symbols.ECP.samples.length, 0);
+
+  const unchanged = updateStockPriceHistory(
+    baseline.history,
+    { ECP: 100 },
+    2000,
+    10000,
+  );
+  assert.equal(unchanged.changed, false);
+
+  const moved = updateStockPriceHistory(
+    unchanged.history,
+    { ECP: 101 },
+    3000,
+    10000,
+  );
+  assert.deepEqual(moved.history.symbols.ECP.samples, [
+    { direction: 1, timestamp: 3000 },
+  ]);
+
+  const expired = updateStockPriceHistory(
+    moved.history,
+    { ECP: 101 },
+    15000,
+    10000,
+  );
+  assert.deepEqual(expired.history.symbols.ECP.samples, []);
+});
+
+test("pre-4S estimated forecast waits for enough samples and counts direction", () => {
+  const samples = Array.from({ length: ESTIMATED_STOCK_MIN_SAMPLES }, (_, i) => ({
+    direction: i < 9 ? 1 : -1,
+    timestamp: i,
+  }));
+  assert.equal(estimateStockForecast(samples.slice(0, -1)), null);
+  assert.equal(estimateStockForecast(samples), 0.75);
+  assert.equal(shouldExitStockPosition("LONG", 0.5, 0.5), true);
+  assert.equal(shouldExitStockPosition("SHORT", 0.5, 0.5), true);
+});
+
+test("stock finance actions are routed to narrowly scoped scripts", () => {
+  const routes = {
+    tixLicense: "tix.js",
+    fourSigmaLicense: "four-sigma.js",
+    buyLong: "buy-long.js",
+    buyShort: "buy-short.js",
+    sellLong: "sell-long.js",
+    sellShort: "sell-short.js",
+  };
+  assert.equal(
+    isStockFinanceActionAllowed(
+      "STOCK_LICENSE",
+      ["stock-purchase-license", "tix"],
+      "tix.js",
+      routes,
+    ),
+    true,
+  );
+  assert.equal(
+    isStockFinanceActionAllowed(
+      "STOCK_TRADE",
+      ["stock-buy", "ECP", "SHORT", 10],
+      "buy-short.js",
+      routes,
+    ),
+    true,
+  );
+  assert.equal(
+    isStockFinanceActionAllowed(
+      "STOCK_TRADE",
+      ["stock-sell", "ECP", "SHORT", 10],
+      "sell-long.js",
+      routes,
+    ),
+    false,
+  );
 });

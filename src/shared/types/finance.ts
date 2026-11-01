@@ -41,7 +41,7 @@ export interface FinanceActionResult {
 
 export interface PurchaseEvaluator {
   category: PurchaseCategory;
-  getRequests(ns: NS): PurchaseRequest[];
+  getRequests(ns: NS): PurchaseRequest[] | Promise<PurchaseRequest[]>;
 }
 
 export interface FinanceState {

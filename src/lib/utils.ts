@@ -97,6 +97,7 @@ export function isCorporationViable(ns: NS): boolean {
 
 export function isStockViable(ns: NS): boolean {
   if (!ns.stock) return false;
+  if (ns.getResetInfo().currentNode === 8) return true;
 
   const bnMults = loadBnMults(ns);
   const fourSigmaApiCostMult = bnMults.FourSigmaMarketDataApiCost ?? 1.0;
