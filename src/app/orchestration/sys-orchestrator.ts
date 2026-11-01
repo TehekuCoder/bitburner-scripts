@@ -14,7 +14,9 @@ import {
 import {
   isManualMode,
   isModuleDisabled,
+  shouldRunSleeveManager,
 } from "./orchestrator-policy.js";
+import { hasSleevesNeedingShockRecovery } from "/domain/sleeve/sleeve-recovery.js";
 
 interface DaemonConfig {
   name: string;
@@ -208,7 +210,13 @@ export async function main(ns: NS): Promise<void> {
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, "sleeve")) return false;
-        return hasSleeve(ns);
+        return (
+          hasSleeve(ns) &&
+          shouldRunSleeveManager(
+            ns.getResetInfo().currentNode,
+            hasSleevesNeedingShockRecovery(ns),
+          )
+        );
       },
     },
     {

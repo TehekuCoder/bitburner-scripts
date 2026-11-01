@@ -17,12 +17,14 @@ import {
   getSleeveStatuses,
   setSleeveTask,
 } from "../../domain/sleeve/sleeve-utils.js";
+import { hasSleevesNeedingShockRecovery } from "../../domain/sleeve/sleeve-recovery.js";
 import { MEGACORPS } from "../../shared/constants/factions.js";
 import {
   loadSleeveState,
   patchSleeveState,
 } from "/infrastructure/state/state.js";
 import { hasSleeve, hasGang } from "/lib/utils.js";
+import { shouldRunSleeveManager } from "/app/orchestration/orchestrator-policy.js";
 import { evaluateBladeburnerPreference } from "../../domain/strategy/bladeburner-decision.js";
 import { getChaosStatus } from "../../domain/bladeburner/chaos-control.js";
 
@@ -562,6 +564,16 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     if (ns.sleeve === undefined) {
       logger.error("🛑 Keine Sleeve-API (SF10) in diesem Node verfügbar.");
+      return;
+    }
+
+    if (
+      !shouldRunSleeveManager(
+        getCurrentBitNode(ns) ?? 0,
+        hasSleevesNeedingShockRecovery(ns),
+      )
+    ) {
+      logger.info("BN8: Shock abgebaut; Sleeve-Manager wird beendet.");
       return;
     }
 

@@ -19,3 +19,10 @@ export function isManualMode(
 ): boolean {
   return Boolean(state?.manualMode || state?.strategy === "MANUAL");
 }
+
+export function shouldRunSleeveManager(
+  currentNode: number,
+  hasSleevesInShock: boolean,
+): boolean {
+  return currentNode !== 8 || hasSleevesInShock;
+}

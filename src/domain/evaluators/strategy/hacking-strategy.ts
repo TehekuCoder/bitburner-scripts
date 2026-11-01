@@ -3,6 +3,7 @@ import { BatchStrategy } from "/shared/types/batcher.js";
 import { evaluateTargets, getAllServers } from "./target-selection";
 import { loadBnMults } from "/lib/utils";
 import { getWorkerMaxUsableRam } from "/infrastructure/network/network";
+import { getHackingStrategyOverride } from "./hacking-policy.js";
 
 export interface StrategyRecommendation {
   strategy: BatchStrategy;
@@ -71,7 +72,13 @@ export function evaluateHackingStrategy(
   let strategy: BatchStrategy = "SHOTGUN_HWGW";
   let reason = "";
 
-  if (playerSkill < 30 || yieldFactor === 0) {
+  const strategyOverride = getHackingStrategyOverride(
+    ns.getResetInfo().currentNode,
+  );
+  if (strategyOverride) {
+    strategy = strategyOverride.strategy;
+    reason = strategyOverride.reason;
+  } else if (playerSkill < 30 || yieldFactor === 0) {
     strategy = "XP_GRIND";
     reason = "Fokus auf XP-Grind.";
   } else if (totalNetworkRam < 64) {
