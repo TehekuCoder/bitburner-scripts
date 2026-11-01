@@ -16,6 +16,7 @@ export const CATEGORY_WEIGHTS: Record<PurchaseCategory, number> = {
 export const TRANSACTION_FEE = 100_000;
 export const MIN_INVESTMENT = 5_000_000;
 export const CASH_BUFFER = 2_000_000;
+export const BITNODE_8_CASH_BUFFER = 250_000;
 export const AUG_PURCHASE_PLAN_FILE = "aug-purchase-plan.txt";
 export const STOCK_DASHBOARD_FILE = "stock-dashboard.txt";
 export const FINANCE_RESULT_PORT = 11;

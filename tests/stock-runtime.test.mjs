@@ -6,7 +6,9 @@ import {
   ESTIMATED_STOCK_MIN_SAMPLES,
   estimateStockForecast,
   getStockTradeBudgetRatio,
+  getStockCashReserve,
   getStockTradingBudget,
+  isStockPositionProfitableAfterFees,
   parseStockPriceHistory,
   updateStockPriceHistory,
   STOCK_LONG_ENTRY_FORECAST,
@@ -32,6 +34,34 @@ test("stock budget applies its allocation ratio once", () => {
   assert.equal(getStockTradingBudget(1000, 0.8), 800);
   assert.equal(getStockTradingBudget(1000, 0), 0);
   assert.equal(getStockTradingBudget(-100, 0.8), 0);
+});
+
+test("BN8 keeps a small cash reserve while other BitNodes keep the default", () => {
+  assert.equal(getStockCashReserve(8, 2_000_000, 250_000), 250_000);
+  assert.equal(getStockCashReserve(7, 2_000_000, 250_000), 2_000_000);
+});
+
+test("stock exits require profit after both transaction fees", () => {
+  assert.equal(
+    isStockPositionProfitableAfterFees("LONG", 100, 1_000, 3_000, 100_000),
+    true,
+  );
+  assert.equal(
+    isStockPositionProfitableAfterFees("LONG", 100, 1_000, 2_999, 100_000),
+    false,
+  );
+  assert.equal(
+    isStockPositionProfitableAfterFees("SHORT", 100, 3_000, 1_000, 100_000),
+    true,
+  );
+  assert.equal(
+    isStockPositionProfitableAfterFees("SHORT", 100, 3_000, 1_001, 100_000),
+    false,
+  );
+  assert.equal(
+    isStockPositionProfitableAfterFees("LONG", 0, 100, 200, 100_000),
+    false,
+  );
 });
 
 test("pre-4S price history samples only price changes and expires old samples", () => {
@@ -80,6 +110,7 @@ test("pre-4S estimated forecast waits for enough samples and counts direction", 
 test("stock finance actions are routed to narrowly scoped scripts", () => {
   const routes = {
     tixLicense: "tix.js",
+    fourSigmaDataLicense: "4s-data.js",
     fourSigmaLicense: "four-sigma.js",
     buyLong: "buy-long.js",
     buyShort: "buy-short.js",
@@ -91,6 +122,15 @@ test("stock finance actions are routed to narrowly scoped scripts", () => {
       "STOCK_LICENSE",
       ["stock-purchase-license", "tix"],
       "tix.js",
+      routes,
+    ),
+    true,
+  );
+  assert.equal(
+    isStockFinanceActionAllowed(
+      "STOCK_LICENSE",
+      ["stock-purchase-license", "4s"],
+      "4s-data.js",
       routes,
     ),
     true,

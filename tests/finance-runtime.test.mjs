@@ -24,6 +24,21 @@ test("BitNode 8 finance dispatch allows stock and darknet program requests", () 
   assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 7), true);
 });
 
+test("BN8 prioritizes affordable 4S licenses over new stock positions", () => {
+  const requests = [
+    { id: "trade", category: "STOCK_TRADE", priority: 3, cost: 1 },
+    { id: "license", category: "STOCK_LICENSE", priority: 1, cost: 10 },
+  ];
+  const ordered = requests.sort((a, b) =>
+    compareFinanceRequests(a, b, {
+      STOCK_LICENSE: Number.MAX_SAFE_INTEGER,
+      STOCK_TRADE: Number.MAX_SAFE_INTEGER - 1,
+    }),
+  );
+
+  assert.deepEqual(ordered.map(({ id }) => id), ["license", "trade"]);
+});
+
 test("finance requests sort by priority, category weight, score, then cost", () => {
   const weights = { PLAYER_AUG: 3, HACKNET: 1 };
   const requests = [

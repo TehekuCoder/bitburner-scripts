@@ -14,6 +14,7 @@ export interface FinanceProcessLike {
 
 export interface StockFinanceActionRoutes {
   tixLicense: string;
+  fourSigmaDataLicense: string;
   fourSigmaLicense: string;
   buyLong: string;
   buyShort: string;
@@ -33,9 +34,11 @@ export function isStockFinanceActionAllowed(
     expectedScript =
       args[1] === "tix"
         ? routes.tixLicense
-        : args[1] === "4s-tix"
-          ? routes.fourSigmaLicense
-          : undefined;
+        : args[1] === "4s"
+          ? routes.fourSigmaDataLicense
+          : args[1] === "4s-tix"
+            ? routes.fourSigmaLicense
+            : undefined;
   } else if (category === "STOCK_TRADE") {
     if (args[0] === "stock-buy" && args[2] === "LONG") {
       expectedScript = routes.buyLong;

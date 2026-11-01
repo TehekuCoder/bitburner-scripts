@@ -12,6 +12,7 @@ import { runEvaluator } from "../evaluator-runner.js";
 import { isStockViable } from "/lib/utils.js";
 import { PATHS } from "/infrastructure/runtime/paths";
 import {
+  BITNODE_8_CASH_BUFFER,
   CASH_BUFFER,
   STOCK_DASHBOARD_FILE,
 } from "/shared/constants/finance.js";
@@ -22,9 +23,11 @@ import {
   ESTIMATED_STOCK_MIN_SAMPLES,
   ESTIMATED_STOCK_SHORT_ENTRY_FORECAST,
   STOCK_PRICE_HISTORY_FILE,
+  getStockCashReserve,
   getStockTradeBudgetRatio,
   getStockTradingBudget,
   estimateStockForecast,
+  isStockPositionProfitableAfterFees,
   parseStockPriceHistory,
   STOCK_LONG_ENTRY_FORECAST,
   STOCK_SHORT_ENTRY_FORECAST,
@@ -122,9 +125,21 @@ export const StockEvaluator: PurchaseEvaluator = {
 
     const stockConstants = ns.stock.getConstants();
     const tixCost = stockConstants.TixApiCost;
+    const fourSigmaDataCost = stockConstants.MarketData4SCost;
     const fourSigmaTixCost = stockConstants.MarketDataTixApi4SCost;
     const playerMoney = ns.getServerMoneyAvailable("home");
-    const availableMoney = Math.max(0, playerMoney - CASH_BUFFER);
+    const configuredReserve = loadFinanceState(ns)?.moneyReserve ?? 0;
+    const reserve = Math.max(
+      getStockCashReserve(
+        ns.getResetInfo().currentNode,
+        CASH_BUFFER,
+        BITNODE_8_CASH_BUFFER,
+      ),
+      Number.isFinite(configuredReserve) && configuredReserve > 0
+        ? configuredReserve
+        : 0,
+    );
+    const availableMoney = Math.max(0, playerMoney - reserve);
 
     if (!ns.stock.hasTixApiAccess()) {
       const canAffordTix = availableMoney >= tixCost;
@@ -156,14 +171,31 @@ export const StockEvaluator: PurchaseEvaluator = {
       return requests;
     }
 
+    const hasFourSigmaData = ns.stock.has4SData();
     const hasFourSigmaApi = ns.stock.has4SDataTixApi();
-    if (!hasFourSigmaApi) {
-      if (availableMoney >= fourSigmaTixCost * 1.2) {
-        requests.push({
+    if (!hasFourSigmaData && availableMoney >= fourSigmaDataCost) {
+      requests.push({
+        id: "stock-4s-data",
+        category: "STOCK_LICENSE" as PurchaseCategory,
+        priority: PurchasePriority.CRITICAL,
+        score: 100,
+        cost: fourSigmaDataCost,
+        description: "4S Market Data Access",
+        action: {
+          script: PATHS.app.actions.stock4sDataLicense,
+          args: ["stock-purchase-license", "4s"],
+        },
+      });
+    } else if (
+      hasFourSigmaData &&
+      !hasFourSigmaApi &&
+      availableMoney >= fourSigmaTixCost
+    ) {
+      requests.push({
           id: "stock-4s-tix-api",
           category: "STOCK_LICENSE" as PurchaseCategory,
-          priority: PurchasePriority.HIGH,
-          score: 90,
+          priority: PurchasePriority.CRITICAL,
+          score: 100,
           cost: fourSigmaTixCost,
           description: "4S TIX API (Forecast)",
           action: {
@@ -171,7 +203,6 @@ export const StockEvaluator: PurchaseEvaluator = {
             args: ["stock-purchase-license", "4s-tix"],
           },
         });
-      }
     }
     if (!hasFourSigmaApi && !isBitNode8) {
       const status = "4S-Lizenz fehlt; ohne BN8 keine Forecast-Schätzung.";
@@ -271,7 +302,8 @@ export const StockEvaluator: PurchaseEvaluator = {
         logStockDecision(logger, sym, row.decision);
         continue;
       }
-      const [shares, , sharesShort] = ns.stock.getPosition(sym);
+      const [shares, averageLongPrice, sharesShort, averageShortPrice] =
+        ns.stock.getPosition(sym);
       const row: StockDashboardSymbol = {
         symbol: sym,
         forecast,
@@ -288,19 +320,31 @@ export const StockEvaluator: PurchaseEvaluator = {
         shares > 0 &&
         shouldExitStockPosition("LONG", forecast, exitThreshold)
       ) {
-        row.decision = "VERKAUF LONG";
-        requests.push({
-          id: `stock-exit-${sym}-LONG`,
-          category: "STOCK_TRADE" as PurchaseCategory,
-          priority: PurchasePriority.HIGH,
-          score: Math.round((0.5 - forecast) * 100),
-          cost: 0,
-          description: `Aktien-Ausstieg: ${sym} LONG [${hasFourSigmaApi ? "Forecast" : "Schätzung"}: ${(forecast * 100).toFixed(1)}%]`,
-          action: {
-            script: PATHS.app.actions.stockSellLong,
-            args: ["stock-sell", sym, "LONG", shares],
-          },
-        });
+        if (
+          isStockPositionProfitableAfterFees(
+            "LONG",
+            shares,
+            averageLongPrice,
+            ns.stock.getBidPrice(sym),
+            stockConstants.StockMarketCommission,
+          )
+        ) {
+          row.decision = "VERKAUF LONG";
+          requests.push({
+            id: `stock-exit-${sym}-LONG`,
+            category: "STOCK_TRADE" as PurchaseCategory,
+            priority: PurchasePriority.HIGH,
+            score: Math.round((0.5 - forecast) * 100),
+            cost: 0,
+            description: `Aktien-Ausstieg: ${sym} LONG [${hasFourSigmaApi ? "Forecast" : "Schätzung"}: ${(forecast * 100).toFixed(1)}%]`,
+            action: {
+              script: PATHS.app.actions.stockSellLong,
+              args: ["stock-sell", sym, "LONG", shares],
+            },
+          });
+        } else {
+          row.decision = "HALTEN LONG (Verkauf nach Gebühren Verlust)";
+        }
         logStockDecision(logger, sym, `${row.decision}: Forecast ${(forecast * 100).toFixed(1)}%`);
       }
 
@@ -308,19 +352,31 @@ export const StockEvaluator: PurchaseEvaluator = {
         sharesShort > 0 &&
         shouldExitStockPosition("SHORT", forecast, exitThreshold)
       ) {
-        row.decision = "VERKAUF SHORT";
-        requests.push({
-          id: `stock-exit-${sym}-SHORT`,
-          category: "STOCK_TRADE" as PurchaseCategory,
-          priority: PurchasePriority.HIGH,
-          score: Math.round((forecast - 0.5) * 100),
-          cost: 0,
-          description: `Aktien-Ausstieg: ${sym} SHORT [${hasFourSigmaApi ? "Forecast" : "Schätzung"}: ${(forecast * 100).toFixed(1)}%]`,
-          action: {
-            script: PATHS.app.actions.stockSellShort,
-            args: ["stock-sell", sym, "SHORT", sharesShort],
-          },
-        });
+        if (
+          isStockPositionProfitableAfterFees(
+            "SHORT",
+            sharesShort,
+            averageShortPrice,
+            ns.stock.getAskPrice(sym),
+            stockConstants.StockMarketCommission,
+          )
+        ) {
+          row.decision = "VERKAUF SHORT";
+          requests.push({
+            id: `stock-exit-${sym}-SHORT`,
+            category: "STOCK_TRADE" as PurchaseCategory,
+            priority: PurchasePriority.HIGH,
+            score: Math.round((forecast - 0.5) * 100),
+            cost: 0,
+            description: `Aktien-Ausstieg: ${sym} SHORT [${hasFourSigmaApi ? "Forecast" : "Schätzung"}: ${(forecast * 100).toFixed(1)}%]`,
+            action: {
+              script: PATHS.app.actions.stockSellShort,
+              args: ["stock-sell", sym, "SHORT", sharesShort],
+            },
+          });
+        } else {
+          row.decision = "HALTEN SHORT (Verkauf nach Gebühren Verlust)";
+        }
         logStockDecision(logger, sym, `${row.decision}: Forecast ${(forecast * 100).toFixed(1)}%`);
       }
 
@@ -366,13 +422,6 @@ export const StockEvaluator: PurchaseEvaluator = {
 
     buyCandidates.sort((a, b) => b.strength - a.strength);
 
-    const configuredReserve = loadFinanceState(ns)?.moneyReserve ?? 0;
-    const reserve = Math.max(
-      CASH_BUFFER,
-      Number.isFinite(configuredReserve) && configuredReserve > 0
-        ? configuredReserve
-        : 0,
-    );
     const tradingMoney = Math.max(0, playerMoney - reserve);
     const remainingBudget = getStockTradingBudget(
       tradingMoney,
@@ -467,7 +516,9 @@ export const StockEvaluator: PurchaseEvaluator = {
       mode: hasFourSigmaApi ? "4S" : "ESTIMATE",
       status: hasFourSigmaApi
         ? "4S-Forecast aktiv."
-        : `BN8-Kursbewegungs-Schätzung aktiv; mindestens ${ESTIMATED_STOCK_MIN_SAMPLES} Bewegungen je Aktie.`,
+        : !hasFourSigmaData
+          ? `BN8-Kursbewegungs-Schätzung aktiv; spare zuerst $${ns.format.number(fourSigmaDataCost)} für 4S Market Data Access.`
+          : `BN8-Kursbewegungs-Schätzung aktiv; spare $${ns.format.number(fourSigmaTixCost)} für die 4S-TIX-API. Mindestens ${ESTIMATED_STOCK_MIN_SAMPLES} Kursbewegungen je Aktie.`,
       tradingBudget: remainingBudget,
       samplesRequired: ESTIMATED_STOCK_MIN_SAMPLES,
       symbols: dashboardSymbols,

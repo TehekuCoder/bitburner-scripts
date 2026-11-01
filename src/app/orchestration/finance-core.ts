@@ -12,6 +12,7 @@ import { LoggerClient } from "/infrastructure/logging/logger-client";
 import { FINANCE_PORT } from "../../domain/evaluators/evaluator-runner";
 import { PATHS } from "/infrastructure/runtime/paths";
 import {
+  BITNODE_8_CASH_BUFFER,
   BASE_CATEGORY_MARGINS,
   AUG_PURCHASE_PLAN_FILE,
   CASH_BUFFER,
@@ -100,6 +101,7 @@ const CATEGORY_ACTION_SCRIPTS: Record<PurchaseCategory, string> = {
 
 const STOCK_ACTION_ROUTES = {
   tixLicense: PATHS.app.actions.stockTixLicense,
+  fourSigmaDataLicense: PATHS.app.actions.stock4sDataLicense,
   fourSigmaLicense: PATHS.app.actions.stockFourSigmaLicense,
   buyLong: PATHS.app.actions.stockBuyLong,
   buyShort: PATHS.app.actions.stockBuyShort,
@@ -561,8 +563,12 @@ export async function main(ns: NS): Promise<void> {
 
     const rawMoney = ns.getServerMoneyAvailable("home");
     const stateReserve = loadFinanceState(ns)?.moneyReserve ?? 0;
+    const baseCashReserve =
+      ns.getResetInfo().currentNode === 8
+        ? BITNODE_8_CASH_BUFFER
+        : CASH_BUFFER;
     const reserve = Math.max(
-      CASH_BUFFER,
+      baseCashReserve,
       Number.isFinite(stateReserve) && stateReserve > 0 ? stateReserve : 0,
     );
     let availableMoney = Math.max(0, rawMoney - reserve);
@@ -700,8 +706,8 @@ export async function main(ns: NS): Promise<void> {
           currentBitNode === 8
             ? {
                 ...CATEGORY_WEIGHTS,
-                STOCK_TRADE: Number.MAX_SAFE_INTEGER,
-                STOCK_LICENSE: Number.MAX_SAFE_INTEGER - 1,
+                  STOCK_LICENSE: Number.MAX_SAFE_INTEGER,
+                  STOCK_TRADE: Number.MAX_SAFE_INTEGER - 1,
               }
             : CATEGORY_WEIGHTS,
         ),

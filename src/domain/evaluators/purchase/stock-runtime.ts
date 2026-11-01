@@ -160,6 +160,41 @@ export function shouldExitStockPosition(
     : forecast >= threshold;
 }
 
+export function getStockCashReserve(
+  bitNode: number,
+  defaultReserve: number,
+  bitNode8Reserve: number,
+): number {
+  return bitNode === 8 ? bitNode8Reserve : defaultReserve;
+}
+
+export function isStockPositionProfitableAfterFees(
+  type: "LONG" | "SHORT",
+  shares: number,
+  averagePrice: number,
+  liquidationPrice: number,
+  commission: number,
+): boolean {
+  if (
+    !Number.isFinite(shares) ||
+    shares <= 0 ||
+    !Number.isFinite(averagePrice) ||
+    averagePrice <= 0 ||
+    !Number.isFinite(liquidationPrice) ||
+    liquidationPrice <= 0 ||
+    !Number.isFinite(commission) ||
+    commission < 0
+  ) {
+    return false;
+  }
+
+  const priceProfit =
+    type === "LONG"
+      ? (liquidationPrice - averagePrice) * shares
+      : (averagePrice - liquidationPrice) * shares;
+  return priceProfit >= commission * 2;
+}
+
 export function getStockTradingBudget(
   availableMoney: number,
   budgetRatio: number,
