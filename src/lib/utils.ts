@@ -99,18 +99,16 @@ export function isStockViable(ns: NS): boolean {
   if (!ns.stock) return false;
 
   const bnMults = loadBnMults(ns);
-  const fourSigmaCostMult = bnMults.FourSigmaMarketDataCost ?? 1.0;
   const fourSigmaApiCostMult = bnMults.FourSigmaMarketDataApiCost ?? 1.0;
-
-  // Wenn die Multiplikatoren auf 0 stehen, ist 4S im BitNode deaktiviert
-  if (fourSigmaCostMult <= 0 || fourSigmaApiCostMult <= 0) return false;
 
   const money = ns.getServerMoneyAvailable("home");
 
-  // Wenn bereits alle Lizenzen vorhanden sind, reicht ein kleines Trading-Kapital
   if (ns.stock.has4SDataTixApi()) {
     return money >= 100_000_000; // 100M $
   }
+
+  // Existing access remains usable even in nodes that disable purchasing the 4S API.
+  if (fourSigmaApiCostMult <= 0) return false;
 
   // Für den Lizenzkauf: Erst evaluieren, wenn wir mindestens 10 Mrd. $ auf der Kante haben,
   // um nicht frühzeitig 5 Mrd. $ für eine nutzlose TIX-API zu blockieren.

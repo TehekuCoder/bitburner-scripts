@@ -16,13 +16,14 @@ export const CATEGORY_WEIGHTS: Record<PurchaseCategory, number> = {
 export const TRANSACTION_FEE = 100_000;
 export const MIN_INVESTMENT = 5_000_000;
 export const CASH_BUFFER = 2_000_000;
+export const STOCK_TRADE_MARGIN = 1.5;
 export const AUG_PURCHASE_PLAN_FILE = "aug-purchase-plan.txt";
 export const FINANCE_RESULT_PORT = 11;
 export const FINANCE_REQUEST_ARG_PREFIX = "__finance_request__:";
 
 export const BASE_CATEGORY_MARGINS: Partial<Record<PurchaseCategory, number>> = {
   STOCK_LICENSE: 1.0,
-  STOCK_TRADE: 1.5,
+  STOCK_TRADE: STOCK_TRADE_MARGIN,
 };
 
 export const CATEGORY_TO_EVALUATOR: Partial<Record<PurchaseCategory, string>> = {

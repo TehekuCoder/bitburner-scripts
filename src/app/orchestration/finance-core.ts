@@ -328,7 +328,12 @@ export async function main(ns: NS): Promise<void> {
         const description = pending?.description ?? cachedRequest?.description;
         if (result.success) {
           if (description !== undefined) {
-            const purchaseMsg = `🛒 [$${ns.format.number(result.actualCost)}] ${description}`;
+            const isStockExit =
+              category === "STOCK_TRADE" &&
+              description.startsWith("Aktien-Ausstieg:");
+            const purchaseMsg = isStockExit
+              ? `✅ ${description}`
+              : `🛒 [$${ns.format.number(result.actualCost)}] ${description}`;
             logger.success(purchaseMsg);
             pushBounded(lastPurchases, purchaseMsg, 6);
             if (requestId?.startsWith("player-aug-")) {
