@@ -17,7 +17,6 @@ import {
   getSleeveStatuses,
   setSleeveTask,
 } from "../../domain/sleeve/sleeve-utils.js";
-import { hasSleevesNeedingShockRecovery } from "../../domain/sleeve/sleeve-recovery.js";
 import { MEGACORPS } from "../../shared/constants/factions.js";
 import {
   loadSleeveState,
@@ -568,12 +567,9 @@ export async function main(ns: NS): Promise<void> {
     }
 
     if (
-      !shouldRunSleeveManager(
-        getCurrentBitNode(ns) ?? 0,
-        hasSleevesNeedingShockRecovery(ns),
-      )
+      !shouldRunSleeveManager(getCurrentBitNode(ns) ?? 0)
     ) {
-      logger.info("BN8: Shock abgebaut; Sleeve-Manager wird beendet.");
+      logger.info("BN8: Sleeve-Manager ist deaktiviert; automatische Recovery bleibt aktiv.");
       return;
     }
 

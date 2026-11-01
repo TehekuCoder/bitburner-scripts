@@ -4,6 +4,13 @@ export interface OrchestratorPolicyState {
   strategy?: unknown;
 }
 
+export function shouldRunDaemonInBitNode(
+  currentNode: number,
+  enabledInBn8MinimalMode: boolean,
+): boolean {
+  return currentNode !== 8 || enabledInBn8MinimalMode;
+}
+
 export function isModuleDisabled(
   state: OrchestratorPolicyState | null | undefined,
   moduleName: string | readonly string[],
@@ -22,7 +29,13 @@ export function isManualMode(
 
 export function shouldRunSleeveManager(
   currentNode: number,
-  hasSleevesInShock: boolean,
 ): boolean {
-  return currentNode !== 8 || hasSleevesInShock;
+  return currentNode !== 8;
+}
+
+export function shouldRunSingularityDispatcher(
+  currentNode: number,
+  strategy: unknown,
+): boolean {
+  return currentNode !== 8 || strategy === "REP";
 }

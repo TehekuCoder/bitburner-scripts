@@ -14,15 +14,17 @@ import {
 import {
   isManualMode,
   isModuleDisabled,
+  shouldRunDaemonInBitNode,
+  shouldRunSingularityDispatcher,
   shouldRunSleeveManager,
 } from "./orchestrator-policy.js";
-import { hasSleevesNeedingShockRecovery } from "/domain/sleeve/sleeve-recovery.js";
 
 interface DaemonConfig {
   name: string;
   path: string;
   args?: (string | number)[];
   priority?: number | ((ns: NS) => number);
+  enabledInBn8MinimalMode?: boolean;
   condition?: (ns: NS) => boolean;
 }
 
@@ -98,6 +100,7 @@ export async function main(ns: NS): Promise<void> {
       name: "Finance Manager",
       path: PATHS.services.daemons.financeDispatcher,
       priority: (ns) => (ns.getResetInfo().currentNode === 8 ? 0 : 1),
+      enabledInBn8MinimalMode: true,
       condition: (ns) => {
         const state = loadState(ns);
         return !isModuleDisabled(state, ["finance", "stock"]);
@@ -163,12 +166,19 @@ export async function main(ns: NS): Promise<void> {
       name: "Singularity Dispatcher",
       path: PATHS.app.orchestration.dispatcher,
       priority: (ns) => (ns.getResetInfo().currentNode === 8 ? 2 : 0),
+      enabledInBn8MinimalMode: true,
       condition: (ns) => {
         const state = loadState(ns);
         if (isManualMode(state)) return false;
         if (isModuleDisabled(state, ["dispatcher", "singularity"]))
           return false;
-        return hasSingularity(ns);
+        return (
+          hasSingularity(ns) &&
+          shouldRunSingularityDispatcher(
+            ns.getResetInfo().currentNode,
+            state?.strategy,
+          )
+        );
       },
     },
 
@@ -212,10 +222,7 @@ export async function main(ns: NS): Promise<void> {
         if (isModuleDisabled(state, "sleeve")) return false;
         return (
           hasSleeve(ns) &&
-          shouldRunSleeveManager(
-            ns.getResetInfo().currentNode,
-            hasSleevesNeedingShockRecovery(ns),
-          )
+          shouldRunSleeveManager(ns.getResetInfo().currentNode)
         );
       },
     },
@@ -289,6 +296,7 @@ export async function main(ns: NS): Promise<void> {
       name: "Batch Orchestrator",
       path: PATHS.services.daemons.hackingOrchestrator,
       priority: 30,
+      enabledInBn8MinimalMode: true,
       condition: (ns) => {
         const state = loadState(ns);
         return !isModuleDisabled(state, ["batcher", "hacking"]);
@@ -325,7 +333,12 @@ export async function main(ns: NS): Promise<void> {
       const isRunning = ns.isRunning(execPath, "home", ...args);
 
       // Falls die Bedinung/Sperre greift, aber das Skript bereits läuft -> automatisch beenden
-      if (daemon.condition && !daemon.condition(ns)) {
+      const daemonEnabled =
+        shouldRunDaemonInBitNode(
+          ns.getResetInfo().currentNode,
+          daemon.enabledInBn8MinimalMode === true,
+        ) && (!daemon.condition || daemon.condition(ns));
+      if (!daemonEnabled) {
         if (isRunning) {
           logger.warn(
             `🛑 Modus/Deaktivierung erkannt: Beende Daemon ${daemon.name}...`,
@@ -470,6 +483,10 @@ function getProtectedRam(
   const isSingularityEnabled =
     !isManualMode(state) &&
     !isModuleDisabled(state, ["dispatcher", "singularity"]) &&
+    shouldRunSingularityDispatcher(
+      ns.getResetInfo().currentNode,
+      state?.strategy,
+    ) &&
     hasSingularity(ns);
   const isFinanceEnabled =
     !isModuleDisabled(state, ["finance", "stock"]);
