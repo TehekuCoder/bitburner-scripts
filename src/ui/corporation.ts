@@ -1,6 +1,7 @@
 import { CorporationInfo, NS } from "@ns";
 import { loadCorporationState } from "/infrastructure/state/state";
 import { CORP_CONFIG, MATERIAL_RESEARCH_PRIORITY, PRODUCT_RESEARCH_PRIORITY } from "/shared/constants/corporation";
+import { printWrapped } from "./ui-helper.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -56,14 +57,17 @@ function renderDashboard(
       ? `+$${ns.format.number(profitPerSec)}/s`
       : `-$${ns.format.number(Math.abs(profitPerSec))}/s`;
 
-  ns.print(
-    ` Capital: $${ns.format.number(corp.funds)} | ` +
-      `Revenue: $${ns.format.number(revPerSec)}/s | ` +
-      `Expenses: $${ns.format.number(expPerSec)}/s`,
+  printWrapped(
+    ns,
+    ` Capital: $${ns.format.number(corp.funds)} | Revenue: $${ns.format.number(revPerSec)}/s | Expenses: $${ns.format.number(expPerSec)}/s`,
+    82,
+    " ",
   );
-  ns.print(
-    ` Net Profit: ${profitStr} | ` +
-      `Investor (R${investOffer.round}): $${ns.format.number(investOffer.funds)} (${ns.format.number(investOffer.shares)} Shares)`,
+  printWrapped(
+    ns,
+    ` Net Profit: ${profitStr} | Investor (R${investOffer.round}): $${ns.format.number(investOffer.funds)} (${ns.format.number(investOffer.shares)} Shares)`,
+    82,
+    " ",
   );
 
   ns.print(dividerSub);
@@ -125,7 +129,7 @@ function renderDashboard(
   if (localLogBuffer.length > 0) {
     ns.print(" LETZTE AKTIONEN:");
     for (const logLine of localLogBuffer) {
-      ns.print(`   ${logLine}`);
+      printWrapped(ns, logLine, 82, "   ");
     }
     ns.print(dividerSub);
   }
@@ -287,8 +291,11 @@ function renderResearchOverview(ns: NS, corpInfo: CorporationInfo): void {
       nextTechStr = `${indicator} ${nextTech.name} (${costStr} RP)`;
     }
 
-    ns.print(
+    printWrapped(
+      ns,
       `   ${div.name.padEnd(12)} | RP: ${rpStr.padStart(8)} | Prio: ${statusStr.padEnd(11)} | Ziel: ${nextTechStr}`,
+      82,
+      "      ",
     );
   }
 }

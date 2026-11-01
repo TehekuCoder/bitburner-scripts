@@ -1,5 +1,6 @@
 import { NS, GangGenInfo, GangMemberInfo } from "@ns";
 import { loadGangState } from "/infrastructure/state/state";
+import { printWrapped } from "./ui-helper.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -65,7 +66,8 @@ function renderDashboard(
 
   for (const member of members) {
     const nameStr = member.name.padEnd(10);
-    const taskStr = (member.task || "IDLE").padEnd(25);
+    const task = member.task || "IDLE";
+    const taskStr = task.padEnd(25);
 
     const avgStat = gangInfo.isHacking
       ? member.hack
@@ -82,7 +84,12 @@ function renderDashboard(
 
     const equipCount = `${member.upgrades.length}/${member.augmentations.length}`;
 
-    ns.print(` ${nameStr} | ${taskStr} | ${statStr} | ${multStr} | ${equipCount}`);
+    if (Array.from(task).length > 25) {
+      ns.print(` ${nameStr} | ${statStr} | ${multStr} | ${equipCount}`);
+      printWrapped(ns, `TASK: ${task}`, 74, "   ");
+    } else {
+      ns.print(` ${nameStr} | ${taskStr} | ${statStr} | ${multStr} | ${equipCount}`);
+    }
   }
 
   ns.print(dividerHeader);
@@ -90,7 +97,7 @@ function renderDashboard(
   if (localLogBuffer.length > 0) {
     ns.print(" LETZTE AKTIONEN:");
     for (const logLine of localLogBuffer) {
-      ns.print(`   ${logLine}`);
+      printWrapped(ns, logLine, 74, "   ");
     }
     ns.print(dividerSub);
   }

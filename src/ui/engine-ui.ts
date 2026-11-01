@@ -1,5 +1,6 @@
 import { NS } from "@ns";
 import { formatPercent } from "/lib/utils.js";
+import { printWrapped } from "./ui-helper.js";
 
 export interface EngineDashboardData {
   engineName: string; // "PREP" | "PROTO" | "SHOTGUN" | "XP-GRIND" | "STANDBY"
@@ -34,8 +35,8 @@ export function drawEngineDashboard(ns: NS, data: EngineDashboardData): void {
   ns.print(`============================================================`);
   ns.print(`⚡ BIT-OS ENGINE MONITOR 2.0  |  MODUS: [${data.engineName.padEnd(8, " ")}]`);
   ns.print(`============================================================`);
-  ns.print(`FOKUS-ZIEL:      ${data.target}`);
-  ns.print(`STATUS:          ${data.status}`);
+  printWrapped(ns, `FOKUS-ZIEL: ${data.target}`, 58, "  ");
+  printWrapped(ns, `STATUS: ${data.status}`, 58, "  ");
   ns.print(`------------------------------------------------------------`);
   ns.print(`NETZWERK ALLOKATION:`);
   ns.print(`RAM Pool:        ${ns.format.ram(data.ramUsed)} / ${ns.format.ram(data.ramTotal)} (${ramPercent.toFixed(1)}%)`);
@@ -54,7 +55,7 @@ export function drawEngineDashboard(ns: NS, data: EngineDashboardData): void {
     ns.print(`> Warte auf Systemereignisse...`);
   } else {
     for (const log of data.eventLog) {
-      ns.print(`> ${log}`);
+      printWrapped(ns, log, 56, "> ");
     }
   }
   ns.print(`============================================================`);

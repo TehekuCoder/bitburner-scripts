@@ -14,6 +14,7 @@ import {
 } from "/lib/utils.js";
 import { loadStrategyState } from "/infrastructure/state/state.js";
 import { StrategyState, BotStrategy } from "/shared/types/strategy.js";
+import { wrapText } from "./ui-helper.js";
 
 const ANSI_REGEX = /\u001b\[[0-9;]*m/g;
 const GANG_KARMA_REQUIREMENT = 54_000;
@@ -129,29 +130,6 @@ function padANSI(
   const missing = Math.max(0, visibleWidth - getVisibleLength(text));
   const padding = " ".repeat(missing);
   return alignRight ? padding + text : text + padding;
-}
-
-function truncateANSI(text: string, maxWidth: number): string {
-  if (getVisibleLength(text) <= maxWidth) return text;
-
-  let visibleCount = 0;
-  let result = "";
-  let i = 0;
-
-  while (i < text.length && visibleCount < maxWidth - 3) {
-    if (text[i] === "\u001b") {
-      const match = text.slice(i).match(/^(\u001b\[[0-9;]*m)/);
-      if (match) {
-        result += match[0];
-        i += match[0].length;
-        continue;
-      }
-    }
-    result += text[i];
-    visibleCount++;
-    i++;
-  }
-  return result + "...\u001b[0m";
 }
 
 function makeProgressBar(value: number, max: number, width = 20): string {
@@ -361,7 +339,8 @@ export async function main(ns: NS): Promise<void> {
       `${CLR.WHITE_BOLD}BITNODE-FORTSCHRITT (Phase ${phase.phaseNumber}/5):${CLR.RESET}`,
     );
     buffer.push(`Phase:       ${CLR.CYAN}${phase.name}${CLR.RESET}`);
-    buffer.push(`Details:     ${phase.description}`);
+    buffer.push("Details:");
+    buffer.push(...wrapText(phase.description, 52, "             "));
 
     const progressBar = makeProgressBar(phase.targetProgress, 100, 24);
     const pctStr = `${phase.targetProgress.toFixed(1)}%`;
@@ -400,8 +379,13 @@ export async function main(ns: NS): Promise<void> {
             `Status:      ${CLR.GREEN}✓ BEREIT FÜR BLACK OP EXECUTION!${CLR.RESET}`,
           );
         } else {
+          buffer.push("Fehlt noch:");
           buffer.push(
-            `Fehlt noch:  ${CLR.RED}${bbInfo.unmetReqs.join(" | ")}${CLR.RESET}`,
+            ...wrapText(
+              `${CLR.RED}${bbInfo.unmetReqs.join(" | ")}${CLR.RESET}`,
+              52,
+              "             ",
+            ),
           );
         }
       } else {
@@ -512,7 +496,9 @@ export async function main(ns: NS): Promise<void> {
     }
 
     for (const step of nextSteps.slice(0, 3)) {
-      buffer.push(`> ${CLR.YELLOW}${truncateANSI(step, 58)}${CLR.RESET}`);
+      buffer.push(
+        ...wrapText(`> ${CLR.YELLOW}${step}${CLR.RESET}`, 64, "  "),
+      );
     }
 
     buffer.push(H_LINE);

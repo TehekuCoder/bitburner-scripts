@@ -2,6 +2,7 @@ import { NS } from "@ns";
 import { formatPercent } from "/lib/utils.js";
 import { AUG_PURCHASE_PLAN_FILE } from "/shared/constants/finance.js";
 import { StockDashboardSnapshot } from "/shared/types/finance.js";
+import { wrapText } from "./ui-helper.js";
 
 export interface PendingRequestSummary {
   description: string;
@@ -130,29 +131,6 @@ function padANSI(
   return alignRight ? padding + text : text + padding;
 }
 
-function truncateANSI(text: string, maxWidth: number): string {
-  if (getVisibleLength(text) <= maxWidth) return text;
-
-  let visibleCount = 0;
-  let result = "";
-  let i = 0;
-
-  while (i < text.length && visibleCount < maxWidth - 3) {
-    if (text[i] === "\u001b") {
-      const match = text.slice(i).match(/^(\u001b\[[0-9;]*m)/);
-      if (match) {
-        result += match[0];
-        i += match[0].length;
-        continue;
-      }
-    }
-    result += text[i];
-    visibleCount++;
-    i++;
-  }
-  return result + "...\u001b[0m";
-}
-
 function makeProgressBar(value: number, max: number, width = 20): string {
   if (max <= 0) return "░".repeat(width);
   const ratio = Math.max(0, Math.min(value, max)) / max;
@@ -242,9 +220,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
         : purchase.waitingForFactionRep
           ? `${CLR.YELLOW}wartet auf Fraktions-Rep${CLR.RESET}`
           : `${CLR.GREEN}bereit${CLR.RESET}`;
-    buffer.push(
-      `${truncateANSI(purchase.name, 30)} | $${ns.format.number(purchase.cost)} | ${purchaseStatus}`,
-    );
+    buffer.push(...wrapText(`${purchase.name} | $${ns.format.number(purchase.cost)} | ${purchaseStatus}`, W));
     if (purchase.faction) buffer.push(`Kauffraktion: ${purchase.faction}`);
     buffer.push(`Plan: home/${AUG_PURCHASE_PLAN_FILE}`);
     if (purchase.factions.length === 0) {
@@ -252,9 +228,11 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     } else {
       purchase.factions.slice(0, 3).forEach((faction, index) => {
         const availability = faction.available ? "verfügbar" : "Rep fehlt";
-        buffer.push(
-          ` ${index + 1}. ${truncateANSI(faction.name, 15)} Rep ${ns.format.number(faction.rep)} | Favor ${ns.format.number(faction.favor)} | Aufwand~ ${ns.format.number(faction.estimatedRemainingRep)} | ${availability}`,
-        );
+        buffer.push(...wrapText(
+          ` ${index + 1}. ${faction.name} Rep ${ns.format.number(faction.rep)} | Favor ${ns.format.number(faction.favor)} | Aufwand~ ${ns.format.number(faction.estimatedRemainingRep)} | ${availability}`,
+          W,
+          "    ",
+        ));
       });
     }
     buffer.push(D_LINE);
@@ -267,7 +245,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
       `Bitte die Augmentations manuell im Spiel installieren; der Finance-Core startet keinen Soft-Reset.`,
     );
     install.items.forEach((item, index) => {
-      buffer.push(` ${index + 1}. ${truncateANSI(item, 58)}`);
+      buffer.push(...wrapText(` ${index + 1}. ${item}`, W, "    "));
     });
     buffer.push(D_LINE);
   }
@@ -321,7 +299,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
       Math.floor((Date.now() - stock.updatedAt) / 1000),
     );
     buffer.push(`${CLR.WHITE_BOLD}AKTIENHANDEL: ${modeLabel}${CLR.RESET}`);
-    buffer.push(truncateANSI(stock.status, W));
+    buffer.push(...wrapText(stock.status, W));
     buffer.push(
       `Budget: $${ns.format.number(stock.tradingBudget)} | ${ageSeconds > 30 ? `${CLR.YELLOW}Daten ${ageSeconds}s alt${CLR.RESET}` : `Update vor ${ageSeconds}s`}`,
     );
@@ -351,11 +329,9 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
               : `${(symbol.forecast * 100).toFixed(1)}%`;
         const position = `L:${ns.format.number(symbol.longShares)} S:${ns.format.number(symbol.shortShares)}`;
         buffer.push(
-          truncateANSI(
-            `${symbol.symbol.padEnd(6)} ${forecast.padEnd(13)} ${position.padEnd(15)} ${symbol.decision}`,
-            W,
-          ),
+          `${symbol.symbol.padEnd(6)} ${forecast.padEnd(13)} ${position}`,
         );
+        buffer.push(...wrapText(symbol.decision, W, "       "));
       }
       if (rankedSymbols.length > 7) {
         buffer.push(`... und ${rankedSymbols.length - 7} weitere Symbole`);
@@ -375,13 +351,14 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     const progressPct =
       req.cost > 0 ? Math.min(100, (data.currentMoney / req.cost) * 100) : 100;
     const progressBar = makeProgressBar(data.currentMoney, req.cost, 20);
-    const shortDesc = truncateANSI(cleanupDescription(req.description), 44);
+    const description = cleanupDescription(req.description);
     const statusStr =
       progressPct >= 100
         ? `${CLR.GREEN}Bereit!${CLR.RESET}`
         : `${CLR.YELLOW}Sparen...${CLR.RESET}`;
 
-    buffer.push(`Ziel:        ${shortDesc}`);
+    buffer.push("Ziel:");
+    buffer.push(...wrapText(description, W - 13, "             "));
     buffer.push(`Fortschritt: ${currentMoneyStr} / ${reqCostStr} (${progressPct.toFixed(1)}%)`);
     buffer.push(
       `Status:      [${CLR.CYAN}${progressBar}${CLR.RESET}] ${statusStr}`,
@@ -408,11 +385,9 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
         CATEGORY_TAGS[req.category] ?? req.category.substring(0, 3);
       const cleanDesc = cleanupDescription(req.description);
       const costStr = `$${ns.format.number(req.cost)}`;
-      const shortDesc = truncateANSI(cleanDesc, 40);
-
-      buffer.push(
-        `> [${CLR.CYAN}${prio}${CLR.RESET}] [${CLR.YELLOW}${catTag}${CLR.RESET}] ${padANSI(shortDesc, 40)} ${padANSI(costStr, 9, true)}`,
-      );
+      const requestPrefix = `> [${CLR.CYAN}${prio}${CLR.RESET}] [${CLR.YELLOW}${catTag}${CLR.RESET}]`;
+      buffer.push(`${requestPrefix} ${costStr}`);
+      buffer.push(...wrapText(cleanDesc, W - 4, "    "));
     }
   }
 
@@ -431,7 +406,7 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
   } else {
     for (const logLine of uniqueLogs) {
       const cleanedLog = cleanupDescription(logLine);
-      buffer.push(`> ${truncateANSI(cleanedLog, 60)}`);
+      buffer.push(...wrapText(cleanedLog, W - 2, "> "));
     }
   }
 

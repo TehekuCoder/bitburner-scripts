@@ -1,6 +1,7 @@
 import { NS } from "@ns";
 import { DashboardData } from "/shared/types/batcher.js";
 import { formatPercent } from "/lib/utils.js";
+import { printWrapped } from "./ui-helper.js";
 
 function makeProgressBar(progress: number, width = 20): string {
   const filledLength = Math.round(Math.max(0, Math.min(1, progress)) * width);
@@ -20,9 +21,9 @@ export function drawBatcherDashboard(ns: NS, data: DashboardData): void {
     `⚡ BIT-OS DYNAMIC BATCHER v2.2     |  Gewinn/Welle: +$${ns.format.number(data.lastWaveProfit)}`,
   );
   ns.print(`============================================================`);
-  ns.print(`FOKUS-ZIEL:      ${data.target}`);
-  ns.print(`STATUS:          [${bar}] ${data.status}`);
-  ns.print(`DETAILS:         ${data.progressText}`);
+  printWrapped(ns, `FOKUS-ZIEL: ${data.target}`, 60, "  ");
+  printWrapped(ns, `STATUS: [${bar}] ${data.status}`, 60, "  ");
+  printWrapped(ns, `DETAILS: ${data.progressText}`, 60, "  ");
   ns.print(`------------------------------------------------------------`);
   ns.print(`NETZWERK-ALLOKATION:`);
   ns.print(
@@ -89,7 +90,7 @@ export function drawBatcherDashboard(ns: NS, data: DashboardData): void {
     ns.print(`> Warte auf Systemereignisse...`);
   } else {
     for (const log of data.eventLog) {
-      ns.print(`> ${log}`);
+      printWrapped(ns, log, 58, "> ");
     }
   }
   ns.print(`============================================================`);

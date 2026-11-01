@@ -1,5 +1,6 @@
 import { NS, SleeveTask } from "@ns";
 import { loadSleeveState } from "/infrastructure/state/state";
+import { printWrapped } from "./ui-helper.js";
 
 function visualPadEnd(str: string, targetLength: number): string {
   const actualLength = [...str].length;
@@ -82,8 +83,10 @@ export async function main(ns: NS): Promise<void> {
     // Globaler Modus & Manager Status
     const globalMode = sleeveState?.sleeveGlobalMode ?? "AUTO";
     const progressSummary = sleeveState?.sleeveProgress ?? "Kein Status";
-    ns.print(
+    printWrapped(
+      ns,
       ` Modus: ${COLOR.YELLOW}${globalMode}${COLOR.RESET} | Status: ${COLOR.GRAY}${progressSummary}${COLOR.RESET}`,
+      88,
     );
     ns.print(dividerSub);
 
@@ -121,11 +124,17 @@ export async function main(ns: NS): Promise<void> {
       const cityStr = stats.city.padEnd(10);
 
       const { icon, text } = parseTaskDetails(task);
-      const taskFormatted = visualPadEnd(`${icon} ${text}`, 36);
-
-      ns.print(
-        ` ${idStr} | ${shockStr} | ${syncStr} | ${augStr} | ${cityStr} | ${taskFormatted}`,
-      );
+      if (Array.from(text).length > 30) {
+        ns.print(
+          ` ${idStr} | ${shockStr} | ${syncStr} | ${augStr} | ${cityStr} |`,
+        );
+        printWrapped(ns, `${icon} ${text}`, 84, "      ");
+      } else {
+        const taskFormatted = visualPadEnd(`${icon} ${text}`, 36);
+        ns.print(
+          ` ${idStr} | ${shockStr} | ${syncStr} | ${augStr} | ${cityStr} | ${taskFormatted}`,
+        );
+      }
     }
 
     ns.print(dividerHeader);
