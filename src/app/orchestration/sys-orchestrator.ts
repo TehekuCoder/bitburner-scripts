@@ -66,6 +66,7 @@ export async function main(ns: NS): Promise<void> {
       name: "Backdoor Service",
       path: PATHS.services.daemons.backdoor,
       priority: 10,
+      enabledInBn8MinimalMode: true,
       condition: (ns) => {
         const state = loadState(ns);
         if (isModuleDisabled(state, ["backdoor", "singularity"])) return false;

@@ -70,6 +70,9 @@ export async function main(ns: NS): Promise<void> {
       if (isStockViable(ns)) {
         await runAndWait(PATHS.domain.evaluators.purchase.stock);
       }
+      if (hasSingularity(ns)) {
+        await runAndWait(PATHS.domain.evaluators.purchase.programs);
+      }
       await ns.sleep(1000);
       continue;
     }

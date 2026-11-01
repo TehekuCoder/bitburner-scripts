@@ -57,6 +57,7 @@ export function isFinanceCategoryAllowedInBitNode(
 ): boolean {
   return (
     bitNode !== 8 ||
+    category === "DARKNET_PROGRAM" ||
     category === "STOCK_LICENSE" ||
     category === "STOCK_TRADE"
   );
