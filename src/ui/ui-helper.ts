@@ -74,6 +74,10 @@ export function generateProgressBar(ns: NS, params: UIProgressBarParams): string
       generatedBar = `🏗️ Aufbau-Phase: Generiere Geld auf ${cachedFallbackTarget} (Warte auf Server mit 32GB+ RAM)`;
     }
   } 
+
+  else if (mode === "STOCK") {
+    generatedBar = `📈 BN8-Aktienmodus | Kapital: ${ns.format.number(playerMoney, 1)} $`;
+  }
   
   else {
     if (factionToWorkFor) {

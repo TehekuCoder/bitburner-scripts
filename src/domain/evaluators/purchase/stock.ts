@@ -15,13 +15,12 @@ import {
 } from "/shared/constants/finance.js";
 import { loadFinanceState } from "/infrastructure/state/state.js";
 import {
+  getStockTradeBudgetRatio,
   getStockTradingBudget,
   STOCK_LONG_ENTRY_FORECAST,
   STOCK_SHORT_ENTRY_FORECAST,
   shouldExitStockPosition,
 } from "./stock-runtime.js";
-
-const STOCK_TRADE_BUDGET_RATIO = 0.2;
 
 export const StockEvaluator: PurchaseEvaluator = {
   category: "STOCK_LICENSE" as PurchaseCategory,
@@ -151,7 +150,7 @@ export const StockEvaluator: PurchaseEvaluator = {
     const availableMoney = Math.max(0, playerMoney - reserve);
     const remainingBudget = getStockTradingBudget(
       availableMoney,
-      STOCK_TRADE_BUDGET_RATIO,
+      getStockTradeBudgetRatio(ns.getResetInfo().currentNode),
       STOCK_TRADE_MARGIN,
     );
     let budgetLeft = remainingBudget;

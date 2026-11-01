@@ -192,7 +192,7 @@ export function getBotStateShapeErrors(value: unknown): string[] {
     strategy: (item) =>
       item === undefined ||
       [
-        "MANUAL", "MONEY", "REP", "COMPANY", "TRAIN", "KILLS", "CRIME",
+        "MANUAL", "MONEY", "STOCK", "REP", "COMPANY", "TRAIN", "KILLS", "CRIME",
         "UNI", "KARMA", "BLADEBURNER", "CHURCH", "DOMINION",
       ].includes(item as string),
     targetFaction: isNullableString,

@@ -7,12 +7,21 @@ import {
   findRunningFinanceAction,
   getAffordableAugmentationShortlist,
   getCompletedAugmentationPurchaseOutcome,
+  isFinanceCategoryAllowedInBitNode,
   hasPendingFinanceCategory,
   isAugmentationPurchasePriceStale,
   isFinanceRequestRecentlyCompleted,
   isFinanceActionTimedOut,
   pruneExpiredFinanceRetries,
 } from "../src/app/orchestration/finance-runtime.ts";
+
+test("BitNode 8 finance dispatch only allows stock licenses and trades", () => {
+  assert.equal(isFinanceCategoryAllowedInBitNode("STOCK_LICENSE", 8), true);
+  assert.equal(isFinanceCategoryAllowedInBitNode("STOCK_TRADE", 8), true);
+  assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 8), false);
+  assert.equal(isFinanceCategoryAllowedInBitNode("HOME_SERVER", 8), false);
+  assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 7), true);
+});
 
 test("finance requests sort by priority, category weight, score, then cost", () => {
   const weights = { PLAYER_AUG: 3, HACKNET: 1 };

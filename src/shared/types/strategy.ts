@@ -9,6 +9,7 @@ import { CorporationState } from "./corporation";
 export type BotStrategy =
   | "MANUAL"
   | "MONEY"
+  | "STOCK"
   | "REP"
   | "COMPANY"
   | "TRAIN"

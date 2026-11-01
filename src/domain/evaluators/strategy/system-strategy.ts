@@ -89,6 +89,8 @@ export class SystemStrategyEvaluator {
     const p = ns.getPlayer();
     const bnMults = loadBnMults(ns);
     const singularityAvailable = hasSingularity(ns);
+    const currentBN = ns.getResetInfo().currentNode;
+    const isBitNode8 = currentBN === 8;
 
     const player = ns.getPlayer();
     const combatStats = [
@@ -255,7 +257,10 @@ export class SystemStrategyEvaluator {
       : false;
 
     const isReadyForFactionGrind =
-      isBatcherActive || isMemberOfTarget || p.money > effectiveThreshold;
+      isBitNode8 ||
+      isBatcherActive ||
+      isMemberOfTarget ||
+      p.money > effectiveThreshold;
 
     const isDaedalus = nextRoadmapFaction?.name === "Daedalus";
 
@@ -310,10 +315,18 @@ export class SystemStrategyEvaluator {
       isDominionEtaReady,
     );
 
+    if (
+      isBitNode8 &&
+      ["MONEY", "CRIME", "KARMA"].includes(strategy.mode)
+    ) {
+      logger.info(
+        `BN8: Ersetze Geld-/Crime-Fallback durch Aktienmodus; Stockhandel ist die Geldstrategie.`,
+      );
+      strategy = { mode: "STOCK" };
+    }
+
     // ⚔️ Bladeburner-Prerequisite Override (BN6 & BN7)
     const inBladeburner = ns.bladeburner?.inBladeburner() ?? false;
-    const currentBN = ns.getResetInfo().currentNode;
-
     if (
       !inBladeburner &&
       (currentBN === 6 || currentBN === 7) &&
@@ -435,6 +448,10 @@ export class SystemStrategyEvaluator {
       currentVal = 0;
       targetVal = 0;
       label = `⛩️ Church / Stanek`;
+    } else if (mode === "STOCK") {
+      currentVal = p.money;
+      targetVal = 0;
+      label = "Aktienmarkt – Kapitalaufbau";
     }
 
     this.metricTracker.update(

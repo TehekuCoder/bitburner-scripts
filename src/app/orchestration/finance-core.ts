@@ -36,6 +36,7 @@ import {
   getAffordableAugmentationShortlist,
   getCompletedAugmentationPurchaseOutcome,
   hasPendingFinanceCategory,
+  isFinanceCategoryAllowedInBitNode,
   isAugmentationPurchasePriceStale,
   isFinanceRequestRecentlyCompleted,
   isFinanceActionTimedOut,
@@ -489,6 +490,13 @@ export async function main(ns: NS): Promise<void> {
     for (const cache of evaluatorRequestCache.values()) {
       allRequests.push(...cache.requests.values());
     }
+    const currentBitNode = ns.getResetInfo().currentNode;
+    if (currentBitNode === 8) {
+      const stockRequests = allRequests.filter((request) =>
+        isFinanceCategoryAllowedInBitNode(request.category, currentBitNode),
+      );
+      allRequests.splice(0, allRequests.length, ...stockRequests);
+    }
     const uninstalledAugs = getPurchasedUninstalledAugs(ns);
     const isAugmentationMode = uninstalledAugs.length > 0;
 
@@ -594,7 +602,17 @@ export async function main(ns: NS): Promise<void> {
     // 3. Sortierung der Anfragen
     if (allRequests.length > 0) {
       allRequests.sort((a, b) =>
-        compareFinanceRequests(a, b, CATEGORY_WEIGHTS),
+        compareFinanceRequests(
+          a,
+          b,
+          currentBitNode === 8
+            ? {
+                ...CATEGORY_WEIGHTS,
+                STOCK_TRADE: Number.MAX_SAFE_INTEGER,
+                STOCK_LICENSE: Number.MAX_SAFE_INTEGER - 1,
+              }
+            : CATEGORY_WEIGHTS,
+        ),
       );
       const augmentationShortlist = new Set(
         getAffordableAugmentationShortlist(

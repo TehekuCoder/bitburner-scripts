@@ -1,5 +1,7 @@
 export const STOCK_SHORT_ENTRY_FORECAST = 0.4;
 export const STOCK_LONG_ENTRY_FORECAST = 0.6;
+export const DEFAULT_STOCK_TRADE_BUDGET_RATIO = 0.2;
+export const BITNODE_8_STOCK_TRADE_BUDGET_RATIO = 0.8;
 
 export function shouldExitStockPosition(
   type: "LONG" | "SHORT",
@@ -26,4 +28,10 @@ export function getStockTradingBudget(
     return 0;
   }
   return (Math.max(0, availableMoney) * budgetRatio) / margin;
+}
+
+export function getStockTradeBudgetRatio(bitNode: number): number {
+  return bitNode === 8
+    ? BITNODE_8_STOCK_TRADE_BUDGET_RATIO
+    : DEFAULT_STOCK_TRADE_BUDGET_RATIO;
 }

@@ -49,6 +49,7 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const bnMults = loadBnMults(ns);
+    const isBitNode8 = ns.getResetInfo().currentNode === 8;
 
     // 0. Finance-Core als Dauerläufer (UI & Kauf-Abwicklung)
     if (
@@ -63,6 +64,14 @@ export async function main(ns: NS): Promise<void> {
       if (freeRam >= coreRam) {
         ns.run(PATHS.app.orchestration.financeCore, 1);
       }
+    }
+
+    if (isBitNode8) {
+      if (isStockViable(ns)) {
+        await runAndWait(PATHS.domain.evaluators.purchase.stock);
+      }
+      await ns.sleep(1000);
+      continue;
     }
 
     // 1. Purchased Servers (cloud.js - ~6.05 GB)

@@ -12,6 +12,17 @@ export interface FinanceProcessLike {
   pid: number;
 }
 
+export function isFinanceCategoryAllowedInBitNode(
+  category: string,
+  bitNode: number,
+): boolean {
+  return (
+    bitNode !== 8 ||
+    category === "STOCK_LICENSE" ||
+    category === "STOCK_TRADE"
+  );
+}
+
 export function compareFinanceRequests(
   a: FinanceRequestLike,
   b: FinanceRequestLike,

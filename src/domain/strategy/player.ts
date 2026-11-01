@@ -239,7 +239,12 @@ export function determineStrategy(
 
   // Gang unlock takes precedence over optional hacking progression once the
   // Gang API is available. Joining a gang remains a manual player decision.
-  if (ns.gang && !hasGang && currentKarma > -54000) {
+  if (
+    ns.getResetInfo().currentNode !== 8 &&
+    ns.gang &&
+    !hasGang &&
+    currentKarma > -54000
+  ) {
     const mugChance = ns.singularity.getCrimeChance(ns.enums.CrimeType.mug);
     if (mugChance < 0.7) {
       const trainingMoneyThreshold =

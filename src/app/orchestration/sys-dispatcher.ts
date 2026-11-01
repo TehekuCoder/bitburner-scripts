@@ -46,13 +46,14 @@ export async function main(ns: NS): Promise<void> {
       const isLowBudgetTrainingFallback =
         previousStrategy === "TRAIN" && mode === "MONEY";
       const isOscillating =
-        ["MONEY", "CRIME", "REP", "COMPANY", "TRAIN"].includes(mode) &&
+        ["MONEY", "STOCK", "CRIME", "REP", "COMPANY", "TRAIN"].includes(mode) &&
         ["MONEY", "CRIME", "REP", "COMPANY", "TRAIN"].includes(
           previousStrategy,
         );
 
       if (
         isOscillating &&
+        !(mode === "STOCK" && ns.getResetInfo().currentNode === 8) &&
         !isLowBudgetTrainingFallback &&
         now - modeLockTime < REFRESH_INTERVALS.STRATEGY_COOLDOWN
       ) {

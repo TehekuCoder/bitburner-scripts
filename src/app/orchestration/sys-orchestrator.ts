@@ -20,8 +20,18 @@ interface DaemonConfig {
   name: string;
   path: string;
   args?: (string | number)[];
-  priority?: number;
+  priority?: number | ((ns: NS) => number);
   condition?: (ns: NS) => boolean;
+}
+
+function getDaemonPriority(ns: NS, daemon: DaemonConfig): number {
+  const priority =
+    typeof daemon.priority === "function"
+      ? daemon.priority(ns)
+      : daemon.priority;
+  return typeof priority === "number" && Number.isFinite(priority)
+    ? priority
+    : 100;
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -85,7 +95,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Finance Manager",
       path: PATHS.services.daemons.financeDispatcher,
-      priority: 1,
+      priority: (ns) => (ns.getResetInfo().currentNode === 8 ? 0 : 1),
       condition: (ns) => {
         const state = loadState(ns);
         return !isModuleDisabled(state, ["finance", "stock"]);
@@ -150,7 +160,7 @@ export async function main(ns: NS): Promise<void> {
     {
       name: "Singularity Dispatcher",
       path: PATHS.app.orchestration.dispatcher,
-      priority: 0,
+      priority: (ns) => (ns.getResetInfo().currentNode === 8 ? 2 : 0),
       condition: (ns) => {
         const state = loadState(ns);
         if (isManualMode(state)) return false;
@@ -290,7 +300,7 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const orderedDaemons = [...daemons].sort(
-      (a, b) => (a.priority ?? 100) - (b.priority ?? 100),
+      (a, b) => getDaemonPriority(ns, a) - getDaemonPriority(ns, b),
     );
     reclaimRamForProtectedServices(ns, orderedDaemons, logger);
 
@@ -332,14 +342,18 @@ export async function main(ns: NS): Promise<void> {
         continue;
       }
 
-      const isCriticalDaemon = (daemon.priority ?? 100) <= 1;
+      const daemonPriority = getDaemonPriority(ns, daemon);
+      const isCriticalDaemon = daemonPriority <= 1;
       let state = loadState(ns);
       let protectedRam = getFeasibleProtectedRam(ns, state, execPath);
       let freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
 
       if (isCriticalDaemon && freeRam < reqRam) {
         const lowerPriorityDaemons = orderedDaemons
-          .filter((candidate) => (candidate.priority ?? 100) > (daemon.priority ?? 100))
+          .filter(
+            (candidate) =>
+              getDaemonPriority(ns, candidate) > daemonPriority,
+          )
           .reverse();
         for (const candidate of lowerPriorityDaemons) {
           const candidatePath = candidate.path.endsWith(".ts")
@@ -396,8 +410,10 @@ function reclaimRamForProtectedServices(
 
   let freeRam = maxRam - ns.getServerUsedRam("home");
   const lowerPriorityDaemons = [...daemons]
-    .filter((daemon) => (daemon.priority ?? 100) > 1)
-    .sort((a, b) => (b.priority ?? 100) - (a.priority ?? 100));
+    .filter((daemon) => getDaemonPriority(ns, daemon) > 1)
+    .sort(
+      (a, b) => getDaemonPriority(ns, b) - getDaemonPriority(ns, a),
+    );
 
   for (const daemon of lowerPriorityDaemons) {
     if (freeRam >= protectedRam) break;
@@ -425,7 +441,13 @@ function getFeasibleProtectedRam(
   excludedScript?: string,
 ): number {
   const maxRam = ns.getServerMaxRam("home");
-  const fullReserve = getProtectedRam(ns, state, excludedScript);
+  const includeSingularityAction = ns.getResetInfo().currentNode !== 8;
+  const fullReserve = getProtectedRam(
+    ns,
+    state,
+    excludedScript,
+    includeSingularityAction,
+  );
   return fullReserve <= maxRam
     ? fullReserve
     : getProtectedRam(ns, state, excludedScript, false);
