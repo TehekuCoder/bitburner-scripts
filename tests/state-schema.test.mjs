@@ -87,6 +87,13 @@ test("augmentation roadmap validates the shape written by its analyzer", () => {
   assert.deepEqual(getBotStateShapeErrors(validState), []);
 });
 
+test("state schema accepts the stock hacking-orchestrator mode", () => {
+  assert.deepEqual(
+    getBotStateShapeErrors({ ...validState, batchStrategy: "STOCK" }),
+    [],
+  );
+});
+
 test("unknown future schemas are rejected", () => {
   const parsed = parseStoredState(
     {

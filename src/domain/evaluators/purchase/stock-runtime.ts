@@ -1,5 +1,6 @@
 export const STOCK_SHORT_ENTRY_FORECAST = 0.4;
 export const STOCK_LONG_ENTRY_FORECAST = 0.6;
+export const STOCK_INFLUENCE_HOLD_FORECAST = 0.5;
 export const ESTIMATED_STOCK_SHORT_ENTRY_FORECAST = 0.35;
 export const ESTIMATED_STOCK_LONG_ENTRY_FORECAST = 0.65;
 export const ESTIMATED_STOCK_HISTORY_LIMIT = 20;
@@ -160,6 +161,24 @@ export function shouldExitStockPosition(
     : forecast >= threshold;
 }
 
+export function shouldInfluenceStockPosition(
+  type: "LONG" | "SHORT",
+  forecast: number,
+  alreadyInfluencing: boolean,
+): boolean {
+  if (!Number.isFinite(forecast)) return false;
+  if (type === "LONG") {
+    return forecast >
+      (alreadyInfluencing
+        ? STOCK_INFLUENCE_HOLD_FORECAST
+        : STOCK_LONG_ENTRY_FORECAST);
+  }
+  return forecast <
+    (alreadyInfluencing
+      ? STOCK_INFLUENCE_HOLD_FORECAST
+      : STOCK_SHORT_ENTRY_FORECAST);
+}
+
 export function getStockCashReserve(
   bitNode: number,
   defaultReserve: number,
@@ -218,6 +237,18 @@ export function meetsStockMinimumInvestment(
     Number.isFinite(minimumInvestment) &&
     minimumInvestment >= 0 &&
     orderCost >= minimumInvestment
+  );
+}
+
+export function isStockInfluenceRamConstrained(
+  availableRam: number,
+  workerRam: number,
+): boolean {
+  return (
+    Number.isFinite(availableRam) &&
+    Number.isFinite(workerRam) &&
+    workerRam > 0 &&
+    availableRam < workerRam
   );
 }
 

@@ -61,7 +61,8 @@ export function isFinanceCategoryAllowedInBitNode(
   return (
     bitNode !== 8 ||
     category === "STOCK_LICENSE" ||
-    category === "STOCK_TRADE"
+    category === "STOCK_TRADE" ||
+    category === "PURCHASED_SERVER"
   );
 }
 

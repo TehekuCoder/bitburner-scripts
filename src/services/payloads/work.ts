@@ -3,6 +3,9 @@ import { formatPercent } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
   const target = ns.args[0] as string;
+  const stockDirection = ns.args[1] === "STOCK" ? ns.args[2] : undefined;
+  const isStockWorker =
+    stockDirection === "LONG" || stockDirection === "SHORT";
 
   if (!target || !ns.serverExists(target)) {
     ns.print(`ERROR: Ungültiges Ziel [${target}]. Nutzung: run work.ts [target]`);
@@ -50,10 +53,14 @@ export async function main(ns: NS): Promise<void> {
         await ns.weaken(target);
       } else if (currentMoney < moneyThresh) {
         ns.print(`[GROW]   Sec: ${secStr} | Money: ${moneyStr}`);
-        await ns.grow(target);
+        await ns.grow(target, {
+          stock: isStockWorker && stockDirection === "LONG",
+        });
       } else {
         ns.print(`[HACK]   Sec: ${secStr} | Money: ${moneyStr}`);
-        await ns.hack(target);
+        await ns.hack(target, {
+          stock: isStockWorker && stockDirection === "SHORT",
+        });
       }
     } catch (e: unknown) {
       ns.print(`[ERROR] Unerwarteter Fehler: ${String(e)}`);

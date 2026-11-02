@@ -15,10 +15,11 @@ import {
   pruneExpiredFinanceRetries,
 } from "../src/app/orchestration/finance-runtime.ts";
 
-test("BitNode 8 finance dispatch only allows stock licenses and trades", () => {
+test("BitNode 8 finance dispatch allows stock and gated server purchases only", () => {
   assert.equal(isFinanceCategoryAllowedInBitNode("DARKNET_PROGRAM", 8), false);
   assert.equal(isFinanceCategoryAllowedInBitNode("STOCK_LICENSE", 8), true);
   assert.equal(isFinanceCategoryAllowedInBitNode("STOCK_TRADE", 8), true);
+  assert.equal(isFinanceCategoryAllowedInBitNode("PURCHASED_SERVER", 8), true);
   assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 8), false);
   assert.equal(isFinanceCategoryAllowedInBitNode("HOME_SERVER", 8), false);
   assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 7), true);

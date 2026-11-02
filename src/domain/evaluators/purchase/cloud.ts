@@ -10,6 +10,13 @@ import {
 import { runEvaluator } from "../evaluator-runner.js";
 import { loadBnMults, adjustPriorityByMult } from "lib/utils.js";
 import { PATHS } from "/infrastructure/runtime/paths.js";
+import {
+  getAllRootedServersIncludingPurchased,
+  getWorkerFreeRam,
+} from "/infrastructure/network/network.js";
+import { getStockInfluenceTargets } from "/domain/hacking/stock-influence.js";
+import { isStockInfluenceRamConstrained } from "./stock-runtime.js";
+import { loadState } from "/infrastructure/state/state.js";
 
 const CLOUD_PREFIX = "cloud-";
 const INITIAL_RAM = 8;
@@ -20,6 +27,29 @@ export const CloudEvaluator: PurchaseEvaluator = {
   category: "PURCHASED_SERVER",
 
   getRequests(ns: NS): PurchaseRequest[] {
+    const isBitNode8 = ns.getResetInfo().currentNode === 8;
+    if (isBitNode8) {
+      const rootedServers = getAllRootedServersIncludingPurchased(ns);
+      const activeStockTargets = getStockInfluenceTargets(
+        ns,
+        rootedServers,
+        loadState(ns)?.batchStrategy === "STOCK",
+      );
+      const workerRam = ns.getScriptRam(PATHS.services.payloads.work, "home");
+      const availableStockRam = rootedServers
+        .filter((host) => host !== "home")
+        .reduce(
+          (total, host) => total + getWorkerFreeRam(ns, host, "hacking"),
+          0,
+        );
+      if (
+        activeStockTargets.length === 0 ||
+        !isStockInfluenceRamConstrained(availableStockRam, workerRam)
+      ) {
+        return [];
+      }
+    }
+
     const bnMults = loadBnMults(ns);
 
     // 🔴 1. Hard Checks & BitNode Multiplikator-Erfassung (PascalCase + snake_case)
@@ -135,7 +165,21 @@ export const CloudEvaluator: PurchaseEvaluator = {
       }
     }
 
-    return requests.sort((a, b) => a.cost - b.cost);
+    requests.sort((a, b) => a.cost - b.cost);
+    if (isBitNode8) {
+      const request = requests[0];
+      return request
+        ? [
+            {
+              ...request,
+              priority: PurchasePriority.LOW,
+              score: 1,
+              description: `${request.description} [Stock-RAM-Engpass]`,
+            },
+          ]
+        : [];
+    }
+    return requests;
   },
 };
 

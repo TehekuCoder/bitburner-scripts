@@ -6,7 +6,8 @@ export type BatchStrategy =
   | "PREP"
   | "PROTO_BATCH"
   | "SHOTGUN_HWGW"
-  | "JIT_HWGW";
+  | "JIT_HWGW"
+  | "STOCK";
 
 export interface BatchPlan {
   target: string;

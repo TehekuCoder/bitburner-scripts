@@ -161,9 +161,16 @@ export function getBotStateShapeErrors(value: unknown): string[] {
         Object.values(item).every((source) => typeof source === "string")),
     batchStrategy: (item) =>
       item === undefined ||
-      ["WORKER", "BOOTSTRAP", "XP_GRIND", "PREP", "PROTO_BATCH", "SHOTGUN_HWGW", "JIT_HWGW"].includes(
-        item as string,
-      ),
+      [
+        "WORKER",
+        "BOOTSTRAP",
+        "XP_GRIND",
+        "PREP",
+        "PROTO_BATCH",
+        "SHOTGUN_HWGW",
+        "JIT_HWGW",
+        "STOCK",
+      ].includes(item as string),
     batcherPhase: isStringOrUndefined,
     batcherTarget: (item) =>
       item === undefined || item === null || typeof item === "string",

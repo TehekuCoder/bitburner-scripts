@@ -18,6 +18,10 @@ import {
 } from "/infrastructure/network/network.js";
 import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
 import { canRunHackingWorkersOnHome } from "/domain/evaluators/strategy/hacking-policy.js";
+import {
+  getStockInfluenceTargets,
+  StockInfluenceTarget,
+} from "/domain/hacking/stock-influence.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -44,7 +48,30 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     const evalRec = evaluateHackingStrategy(ns, lastStrategy);
-    const proposedStrategy: BatchStrategy = evalRec.strategy;
+    const stockTargets = getStockInfluenceTargets(
+      ns,
+      getAllRootedServersIncludingPurchased(ns),
+      lastStrategy === "STOCK",
+    );
+    if (lastStrategy === "STOCK" && lastTarget) {
+      const currentTarget = stockTargets.find(
+        (target) => target.hostname === lastTarget,
+      );
+      const bestTarget = stockTargets[0];
+      if (
+        currentTarget &&
+        bestTarget &&
+        currentTarget !== bestTarget &&
+        bestTarget.score <= currentTarget.score * 1.15
+      ) {
+        stockTargets.splice(stockTargets.indexOf(currentTarget), 1);
+        stockTargets.unshift(currentTarget);
+      }
+    }
+    let proposedStrategy: BatchStrategy = evalRec.strategy;
+    if (stockTargets.length > 0) {
+      proposedStrategy = "STOCK";
+    }
     const now = Date.now();
 
     let activeStrategy = proposedStrategy;
@@ -55,6 +82,7 @@ export async function main(ns: NS): Promise<void> {
       proposedStrategy,
       lastTarget,
       lastTargetChangeTime,
+      stockTargets,
     );
 
     let strategyCandidate = proposedStrategy;
@@ -74,6 +102,7 @@ export async function main(ns: NS): Promise<void> {
         strategyCandidate !== "XP_GRIND" &&
         strategyCandidate !== "WORKER" &&
         strategyCandidate !== "BOOTSTRAP" &&
+        strategyCandidate !== "STOCK" &&
         shouldForcePrep(ns, evalTarget, lastStrategy)
       ) {
         strategyCandidate = "PREP";
@@ -83,15 +112,21 @@ export async function main(ns: NS): Promise<void> {
     // 3️⃣ Strategie-Cooldown prüfen
     if (lastStrategy !== null && strategyCandidate !== lastStrategy) {
       const timeSinceLastChange = now - lastStrategyChangeTime;
-      const isEmergencySwitch =
-        EMERGENCY_STRATEGIES.includes(strategyCandidate);
+      const isEmergencySwitch = EMERGENCY_STRATEGIES.includes(strategyCandidate);
+      const isStockModeSwitch =
+        lastStrategy === "STOCK" ||
+        strategyCandidate === "STOCK";
       const isJitShotgunFlip =
         (lastStrategy === "JIT_HWGW" && strategyCandidate === "SHOTGUN_HWGW") ||
         (lastStrategy === "SHOTGUN_HWGW" && strategyCandidate === "JIT_HWGW");
 
       const stabilityHoldMs = isJitShotgunFlip ? 60_000 : STRATEGY_COOLDOWN_MS;
 
-      if (!isEmergencySwitch && timeSinceLastChange < stabilityHoldMs) {
+      if (
+        !isEmergencySwitch &&
+        !isStockModeSwitch &&
+        timeSinceLastChange < stabilityHoldMs
+      ) {
         const remainingSec = (
           (stabilityHoldMs - timeSinceLastChange) /
           1000
@@ -122,6 +157,10 @@ export async function main(ns: NS): Promise<void> {
               },
             },
           );
+        } else if (isStockModeSwitch) {
+          logger.info(
+            `Sofortiger Wechsel zwischen STOCK und ${strategyCandidate} (Cooldown umgangen).`,
+          );
         }
         activeStrategy = strategyCandidate;
         lastStrategyChangeTime = now;
@@ -137,6 +176,7 @@ export async function main(ns: NS): Promise<void> {
       activeStrategy,
       lastTarget,
       lastTargetChangeTime,
+      stockTargets,
     );
 
     if (!finalTarget || !ns.hasRootAccess(finalTarget)) {
@@ -150,7 +190,15 @@ export async function main(ns: NS): Promise<void> {
 
     // 6️⃣ Engine starten ODER Multi-Target Worker verteilen
     let executionActive: boolean;
-    if (activeStrategy === "BOOTSTRAP" || activeStrategy === "WORKER") {
+    if (activeStrategy === "STOCK") {
+      stopAllEngines(ns, logger);
+      executionActive = await deployStockInfluenceFleet(
+        ns,
+        logger,
+        getAllRootedServersIncludingPurchased(ns),
+        stockTargets,
+      );
+    } else if (activeStrategy === "BOOTSTRAP" || activeStrategy === "WORKER") {
       stopAllEngines(ns, logger);
 
       const allServers = getAllRootedServersIncludingPurchased(ns);
@@ -220,11 +268,13 @@ export async function main(ns: NS): Promise<void> {
       batchStrategy: activeStrategy,
       batcherTarget: finalTarget,
       batcherActive: executionActive,
-      batcherProgress: executionActive
-        ? activeStrategy === "XP_GRIND"
+      batcherProgress: !executionActive
+        ? `Warten auf RAM für ${activeStrategy} (${finalTarget})`
+        : activeStrategy === "XP_GRIND"
           ? `XP-Grind aktiv auf ${finalTarget}`
-          : `Laufende Strategie: ${activeStrategy}`
-        : `Warten auf RAM für ${activeStrategy} (${finalTarget})`,
+          : activeStrategy === "STOCK"
+            ? `Stock-Manipulation aktiv auf ${finalTarget}`
+            : `Laufende Strategie: ${activeStrategy}`,
     });
 
     // 7️⃣ Dashboards verwalten
@@ -277,7 +327,12 @@ function resolveTargetForStrategy(
   strategy: BatchStrategy,
   currentTarget: string | null,
   lastTargetChangeTime: number,
+  stockTargets: readonly StockInfluenceTarget[] = [],
 ): string | null {
+  if (strategy === "STOCK") {
+    return stockTargets[0]?.hostname ?? resolveXpTarget(ns);
+  }
+
   if (strategy === "XP_GRIND") {
     const daemon = "w0r1d_d43m0n";
     const hasDaemonRoot = ns.serverExists(daemon) && ns.hasRootAccess(daemon);
@@ -318,7 +373,9 @@ function manageDashboards(
   const activeDashboardScript =
     activeStrategy === "JIT_HWGW"
       ? jitDash
-      : activeStrategy !== null && !isWorkerPhase
+      : activeStrategy !== null &&
+          !isWorkerPhase &&
+          activeStrategy !== "STOCK"
         ? engineDash
         : null;
 
@@ -467,6 +524,91 @@ export async function deployWorkerFleet(
         targetIndex++;
       }
     }
+  }
+  return deployedAny;
+}
+
+async function deployStockInfluenceFleet(
+  ns: NS,
+  logger: LoggerClient,
+  servers: string[],
+  targets: readonly StockInfluenceTarget[],
+): Promise<boolean> {
+  const target = targets[0];
+  if (!target || servers.length === 0) return false;
+
+  const workerScript = PATHS.services.payloads.work;
+  const workerName = workerScript.replace(/^.*[\\/]/, "");
+  const targetServers = servers.filter((host) => host !== "home");
+
+  for (const host of servers) {
+    for (const proc of ns.ps(host)) {
+      if (!proc.filename.endsWith(workerName)) continue;
+      const isMatchingStockWorker =
+        String(proc.args[0]) === target.hostname &&
+        proc.args[1] === "STOCK" &&
+        proc.args[2] === target.type;
+      if (!isMatchingStockWorker) ns.kill(proc.pid);
+    }
+  }
+
+  if (!ns.fileExists(workerScript, "home")) {
+    logger.warn(`Stock-Worker-Skript fehlt auf home: ${workerScript}`);
+    return false;
+  }
+  const scriptRam = ns.getScriptRam(workerScript, "home");
+  if (!Number.isFinite(scriptRam) || scriptRam <= 0) {
+    logger.warn(`Stock-Worker-Skript hat ungültigen RAM-Verbrauch: ${workerScript}`);
+    return false;
+  }
+
+  const hasMatchingWorker = targetServers.some((host) =>
+    ns.ps(host).some(
+      (proc) =>
+        proc.filename.endsWith(workerName) &&
+        String(proc.args[0]) === target.hostname &&
+        proc.args[1] === "STOCK" &&
+        proc.args[2] === target.type,
+    ),
+  );
+  let deployedAny = hasMatchingWorker;
+  let startedWorker = false;
+  const prioritizedServers = [...targetServers].sort(
+    (a, b) => ns.getServerMaxRam(b) - ns.getServerMaxRam(a),
+  );
+
+  for (const host of prioritizedServers) {
+    if (!ns.hasRootAccess(host)) continue;
+    if (!(await ensureScriptsOnServer(ns, host, [workerScript]))) continue;
+
+    const freeRam = getWorkerFreeRam(ns, host, "hacking");
+    const threads = Math.floor(freeRam / scriptRam);
+    if (threads <= 0) continue;
+
+    const pid = ns.exec(
+      workerScript,
+      host,
+      threads,
+      target.hostname,
+      "STOCK",
+      target.type,
+    );
+    if (pid <= 0) {
+      logger.warn(
+        `Stock-Worker-Start fehlgeschlagen auf ${host} für ${target.symbol} (${target.type}).`,
+      );
+      continue;
+    }
+    deployedAny = true;
+    startedWorker = true;
+  }
+
+  if (startedWorker) {
+    logger.info(
+      `Stock-Manipulation aktiv: ${target.symbol} ${target.type} auf ${target.hostname}.`,
+      target.hostname,
+      { context: { symbol: target.symbol, forecast: target.forecast } },
+    );
   }
   return deployedAny;
 }

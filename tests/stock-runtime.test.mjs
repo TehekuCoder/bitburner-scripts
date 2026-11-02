@@ -9,12 +9,14 @@ import {
   getStockCashReserve,
   getStockTradingBudget,
   isStockPositionProfitableAfterFees,
+  isStockInfluenceRamConstrained,
   meetsStockMinimumInvestment,
   parseStockPriceHistory,
   updateStockPriceHistory,
   STOCK_LONG_ENTRY_FORECAST,
   STOCK_SHORT_ENTRY_FORECAST,
   shouldExitStockPosition,
+  shouldInfluenceStockPosition,
 } from "../src/domain/evaluators/purchase/stock-runtime.ts";
 import { isStockFinanceActionAllowed } from "../src/app/orchestration/finance-runtime.ts";
 
@@ -31,6 +33,16 @@ test("stock exits require a clear opposite signal", () => {
   assert.equal(shouldExitStockPosition("LONG", Number.NaN), false);
 });
 
+test("stock influence follows aligned positions and keeps a wider active band", () => {
+  assert.equal(shouldInfluenceStockPosition("LONG", 0.6, false), false);
+  assert.equal(shouldInfluenceStockPosition("LONG", 0.61, false), true);
+  assert.equal(shouldInfluenceStockPosition("SHORT", 0.39, false), true);
+  assert.equal(shouldInfluenceStockPosition("LONG", 0.51, true), true);
+  assert.equal(shouldInfluenceStockPosition("SHORT", 0.49, true), true);
+  assert.equal(shouldInfluenceStockPosition("LONG", 0.5, true), false);
+  assert.equal(shouldInfluenceStockPosition("SHORT", Number.NaN, true), false);
+});
+
 test("stock budget applies its allocation ratio once", () => {
   assert.equal(getStockTradingBudget(1000, 0.8), 800);
   assert.equal(getStockTradingBudget(1000, 0), 0);
@@ -41,6 +53,12 @@ test("stock orders below the minimum investment are rejected", () => {
   assert.equal(meetsStockMinimumInvestment(4_999_999, 5_000_000), false);
   assert.equal(meetsStockMinimumInvestment(5_000_000, 5_000_000), true);
   assert.equal(meetsStockMinimumInvestment(Number.NaN, 5_000_000), false);
+});
+
+test("stock server expansion starts only when worker RAM cannot fit a script", () => {
+  assert.equal(isStockInfluenceRamConstrained(1.69, 1.7), true);
+  assert.equal(isStockInfluenceRamConstrained(1.7, 1.7), false);
+  assert.equal(isStockInfluenceRamConstrained(Number.NaN, 1.7), false);
 });
 
 test("BN8 keeps a small cash reserve while other BitNodes keep the default", () => {
