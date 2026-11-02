@@ -9,6 +9,7 @@ import {
   getStockCashReserve,
   getStockTradingBudget,
   isStockPositionProfitableAfterFees,
+  meetsStockMinimumInvestment,
   parseStockPriceHistory,
   updateStockPriceHistory,
   STOCK_LONG_ENTRY_FORECAST,
@@ -34,6 +35,12 @@ test("stock budget applies its allocation ratio once", () => {
   assert.equal(getStockTradingBudget(1000, 0.8), 800);
   assert.equal(getStockTradingBudget(1000, 0), 0);
   assert.equal(getStockTradingBudget(-100, 0.8), 0);
+});
+
+test("stock orders below the minimum investment are rejected", () => {
+  assert.equal(meetsStockMinimumInvestment(4_999_999, 5_000_000), false);
+  assert.equal(meetsStockMinimumInvestment(5_000_000, 5_000_000), true);
+  assert.equal(meetsStockMinimumInvestment(Number.NaN, 5_000_000), false);
 });
 
 test("BN8 keeps a small cash reserve while other BitNodes keep the default", () => {

@@ -209,6 +209,18 @@ export function getStockTradingBudget(
   return Math.max(0, availableMoney) * budgetRatio;
 }
 
+export function meetsStockMinimumInvestment(
+  orderCost: number,
+  minimumInvestment: number,
+): boolean {
+  return (
+    Number.isFinite(orderCost) &&
+    Number.isFinite(minimumInvestment) &&
+    minimumInvestment >= 0 &&
+    orderCost >= minimumInvestment
+  );
+}
+
 export function getStockTradeBudgetRatio(bitNode: number): number {
   return bitNode === 8
     ? BITNODE_8_STOCK_TRADE_BUDGET_RATIO

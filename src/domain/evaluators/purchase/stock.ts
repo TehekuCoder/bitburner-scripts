@@ -14,6 +14,7 @@ import { PATHS } from "/infrastructure/runtime/paths";
 import {
   BITNODE_8_CASH_BUFFER,
   CASH_BUFFER,
+  MIN_INVESTMENT,
   STOCK_DASHBOARD_FILE,
 } from "/shared/constants/finance.js";
 import { loadFinanceState } from "/infrastructure/state/state.js";
@@ -28,6 +29,7 @@ import {
   getStockTradingBudget,
   estimateStockForecast,
   isStockPositionProfitableAfterFees,
+  meetsStockMinimumInvestment,
   parseStockPriceHistory,
   STOCK_LONG_ENTRY_FORECAST,
   STOCK_SHORT_ENTRY_FORECAST,
@@ -457,7 +459,10 @@ export const StockEvaluator: PurchaseEvaluator = {
           }
         }
 
-        if (affordableShares > 0) {
+        if (
+          affordableShares > 0 &&
+          meetsStockMinimumInvestment(targetCost, MIN_INVESTMENT)
+        ) {
           budgetLeft -= targetCost;
           const score = Math.floor(candidate.strength * 100);
 
@@ -492,11 +497,20 @@ export const StockEvaluator: PurchaseEvaluator = {
           );
         } else {
           const row = dashboardBySymbol.get(sym);
-          if (row) row.decision = "Kein Kauf: Budget reicht nicht für 1 Aktie";
+          const belowMinimum =
+            affordableShares > 0 &&
+            !meetsStockMinimumInvestment(targetCost, MIN_INVESTMENT);
+          if (row) {
+            row.decision = belowMinimum
+              ? `Kein Kauf: Mindestbetrag $${ns.format.number(MIN_INVESTMENT)}`
+              : "Kein Kauf: Budget reicht nicht für 1 Aktie";
+          }
           logStockDecision(
             logger,
             sym,
-            "Kein Kauf: Das verbleibende Handelsbudget reicht nicht für eine Aktie inklusive Gebühren.",
+            belowMinimum
+              ? `Kein Kauf: Die Orderkosten liegen unter dem Mindestbetrag von $${ns.format.number(MIN_INVESTMENT)} inklusive Gebühren.`
+              : "Kein Kauf: Das verbleibende Handelsbudget reicht nicht für eine Aktie inklusive Gebühren.",
           );
         }
       }
