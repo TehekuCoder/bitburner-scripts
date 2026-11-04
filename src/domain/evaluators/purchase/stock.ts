@@ -28,7 +28,6 @@ import {
   getStockTradeBudgetRatio,
   getStockTradingBudget,
   estimateStockForecast,
-  isStockPositionProfitableAfterFees,
   meetsStockMinimumInvestment,
   parseStockPriceHistory,
   STOCK_LONG_ENTRY_FORECAST,
@@ -304,8 +303,7 @@ export const StockEvaluator: PurchaseEvaluator = {
         logStockDecision(logger, sym, row.decision);
         continue;
       }
-      const [shares, averageLongPrice, sharesShort, averageShortPrice] =
-        ns.stock.getPosition(sym);
+      const [shares, , sharesShort] = ns.stock.getPosition(sym);
       const row: StockDashboardSymbol = {
         symbol: sym,
         forecast,
@@ -322,64 +320,48 @@ export const StockEvaluator: PurchaseEvaluator = {
         shares > 0 &&
         shouldExitStockPosition("LONG", forecast, exitThreshold)
       ) {
-        if (
-          isStockPositionProfitableAfterFees(
-            "LONG",
-            shares,
-            averageLongPrice,
-            ns.stock.getBidPrice(sym),
-            stockConstants.StockMarketCommission,
-          )
-        ) {
-          row.decision = "VERKAUF LONG";
-          requests.push({
-            id: `stock-exit-${sym}-LONG`,
-            category: "STOCK_TRADE" as PurchaseCategory,
-            priority: PurchasePriority.HIGH,
-            score: Math.round((0.5 - forecast) * 100),
-            cost: 0,
-            description: `Aktien-Ausstieg: ${sym} LONG [${hasFourSigmaApi ? "Forecast" : "Schätzung"}: ${(forecast * 100).toFixed(1)}%]`,
-            action: {
-              script: PATHS.app.actions.stockSellLong,
-              args: ["stock-sell", sym, "LONG", shares],
-            },
-          });
-        } else {
-          row.decision = "HALTEN LONG (Verkauf nach Gebühren Verlust)";
-        }
-        logStockDecision(logger, sym, `${row.decision}: Forecast ${(forecast * 100).toFixed(1)}%`);
+        row.decision = "VERKAUF LONG (Gegensignal)";
+        requests.push({
+          id: `stock-exit-${sym}-LONG`,
+          category: "STOCK_TRADE" as PurchaseCategory,
+          priority: PurchasePriority.HIGH,
+          score: Math.round((0.5 - forecast) * 100),
+          cost: 0,
+          description: `Aktien-Ausstieg: ${sym} LONG (Gegensignal; unabhängig von Gebührengewinn) [${hasFourSigmaApi ? "Forecast" : "Schätzung"}: ${(forecast * 100).toFixed(1)}%]`,
+          action: {
+            script: PATHS.app.actions.stockSellLong,
+            args: ["stock-sell", sym, "LONG", shares],
+          },
+        });
+        logStockDecision(
+          logger,
+          sym,
+          `${row.decision}: Gegensignal bei Forecast ${(forecast * 100).toFixed(1)}%; Verkauf unabhängig vom Gewinn nach Gebühren.`,
+        );
       }
 
       if (
         sharesShort > 0 &&
         shouldExitStockPosition("SHORT", forecast, exitThreshold)
       ) {
-        if (
-          isStockPositionProfitableAfterFees(
-            "SHORT",
-            sharesShort,
-            averageShortPrice,
-            ns.stock.getAskPrice(sym),
-            stockConstants.StockMarketCommission,
-          )
-        ) {
-          row.decision = "VERKAUF SHORT";
-          requests.push({
-            id: `stock-exit-${sym}-SHORT`,
-            category: "STOCK_TRADE" as PurchaseCategory,
-            priority: PurchasePriority.HIGH,
-            score: Math.round((forecast - 0.5) * 100),
-            cost: 0,
-            description: `Aktien-Ausstieg: ${sym} SHORT [${hasFourSigmaApi ? "Forecast" : "Schätzung"}: ${(forecast * 100).toFixed(1)}%]`,
-            action: {
-              script: PATHS.app.actions.stockSellShort,
-              args: ["stock-sell", sym, "SHORT", sharesShort],
-            },
-          });
-        } else {
-          row.decision = "HALTEN SHORT (Verkauf nach Gebühren Verlust)";
-        }
-        logStockDecision(logger, sym, `${row.decision}: Forecast ${(forecast * 100).toFixed(1)}%`);
+        row.decision = "VERKAUF SHORT (Gegensignal)";
+        requests.push({
+          id: `stock-exit-${sym}-SHORT`,
+          category: "STOCK_TRADE" as PurchaseCategory,
+          priority: PurchasePriority.HIGH,
+          score: Math.round((forecast - 0.5) * 100),
+          cost: 0,
+          description: `Aktien-Ausstieg: ${sym} SHORT (Gegensignal; unabhängig von Gebührengewinn) [${hasFourSigmaApi ? "Forecast" : "Schätzung"}: ${(forecast * 100).toFixed(1)}%]`,
+          action: {
+            script: PATHS.app.actions.stockSellShort,
+            args: ["stock-sell", sym, "SHORT", sharesShort],
+          },
+        });
+        logStockDecision(
+          logger,
+          sym,
+          `${row.decision}: Gegensignal bei Forecast ${(forecast * 100).toFixed(1)}%; Verkauf unabhängig vom Gewinn nach Gebühren.`,
+        );
       }
 
       if (shares === 0 && sharesShort === 0) {

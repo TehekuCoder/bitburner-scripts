@@ -25,7 +25,7 @@ test("BitNode 8 allocates a larger stock trading budget than the default", () =>
   assert.equal(getStockTradeBudgetRatio(7), DEFAULT_STOCK_TRADE_BUDGET_RATIO);
 });
 
-test("stock exits require a clear opposite signal", () => {
+test("stock exit signals trigger on a clear reversal independently of trade profit", () => {
   assert.equal(shouldExitStockPosition("LONG", STOCK_SHORT_ENTRY_FORECAST), true);
   assert.equal(shouldExitStockPosition("LONG", 0.41), false);
   assert.equal(shouldExitStockPosition("SHORT", STOCK_LONG_ENTRY_FORECAST), true);
