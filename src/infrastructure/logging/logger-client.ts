@@ -88,7 +88,7 @@ export class LoggerClient {
    */
   public timeEnd(label: string, level: LogLevel = "DEBUG", target?: string): number {
     const start = this.timers.get(label);
-    if (!start) {
+    if (start === undefined) {
       this.warn(`Timer '${label}' wurde nicht gestartet.`);
       return 0;
     }

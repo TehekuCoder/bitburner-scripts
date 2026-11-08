@@ -54,11 +54,15 @@ export async function main(ns: NS): Promise<void> {
   let currentPhase = determinePhase(ns, postInvestor1Phase);
 
   const recentLogs: string[] = [];
+  const logMethods: Record<LogLevel, (message: string) => void> = {
+    DEBUG: (message) => logger.debug(message),
+    INFO: (message) => logger.info(message),
+    SUCCESS: (message) => logger.success(message),
+    WARN: (message) => logger.warn(message),
+    ERROR: (message) => logger.error(message),
+  };
   const log = (msg: string, level: LogLevel = "INFO") => {
-    const logMethod =
-      (logger[level.toLowerCase() as keyof LoggerClient] as Function) ??
-      logger.info;
-    logMethod.call(logger, msg);
+    logMethods[level](msg);
 
     recentLogs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
     if (recentLogs.length > 5) recentLogs.shift();
