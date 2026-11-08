@@ -2,6 +2,7 @@ import { NS } from "@ns";
 import { LogLevel, LoggerContext, LogPayload } from "/shared/types/logger";
 import { LOG_PORT } from "../runtime/system";
 import { LEVEL_RANK } from "/shared/constants/logger";
+import { PortDropTracker, shouldEmitLog } from "./logger-client-policy";
 
 // Typ für die erlaubten Context-Werte (passend zu LogPayload in types.ts)
 type ContextValue = string | number | boolean | null | undefined;
@@ -17,9 +18,7 @@ export class LoggerClient {
   private baseContext: ContextRecord;
   private baseTags: string[];
   private timers: Map<string, number> = new Map();
-  private droppedPortLogs = 0;
-  private lastPortWarning = 0;
-  private static readonly PORT_WARNING_INTERVAL_MS = 30_000;
+  private readonly droppedPortTracker = new PortDropTracker(30_000);
 
   constructor(
     ns: NS,
@@ -111,7 +110,7 @@ export class LoggerClient {
       ...(context?.context as ContextRecord || {}) 
     };
 
-    if (levelRank < this.minLevelRank) return;
+    if (!shouldEmitLog(levelRank, this.minLevelRank)) return;
 
     const targetStr = currentTarget ? ` [${currentTarget.toLowerCase()}]` : "";
     const icon = this.getLevelIcon(level);
@@ -127,23 +126,15 @@ export class LoggerClient {
       context: Object.keys(mergedContext).length > 0 ? mergedContext : undefined,
     };
 
-    const success = this.ns.tryWritePort(this.portNumber, payload);
-    if (!success) {
-      this.droppedPortLogs++;
-    }
-    this.reportDroppedLogs();
-  }
-
-  private reportDroppedLogs(): void {
-    if (this.droppedPortLogs === 0) return;
-    const now = Date.now();
-    if (now - this.lastPortWarning < LoggerClient.PORT_WARNING_INTERVAL_MS) return;
-
-    this.ns.print(
-      `⚠️ [LOGGER-CLIENT] Port ${this.portNumber} voll; ${this.droppedPortLogs} Log(s) verworfen.`,
+    const droppedCount = this.droppedPortTracker.record(
+      this.ns.tryWritePort(this.portNumber, payload),
+      Date.now(),
     );
-    this.droppedPortLogs = 0;
-    this.lastPortWarning = now;
+    if (droppedCount !== undefined) {
+      this.ns.print(
+        `⚠️ [LOGGER-CLIENT] Port ${this.portNumber} voll; ${droppedCount} Log(s) verworfen.`,
+      );
+    }
   }
 
   private getLevelIcon(level: LogLevel): string {
