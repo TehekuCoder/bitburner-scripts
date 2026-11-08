@@ -1,6 +1,7 @@
 import { NS, BladeburnerActionType, BladeburnerActionName, BladeburnerBlackOpName } from "@ns";
 import { manageCityAndChaos, calculateDynamicThreshold } from "/domain/bladeburner/chaos-control";
 import { autoUpgradeSkills } from "/domain/bladeburner/skill-manager";
+import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 
 const CONFIG = {
   STAMINA_RECOVERY_THRESHOLD: 0.5,
@@ -15,13 +16,26 @@ const CONFIG = {
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   ns.ui.openTail();
+  const logger = new LoggerClient(ns, "BLADEBURNER", undefined, "INFO");
+  const failedActions = new Set<string>();
+  let waitingForJoin = false;
+
+  logger.info("Bladeburner-Manager gestartet.");
 
   while (true) {
     if (!ns.bladeburner.inBladeburner()) {
       if (!ns.bladeburner.joinBladeburnerDivision()) {
+        if (!waitingForJoin) {
+          logger.info("Warte auf ausreichende Combat-Stats zum Bladeburner-Beitritt.");
+          waitingForJoin = true;
+        }
         ns.print("⏳ Warte auf ausreichende Combat-Stats zum Beitritt...");
         await ns.sleep(10000);
         continue;
+      }
+      if (waitingForJoin) {
+        logger.success("Bladeburner-Division beigetreten.");
+        waitingForJoin = false;
       }
     }
 
@@ -45,7 +59,13 @@ export async function main(ns: NS): Promise<void> {
 
     if (staminaRatio < CONFIG.STAMINA_RECOVERY_THRESHOLD) {
       if (currentAction?.name !== "Hyperbolic Regeneration Chamber") {
-        setAction(ns, "General", "Hyperbolic Regeneration Chamber");
+        setAction(
+          ns,
+          "General",
+          "Hyperbolic Regeneration Chamber",
+          logger,
+          failedActions,
+        );
       }
       await sleepNextCycle(ns);
       continue;
@@ -62,13 +82,33 @@ export async function main(ns: NS): Promise<void> {
 
     if (bestAction) {
       if (currentAction?.name !== bestAction.name) {
-        const success = setAction(ns, bestAction.type, bestAction.name);
+        const success = setAction(
+          ns,
+          bestAction.type,
+          bestAction.name,
+          logger,
+          failedActions,
+        );
         if (!success) {
-          executeFallbackAction(ns, currentAction, currentChaos, dynamicChaosLimit);
+          executeFallbackAction(
+            ns,
+            currentAction,
+            currentChaos,
+            dynamicChaosLimit,
+            logger,
+            failedActions,
+          );
         }
       }
     } else {
-      executeFallbackAction(ns, currentAction, currentChaos, dynamicChaosLimit);
+      executeFallbackAction(
+        ns,
+        currentAction,
+        currentChaos,
+        dynamicChaosLimit,
+        logger,
+        failedActions,
+      );
     }
 
     await sleepNextCycle(ns);
@@ -140,13 +180,19 @@ function executeFallbackAction(
   currentAction: { type: string; name: string } | null,
   currentChaos: number,
   chaosLimit: number,
+  logger: LoggerClient,
+  failedActions: Set<string>,
 ): void {
   if (currentChaos > chaosLimit) {
-    if (currentAction?.name !== "Diplomacy") setAction(ns, "General", "Diplomacy");
+    if (currentAction?.name !== "Diplomacy") {
+      setAction(ns, "General", "Diplomacy", logger, failedActions);
+    }
   } else if (hasLowCombatStats(ns)) {
-    if (currentAction?.name !== "Training") setAction(ns, "General", "Training");
+    if (currentAction?.name !== "Training") {
+      setAction(ns, "General", "Training", logger, failedActions);
+    }
   } else if (currentAction?.name !== "Field Analysis") {
-    setAction(ns, "General", "Field Analysis");
+    setAction(ns, "General", "Field Analysis", logger, failedActions);
   }
 }
 
@@ -160,9 +206,27 @@ function hasLowCombatStats(ns: NS): boolean {
   );
 }
 
-function setAction(ns: NS, type: BladeburnerActionType, name: BladeburnerActionName): boolean {
+function setAction(
+  ns: NS,
+  type: BladeburnerActionType,
+  name: BladeburnerActionName,
+  logger: LoggerClient,
+  failedActions: Set<string>,
+): boolean {
   const success = ns.bladeburner.startAction(type, name);
-  if (success) ns.print(`▶️ Aktion gestartet: [${type}] ${name}`);
+  const actionKey = `${type}:${name}`;
+  if (success) {
+    failedActions.clear();
+    logger.info(`Bladeburner-Aktion gestartet: ${type} / ${name}.`, undefined, {
+      context: { actionType: type, actionName: name },
+    });
+    ns.print(`▶️ Aktion gestartet: [${type}] ${name}`);
+  } else if (!failedActions.has(actionKey)) {
+    failedActions.add(actionKey);
+    logger.warn(`Bladeburner-Aktion konnte nicht gestartet werden: ${type} / ${name}.`, undefined, {
+      context: { actionType: type, actionName: name },
+    });
+  }
   return success;
 }
 

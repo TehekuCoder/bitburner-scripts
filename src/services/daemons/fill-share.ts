@@ -9,11 +9,16 @@ import {
 } from "/infrastructure/network/network.js";
 import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
 import { RAM_ALLOCATION } from "/shared/constants/ram-allocation.js";
+import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
+  const logger = new LoggerClient(ns, "SHARE-FILLER", undefined, "INFO");
+  const warnedHosts = new Set<string>();
   const shareScript = PATHS.services.payloads.share;
   const cleanShareName = shareScript.replace(/\\/g, "/").split("/").pop()!;
+
+  logger.info("Share-Filler gestartet.");
 
   while (true) {
     const state = loadState(ns);
@@ -65,7 +70,10 @@ export async function main(ns: NS): Promise<void> {
         currentThreads + availableThreads,
       );
 
-      if (targetThreads === currentThreads) continue;
+      if (targetThreads === currentThreads) {
+        warnedHosts.delete(host);
+        continue;
+      }
 
       for (const process of shareProcesses) {
         ns.kill(process.pid);
@@ -74,10 +82,28 @@ export async function main(ns: NS): Promise<void> {
       if (targetThreads > 0) {
         const pid = ns.exec(shareScript, host, targetThreads);
         if (pid <= 0) {
-          ns.print(
-            `[SHARE] Share-Worker-Start fehlgeschlagen auf ${host} (${targetThreads} Threads).`,
-          );
+          if (!warnedHosts.has(host)) {
+            warnedHosts.add(host);
+            logger.forTarget(host).warn(
+              `Share-Worker konnte nicht gestartet werden (${targetThreads} Threads).`,
+              undefined,
+              {
+                context: {
+                  targetThreads,
+                  availableThreads,
+                  desiredThreads,
+                },
+              },
+            );
+            ns.print(
+              `[SHARE] Share-Worker-Start fehlgeschlagen auf ${host} (${targetThreads} Threads).`,
+            );
+          }
+        } else {
+          warnedHosts.delete(host);
         }
+      } else {
+        warnedHosts.delete(host);
       }
     }
 
