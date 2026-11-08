@@ -6,6 +6,7 @@ import { BotState, StrategyResult } from "/shared/types/strategy.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import { loadBnMults, hasSingularity } from "/lib/utils.js";
 import { shouldContinueFactionReputation } from "./strategy-stability.js";
+import { getDaedalusAugmentationRequirement } from "../evaluators/purchase/bn8-augmentation.js";
 
 const MEGACORP_FACTION_TO_COMPANY: Record<string, CompanyName> = {
   ECorp: "ECorp" as CompanyName,
@@ -33,6 +34,14 @@ export function hasPurchasedAugsThisRun(ns: NS): boolean {
 export function hasRedPill(ns: NS): boolean {
   try {
     return ns.singularity.getOwnedAugmentations(true).includes("The Red Pill");
+  } catch {
+    return false;
+  }
+}
+
+export function hasInstalledRedPill(ns: NS): boolean {
+  try {
+    return ns.singularity.getOwnedAugmentations(false).includes("The Red Pill");
   } catch {
     return false;
   }
@@ -224,11 +233,13 @@ export function determineStrategy(
   ];
 
   const hackExpMult = bnMults.HackExpGain ?? 1;
-  const reqDaedalusAugs = Math.floor(30 * (bnMults.DaedalusAugsRequirement ?? 1));
+  const reqDaedalusAugs = getDaedalusAugmentationRequirement(
+    bnMults.DaedalusAugsRequirement ?? 1,
+  );
   const hasGang = ns.gang
     ? ns.gang.inGang()
     : (currentState?.hasGang ?? false);
-  const redPillOwned = hasRedPill(ns);
+  const redPillOwned = hasInstalledRedPill(ns);
   const daedalusRep = player.factions.includes("Daedalus")
     ? ns.singularity.getFactionRep("Daedalus")
     : 0;
@@ -468,7 +479,9 @@ export function isReadyForDaedalus(
   bnMults?: BitNodeMultipliers,
 ): boolean {
   const mults = bnMults ?? loadBnMults(ns);
-  const reqAugs = Math.floor(30 * (mults.DaedalusAugsRequirement ?? 1));
+  const reqAugs = getDaedalusAugmentationRequirement(
+    mults.DaedalusAugsRequirement ?? 1,
+  );
   const installedAugs = ns.singularity.getOwnedAugmentations(false).length;
   const hasMoney = player.money >= 100e9;
   const hasSkill =

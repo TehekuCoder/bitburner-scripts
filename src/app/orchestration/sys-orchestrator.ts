@@ -44,6 +44,15 @@ export async function main(ns: NS): Promise<void> {
   logger.info("⚡ BitOS System-Orchestrator initiiert.");
 
   const daemons: DaemonConfig[] = [
+    {
+      name: "BN8 Grafting Manager",
+      path: PATHS.services.managers.bn8Grafting,
+      enabledInBn8MinimalMode: true,
+      condition: (ns) =>
+        ns.getResetInfo().currentNode === 8 &&
+        (ns.getResetInfo().ownedSF.get(10) ?? 0) > 0,
+    },
+
     // 1. CCT Solver Task
     {
       name: "CCT Solver Task",

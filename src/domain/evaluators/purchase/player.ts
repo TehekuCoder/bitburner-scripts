@@ -24,6 +24,14 @@ import {
   loadAugmentState,
   patchAugmentState,
 } from "/infrastructure/state/state.js";
+import {
+  getDaedalusAugmentationRequirement,
+  getHackingAugmentationValue,
+  getMissingDaedalusAugmentationCount,
+  hasBothFourSigmaLicenses,
+  hasGraftingUnlock,
+  hasHackingAugmentationBenefit,
+} from "./bn8-augmentation.js";
 
 function getCurrentGangFaction(ns: NS): FactionName | undefined {
   if (!ns.gang?.inGang()) return undefined;
@@ -181,16 +189,21 @@ export const PlayerEvaluator: PurchaseEvaluator = {
     const requests: PurchaseRequest[] = [];
     if (!hasSingularity(ns)) return requests;
 
+    const isBitNode8 = ns.getResetInfo().currentNode === 8;
+    if (isBitNode8 && !hasBothFourSigmaLicenses(ns)) return requests;
+
     const sing = ns.singularity;
     const bnMults = loadBnMults(ns);
     const costMult = bnMults.AugmentationMoneyCost ?? 1.0;
     const efficiencyMult = costMult > 0 ? 1 / costMult : 1.0;
 
     const ownedAugs = sing.getOwnedAugmentations(true);
+    const installedAugs = sing.getOwnedAugmentations(false);
     const uninstalled = getPurchasedUninstalledAugs(ns);
-
-    // Installing augmentations resets the game; the player performs that step manually.
-    if (uninstalled.length > 0) return requests;
+    const redPillInstalled = installedAugs.includes("The Red Pill");
+    const redPillPurchased = ownedAugs.includes("The Red Pill");
+    if (!isBitNode8 && uninstalled.length > 0) return requests;
+    if (isBitNode8 && (redPillInstalled || redPillPurchased)) return requests;
 
     const plan = loadAugmentState(ns)?.augPurchasePlan;
     const gangFaction = getCurrentGangFaction(ns);
@@ -208,8 +221,43 @@ export const PlayerEvaluator: PurchaseEvaluator = {
     if (gangFaction) playerFactions.add(gangFaction);
 
     const ownedAugSet = new Set(ownedAugs);
-    const eligibleItems = getEligibleAugmentations(plan.items, ownedAugSet);
+    const eligibleItems = getEligibleAugmentations(plan.items, ownedAugSet)
+      .filter((item) =>
+        !isBitNode8 ||
+        item.name === "The Red Pill" ||
+        hasHackingAugmentationBenefit(sing.getAugmentationStats(item.name)),
+      )
+      .sort((a, b) => {
+        if (!isBitNode8) return 0;
+        const aValue = getHackingAugmentationValue(
+          sing.getAugmentationStats(a.name),
+        );
+        const bValue = getHackingAugmentationValue(
+          sing.getAugmentationStats(b.name),
+        );
+        return bValue / b.basePrice - aValue / a.basePrice;
+      });
+    const daedalusAugRequirement = getDaedalusAugmentationRequirement(
+      bnMults.DaedalusAugsRequirement ?? 1,
+    );
+    let remainingInstalledAugSlots = isBitNode8
+      ? getMissingDaedalusAugmentationCount(
+          daedalusAugRequirement,
+          installedAugs.length,
+          uninstalled.length,
+        )
+      : Number.POSITIVE_INFINITY;
+    const canUseGrafting = isBitNode8 && hasGraftingUnlock(ns);
+
     for (const item of eligibleItems) {
+      if (isBitNode8) {
+        if (item.name === "The Red Pill") {
+          if (installedAugs.length < daedalusAugRequirement) continue;
+        } else {
+          if (canUseGrafting || remainingInstalledAugSlots <= 0) continue;
+        }
+      }
+
       const faction = getAvailableFaction(ns, item, playerFactions);
       if (!faction) continue;
 
@@ -225,7 +273,17 @@ export const PlayerEvaluator: PurchaseEvaluator = {
         priority: isRedPill
           ? PurchasePriority.CRITICAL
           : adjustPriorityByMult(PurchasePriority.HIGH, efficiencyMult),
-        score: isRedPill ? 100 : price,
+        score: isRedPill
+          ? 100
+          : isBitNode8
+            ? Math.round(
+                (getHackingAugmentationValue(
+                  sing.getAugmentationStats(item.name),
+                ) /
+                  price) *
+                  1_000_000,
+              )
+            : price,
         cost: price,
         description: `${isRedPill ? "CRITICAL " : ""}Augmentation: ${item.name} (${faction})`,
         action: {
@@ -233,6 +291,9 @@ export const PlayerEvaluator: PurchaseEvaluator = {
           args: ["player-purchase-aug", faction, item.name, price],
         },
       });
+      if (isBitNode8 && item.name !== "The Red Pill") {
+        remainingInstalledAugSlots--;
+      }
     }
 
     return requests;

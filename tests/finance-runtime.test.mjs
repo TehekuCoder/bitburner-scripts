@@ -8,6 +8,7 @@ import {
   getAffordableAugmentationShortlist,
   getCompletedAugmentationPurchaseOutcome,
   isFinanceCategoryAllowedInBitNode,
+  isFinanceCategoryAllowedDuringAugmentation,
   hasPendingFinanceCategory,
   isAugmentationPurchasePriceStale,
   isFinanceRequestRecentlyCompleted,
@@ -15,14 +16,32 @@ import {
   pruneExpiredFinanceRetries,
 } from "../src/app/orchestration/finance-runtime.ts";
 
-test("BitNode 8 finance dispatch allows stock and gated server purchases only", () => {
+test("BitNode 8 finance dispatch gates augmentations and programs by phase", () => {
   assert.equal(isFinanceCategoryAllowedInBitNode("DARKNET_PROGRAM", 8), false);
   assert.equal(isFinanceCategoryAllowedInBitNode("STOCK_LICENSE", 8), true);
   assert.equal(isFinanceCategoryAllowedInBitNode("STOCK_TRADE", 8), true);
   assert.equal(isFinanceCategoryAllowedInBitNode("PURCHASED_SERVER", 8), true);
   assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 8), false);
   assert.equal(isFinanceCategoryAllowedInBitNode("HOME_SERVER", 8), false);
+  assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 8, true), true);
+  assert.equal(
+    isFinanceCategoryAllowedInBitNode("DARKNET_PROGRAM", 8, true),
+    false,
+  );
+  assert.equal(
+    isFinanceCategoryAllowedInBitNode("DARKNET_PROGRAM", 8, true, true),
+    true,
+  );
   assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 7), true);
+});
+
+test("BN8 stock trading continues while an augmentation batch awaits installation", () => {
+  assert.equal(isFinanceCategoryAllowedDuringAugmentation("STOCK_TRADE", 8), true);
+  assert.equal(isFinanceCategoryAllowedDuringAugmentation("STOCK_LICENSE", 8), true);
+  assert.equal(isFinanceCategoryAllowedDuringAugmentation("PLAYER_AUG", 8), true);
+  assert.equal(isFinanceCategoryAllowedDuringAugmentation("DARKNET_PROGRAM", 8), false);
+  assert.equal(isFinanceCategoryAllowedDuringAugmentation("STOCK_TRADE", 7), false);
+  assert.equal(isFinanceCategoryAllowedDuringAugmentation("SLEEVE_AUG", 7), true);
 });
 
 test("BN8 prioritizes affordable 4S licenses over new stock positions", () => {

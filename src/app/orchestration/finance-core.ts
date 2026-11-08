@@ -26,7 +26,16 @@ import {
   loadAugmentState,
   loadFinanceState,
 } from "/infrastructure/state/state";
-import { getPurchasedUninstalledAugs } from "/domain/strategy/player.js";
+import {
+  getPurchasedUninstalledAugs,
+  hasInstalledRedPill,
+} from "/domain/strategy/player.js";
+import {
+  getDaedalusAugmentationRequirement,
+  hasBothFourSigmaLicenses,
+  hasGraftingUnlock,
+  hasHackingAugmentationBenefit,
+} from "/domain/evaluators/purchase/bn8-augmentation.js";
 import {
   getSingularityActionRam,
   getSingularityRamMultiplier,
@@ -41,6 +50,7 @@ import {
   hasPendingFinanceCategory,
   isStockFinanceActionAllowed,
   isFinanceCategoryAllowedInBitNode,
+  isFinanceCategoryAllowedDuringAugmentation,
   isAugmentationPurchasePriceStale,
   isFinanceRequestRecentlyCompleted,
   isFinanceActionTimedOut,
@@ -590,8 +600,15 @@ export async function main(ns: NS): Promise<void> {
     }
     const currentBitNode = ns.getResetInfo().currentNode;
     if (currentBitNode === 8) {
+      const hasFourSigmaLicenses = hasBothFourSigmaLicenses(ns);
+      const redPillInstalled = hasInstalledRedPill(ns);
       const stockRequests = allRequests.filter((request) =>
-        isFinanceCategoryAllowedInBitNode(request.category, currentBitNode),
+        isFinanceCategoryAllowedInBitNode(
+          request.category,
+          currentBitNode,
+          hasFourSigmaLicenses,
+          redPillInstalled,
+        ),
       );
       allRequests.splice(0, allRequests.length, ...stockRequests);
     }
@@ -614,10 +631,11 @@ export async function main(ns: NS): Promise<void> {
       }
     }
     if (isAugmentationMode) {
-      const maintenanceRequests = allRequests.filter(
-        (request) =>
-          request.category === "SLEEVE_AUG" ||
-          request.category === "GANG_EQUIPMENT",
+      const maintenanceRequests = allRequests.filter((request) =>
+        isFinanceCategoryAllowedDuringAugmentation(
+          request.category,
+          currentBitNode,
+        ),
       );
       allRequests.splice(
         0,
@@ -904,13 +922,53 @@ export async function main(ns: NS): Promise<void> {
       typeof augRequest?.action.args[2] === "string"
         ? augRequest.action.args[2]
         : undefined;
-    const nextPlannedAug = !isAugmentationMode && hasSingularity(ns)
-      ? augPurchasePlan?.items.find((item) =>
-          requestedAugmentation
-            ? item.name === requestedAugmentation
-            : !ns.singularity.getOwnedAugmentations(true).includes(item.name),
-        )
-      : undefined;
+    const installedAugs = hasSingularity(ns)
+      ? ns.singularity.getOwnedAugmentations(false)
+      : [];
+    const allOwnedAugs = hasSingularity(ns)
+      ? ns.singularity.getOwnedAugmentations(true)
+      : [];
+    const bn8AugmentationRequirement =
+      currentBitNode === 8
+        ? getDaedalusAugmentationRequirement(
+            loadBnMults(ns).DaedalusAugsRequirement ?? 1,
+          )
+        : 0;
+    const bn8GraftingUnlocked =
+      currentBitNode === 8 && hasGraftingUnlock(ns);
+    const bn8AugPurchaseAllowed =
+      currentBitNode !== 8 ||
+      (hasBothFourSigmaLicenses(ns) && !hasInstalledRedPill(ns));
+    const nextPlannedAug =
+      !isAugmentationMode &&
+      bn8AugPurchaseAllowed &&
+      hasSingularity(ns)
+        ? augPurchasePlan?.items.find((item) => {
+            if (
+              requestedAugmentation
+                ? item.name !== requestedAugmentation
+                : allOwnedAugs.includes(item.name)
+            ) {
+              return false;
+            }
+            if (currentBitNode === 8) {
+              if (item.name === "The Red Pill") {
+                if (installedAugs.length < bn8AugmentationRequirement) {
+                  return false;
+                }
+              } else if (
+                bn8GraftingUnlocked ||
+                allOwnedAugs.length >= bn8AugmentationRequirement ||
+                !hasHackingAugmentationBenefit(
+                  ns.singularity.getAugmentationStats(item.name),
+                )
+              ) {
+                return false;
+              }
+            }
+            return true;
+          })
+        : undefined;
     if (nextPlannedAug && hasSingularity(ns)) {
       const memberFactions = new Set(ns.getPlayer().factions);
       if (ns.gang?.inGang()) {
@@ -964,7 +1022,16 @@ export async function main(ns: NS): Promise<void> {
         factions: factionProgress,
       };
     }
-    const proposedAugInstallData = uninstalledAugs.length > 0
+    const bn8AugBatchReady =
+      currentBitNode !== 8 ||
+      (hasBothFourSigmaLicenses(ns) &&
+        (allOwnedAugs.includes("The Red Pill") ||
+          allOwnedAugs.length >=
+            getDaedalusAugmentationRequirement(
+              loadBnMults(ns).DaedalusAugsRequirement ?? 1,
+            )));
+    const proposedAugInstallData =
+      uninstalledAugs.length > 0 && bn8AugBatchReady
       ? { items: uninstalledAugs }
       : undefined;
 

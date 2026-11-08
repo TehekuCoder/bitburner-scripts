@@ -57,12 +57,30 @@ export function isStockFinanceActionAllowed(
 export function isFinanceCategoryAllowedInBitNode(
   category: string,
   bitNode: number,
+  hasFourSigmaLicenses = false,
+  hasInstalledRedPill = false,
 ): boolean {
   return (
     bitNode !== 8 ||
     category === "STOCK_LICENSE" ||
     category === "STOCK_TRADE" ||
-    category === "PURCHASED_SERVER"
+    category === "PURCHASED_SERVER" ||
+    (category === "PLAYER_AUG" && hasFourSigmaLicenses) ||
+    (category === "DARKNET_PROGRAM" && hasInstalledRedPill)
+  );
+}
+
+export function isFinanceCategoryAllowedDuringAugmentation(
+  category: string,
+  bitNode: number,
+): boolean {
+  return (
+    category === "SLEEVE_AUG" ||
+    category === "GANG_EQUIPMENT" ||
+    (bitNode === 8 &&
+      (category === "STOCK_LICENSE" ||
+        category === "STOCK_TRADE" ||
+        category === "PLAYER_AUG"))
   );
 }
 

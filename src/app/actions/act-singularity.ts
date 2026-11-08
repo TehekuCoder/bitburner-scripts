@@ -1,5 +1,12 @@
 import { NS, ProgramName, FactionName } from "@ns";
 import { runTrackedFinanceAction } from "./finance-action.js";
+import {
+  getDaedalusAugmentationRequirement,
+  hasBothFourSigmaLicenses,
+  hasGraftingUnlock,
+  hasHackingAugmentationBenefit,
+} from "/domain/evaluators/purchase/bn8-augmentation.js";
+import { loadBnMults } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
 
@@ -16,10 +23,28 @@ export async function main(ns: NS): Promise<void> {
         return ns.singularity.upgradeHomeCores();
 
       case "program-purchase-tor":
+        if (
+          ns.getResetInfo().currentNode === 8 &&
+          !ns.singularity.getOwnedAugmentations(false).includes("The Red Pill")
+        ) {
+          ns.tprint(
+            "[WARN] BN8: Programme erst nach installierter Red Pill kaufen.",
+          );
+          return false;
+        }
         return ns.singularity.purchaseTor();
 
       case "program-purchase": {
         const prog = String(ns.args[1] ?? "") as ProgramName;
+        if (
+          ns.getResetInfo().currentNode === 8 &&
+          !ns.singularity.getOwnedAugmentations(false).includes("The Red Pill")
+        ) {
+          ns.tprint(
+            "[WARN] BN8: Programme erst nach installierter Red Pill kaufen.",
+          );
+          return false;
+        }
         return prog ? ns.singularity.purchaseProgram(prog) : false;
       }
 
@@ -46,6 +71,9 @@ export async function main(ns: NS): Promise<void> {
           (ns.gang?.inGang() &&
             ns.gang.getGangInformation().faction === faction);
         const failures: string[] = [];
+        const isBitNode8 = ns.getResetInfo().currentNode === 8;
+        const ownedAugs = ns.singularity.getOwnedAugmentations(true);
+        const installedAugs = ns.singularity.getOwnedAugmentations(false);
         if (!faction || !aug) failures.push("Fraktion oder Augmentation fehlt");
         if (!factionIsAvailable) failures.push(`nicht beigetreten bei ${faction}`);
         if (
@@ -54,6 +82,47 @@ export async function main(ns: NS): Promise<void> {
           !ns.singularity.getAugmentationsFromFaction(faction).includes(aug)
         ) {
           failures.push(`${faction} bietet ${aug} nicht an`);
+        }
+        if (isBitNode8 && !hasBothFourSigmaLicenses(ns)) {
+          failures.push("beide 4S-Marktdaten-Zugänge sind erforderlich");
+        }
+        if (
+          isBitNode8 &&
+          aug &&
+          aug !== "The Red Pill" &&
+          factionIsAvailable &&
+          ns.singularity
+            .getAugmentationsFromFaction(faction)
+            .includes(aug) &&
+          !hasHackingAugmentationBenefit(
+            ns.singularity.getAugmentationStats(aug),
+          )
+        ) {
+          failures.push("Augmentation verbessert Hacking nicht");
+        }
+        if (isBitNode8 && aug === "The Red Pill") {
+          const requirement = getDaedalusAugmentationRequirement(
+            loadBnMults(ns).DaedalusAugsRequirement ?? 1,
+          );
+          if (installedAugs.length < requirement) {
+            failures.push(
+              "Daedalus-Anforderung installierter Augmentations fehlt",
+            );
+          }
+        } else if (isBitNode8 && hasGraftingUnlock(ns)) {
+          failures.push(
+            "Hacking-Augmentations werden bei freigeschaltetem SF10 gegraftet",
+          );
+        } else if (
+          isBitNode8 &&
+          ownedAugs.length >=
+            getDaedalusAugmentationRequirement(
+              loadBnMults(ns).DaedalusAugsRequirement ?? 1,
+            )
+        ) {
+          failures.push(
+            "Daedalus-Anforderung installierter Augmentations ist bereits erfüllt",
+          );
         }
         if (
           !Number.isFinite(maximumPrice) ||

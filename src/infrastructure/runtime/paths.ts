@@ -158,6 +158,7 @@ export const PATHS = {
     },
     managers: {
       bladeburner: "services/managers/bladeburner-manager.js",
+      bn8Grafting: "services/managers/bn8-grafting-manager.js",
       corporation: "services/managers/corporation-manager.js",
       dnet: "services/managers/dnet-master.js",
       gang: "services/managers/gang-manager.js",
