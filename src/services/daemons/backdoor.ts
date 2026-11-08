@@ -1,16 +1,19 @@
 import { NS, Server } from "@ns";
 import { getAllServers, findPathTo } from "/infrastructure/network/network";
 import { loadState } from "/infrastructure/state/state";
-
+import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
+  const logger = new LoggerClient(ns, "BACKDOOR", undefined, "INFO");
 
   if (ns.singularity === undefined) {
+    logger.error("Singularity API nicht verfügbar (SourceFile 4 fehlt).");
     ns.tprint("🛑 [BACKDOOR] Singularity API nicht verfügbar (SourceFile 4 fehlt).");
     return;
   }
 
+  logger.info("Backdoor-Daemon gestartet.");
   ns.tprint("🚀 Backdoor-Daemon erfolgreich im Hintergrund verankert.");
 
   while (true) {
@@ -24,6 +27,7 @@ export async function main(ns: NS): Promise<void> {
     // 🟢 WICHTIG: Level im Loop abgreifen, da es sich im laufenden Betrieb erhöht
     const myHackLevel: number = ns.getHackingLevel();
     let targetsFound = 0;
+    let installedCount = 0;
 
     for (const target of allServers) {
       if (
@@ -45,6 +49,10 @@ export async function main(ns: NS): Promise<void> {
 
         if (myHackLevel >= reqHackingSkill) {
           targetsFound++;
+          const targetLogger = logger.forTarget(target);
+          targetLogger.info("Backdoor-Installation gestartet.", undefined, {
+            context: { requiredHackingSkill: reqHackingSkill, myHackLevel },
+          });
           ns.print(`[AUTO-BACKDOOR] Starte Infiltration von: ${target}`);
 
           const path: string[] | null = findPathTo(ns, target);
@@ -60,8 +68,13 @@ export async function main(ns: NS): Promise<void> {
               ns.print(`Installiere Backdoor auf ${target}...`);
               // Blockiert den Loop exakt so lange, wie die Installation dauert
               await ns.singularity.installBackdoor();
+              installedCount++;
+              targetLogger.success("Backdoor erfolgreich installiert.");
               ns.print(`[AUTO-BACKDOOR] ✅ ${target} erfolgreich infiltriert.`);
             } catch (e: unknown) {
+              targetLogger.error("Backdoor-Installation fehlgeschlagen.", undefined, {
+                context: { error: String(e) },
+              });
               ns.print(`[AUTO-BACKDOOR] ❌ Fehler bei ${target}: ${String(e)}`);
             } finally {
               // Nach Erfolg oder Fehler bedingungslos zurück nach Hause springen
@@ -69,13 +82,18 @@ export async function main(ns: NS): Promise<void> {
             }
             // Kurze Atempause zwischen zwei Installationen
             await ns.sleep(1000);
+          } else {
+            targetLogger.warn("Kein Netzwerkpfad zum Ziel gefunden.");
           }
         }
       }
     }
 
-    if (targetsFound > 0) {
-      ns.print(`[${new Date().toLocaleTimeString()}] Infiltrations-Sprint beendet. ${targetsFound} neue Systeme gesichert.`);
+    if (installedCount > 0) {
+      logger.info(`Backdoor-Durchlauf abgeschlossen: ${installedCount} System(e) gesichert.`, undefined, {
+        context: { installedCount, eligibleTargets: targetsFound },
+      });
+      ns.print(`[${new Date().toLocaleTimeString()}] Infiltrations-Sprint beendet. ${installedCount} neue Systeme gesichert.`);
     }
 
     // 🟢 60 Sekunden schlafen. Hält das Skript aktiv (Kernel blockiert Spawn) 

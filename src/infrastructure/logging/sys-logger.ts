@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { LogLevel, LogPayload } from "shared/types/logger";
+import { isLogPayload, LogLevel, LogPayload } from "/shared/types/logger";
 import { LEVEL_RANK } from "../../shared/constants/logger";
 
 export async function main(ns: NS): Promise<void> {
@@ -23,6 +23,7 @@ export async function main(ns: NS): Promise<void> {
   const BACKUP_FILE = "/logs/bitos_system_old.txt";
   const MAX_LOG_SIZE = 100_000;
   const FLUSH_INTERVAL_MS = 200;
+  const INVALID_PAYLOAD_WARNING_INTERVAL_MS = 30_000;
 
   // Filter-Sets aufbauen (leeres Set = alle erlaubt)
   const targetFilter = parseFilterSet(flags.target as string);
@@ -38,6 +39,8 @@ export async function main(ns: NS): Promise<void> {
     ? ns.read(LOG_FILE).length
     : 0;
   let buffer: string[] = [];
+  let invalidPayloadCount = 0;
+  let lastInvalidPayloadWarning = 0;
 
   ns.print(`[SYS-LOGGER] 🎧 Daemon gestartet auf Port ${PORT_NUM}`);
   if (targetFilter.size > 0)
@@ -52,8 +55,23 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     while (!port.empty()) {
-      const payload = port.read() as LogPayload;
-      if (!payload || !payload.module) continue;
+      const rawPayload: unknown = port.read();
+      if (!isLogPayload(rawPayload)) {
+        invalidPayloadCount++;
+        const now = Date.now();
+        if (
+          now - lastInvalidPayloadWarning >=
+          INVALID_PAYLOAD_WARNING_INTERVAL_MS
+        ) {
+          ns.print(
+            `[SYS-LOGGER] ⚠️ ${invalidPayloadCount} ungültige Port-Nutzdaten verworfen.`,
+          );
+          invalidPayloadCount = 0;
+          lastInvalidPayloadWarning = now;
+        }
+        continue;
+      }
+      const payload: LogPayload = rawPayload;
 
       const levelRank = LEVEL_RANK[payload.level] ?? 0;
 
@@ -72,7 +90,9 @@ export async function main(ns: NS): Promise<void> {
       const passesContext =
         contextFilter.size === 0 ||
         [...contextFilter.entries()].every(([key, expected]) => {
-          const actual = payload.context?.[key];
+          const actual = Object.entries(payload.context ?? {}).find(
+            ([contextKey]) => contextKey.toLowerCase() === key,
+          )?.[1];
           return actual !== undefined && String(actual).toLowerCase() === expected.toLowerCase();
         });
 

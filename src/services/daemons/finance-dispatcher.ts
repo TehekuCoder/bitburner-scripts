@@ -11,35 +11,74 @@ import {
   isStockViable,
 } from "/lib/utils.js";
 import { loadState } from "/infrastructure/state/state.js";
+import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
+  const logger = new LoggerClient(ns, "FINANCE-DISPATCHER", undefined, "INFO");
+  const missingScriptsWarned = new Set<string>();
+  const ramWarnings = new Set<string>();
+  const startFailures = new Set<string>();
+  let financeCoreWarningActive = false;
+
+  const warnOnce = (
+    warnings: Set<string>,
+    key: string,
+    message: string,
+    context: Record<string, string | number | boolean | null | undefined>,
+  ): void => {
+    if (warnings.has(key)) return;
+    warnings.add(key);
+    logger.warn(message, undefined, { context });
+  };
+
+  logger.info("Finance-Dispatcher gestartet.");
   ns.print("🚀 Finance-Manager (Sequenzieller Dispatcher) gestartet.");
 
   // Helper: Führt ein Skript aus und wartet auf dessen Beendigung
   const runAndWait = async (scriptPath: string): Promise<boolean> => {
-    if (!ns.fileExists(scriptPath, "home")) return false;
+    if (!ns.fileExists(scriptPath, "home")) {
+      warnOnce(missingScriptsWarned, scriptPath, "Finance-Evaluator nicht gefunden.", {
+        scriptPath,
+      });
+      return false;
+    }
+    missingScriptsWarned.delete(scriptPath);
 
     const reqRam = ns.getScriptRam(scriptPath, "home");
     const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
 
     // Falls nicht genug freier RAM da ist, überspringen
     if (freeRam < reqRam) {
+      warnOnce(ramWarnings, scriptPath, "Finance-Evaluator wegen RAM-Mangel übersprungen.", {
+        scriptPath,
+        requiredRam: reqRam,
+        freeRam,
+      });
       ns.print(
         `[FINANCE-MGR] ⚠️ Übersprungen: ${scriptPath} (Benötigt: ${formatRam(reqRam)}, Frei: ${formatRam(freeRam)})`,
       );
       return false;
     }
+    ramWarnings.delete(scriptPath);
 
     try {
       const pid = ns.run(scriptPath, 1);
       if (pid > 0) {
+        startFailures.delete(scriptPath);
         while (ns.isRunning(pid)) {
           await ns.sleep(50);
         }
         return true;
       }
+      warnOnce(startFailures, scriptPath, "Finance-Evaluator konnte nicht gestartet werden.", {
+        scriptPath,
+      });
     } catch (err) {
+      warnOnce(startFailures, scriptPath, "Fehler beim Starten eines Finance-Evaluators.", {
+        scriptPath,
+        error: String(err),
+      });
       ns.print(
         `[FINANCE-MGR] ❌ Fehler beim Ausführen von ${scriptPath}: ${err}`,
       );
@@ -62,8 +101,26 @@ export async function main(ns: NS): Promise<void> {
       );
       const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
       if (freeRam >= coreRam) {
-        ns.run(PATHS.app.orchestration.financeCore, 1);
+        const pid = ns.run(PATHS.app.orchestration.financeCore, 1);
+        if (pid > 0) {
+          financeCoreWarningActive = false;
+          logger.info("Finance-Core gestartet.", undefined, {
+            context: { pid },
+          });
+        } else if (!financeCoreWarningActive) {
+          financeCoreWarningActive = true;
+          logger.warn("Finance-Core konnte nicht gestartet werden.", undefined, {
+            context: { requiredRam: coreRam, freeRam },
+          });
+        }
+      } else if (!financeCoreWarningActive) {
+        financeCoreWarningActive = true;
+        logger.warn("Finance-Core wegen RAM-Mangel nicht gestartet.", undefined, {
+          context: { requiredRam: coreRam, freeRam },
+        });
       }
+    } else {
+      financeCoreWarningActive = false;
     }
 
     if (isBitNode8) {

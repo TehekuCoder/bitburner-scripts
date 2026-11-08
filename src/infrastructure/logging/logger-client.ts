@@ -12,16 +12,20 @@ export class LoggerClient {
   private moduleName: string;
   private portNumber: number;
   private defaultTarget?: string;
-  private minLocalLevelRank: number;
+  private minLevel: LogLevel;
+  private minLevelRank: number;
   private baseContext: ContextRecord;
   private baseTags: string[];
   private timers: Map<string, number> = new Map();
+  private droppedPortLogs = 0;
+  private lastPortWarning = 0;
+  private static readonly PORT_WARNING_INTERVAL_MS = 30_000;
 
   constructor(
     ns: NS,
     moduleName: string,
     defaultTarget?: string,
-    minLocalLevel: LogLevel = "DEBUG",
+    minLevel: LogLevel = "DEBUG",
     portNumber = LOG_PORT,
     baseContext: ContextRecord = {},
     baseTags: string[] = []
@@ -30,7 +34,8 @@ export class LoggerClient {
     this.moduleName = moduleName.toUpperCase();
     this.defaultTarget = defaultTarget;
     this.portNumber = portNumber;
-    this.minLocalLevelRank = LEVEL_RANK[minLocalLevel] ?? 0;
+    this.minLevel = minLevel;
+    this.minLevelRank = LEVEL_RANK[minLevel] ?? 0;
     
     // PID typkonform als number einbinden
     this.baseContext = { pid: ns.pid, ...baseContext };
@@ -45,7 +50,7 @@ export class LoggerClient {
       this.ns,
       this.moduleName,
       target,
-      "DEBUG",
+      this.minLevel,
       this.portNumber,
       this.baseContext,
       this.baseTags
@@ -65,7 +70,7 @@ export class LoggerClient {
       this.ns,
       newModuleName,
       this.defaultTarget,
-      "DEBUG",
+      this.minLevel,
       this.portNumber,
       { ...this.baseContext, ...(extraContext || {}) },
       [...this.baseTags, ...(extraTags || [])]
@@ -106,14 +111,12 @@ export class LoggerClient {
       ...(context?.context as ContextRecord || {}) 
     };
 
-    // 1. LOKALES LOGGING
-    if (levelRank >= this.minLocalLevelRank) {
-      const targetStr = currentTarget ? ` [${currentTarget.toLowerCase()}]` : "";
-      const icon = this.getLevelIcon(level);
-      this.ns.print(`${icon} [${level.padEnd(5)}]${targetStr} ${msg}`);
-    }
+    if (levelRank < this.minLevelRank) return;
 
-    // 2. ZENTRALES LOGGING (An Port senden)
+    const targetStr = currentTarget ? ` [${currentTarget.toLowerCase()}]` : "";
+    const icon = this.getLevelIcon(level);
+    this.ns.print(`${icon} [${level.padEnd(5)}]${targetStr} ${msg}`);
+
     const payload: LogPayload = {
       module: this.moduleName,
       level,
@@ -126,8 +129,21 @@ export class LoggerClient {
 
     const success = this.ns.tryWritePort(this.portNumber, payload);
     if (!success) {
-      this.ns.print(`⚠️ [LOGGER-CLIENT] Port ${this.portNumber} voll! Log verworfen.`);
+      this.droppedPortLogs++;
     }
+    this.reportDroppedLogs();
+  }
+
+  private reportDroppedLogs(): void {
+    if (this.droppedPortLogs === 0) return;
+    const now = Date.now();
+    if (now - this.lastPortWarning < LoggerClient.PORT_WARNING_INTERVAL_MS) return;
+
+    this.ns.print(
+      `⚠️ [LOGGER-CLIENT] Port ${this.portNumber} voll; ${this.droppedPortLogs} Log(s) verworfen.`,
+    );
+    this.droppedPortLogs = 0;
+    this.lastPortWarning = now;
   }
 
   private getLevelIcon(level: LogLevel): string {
