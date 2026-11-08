@@ -216,7 +216,7 @@ function setAction(
   const success = ns.bladeburner.startAction(type, name);
   const actionKey = `${type}:${name}`;
   if (success) {
-    failedActions.clear();
+    failedActions.delete(actionKey);
     logger.info(`Bladeburner-Aktion gestartet: ${type} / ${name}.`, undefined, {
       context: { actionType: type, actionName: name },
     });

@@ -27,15 +27,20 @@ export async function main(ns: NS): Promise<void> {
     level: "INFO" | "WARN",
     message: string,
     context: Record<string, string | number | boolean | null | undefined> = {},
-  ): void => {
-    if (state === lastReportedState) return;
+  ): boolean => {
+    if (state === lastReportedState) return false;
     lastReportedState = state;
     if (level === "WARN") {
       logger.warn(message, undefined, { context });
     } else {
       logger.info(message, undefined, { context });
     }
+    return true;
   };
+  let lastTravelTarget: FactionName | null = null;
+  let lastTravelSucceeded: boolean | null = null;
+  let lastInvitationAttempt: FactionName | null = null;
+  let lastWorkAttempt: FactionName | null = null;
 
   logger.info("Faction-Grinder gestartet.");
   ns.print("🧬 Faction-Grinder Subsystem initialisiert.");
@@ -44,13 +49,18 @@ export async function main(ns: NS): Promise<void> {
     const factionState = loadFactionState(ns);
 
     if (!factionState || !factionState.targetFaction) {
-      reportState(
+      if (reportState(
         "awaiting-target",
         "INFO",
         "Warte auf Zielvorgabe durch den Dispatcher.",
-      );
+      )) {
+        ns.print("⏳ Warte auf Zielvorgabe durch den Dispatcher...");
+      }
       lastReportedTarget = null;
-      ns.print("⏳ Warte auf Zielvorgabe durch den Dispatcher...");
+      lastTravelTarget = null;
+      lastTravelSucceeded = null;
+      lastInvitationAttempt = null;
+      lastWorkAttempt = null;
       await ns.sleep(2000);
       continue;
     }
@@ -62,15 +72,16 @@ export async function main(ns: NS): Promise<void> {
 
     // 🛑 BLADEBURNER IGNORE CHECK
     if ((faction as string) === "Bladeburners") {
-      ns.print(
-        `🛑 [INVALID-TARGET] 'Bladeburners' nutzt eigenes Subsystem. Setze Ziel zurück...`,
-      );
-      reportState(
+      if (reportState(
         `invalid-target:${faction}`,
         "WARN",
         "Bladeburners ist kein gültiges Fraktionsziel; Ziel wird zurückgesetzt.",
         { faction },
-      );
+      )) {
+        ns.print(
+          `🛑 [INVALID-TARGET] 'Bladeburners' nutzt eigenes Subsystem. Setze Ziel zurück...`,
+        );
+      }
       await patchFactionState(ns, { targetFaction: undefined });
       await ns.sleep(2000);
       continue;
@@ -91,14 +102,16 @@ export async function main(ns: NS): Promise<void> {
       const fallbackFaction = getNFGFallbackFaction(ns, gangState);
 
       if (faction !== fallbackFaction) {
-        logger.info(
+        if (reportState(
+          `redirect:${faction}:${fallbackFaction}`,
+          "INFO",
           `NFG-Ziel wird von ${faction} auf ${fallbackFaction} umgeleitet.`,
-          undefined,
-          { context: { fromFaction: faction, toFaction: fallbackFaction } },
-        );
-        ns.print(
-          `🔄 [NFG-REDIRECT] Gang/NFG-Ziel [${faction}] -> Nutze NFG-Provider [${fallbackFaction}]`,
-        );
+          { fromFaction: faction, toFaction: fallbackFaction },
+        )) {
+          ns.print(
+            `🔄 [NFG-REDIRECT] Gang/NFG-Ziel [${faction}] -> Nutze NFG-Provider [${fallbackFaction}]`,
+          );
+        }
         faction = fallbackFaction;
         lastReportedTarget = fallbackFaction;
         await patchFactionState(ns, { targetFaction: fallbackFaction });
@@ -117,15 +130,16 @@ export async function main(ns: NS): Promise<void> {
     // ------------------------------------------------------------------
     const isPendingGangUnlock = !ns.gang.inGang() && player.karma <= -54000;
     if (isPendingGangUnlock && GANG_CANDIDATE_FACTIONS.includes(faction)) {
-      reportState(
+      if (reportState(
         `gang-unlock:${faction}`,
         "INFO",
         `Ruf-Grind für ${faction} pausiert, bis die Gang gegründet ist.`,
         { faction, karma: Math.round(player.karma) },
-      );
-      ns.print(
-        `🛑 [GANG-WAIT] Fraktion [${faction}] ist ein Gang-Kandidat und Gang-Gründung steht aus (Karma: ${Math.round(player.karma)}). Stoppe Ruf-Grind!`,
-      );
+      )) {
+        ns.print(
+          `🛑 [GANG-WAIT] Fraktion [${faction}] ist ein Gang-Kandidat und Gang-Gründung steht aus (Karma: ${Math.round(player.karma)}). Stoppe Ruf-Grind!`,
+        );
+      }
       await patchFactionState(ns, { targetFaction: undefined });
       await ns.sleep(2000);
       continue;
@@ -140,15 +154,16 @@ export async function main(ns: NS): Promise<void> {
       isTargetCity && currentCityFaction && currentCityFaction !== faction;
 
     if (isCityLocked) {
-      reportState(
+      if (reportState(
         `city-lock:${faction}:${currentCityFaction}`,
         "WARN",
         `Stadt-Fraktion ${faction} ist durch ${currentCityFaction} gesperrt; Ziel wird zurückgesetzt.`,
         { faction, currentCityFaction },
-      );
-      ns.print(
-        `🛑 [LOCKOUT] Stadt-Fraktion [${faction}] kollidiert mit [${currentCityFaction}]. Setze Ziel zurück...`,
-      );
+      )) {
+        ns.print(
+          `🛑 [LOCKOUT] Stadt-Fraktion [${faction}] kollidiert mit [${currentCityFaction}]. Setze Ziel zurück...`,
+        );
+      }
       await patchFactionState(ns, { targetFaction: undefined });
       await ns.sleep(2000);
       continue;
@@ -162,26 +177,56 @@ export async function main(ns: NS): Promise<void> {
       if (faction === "Tian Di Hui") {
         const inValidCity = TIAN_DI_HUI_CITIES.includes(player.city as any);
         if (!inValidCity && player.money >= 200_000) {
-          ns.print(`✈️ Reise nach Chongqing für Tian Di Hui Einladung...`);
-          sing.travelToCity("Chongqing");
+          if (lastTravelTarget !== faction || lastTravelSucceeded !== true) {
+            const traveled = sing.travelToCity("Chongqing");
+            lastTravelTarget = faction;
+            if (traveled) {
+              if (lastTravelSucceeded !== true) {
+                ns.print(`✈️ Reise nach Chongqing für Tian Di Hui Einladung...`);
+              }
+              lastTravelSucceeded = true;
+            } else {
+              if (lastTravelSucceeded !== false) {
+                logger.warn("Reise nach Chongqing für Tian Di Hui fehlgeschlagen.", undefined, {
+                  context: { faction, city: player.city },
+                });
+              }
+              lastTravelSucceeded = false;
+            }
+          }
+        } else {
+          lastTravelTarget = null;
+          lastTravelSucceeded = null;
         }
+      } else {
+        lastTravelTarget = null;
+        lastTravelSucceeded = null;
       }
 
       const invites = sing.checkFactionInvitations();
       if (invites.includes(faction)) {
-        ns.print(`📩 Nehme Einladung für [${faction}] an...`);
+        if (lastInvitationAttempt !== faction) {
+          ns.print(`📩 Nehme Einladung für [${faction}] an...`);
+          lastInvitationAttempt = faction;
+        }
         sing.joinFaction(faction);
       } else {
-        reportState(
+        lastInvitationAttempt = null;
+        if (reportState(
           `invitation:${faction}`,
           "INFO",
           `Warte auf Beitritt oder Einladung für ${faction}.`,
           { faction },
-        );
-        ns.print(`⏳ Warte auf Beitritt/Einladung für [${faction}]...`);
+        )) {
+          ns.print(`⏳ Warte auf Beitritt/Einladung für [${faction}]...`);
+        }
         await ns.sleep(2000);
         continue;
       }
+    } else {
+      lastTravelTarget = null;
+      lastTravelSucceeded = null;
+      lastInvitationAttempt = null;
     }
 
     // ------------------------------------------------------------------
@@ -194,7 +239,10 @@ export async function main(ns: NS): Promise<void> {
       (currentWork as any).factionName === faction;
 
     if (!isWorkingCorrectly) {
-      ns.print("🚀 Wechsle Arbeit auf Fraktion: " + faction);
+      if (lastWorkAttempt !== faction) {
+        ns.print("🚀 Wechsle Arbeit auf Fraktion: " + faction);
+        lastWorkAttempt = faction;
+      }
 
       const started =
         sing.workForFaction(faction, ns.enums.FactionWorkType.hacking, false) ||
@@ -202,13 +250,14 @@ export async function main(ns: NS): Promise<void> {
         sing.workForFaction(faction, ns.enums.FactionWorkType.security, false);
 
       if (!started) {
-        reportState(
+        if (reportState(
           `work-failed:${faction}`,
           "WARN",
           `Fraktionsarbeit für ${faction} konnte nicht gestartet werden.`,
           { faction },
-        );
-        ns.print(`⚠️ Konnte Arbeit für [${faction}] nicht starten.`);
+        )) {
+          ns.print(`⚠️ Konnte Arbeit für [${faction}] nicht starten.`);
+        }
       } else {
         reportState(
           `working:${faction}`,
@@ -216,6 +265,7 @@ export async function main(ns: NS): Promise<void> {
           `Fraktionsarbeit für ${faction} gestartet.`,
           { faction },
         );
+        lastWorkAttempt = null;
       }
     } else {
       reportState(
@@ -224,6 +274,7 @@ export async function main(ns: NS): Promise<void> {
         `Fraktionsarbeit für ${faction} läuft.`,
         { faction },
       );
+      lastWorkAttempt = null;
     }
 
     const currentRep = sing.getFactionRep(faction);
