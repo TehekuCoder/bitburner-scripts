@@ -4,6 +4,7 @@ import {
   isManualMode,
   isModuleDisabled,
   shouldRunDaemonInBitNode,
+  shouldStartBn8GraftingManager,
   shouldRunSingularityDispatcher,
   shouldRunSleeveManager,
 } from "../src/app/orchestration/orchestrator-policy.ts";
@@ -34,6 +35,13 @@ test("BN8 minimal mode only starts explicitly allowed daemons", () => {
   assert.equal(shouldRunDaemonInBitNode(8, true), true);
   assert.equal(shouldRunDaemonInBitNode(8, false), false);
   assert.equal(shouldRunDaemonInBitNode(7, false), true);
+});
+
+test("BN8 grafting manager waits for SF10 and 4S TIX API access", () => {
+  assert.equal(shouldStartBn8GraftingManager(8, 0, false), false);
+  assert.equal(shouldStartBn8GraftingManager(8, 1, false), false);
+  assert.equal(shouldStartBn8GraftingManager(8, 1, true), true);
+  assert.equal(shouldStartBn8GraftingManager(7, 1, true), false);
 });
 
 test("BN8 only starts the Singularity dispatcher for reputation farming", () => {

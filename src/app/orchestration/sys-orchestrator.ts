@@ -7,6 +7,7 @@ import {
 import { PATHS } from "/infrastructure/runtime/paths";
 import { loadState } from "/infrastructure/state/state";
 import { hasSingularity, hasGang, hasSleeve, hasCorporation, isCorporationViable } from "/lib/utils";
+import { shouldEnableStanekForBitNode } from "/domain/strategy/stanek-policy.js";
 import {
   getMaximumSingularityActionRam,
   getSingularityRamMultiplier,
@@ -15,6 +16,7 @@ import {
   isManualMode,
   isModuleDisabled,
   shouldRunDaemonInBitNode,
+  shouldStartBn8GraftingManager,
   shouldRunSingularityDispatcher,
   shouldRunSleeveManager,
 } from "./orchestrator-policy.js";
@@ -48,9 +50,14 @@ export async function main(ns: NS): Promise<void> {
       name: "BN8 Grafting Manager",
       path: PATHS.services.managers.bn8Grafting,
       enabledInBn8MinimalMode: true,
-      condition: (ns) =>
-        ns.getResetInfo().currentNode === 8 &&
-        (ns.getResetInfo().ownedSF.get(10) ?? 0) > 0,
+      condition: (ns) => {
+        const resetInfo = ns.getResetInfo();
+        return shouldStartBn8GraftingManager(
+          resetInfo.currentNode,
+          resetInfo.ownedSF.get(10) ?? 0,
+          Boolean(ns.stock?.has4SDataTixApi()),
+        );
+      },
     },
 
     // 1. CCT Solver Task
@@ -292,7 +299,10 @@ export async function main(ns: NS): Promise<void> {
       path: PATHS.services.managers.stanek,
       condition: (ns) => {
         const state = loadState(ns);
-        if (isModuleDisabled(state, ["stanek", "church"])) return false;
+        if (
+          !shouldEnableStanekForBitNode(ns.getResetInfo().currentNode) ||
+          isModuleDisabled(state, ["stanek", "church"])
+        ) return false;
         try {
           return typeof ns.stanek !== "undefined";
         } catch {

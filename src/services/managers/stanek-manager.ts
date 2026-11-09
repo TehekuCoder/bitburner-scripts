@@ -9,6 +9,7 @@ import {
 } from "/infrastructure/network/network.js";
 import { PATHS } from "/infrastructure/runtime/paths.js";
 import { ensureScriptsOnServer } from "/domain/hacking/provision.js";
+import { shouldEnableStanekForBitNode } from "/domain/strategy/stanek-policy.js";
 
 const CHARGE_PAYLOAD = PATHS.services.payloads.stanekCharge ?? "/services/payloads/stanek-charge.js";
 const HACKING_FRAGMENT_TYPES = [3, 4, 5, 6];
@@ -25,6 +26,11 @@ export async function main(ns: NS): Promise<void> {
     {},
     ["stanek"]
   );
+
+  if (!shouldEnableStanekForBitNode(ns.getResetInfo().currentNode)) {
+    logger.info("Stanek's Gift ist in BitNode 8 deaktiviert.");
+    return;
+  }
 
   logger.info("⛩️ Stanek's Gift Manager gestartet.");
 

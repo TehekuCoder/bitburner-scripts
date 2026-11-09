@@ -8,6 +8,7 @@ import {
   SHARE_POWER_SATURATION_CAP,
 } from "/shared/constants/ram-allocation";
 import { loadState } from "/infrastructure/state/state";
+import { shouldEnableStanekForBitNode } from "/domain/strategy/stanek-policy.js";
 
 export type RamConsumer = "hacking" | "stanek" | "share";
 
@@ -132,6 +133,7 @@ function getConsumerRatio(ns: NS, consumer: RamConsumer): number {
   ) {
     const state = loadState(ns);
     const stanekEnabled =
+      shouldEnableStanekForBitNode(ns.getResetInfo().currentNode) &&
       Boolean(ns.stanek) &&
       !state?.disabledModules?.includes("stanek") &&
       ns.stanek.activeFragments().some((fragment) => fragment.type !== 18);

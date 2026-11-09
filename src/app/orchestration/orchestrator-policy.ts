@@ -11,6 +11,18 @@ export function shouldRunDaemonInBitNode(
   return currentNode !== 8 || enabledInBn8MinimalMode;
 }
 
+export function shouldStartBn8GraftingManager(
+  currentNode: number,
+  sourceFile10Level: number,
+  hasFourSigmaTixApi: boolean,
+): boolean {
+  return (
+    currentNode === 8 &&
+    sourceFile10Level > 0 &&
+    hasFourSigmaTixApi
+  );
+}
+
 export function isModuleDisabled(
   state: OrchestratorPolicyState | null | undefined,
   moduleName: string | readonly string[],

@@ -8,6 +8,7 @@ import { CITY_FACTIONS } from "/shared/constants/factions";
 import { REFRESH_INTERVALS } from "/shared/constants/game-defaults";
 import { hasSingularity, hasBladeburner, hasStanek } from "/lib/utils";
 import { getJoinedCityFaction } from "/domain/faction/faction-helpers";
+import { shouldEnableStanekForBitNode } from "/domain/strategy/stanek-policy.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -278,6 +279,7 @@ function handleFactionInvitations(ns: NS, logger: LoggerClient): void {
  * Gibt `true` zurück, wenn Stanek bereit/akzeptiert ist ODER in diesem Run nicht existiert.
  */
 function ensureStanekGiftAccepted(ns: NS, logger: LoggerClient): boolean {
+  if (!shouldEnableStanekForBitNode(ns.getResetInfo().currentNode)) return true;
   if (!hasStanek(ns)) return true;
 
   // 1. Prüfen, ob Gift bereits akzeptiert wurde

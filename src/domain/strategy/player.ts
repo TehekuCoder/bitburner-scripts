@@ -7,6 +7,7 @@ import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import { loadBnMults, hasSingularity } from "/lib/utils.js";
 import { shouldContinueFactionReputation } from "./strategy-stability.js";
 import { getDaedalusAugmentationRequirement } from "../evaluators/purchase/bn8-augmentation.js";
+import { shouldEnableStanekForBitNode } from "./stanek-policy.js";
 
 const MEGACORP_FACTION_TO_COMPANY: Record<string, CompanyName> = {
   ECorp: "ECorp" as CompanyName,
@@ -426,7 +427,11 @@ export function determineStrategy(
 
   // 8️⃣ PHASE 6: CHURCH OF THE MACHINE GOD / STANEK (SF13)
   try {
-    if (ns.serverExists("church") && ns.stanek?.activeFragments().length > 0) {
+    if (
+      shouldEnableStanekForBitNode(ns.getResetInfo().currentNode) &&
+      ns.serverExists("church") &&
+      ns.stanek?.activeFragments().length > 0
+    ) {
       logger?.debug(`[Strategie] Stanek Fragment Charge/Church Grind ➔ CHURCH`);
       return { mode: "CHURCH" };
     }
