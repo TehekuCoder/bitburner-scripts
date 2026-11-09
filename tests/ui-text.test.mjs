@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { wrapText } from "../src/ui/ui-text.ts";
+import {
+  getStockDashboardAgeLabel,
+  wrapText,
+} from "../src/ui/ui-text.ts";
 
 const stripAnsi = (value) => value.replace(/\u001b\[[0-9;]*m/g, "");
 
@@ -25,4 +28,10 @@ test("wrapText keeps ANSI colors valid across wrapped lines", () => {
   assert.ok(lines.slice(0, -1).every((line) => line.endsWith("\u001b[0m")));
   assert.ok(lines.slice(1).every((line) => line.startsWith("\u001b[31m")));
   assert.equal(lines.map(stripAnsi).join(" "), "red text that wraps");
+});
+
+test("stock dashboard age labels identify the snapshot rather than offline market data", () => {
+  assert.equal(getStockDashboardAgeLabel(12.8), "Dashboard-Update vor 12s");
+  assert.equal(getStockDashboardAgeLabel(31), "Dashboard-Stand 31s alt");
+  assert.equal(getStockDashboardAgeLabel(-2), "Dashboard-Update vor 0s");
 });

@@ -1,5 +1,12 @@
 const ANSI_SGR_PATTERN = /^\u001b\[[0-9;]*m$/;
 
+export function getStockDashboardAgeLabel(ageSeconds: number): string {
+  const age = Math.max(0, Math.floor(ageSeconds));
+  return age > 30
+    ? `Dashboard-Stand ${age}s alt`
+    : `Dashboard-Update vor ${age}s`;
+}
+
 function getVisibleWidth(text: string): number {
   return Array.from(text.replace(/\u001b\[[0-9;]*m/g, "")).length;
 }

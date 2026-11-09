@@ -2,7 +2,7 @@ import { NS } from "@ns";
 import { formatPercent } from "/lib/utils.js";
 import { AUG_PURCHASE_PLAN_FILE } from "/shared/constants/finance.js";
 import { StockDashboardSnapshot } from "/shared/types/finance.js";
-import { wrapText } from "./ui-helper.js";
+import { getStockDashboardAgeLabel, wrapText } from "./ui-text.js";
 
 export interface PendingRequestSummary {
   description: string;
@@ -301,7 +301,13 @@ export function drawFinanceDashboard(ns: NS, data: FinanceDashboardData): void {
     buffer.push(`${CLR.WHITE_BOLD}AKTIENHANDEL: ${modeLabel}${CLR.RESET}`);
     buffer.push(...wrapText(stock.status, W));
     buffer.push(
-      `Budget: $${ns.format.number(stock.tradingBudget)} | ${ageSeconds > 30 ? `${CLR.YELLOW}Daten ${ageSeconds}s alt${CLR.RESET}` : `Update vor ${ageSeconds}s`}`,
+      `Budget: $${ns.format.number(stock.tradingBudget)} | ${ageSeconds > 30 ? CLR.YELLOW : ""}${getStockDashboardAgeLabel(ageSeconds)}${ageSeconds > 30 ? CLR.RESET : ""}`,
+    );
+    buffer.push(
+      ...wrapText(
+        "Bitburner pausiert den Aktienmarkt offline; nach dem Öffnen aktualisiert er Kurse vorübergehend schneller (~4s statt ~6s).",
+        W,
+      ),
     );
 
     const rankedSymbols = [...stock.symbols].sort((a, b) => {
