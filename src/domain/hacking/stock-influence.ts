@@ -23,7 +23,12 @@ export function getStockInfluenceTargets(
   }
 
   const rootedServers = servers
-    .filter((hostname) => hostname !== "home" && ns.hasRootAccess(hostname))
+    .filter(
+      (hostname) =>
+        hostname !== "home" &&
+        !hostname.startsWith("hacknet-server-") &&
+        ns.hasRootAccess(hostname),
+    )
     .map((hostname) => ({
       hostname,
       organization: ns.getServer(hostname).organizationName,
