@@ -51,6 +51,7 @@ import {
   isStockFinanceActionAllowed,
   isFinanceCategoryAllowedInBitNode,
   isFinanceCategoryAllowedDuringAugmentation,
+  shouldPrepareBn8GraftingCapacity,
   isAugmentationPurchasePriceStale,
   isFinanceRequestRecentlyCompleted,
   isFinanceActionTimedOut,
@@ -600,17 +601,40 @@ export async function main(ns: NS): Promise<void> {
     }
     const currentBitNode = ns.getResetInfo().currentNode;
     if (currentBitNode === 8) {
+      const resetInfo = ns.getResetInfo();
       const hasFourSigmaLicenses = hasBothFourSigmaLicenses(ns);
       const redPillInstalled = hasInstalledRedPill(ns);
-      const stockRequests = allRequests.filter((request) =>
-        isFinanceCategoryAllowedInBitNode(
-          request.category,
-          currentBitNode,
-          hasFourSigmaLicenses,
-          redPillInstalled,
-        ),
+      const graftingManager = PATHS.services.managers.bn8Grafting;
+      const prepareGraftingCapacity = shouldPrepareBn8GraftingCapacity(
+        currentBitNode,
+        resetInfo.ownedSF.get(10) ?? 0,
+        Boolean(ns.stock?.has4SDataTixApi()),
+        ns.isRunning(graftingManager, "home"),
+        ns.getScriptRam(graftingManager, "home"),
+        ns.getServerMaxRam("home") - ns.getServerUsedRam("home"),
       );
-      allRequests.splice(0, allRequests.length, ...stockRequests);
+      const allowedRequests = allRequests
+        .filter((request) =>
+          isFinanceCategoryAllowedInBitNode(
+            request.category,
+            currentBitNode,
+            hasFourSigmaLicenses,
+            redPillInstalled,
+            prepareGraftingCapacity,
+          ),
+        )
+        .filter(
+          (request) =>
+            request.category !== "HOME_SERVER" ||
+            (prepareGraftingCapacity &&
+              request.action.args[0] === "home-upgrade-ram"),
+        )
+        .map((request) =>
+          prepareGraftingCapacity && request.category === "HOME_SERVER"
+            ? { ...request, priority: PurchasePriority.CRITICAL }
+            : request,
+        );
+      allRequests.splice(0, allRequests.length, ...allowedRequests);
     }
     const uninstalledAugs = getPurchasedUninstalledAugs(ns);
     const isAugmentationMode = uninstalledAugs.length > 0;
@@ -724,8 +748,9 @@ export async function main(ns: NS): Promise<void> {
           currentBitNode === 8
             ? {
                 ...CATEGORY_WEIGHTS,
-                  STOCK_LICENSE: Number.MAX_SAFE_INTEGER,
-                  STOCK_TRADE: Number.MAX_SAFE_INTEGER - 1,
+                    HOME_SERVER: Number.MAX_SAFE_INTEGER,
+                    STOCK_LICENSE: Number.MAX_SAFE_INTEGER - 1,
+                    STOCK_TRADE: Number.MAX_SAFE_INTEGER - 2,
               }
             : CATEGORY_WEIGHTS,
         ),

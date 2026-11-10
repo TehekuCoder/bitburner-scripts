@@ -12,6 +12,7 @@ import {
 } from "/lib/utils.js";
 import { loadState } from "/infrastructure/state/state.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
+import { shouldPrepareBn8GraftingCapacity } from "/app/orchestration/finance-runtime.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -124,6 +125,22 @@ export async function main(ns: NS): Promise<void> {
     }
 
     if (isBitNode8) {
+      const resetInfo = ns.getResetInfo();
+      const graftingManager = PATHS.services.managers.bn8Grafting;
+      const graftingManagerRam = ns.getScriptRam(graftingManager, "home");
+      const freeHomeRam =
+        ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+      const prepareGraftingCapacity = shouldPrepareBn8GraftingCapacity(
+        resetInfo.currentNode,
+        resetInfo.ownedSF.get(10) ?? 0,
+        Boolean(ns.stock?.has4SDataTixApi()),
+        ns.isRunning(graftingManager, "home"),
+        graftingManagerRam,
+        freeHomeRam,
+      );
+      if (prepareGraftingCapacity) {
+        await runAndWait(PATHS.domain.evaluators.purchase.home);
+      }
       if (isStockViable(ns)) {
         await runAndWait(PATHS.domain.evaluators.purchase.stock);
       }

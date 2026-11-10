@@ -551,6 +551,7 @@ function getProtectedRam(
 
   if (isFinanceEnabled) {
     reserveScript(PATHS.services.daemons.financeDispatcher);
+    reserveScript(PATHS.app.orchestration.financeCore);
   }
 
   if (

@@ -9,6 +9,7 @@ import {
   getCompletedAugmentationPurchaseOutcome,
   isFinanceCategoryAllowedInBitNode,
   isFinanceCategoryAllowedDuringAugmentation,
+  shouldPrepareBn8GraftingCapacity,
   hasPendingFinanceCategory,
   isAugmentationPurchasePriceStale,
   isFinanceRequestRecentlyCompleted,
@@ -23,6 +24,7 @@ test("BitNode 8 finance dispatch gates augmentations and programs by phase", () 
   assert.equal(isFinanceCategoryAllowedInBitNode("PURCHASED_SERVER", 8), true);
   assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 8), false);
   assert.equal(isFinanceCategoryAllowedInBitNode("HOME_SERVER", 8), false);
+  assert.equal(isFinanceCategoryAllowedInBitNode("HOME_SERVER", 8, true, false, true), true);
   assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 8, true), true);
   assert.equal(
     isFinanceCategoryAllowedInBitNode("DARKNET_PROGRAM", 8, true),
@@ -33,6 +35,15 @@ test("BitNode 8 finance dispatch gates augmentations and programs by phase", () 
     true,
   );
   assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 7), true);
+});
+
+test("BN8 prepares home RAM before starting the Grafting Manager", () => {
+  assert.equal(shouldPrepareBn8GraftingCapacity(8, 1, true, false, 35, 20), true);
+  assert.equal(shouldPrepareBn8GraftingCapacity(8, 1, true, false, 35, 35), false);
+  assert.equal(shouldPrepareBn8GraftingCapacity(8, 1, true, true, 35, 20), false);
+  assert.equal(shouldPrepareBn8GraftingCapacity(8, 0, true, false, 35, 20), false);
+  assert.equal(shouldPrepareBn8GraftingCapacity(8, 1, false, false, 35, 20), false);
+  assert.equal(shouldPrepareBn8GraftingCapacity(7, 1, true, false, 35, 20), false);
 });
 
 test("BN8 stock trading continues while an augmentation batch awaits installation", () => {

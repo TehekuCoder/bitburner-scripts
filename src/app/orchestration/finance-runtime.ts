@@ -59,14 +59,36 @@ export function isFinanceCategoryAllowedInBitNode(
   bitNode: number,
   hasFourSigmaLicenses = false,
   hasInstalledRedPill = false,
+  allowBn8HomeRamUpgrade = false,
 ): boolean {
   return (
     bitNode !== 8 ||
     category === "STOCK_LICENSE" ||
     category === "STOCK_TRADE" ||
     category === "PURCHASED_SERVER" ||
+    (category === "HOME_SERVER" && allowBn8HomeRamUpgrade) ||
     (category === "PLAYER_AUG" && hasFourSigmaLicenses) ||
     (category === "DARKNET_PROGRAM" && hasInstalledRedPill)
+  );
+}
+
+export function shouldPrepareBn8GraftingCapacity(
+  currentNode: number,
+  sourceFile10Level: number,
+  hasFourSigmaTixApi: boolean,
+  graftingManagerRunning: boolean,
+  graftingManagerRam: number,
+  freeHomeRam: number,
+): boolean {
+  return (
+    currentNode === 8 &&
+    sourceFile10Level > 0 &&
+    hasFourSigmaTixApi &&
+    !graftingManagerRunning &&
+    Number.isFinite(graftingManagerRam) &&
+    graftingManagerRam > 0 &&
+    Number.isFinite(freeHomeRam) &&
+    freeHomeRam < graftingManagerRam
   );
 }
 
