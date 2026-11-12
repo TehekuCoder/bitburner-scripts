@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  canPurchaseBn8RedPill,
   getDaedalusAugmentationRequirement,
   getHackingAugmentationValue,
   getMissingDaedalusAugmentationCount,
@@ -27,6 +28,13 @@ test("Daedalus augmentation count respects the BitNode multiplier and pending ba
   assert.equal(getDaedalusAugmentationRequirement(Number.NaN), 30);
   assert.equal(getMissingDaedalusAugmentationCount(30, 20, 7), 3);
   assert.equal(getMissingDaedalusAugmentationCount(30, 30, 4), 0);
+});
+
+test("BN8 requires Violet Congruity before Red Pill when grafting is unlocked", () => {
+  assert.equal(canPurchaseBn8RedPill(29, 30, true, true), false);
+  assert.equal(canPurchaseBn8RedPill(30, 30, true, false), false);
+  assert.equal(canPurchaseBn8RedPill(30, 30, true, true), true);
+  assert.equal(canPurchaseBn8RedPill(30, 30, false, false), true);
 });
 
 test("both 4S licenses are required for the BN8 augmentation phase", () => {

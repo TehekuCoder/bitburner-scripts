@@ -52,6 +52,7 @@ export interface FinanceState {
   isHomePrioritized?: boolean;
   isRushModeActive?: boolean;
   homeCores?: number;
+  bn8SleeveAugPurchasesUnlocked?: boolean;
 }
 
 export interface StockDashboardSymbol {

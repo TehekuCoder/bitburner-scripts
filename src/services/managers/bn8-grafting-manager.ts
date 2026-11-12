@@ -1,6 +1,7 @@
 import { NS } from "@ns";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import {
+  BN8_VIOLET_CONGRUITY_AUGMENTATION,
   getDaedalusAugmentationRequirement,
   getHackingAugmentationValue,
   hasBothFourSigmaLicenses,
@@ -24,7 +25,6 @@ export async function main(ns: NS): Promise<void> {
     if (
       !hasBothFourSigmaLicenses(ns) ||
       ns.singularity.getOwnedAugmentations(false).includes("The Red Pill") ||
-      ns.singularity.getOwnedAugmentations(true).includes("The Red Pill") ||
       !ns.grafting
     ) {
       await ns.sleep(RETRY_DELAY_MS);
@@ -35,7 +35,13 @@ export async function main(ns: NS): Promise<void> {
       loadBnMults(ns).DaedalusAugsRequirement ?? 1,
     );
     const installedAugs = ns.singularity.getOwnedAugmentations(false);
-    if (installedAugs.length >= requiredAugs) {
+    const ownedAugSet = new Set(
+      ns.singularity.getOwnedAugmentations(true),
+    );
+    const shouldGraftViolet =
+      installedAugs.length >= requiredAugs &&
+      !ownedAugSet.has(BN8_VIOLET_CONGRUITY_AUGMENTATION);
+    if (installedAugs.length >= requiredAugs && !shouldGraftViolet) {
       await ns.sleep(RETRY_DELAY_MS);
       continue;
     }
@@ -47,9 +53,6 @@ export async function main(ns: NS): Promise<void> {
       continue;
     }
 
-    const ownedAugSet = new Set(
-      ns.singularity.getOwnedAugmentations(true),
-    );
     const candidate = ns.grafting
       .getGraftableAugmentations()
       .filter(
@@ -58,9 +61,11 @@ export async function main(ns: NS): Promise<void> {
           ns.singularity
             .getAugmentationPrereq(name)
             .every((prerequisite) => ownedAugSet.has(prerequisite)) &&
-          hasHackingAugmentationBenefit(
-            ns.singularity.getAugmentationStats(name),
-          ),
+          (shouldGraftViolet
+            ? name === BN8_VIOLET_CONGRUITY_AUGMENTATION
+            : hasHackingAugmentationBenefit(
+                ns.singularity.getAugmentationStats(name),
+              )),
       )
       .map((name) => ({
         name,
@@ -75,7 +80,8 @@ export async function main(ns: NS): Promise<void> {
           item.price > 0 &&
           item.price <= player.money &&
           Number.isFinite(item.value) &&
-          item.value > 0,
+          (item.name === BN8_VIOLET_CONGRUITY_AUGMENTATION ||
+            item.value > 0),
       )
       .sort((a, b) => b.value / b.price - a.value / a.price)[0];
 

@@ -60,6 +60,23 @@ test("schema-v0 snapshots migrate missing values from defaults", () => {
   assert.equal(parsed?.state.moneyReserve, 100);
 });
 
+test("finance state validates the BN8 sleeve-purchase unlock flag", () => {
+  assert.deepEqual(
+    getBotStateShapeErrors({
+      ...validState,
+      bn8SleeveAugPurchasesUnlocked: true,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    getBotStateShapeErrors({
+      ...validState,
+      bn8SleeveAugPurchasesUnlocked: "yes",
+    }),
+    ["bn8SleeveAugPurchasesUnlocked has an invalid value"],
+  );
+});
+
 test("current-version snapshots are validated without silently defaulting bad values", () => {
   const parsed = parseStoredState(
     {

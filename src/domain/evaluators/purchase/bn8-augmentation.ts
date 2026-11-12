@@ -1,6 +1,9 @@
 import type { NS, Multipliers } from "@ns";
 
 export const BN8_DAEDALUS_BASE_AUGMENTATION_REQUIREMENT = 30;
+export const BN8_VIOLET_CONGRUITY_AUGMENTATION =
+  "violet Congruity Implant";
+export const BN8_VIOLET_CONGRUITY_GRAFT_PRICE = 150_000_000_000_000;
 
 const HACKING_MULTIPLIERS = [
   "hacking",
@@ -49,6 +52,18 @@ export function getMissingDaedalusAugmentationCount(
   return Math.max(
     0,
     requirement - installedCount - purchasedUninstalledCount,
+  );
+}
+
+export function canPurchaseBn8RedPill(
+  installedCount: number,
+  requirement: number,
+  graftingUnlocked: boolean,
+  violetCongruityInstalled: boolean,
+): boolean {
+  return (
+    installedCount >= requirement &&
+    (!graftingUnlocked || violetCongruityInstalled)
   );
 }
 

@@ -10,9 +10,18 @@ import {
   isCorporationViable,
   isStockViable,
 } from "/lib/utils.js";
-import { loadState } from "/infrastructure/state/state.js";
+import {
+  loadFinanceState,
+  loadState,
+  patchFinanceState,
+} from "/infrastructure/state/state.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
-import { shouldPrepareBn8GraftingCapacity } from "/app/orchestration/finance-runtime.js";
+import {
+  shouldPrepareBn8GraftingCapacity,
+  shouldPrepareBn8SleeveCapacity,
+  shouldUnlockBn8SleeveAugPurchases,
+} from "/app/orchestration/finance-runtime.js";
+import { hasBothFourSigmaLicenses } from "/domain/evaluators/purchase/bn8-augmentation.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -90,6 +99,14 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     const bnMults = loadBnMults(ns);
     const isBitNode8 = ns.getResetInfo().currentNode === 8;
+    if (
+      !isBitNode8 &&
+      loadFinanceState(ns)?.bn8SleeveAugPurchasesUnlocked === true
+    ) {
+      await patchFinanceState(ns, {
+        bn8SleeveAugPurchasesUnlocked: false,
+      });
+    }
 
     // 0. Finance-Core als Dauerläufer (UI & Kauf-Abwicklung)
     if (
@@ -126,6 +143,27 @@ export async function main(ns: NS): Promise<void> {
 
     if (isBitNode8) {
       const resetInfo = ns.getResetInfo();
+      const hasFourSigmaLicenses = hasBothFourSigmaLicenses(ns);
+      let financeState = loadFinanceState(ns);
+      const sleeveAugPurchasesUnlocked =
+        financeState?.bn8SleeveAugPurchasesUnlocked === true;
+      if (
+        shouldUnlockBn8SleeveAugPurchases(
+          resetInfo.currentNode,
+          hasFourSigmaLicenses,
+          hasSleeve(ns),
+          ns.getServerMoneyAvailable("home"),
+          sleeveAugPurchasesUnlocked,
+        ) &&
+        !sleeveAugPurchasesUnlocked
+      ) {
+        await patchFinanceState(ns, {
+          bn8SleeveAugPurchasesUnlocked: true,
+        });
+        financeState = loadFinanceState(ns);
+        logger.info("BN8-Sleeve-Augmentations ab 100T freigeschaltet.");
+      }
+
       const graftingManager = PATHS.services.managers.bn8Grafting;
       const graftingManagerRam = ns.getScriptRam(graftingManager, "home");
       const freeHomeRam =
@@ -140,6 +178,30 @@ export async function main(ns: NS): Promise<void> {
       );
       if (prepareGraftingCapacity) {
         await runAndWait(PATHS.domain.evaluators.purchase.home);
+      }
+      if (
+        financeState?.bn8SleeveAugPurchasesUnlocked &&
+        hasFourSigmaLicenses &&
+        hasSleeve(ns)
+      ) {
+        const sleeveEvaluator = PATHS.domain.evaluators.purchase.sleeve;
+        const sleeveEvaluatorRam = ns.getScriptRam(sleeveEvaluator, "home");
+        const freeRam =
+          ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+        if (
+          shouldPrepareBn8SleeveCapacity(
+            resetInfo.currentNode,
+            hasFourSigmaLicenses,
+            true,
+            hasSleeve(ns),
+            ns.isRunning(sleeveEvaluator, "home"),
+            sleeveEvaluatorRam,
+            freeRam,
+          )
+        ) {
+          await runAndWait(PATHS.domain.evaluators.purchase.home);
+        }
+        await runAndWait(sleeveEvaluator);
       }
       if (isStockViable(ns)) {
         await runAndWait(PATHS.domain.evaluators.purchase.stock);

@@ -22,6 +22,60 @@ export interface StockFinanceActionRoutes {
   sellShort: string;
 }
 
+export const BN8_SLEEVE_AUG_UNLOCK_MONEY = 100_000_000_000_000;
+export const BN8_VIOLET_CONGRUITY_RESERVE = 150_000_000_000_000;
+
+export function shouldUnlockBn8SleeveAugPurchases(
+  currentNode: number,
+  hasFourSigmaLicenses: boolean,
+  hasSleeves: boolean,
+  money: number,
+  alreadyUnlocked: boolean,
+): boolean {
+  return (
+    currentNode === 8 &&
+    (alreadyUnlocked ||
+      hasFourSigmaLicenses &&
+      hasSleeves &&
+      Number.isFinite(money) &&
+      money >= BN8_SLEEVE_AUG_UNLOCK_MONEY)
+  );
+}
+
+export function shouldPrepareBn8SleeveCapacity(
+  currentNode: number,
+  hasFourSigmaLicenses: boolean,
+  sleeveAugPurchasesUnlocked: boolean,
+  hasSleeves: boolean,
+  sleeveEvaluatorRunning: boolean,
+  sleeveEvaluatorRam: number,
+  freeHomeRam: number,
+): boolean {
+  return (
+    currentNode === 8 &&
+    hasFourSigmaLicenses &&
+    sleeveAugPurchasesUnlocked &&
+    hasSleeves &&
+    !sleeveEvaluatorRunning &&
+    Number.isFinite(sleeveEvaluatorRam) &&
+    sleeveEvaluatorRam > 0 &&
+    Number.isFinite(freeHomeRam) &&
+    freeHomeRam < sleeveEvaluatorRam
+  );
+}
+
+export function getBn8VioletGraftingReserve(
+  sleeveAugPurchasesUnlocked: boolean,
+  violetCongruityOwned: boolean,
+  graftPrice = BN8_VIOLET_CONGRUITY_RESERVE,
+): number {
+  return sleeveAugPurchasesUnlocked && !violetCongruityOwned
+    ? Number.isFinite(graftPrice) && graftPrice > 0
+      ? graftPrice
+      : BN8_VIOLET_CONGRUITY_RESERVE
+    : 0;
+}
+
 export function isStockFinanceActionAllowed(
   category: string,
   args: readonly unknown[],
@@ -60,6 +114,7 @@ export function isFinanceCategoryAllowedInBitNode(
   hasFourSigmaLicenses = false,
   hasInstalledRedPill = false,
   allowBn8HomeRamUpgrade = false,
+  allowBn8SleeveAugments = false,
 ): boolean {
   return (
     bitNode !== 8 ||
@@ -68,6 +123,9 @@ export function isFinanceCategoryAllowedInBitNode(
     category === "PURCHASED_SERVER" ||
     (category === "HOME_SERVER" && allowBn8HomeRamUpgrade) ||
     (category === "PLAYER_AUG" && hasFourSigmaLicenses) ||
+    (category === "SLEEVE_AUG" &&
+      hasFourSigmaLicenses &&
+      allowBn8SleeveAugments) ||
     (category === "DARKNET_PROGRAM" && hasInstalledRedPill)
   );
 }

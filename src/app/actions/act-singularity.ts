@@ -1,6 +1,8 @@
 import { NS, ProgramName, FactionName } from "@ns";
 import { runTrackedFinanceAction } from "./finance-action.js";
 import {
+  BN8_VIOLET_CONGRUITY_AUGMENTATION,
+  canPurchaseBn8RedPill,
   getDaedalusAugmentationRequirement,
   hasBothFourSigmaLicenses,
   hasGraftingUnlock,
@@ -104,9 +106,19 @@ export async function main(ns: NS): Promise<void> {
           const requirement = getDaedalusAugmentationRequirement(
             loadBnMults(ns).DaedalusAugsRequirement ?? 1,
           );
-          if (installedAugs.length < requirement) {
+          if (
+            !canPurchaseBn8RedPill(
+              installedAugs.length,
+              requirement,
+              hasGraftingUnlock(ns),
+              installedAugs.includes(BN8_VIOLET_CONGRUITY_AUGMENTATION),
+            )
+          ) {
             failures.push(
-              "Daedalus-Anforderung installierter Augmentations fehlt",
+              hasGraftingUnlock(ns) &&
+                !installedAugs.includes(BN8_VIOLET_CONGRUITY_AUGMENTATION)
+                ? "Violet Congruity Implant muss vor The Red Pill installiert sein"
+                : "Daedalus-Anforderung installierter Augmentations fehlt",
             );
           }
         } else if (isBitNode8 && hasGraftingUnlock(ns)) {

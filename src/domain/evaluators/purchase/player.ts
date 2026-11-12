@@ -25,6 +25,7 @@ import {
   patchAugmentState,
 } from "/infrastructure/state/state.js";
 import {
+  canPurchaseBn8RedPill,
   getDaedalusAugmentationRequirement,
   getHackingAugmentationValue,
   getMissingDaedalusAugmentationCount,
@@ -252,7 +253,16 @@ export const PlayerEvaluator: PurchaseEvaluator = {
     for (const item of eligibleItems) {
       if (isBitNode8) {
         if (item.name === "The Red Pill") {
-          if (installedAugs.length < daedalusAugRequirement) continue;
+          if (
+            !canPurchaseBn8RedPill(
+              installedAugs.length,
+              daedalusAugRequirement,
+              canUseGrafting,
+              installedAugs.includes("violet Congruity Implant"),
+            )
+          ) {
+            continue;
+          }
         } else {
           if (canUseGrafting || remainingInstalledAugSlots <= 0) continue;
         }

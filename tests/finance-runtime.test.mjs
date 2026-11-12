@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   canAffordFinanceRequest,
   compareFinanceRequests,
+  getBn8VioletGraftingReserve,
   findCachedFinanceRequest,
   findRunningFinanceAction,
   getAffordableAugmentationShortlist,
@@ -15,6 +16,8 @@ import {
   isFinanceRequestRecentlyCompleted,
   isFinanceActionTimedOut,
   pruneExpiredFinanceRetries,
+  shouldPrepareBn8SleeveCapacity,
+  shouldUnlockBn8SleeveAugPurchases,
 } from "../src/app/orchestration/finance-runtime.ts";
 
 test("BitNode 8 finance dispatch gates augmentations and programs by phase", () => {
@@ -23,6 +26,8 @@ test("BitNode 8 finance dispatch gates augmentations and programs by phase", () 
   assert.equal(isFinanceCategoryAllowedInBitNode("STOCK_TRADE", 8), true);
   assert.equal(isFinanceCategoryAllowedInBitNode("PURCHASED_SERVER", 8), true);
   assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 8), false);
+  assert.equal(isFinanceCategoryAllowedInBitNode("SLEEVE_AUG", 8, true, false, false, true), true);
+  assert.equal(isFinanceCategoryAllowedInBitNode("SLEEVE_AUG", 8, true), false);
   assert.equal(isFinanceCategoryAllowedInBitNode("HOME_SERVER", 8), false);
   assert.equal(isFinanceCategoryAllowedInBitNode("HOME_SERVER", 8, true, false, true), true);
   assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 8, true), true);
@@ -35,6 +40,33 @@ test("BitNode 8 finance dispatch gates augmentations and programs by phase", () 
     true,
   );
   assert.equal(isFinanceCategoryAllowedInBitNode("PLAYER_AUG", 7), true);
+});
+
+test("BN8 sleeve aug purchases unlock once the 100T threshold and prerequisites are met", () => {
+  assert.equal(shouldUnlockBn8SleeveAugPurchases(8, true, true, 100e12, false), true);
+  assert.equal(shouldUnlockBn8SleeveAugPurchases(8, true, true, 99e12, false), false);
+  assert.equal(shouldUnlockBn8SleeveAugPurchases(8, false, true, 100e12, false), false);
+  assert.equal(shouldUnlockBn8SleeveAugPurchases(8, true, false, 100e12, false), false);
+  assert.equal(shouldUnlockBn8SleeveAugPurchases(7, true, true, 100e12, false), false);
+  assert.equal(shouldUnlockBn8SleeveAugPurchases(8, false, false, 0, true), true);
+  assert.equal(shouldUnlockBn8SleeveAugPurchases(7, false, false, 0, true), false);
+});
+
+test("BN8 protects the Violet graft price until the augmentation is owned", () => {
+  assert.equal(getBn8VioletGraftingReserve(true, false), 150e12);
+  assert.equal(getBn8VioletGraftingReserve(true, false, 160e12), 160e12);
+  assert.equal(getBn8VioletGraftingReserve(true, false, Number.NaN), 150e12);
+  assert.equal(getBn8VioletGraftingReserve(true, true), 0);
+  assert.equal(getBn8VioletGraftingReserve(false, false), 0);
+});
+
+test("BN8 prepares Home RAM for the Sleeve evaluator only when capacity is short", () => {
+  assert.equal(shouldPrepareBn8SleeveCapacity(8, true, true, true, false, 20, 19), true);
+  assert.equal(shouldPrepareBn8SleeveCapacity(8, true, true, true, false, 20, 20), false);
+  assert.equal(shouldPrepareBn8SleeveCapacity(8, true, true, true, true, 20, 10), false);
+  assert.equal(shouldPrepareBn8SleeveCapacity(8, false, true, true, false, 20, 10), false);
+  assert.equal(shouldPrepareBn8SleeveCapacity(8, true, false, true, false, 20, 10), false);
+  assert.equal(shouldPrepareBn8SleeveCapacity(7, true, true, true, false, 20, 10), false);
 });
 
 test("BN8 prepares home RAM before starting the Grafting Manager", () => {

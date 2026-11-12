@@ -31,6 +31,9 @@ import {
   hasInstalledRedPill,
 } from "/domain/strategy/player.js";
 import {
+  BN8_VIOLET_CONGRUITY_AUGMENTATION,
+  BN8_VIOLET_CONGRUITY_GRAFT_PRICE,
+  canPurchaseBn8RedPill,
   getDaedalusAugmentationRequirement,
   hasBothFourSigmaLicenses,
   hasGraftingUnlock,
@@ -56,6 +59,8 @@ import {
   isFinanceRequestRecentlyCompleted,
   isFinanceActionTimedOut,
   pruneExpiredFinanceRetries,
+  getBn8VioletGraftingReserve,
+  shouldPrepareBn8SleeveCapacity,
 } from "./finance-runtime.js";
 
 interface EvaluatorCacheEntry {
@@ -573,14 +578,27 @@ export async function main(ns: NS): Promise<void> {
     pruneExpiredFinanceRetries(completedRequests, now);
 
     const rawMoney = ns.getServerMoneyAvailable("home");
-    const stateReserve = loadFinanceState(ns)?.moneyReserve ?? 0;
+    const currentBitNode = ns.getResetInfo().currentNode;
+    const financeState = loadFinanceState(ns);
+    const sleeveAugPurchasesUnlocked =
+      financeState?.bn8SleeveAugPurchasesUnlocked === true;
+    const violetCongruityOwned =
+      hasSingularity(ns) &&
+      ns.singularity
+        .getOwnedAugmentations(true)
+        .includes(BN8_VIOLET_CONGRUITY_AUGMENTATION);
+    const violetReserve = getBn8VioletGraftingReserve(
+      currentBitNode === 8 && sleeveAugPurchasesUnlocked,
+      violetCongruityOwned,
+      BN8_VIOLET_CONGRUITY_GRAFT_PRICE,
+    );
+    const stateReserve = financeState?.moneyReserve ?? 0;
     const baseCashReserve =
-      ns.getResetInfo().currentNode === 8
-        ? BITNODE_8_CASH_BUFFER
-        : CASH_BUFFER;
+      currentBitNode === 8 ? BITNODE_8_CASH_BUFFER : CASH_BUFFER;
     const reserve = Math.max(
       baseCashReserve,
       Number.isFinite(stateReserve) && stateReserve > 0 ? stateReserve : 0,
+      violetReserve,
     );
     let availableMoney = Math.max(0, rawMoney - reserve);
     for (const pending of pendingActions.values()) {
@@ -599,11 +617,20 @@ export async function main(ns: NS): Promise<void> {
     for (const cache of evaluatorRequestCache.values()) {
       allRequests.push(...cache.requests.values());
     }
-    const currentBitNode = ns.getResetInfo().currentNode;
     if (currentBitNode === 8) {
       const resetInfo = ns.getResetInfo();
       const hasFourSigmaLicenses = hasBothFourSigmaLicenses(ns);
       const redPillInstalled = hasInstalledRedPill(ns);
+      const sleeveEvaluator = PATHS.domain.evaluators.purchase.sleeve;
+      const prepareSleeveCapacity = shouldPrepareBn8SleeveCapacity(
+        currentBitNode,
+        hasFourSigmaLicenses,
+        sleeveAugPurchasesUnlocked,
+        Boolean(ns.sleeve),
+        ns.isRunning(sleeveEvaluator, "home"),
+        ns.getScriptRam(sleeveEvaluator, "home"),
+        ns.getServerMaxRam("home") - ns.getServerUsedRam("home"),
+      );
       const graftingManager = PATHS.services.managers.bn8Grafting;
       const prepareGraftingCapacity = shouldPrepareBn8GraftingCapacity(
         currentBitNode,
@@ -620,17 +647,19 @@ export async function main(ns: NS): Promise<void> {
             currentBitNode,
             hasFourSigmaLicenses,
             redPillInstalled,
-            prepareGraftingCapacity,
+            prepareGraftingCapacity || prepareSleeveCapacity,
+            sleeveAugPurchasesUnlocked,
           ),
         )
         .filter(
           (request) =>
             request.category !== "HOME_SERVER" ||
-            (prepareGraftingCapacity &&
+            ((prepareGraftingCapacity || prepareSleeveCapacity) &&
               request.action.args[0] === "home-upgrade-ram"),
         )
         .map((request) =>
-          prepareGraftingCapacity && request.category === "HOME_SERVER"
+          (prepareGraftingCapacity || prepareSleeveCapacity) &&
+          request.category === "HOME_SERVER"
             ? { ...request, priority: PurchasePriority.CRITICAL }
             : request,
         );
@@ -978,7 +1007,16 @@ export async function main(ns: NS): Promise<void> {
             }
             if (currentBitNode === 8) {
               if (item.name === "The Red Pill") {
-                if (installedAugs.length < bn8AugmentationRequirement) {
+                if (
+                  !canPurchaseBn8RedPill(
+                    installedAugs.length,
+                    bn8AugmentationRequirement,
+                    bn8GraftingUnlocked,
+                    installedAugs.includes(
+                      BN8_VIOLET_CONGRUITY_AUGMENTATION,
+                    ),
+                  )
+                ) {
                   return false;
                 }
               } else if (
@@ -1050,11 +1088,15 @@ export async function main(ns: NS): Promise<void> {
     const bn8AugBatchReady =
       currentBitNode !== 8 ||
       (hasBothFourSigmaLicenses(ns) &&
-        (allOwnedAugs.includes("The Red Pill") ||
-          allOwnedAugs.length >=
+        (installedAugs.includes("The Red Pill") ||
+          canPurchaseBn8RedPill(
+            installedAugs.length,
             getDaedalusAugmentationRequirement(
               loadBnMults(ns).DaedalusAugsRequirement ?? 1,
-            )));
+            ),
+            bn8GraftingUnlocked,
+            installedAugs.includes(BN8_VIOLET_CONGRUITY_AUGMENTATION),
+          )));
     const proposedAugInstallData =
       uninstalledAugs.length > 0 && bn8AugBatchReady
       ? { items: uninstalledAugs }

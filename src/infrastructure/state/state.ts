@@ -86,6 +86,7 @@ const DEFAULT_FINANCE_STATE: FinanceState = {
   isHomePrioritized: false,
   isRushModeActive: false,
   homeCores: 1,
+  bn8SleeveAugPurchasesUnlocked: false,
 };
 
 const DEFAULT_SLEEVE_STATE: SleeveState = {
@@ -215,6 +216,7 @@ const FINANCE_KEYS = [
   "isHomePrioritized",
   "isRushModeActive",
   "homeCores",
+  "bn8SleeveAugPurchasesUnlocked",
 ] as const satisfies readonly (keyof FinanceState)[];
 
 const SLEEVE_KEYS = [
