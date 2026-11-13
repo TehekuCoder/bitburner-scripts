@@ -17,11 +17,15 @@ import {
 } from "/infrastructure/state/state.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import {
+  getBn8PostRedPillRamRequirement,
   shouldPrepareBn8GraftingCapacity,
+  shouldPrepareBn8PostRedPillCapacity,
   shouldPrepareBn8SleeveCapacity,
   shouldUnlockBn8SleeveAugPurchases,
 } from "/app/orchestration/finance-runtime.js";
-import { hasBothFourSigmaLicenses } from "/domain/evaluators/purchase/bn8-augmentation.js";
+import {
+  hasBothFourSigmaLicenses,
+} from "/domain/evaluators/purchase/bn8-augmentation.js";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -179,6 +183,23 @@ export async function main(ns: NS): Promise<void> {
       if (prepareGraftingCapacity) {
         await runAndWait(PATHS.domain.evaluators.purchase.home);
       }
+      const installedAugs = ns.singularity?.getOwnedAugmentations(false) ?? [];
+      const purchasedAugs = ns.singularity?.getOwnedAugmentations(true) ?? [];
+      const hasUninstalledRedPill =
+        purchasedAugs.includes("The Red Pill") &&
+        !installedAugs.includes("The Red Pill");
+      const postRedPillRamRequirement =
+        getBn8PostRedPillRamRequirement(ns);
+      if (
+        shouldPrepareBn8PostRedPillCapacity(
+          resetInfo.currentNode,
+          hasUninstalledRedPill,
+          ns.getServerMaxRam("home"),
+          postRedPillRamRequirement,
+        )
+      ) {
+        await runAndWait(PATHS.domain.evaluators.purchase.home);
+      }
       if (
         financeState?.bn8SleeveAugPurchasesUnlocked &&
         hasFourSigmaLicenses &&
@@ -205,6 +226,9 @@ export async function main(ns: NS): Promise<void> {
       }
       if (isStockViable(ns)) {
         await runAndWait(PATHS.domain.evaluators.purchase.stock);
+      }
+      if (installedAugs.includes("The Red Pill")) {
+        await runAndWait(PATHS.domain.evaluators.purchase.programs);
       }
       await ns.sleep(1000);
       continue;

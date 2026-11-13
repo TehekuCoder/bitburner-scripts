@@ -9,6 +9,11 @@ import { loadState } from "/infrastructure/state/state";
 import { hasSingularity, hasGang, hasSleeve, hasCorporation, isCorporationViable } from "/lib/utils";
 import { shouldEnableStanekForBitNode } from "/domain/strategy/stanek-policy.js";
 import {
+  BN8_VIOLET_CONGRUITY_AUGMENTATION,
+  hasBothFourSigmaLicenses,
+  hasGraftingUnlock,
+} from "/domain/evaluators/purchase/bn8-augmentation.js";
+import {
   getMaximumSingularityActionRam,
   getSingularityRamMultiplier,
 } from "/app/actions/singularity-action-ram";
@@ -189,11 +194,22 @@ export async function main(ns: NS): Promise<void> {
         if (isManualMode(state)) return false;
         if (isModuleDisabled(state, ["dispatcher", "singularity"]))
           return false;
+        const singularityAvailable = hasSingularity(ns);
+        const violetGraftingPending =
+          singularityAvailable &&
+          ns.getResetInfo().currentNode === 8 &&
+          hasGraftingUnlock(ns) &&
+          hasBothFourSigmaLicenses(ns) &&
+          ns.getPlayer().factions.includes("Daedalus") &&
+          !ns.singularity
+            .getOwnedAugmentations(true)
+            .includes(BN8_VIOLET_CONGRUITY_AUGMENTATION);
         return (
-          hasSingularity(ns) &&
+          singularityAvailable &&
           shouldRunSingularityDispatcher(
             ns.getResetInfo().currentNode,
             state?.strategy,
+            violetGraftingPending,
           )
         );
       },

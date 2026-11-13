@@ -67,6 +67,13 @@ export function canPurchaseBn8RedPill(
   );
 }
 
+export function shouldPrioritizeVioletCongruityGraft(
+  hasJoinedDaedalus: boolean,
+  violetCongruityOwned: boolean,
+): boolean {
+  return hasJoinedDaedalus && !violetCongruityOwned;
+}
+
 export function hasBothFourSigmaLicenses(ns: NS): boolean {
   return Boolean(
     ns.stock?.has4SData() && ns.stock.has4SDataTixApi(),

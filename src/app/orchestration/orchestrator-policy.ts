@@ -48,6 +48,10 @@ export function shouldRunSleeveManager(
 export function shouldRunSingularityDispatcher(
   currentNode: number,
   strategy: unknown,
+  pauseForVioletGrafting = false,
 ): boolean {
-  return currentNode !== 8 || strategy === "REP";
+  return (
+    !pauseForVioletGrafting &&
+    (currentNode !== 8 || strategy === "REP")
+  );
 }

@@ -7,6 +7,7 @@ import {
   hasBothFourSigmaLicenses,
   hasGraftingUnlock,
   hasHackingAugmentationBenefit,
+  shouldPrioritizeVioletCongruityGraft,
 } from "/domain/evaluators/purchase/bn8-augmentation.js";
 import { loadBnMults } from "/lib/utils.js";
 
@@ -38,9 +39,11 @@ export async function main(ns: NS): Promise<void> {
     const ownedAugSet = new Set(
       ns.singularity.getOwnedAugmentations(true),
     );
-    const shouldGraftViolet =
-      installedAugs.length >= requiredAugs &&
-      !ownedAugSet.has(BN8_VIOLET_CONGRUITY_AUGMENTATION);
+    const daedalusJoined = ns.getPlayer().factions.includes("Daedalus");
+    const shouldGraftViolet = shouldPrioritizeVioletCongruityGraft(
+      daedalusJoined,
+      ownedAugSet.has(BN8_VIOLET_CONGRUITY_AUGMENTATION),
+    );
     if (installedAugs.length >= requiredAugs && !shouldGraftViolet) {
       await ns.sleep(RETRY_DELAY_MS);
       continue;
@@ -48,9 +51,24 @@ export async function main(ns: NS): Promise<void> {
 
     const player = ns.getPlayer();
     const currentWork = ns.singularity.getCurrentWork();
-    if (player.city !== "New Tokyo" || currentWork !== null) {
+    if (player.city !== "New Tokyo") {
       await ns.sleep(RETRY_DELAY_MS);
       continue;
+    }
+    if (currentWork !== null) {
+      const isDaedalusRepWork =
+        currentWork.type === "FACTION" &&
+        currentWork.factionName === "Daedalus";
+      if (!shouldGraftViolet || !isDaedalusRepWork) {
+        await ns.sleep(RETRY_DELAY_MS);
+        continue;
+      }
+      if (!ns.singularity.stopAction()) {
+        logger.warn("Daedalus-Rufarbeit konnte für Violet-Grafting nicht beendet werden.");
+        await ns.sleep(RETRY_DELAY_MS);
+        continue;
+      }
+      logger.info("Daedalus-Rufarbeit beendet; Violet-Grafting hat Vorrang.");
     }
 
     const candidate = ns.grafting

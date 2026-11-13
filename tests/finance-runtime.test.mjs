@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  getBn8PostRedPillRamRequirement,
+  isBn8PostRedPillRamReady,
   canAffordFinanceRequest,
   compareFinanceRequests,
   getBn8VioletGraftingReserve,
@@ -11,6 +13,7 @@ import {
   isFinanceCategoryAllowedInBitNode,
   isFinanceCategoryAllowedDuringAugmentation,
   shouldPrepareBn8GraftingCapacity,
+  shouldPrepareBn8PostRedPillCapacity,
   hasPendingFinanceCategory,
   isAugmentationPurchasePriceStale,
   isFinanceRequestRecentlyCompleted,
@@ -78,6 +81,30 @@ test("BN8 prepares home RAM before starting the Grafting Manager", () => {
   assert.equal(shouldPrepareBn8GraftingCapacity(7, 1, true, false, 35, 20), false);
 });
 
+test("BN8 delays Red Pill installation until the operational daemon RAM fits", () => {
+  assert.equal(shouldPrepareBn8PostRedPillCapacity(8, true, 64, 96), true);
+  assert.equal(shouldPrepareBn8PostRedPillCapacity(8, true, 96, 96), false);
+  assert.equal(shouldPrepareBn8PostRedPillCapacity(8, false, 32, 96), false);
+  assert.equal(shouldPrepareBn8PostRedPillCapacity(7, true, 32, 96), false);
+
+  assert.equal(isBn8PostRedPillRamReady(8, 95, 96), false);
+  assert.equal(isBn8PostRedPillRamReady(8, 96, 96), true);
+  assert.equal(isBn8PostRedPillRamReady(7, 0, Number.POSITIVE_INFINITY), true);
+});
+
+test("BN8 post-Red Pill RAM requirement includes all persistent operating daemons", () => {
+  const ns = {
+    getScriptRam: (script) => (script.includes("finance") ? 10 : 5),
+  };
+  assert.equal(getBn8PostRedPillRamRequirement(ns), 35);
+  assert.equal(
+    getBn8PostRedPillRamRequirement({
+      getScriptRam: () => 0,
+    }),
+    Number.POSITIVE_INFINITY,
+  );
+});
+
 test("BN8 stock trading continues while an augmentation batch awaits installation", () => {
   assert.equal(isFinanceCategoryAllowedDuringAugmentation("STOCK_TRADE", 8), true);
   assert.equal(isFinanceCategoryAllowedDuringAugmentation("STOCK_LICENSE", 8), true);
@@ -85,6 +112,8 @@ test("BN8 stock trading continues while an augmentation batch awaits installatio
   assert.equal(isFinanceCategoryAllowedDuringAugmentation("DARKNET_PROGRAM", 8), false);
   assert.equal(isFinanceCategoryAllowedDuringAugmentation("STOCK_TRADE", 7), false);
   assert.equal(isFinanceCategoryAllowedDuringAugmentation("SLEEVE_AUG", 7), true);
+  assert.equal(isFinanceCategoryAllowedDuringAugmentation("HOME_SERVER", 8), false);
+  assert.equal(isFinanceCategoryAllowedDuringAugmentation("HOME_SERVER", 8, true), true);
 });
 
 test("BN8 prioritizes affordable 4S licenses over new stock positions", () => {

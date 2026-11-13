@@ -8,6 +8,7 @@ import {
   hasBothFourSigmaLicenses,
   hasGraftingUnlock,
   hasHackingAugmentationBenefit,
+  shouldPrioritizeVioletCongruityGraft,
 } from "../src/domain/evaluators/purchase/bn8-augmentation.ts";
 
 test("BN8 accepts only augmentations with a positive hacking multiplier", () => {
@@ -35,6 +36,12 @@ test("BN8 requires Violet Congruity before Red Pill when grafting is unlocked", 
   assert.equal(canPurchaseBn8RedPill(30, 30, true, false), false);
   assert.equal(canPurchaseBn8RedPill(30, 30, true, true), true);
   assert.equal(canPurchaseBn8RedPill(30, 30, false, false), true);
+});
+
+test("BN8 prioritizes Violet Congruity once the player joins Daedalus", () => {
+  assert.equal(shouldPrioritizeVioletCongruityGraft(false, false), false);
+  assert.equal(shouldPrioritizeVioletCongruityGraft(true, false), true);
+  assert.equal(shouldPrioritizeVioletCongruityGraft(true, true), false);
 });
 
 test("both 4S licenses are required for the BN8 augmentation phase", () => {

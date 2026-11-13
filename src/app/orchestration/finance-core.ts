@@ -60,6 +60,9 @@ import {
   isFinanceActionTimedOut,
   pruneExpiredFinanceRetries,
   getBn8VioletGraftingReserve,
+  getBn8PostRedPillRamRequirement,
+  isBn8PostRedPillRamReady,
+  shouldPrepareBn8PostRedPillCapacity,
   shouldPrepareBn8SleeveCapacity,
 } from "./finance-runtime.js";
 
@@ -582,15 +585,38 @@ export async function main(ns: NS): Promise<void> {
     const financeState = loadFinanceState(ns);
     const sleeveAugPurchasesUnlocked =
       financeState?.bn8SleeveAugPurchasesUnlocked === true;
+    const hasUninstalledRedPill =
+      currentBitNode === 8 &&
+      hasSingularity(ns) &&
+      getPurchasedUninstalledAugs(ns).includes("The Red Pill");
+    const postRedPillRamRequirement =
+      currentBitNode === 8 ? getBn8PostRedPillRamRequirement(ns) : 0;
+    const postRedPillRamReady = isBn8PostRedPillRamReady(
+      currentBitNode,
+      ns.getServerMaxRam("home"),
+      postRedPillRamRequirement,
+    );
     const violetCongruityOwned =
       hasSingularity(ns) &&
       ns.singularity
         .getOwnedAugmentations(true)
         .includes(BN8_VIOLET_CONGRUITY_AUGMENTATION);
+    const shouldReserveViolet =
+      currentBitNode === 8 &&
+      hasGraftingUnlock(ns) &&
+      ns.getPlayer().factions.includes("Daedalus");
+    const violetGraftPrice =
+      shouldReserveViolet &&
+      !violetCongruityOwned &&
+      ns.grafting
+      ? ns.grafting.getAugmentationGraftPrice(
+          BN8_VIOLET_CONGRUITY_AUGMENTATION,
+        )
+      : BN8_VIOLET_CONGRUITY_GRAFT_PRICE;
     const violetReserve = getBn8VioletGraftingReserve(
-      currentBitNode === 8 && sleeveAugPurchasesUnlocked,
+      shouldReserveViolet,
       violetCongruityOwned,
-      BN8_VIOLET_CONGRUITY_GRAFT_PRICE,
+      violetGraftPrice,
     );
     const stateReserve = financeState?.moneyReserve ?? 0;
     const baseCashReserve =
@@ -617,6 +643,7 @@ export async function main(ns: NS): Promise<void> {
     for (const cache of evaluatorRequestCache.values()) {
       allRequests.push(...cache.requests.values());
     }
+    let preparePostRedPillCapacity = false;
     if (currentBitNode === 8) {
       const resetInfo = ns.getResetInfo();
       const hasFourSigmaLicenses = hasBothFourSigmaLicenses(ns);
@@ -630,6 +657,12 @@ export async function main(ns: NS): Promise<void> {
         ns.isRunning(sleeveEvaluator, "home"),
         ns.getScriptRam(sleeveEvaluator, "home"),
         ns.getServerMaxRam("home") - ns.getServerUsedRam("home"),
+      );
+      preparePostRedPillCapacity = shouldPrepareBn8PostRedPillCapacity(
+        currentBitNode,
+        hasUninstalledRedPill,
+        ns.getServerMaxRam("home"),
+        postRedPillRamRequirement,
       );
       const graftingManager = PATHS.services.managers.bn8Grafting;
       const prepareGraftingCapacity = shouldPrepareBn8GraftingCapacity(
@@ -647,19 +680,25 @@ export async function main(ns: NS): Promise<void> {
             currentBitNode,
             hasFourSigmaLicenses,
             redPillInstalled,
-            prepareGraftingCapacity || prepareSleeveCapacity,
+            prepareGraftingCapacity ||
+              prepareSleeveCapacity ||
+              preparePostRedPillCapacity,
             sleeveAugPurchasesUnlocked,
           ),
         )
         .filter(
           (request) =>
             request.category !== "HOME_SERVER" ||
-            ((prepareGraftingCapacity || prepareSleeveCapacity) &&
+            ((prepareGraftingCapacity ||
+              prepareSleeveCapacity ||
+              preparePostRedPillCapacity) &&
               request.action.args[0] === "home-upgrade-ram"),
         )
         .map((request) =>
-          (prepareGraftingCapacity || prepareSleeveCapacity) &&
-          request.category === "HOME_SERVER"
+          (prepareGraftingCapacity ||
+            prepareSleeveCapacity ||
+            preparePostRedPillCapacity) &&
+            request.category === "HOME_SERVER"
             ? { ...request, priority: PurchasePriority.CRITICAL }
             : request,
         );
@@ -688,6 +727,9 @@ export async function main(ns: NS): Promise<void> {
         isFinanceCategoryAllowedDuringAugmentation(
           request.category,
           currentBitNode,
+          currentBitNode === 8 &&
+            preparePostRedPillCapacity &&
+            request.action.args[0] === "home-upgrade-ram",
         ),
       );
       allRequests.splice(
@@ -1098,7 +1140,9 @@ export async function main(ns: NS): Promise<void> {
             installedAugs.includes(BN8_VIOLET_CONGRUITY_AUGMENTATION),
           )));
     const proposedAugInstallData =
-      uninstalledAugs.length > 0 && bn8AugBatchReady
+      uninstalledAugs.length > 0 &&
+      bn8AugBatchReady &&
+      (!uninstalledAugs.includes("The Red Pill") || postRedPillRamReady)
       ? { items: uninstalledAugs }
       : undefined;
 

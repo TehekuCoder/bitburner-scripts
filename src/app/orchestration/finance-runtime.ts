@@ -1,3 +1,5 @@
+import type { NS } from "@ns";
+
 export interface FinanceRequestLike {
   id: string;
   category: string;
@@ -24,6 +26,54 @@ export interface StockFinanceActionRoutes {
 
 export const BN8_SLEEVE_AUG_UNLOCK_MONEY = 100_000_000_000_000;
 export const BN8_VIOLET_CONGRUITY_RESERVE = 150_000_000_000_000;
+
+const BN8_POST_RED_PILL_DAEMONS = [
+  "app/orchestration/sys-orchestrator.js",
+  "app/orchestration/finance-core.js",
+  "services/daemons/finance-dispatcher.js",
+  "services/daemons/hacking-orchestrator.js",
+  "services/daemons/backdoor.js",
+] as const;
+
+export function getBn8PostRedPillRamRequirement(ns: NS): number {
+  let requiredRam = 0;
+  for (const script of BN8_POST_RED_PILL_DAEMONS) {
+    const scriptRam = ns.getScriptRam(script, "home");
+    if (!Number.isFinite(scriptRam) || scriptRam <= 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+    requiredRam += scriptRam;
+  }
+  return requiredRam;
+}
+
+export function shouldPrepareBn8PostRedPillCapacity(
+  currentNode: number,
+  hasUninstalledRedPill: boolean,
+  homeMaxRam: number,
+  requiredRam: number,
+): boolean {
+  return (
+    currentNode === 8 &&
+    hasUninstalledRedPill &&
+    Number.isFinite(homeMaxRam) &&
+    Number.isFinite(requiredRam) &&
+    homeMaxRam < requiredRam
+  );
+}
+
+export function isBn8PostRedPillRamReady(
+  currentNode: number,
+  homeMaxRam: number,
+  requiredRam: number,
+): boolean {
+  return (
+    currentNode !== 8 ||
+    (Number.isFinite(homeMaxRam) &&
+      Number.isFinite(requiredRam) &&
+      homeMaxRam >= requiredRam)
+  );
+}
 
 export function shouldUnlockBn8SleeveAugPurchases(
   currentNode: number,
@@ -65,11 +115,11 @@ export function shouldPrepareBn8SleeveCapacity(
 }
 
 export function getBn8VioletGraftingReserve(
-  sleeveAugPurchasesUnlocked: boolean,
+  shouldReserveViolet: boolean,
   violetCongruityOwned: boolean,
   graftPrice = BN8_VIOLET_CONGRUITY_RESERVE,
 ): number {
-  return sleeveAugPurchasesUnlocked && !violetCongruityOwned
+  return shouldReserveViolet && !violetCongruityOwned
     ? Number.isFinite(graftPrice) && graftPrice > 0
       ? graftPrice
       : BN8_VIOLET_CONGRUITY_RESERVE
@@ -153,6 +203,7 @@ export function shouldPrepareBn8GraftingCapacity(
 export function isFinanceCategoryAllowedDuringAugmentation(
   category: string,
   bitNode: number,
+  allowBn8HomeRamUpgrade = false,
 ): boolean {
   return (
     category === "SLEEVE_AUG" ||
@@ -160,7 +211,8 @@ export function isFinanceCategoryAllowedDuringAugmentation(
     (bitNode === 8 &&
       (category === "STOCK_LICENSE" ||
         category === "STOCK_TRADE" ||
-        category === "PLAYER_AUG"))
+        category === "PLAYER_AUG" ||
+        (category === "HOME_SERVER" && allowBn8HomeRamUpgrade)))
   );
 }
 

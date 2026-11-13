@@ -46,6 +46,8 @@ test("BN8 grafting manager waits for SF10 and 4S TIX API access", () => {
 
 test("BN8 only starts the Singularity dispatcher for reputation farming", () => {
   assert.equal(shouldRunSingularityDispatcher(8, "REP"), true);
+  assert.equal(shouldRunSingularityDispatcher(8, "REP", true), false);
+  assert.equal(shouldRunSingularityDispatcher(8, "REP", false), true);
   assert.equal(shouldRunSingularityDispatcher(8, "STOCK"), false);
   assert.equal(shouldRunSingularityDispatcher(8, undefined), false);
   assert.equal(shouldRunSingularityDispatcher(7, "STOCK"), true);
