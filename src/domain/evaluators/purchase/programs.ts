@@ -8,7 +8,10 @@ import {
 import { hasSingularity } from "/lib/utils.js";
 import { runEvaluator } from "../evaluator-runner.js";
 import { PATHS } from "/infrastructure/runtime/paths";
-import { shouldAutoPurchaseProgramInBitNode } from "/app/orchestration/finance-runtime.js";
+import {
+  shouldAutoPurchaseProgramInBitNode,
+  shouldRunProgramEvaluatorInBitNode,
+} from "/app/orchestration/finance-runtime.js";
 
 // Reihenfolge der Port-Opener (1 bis 5 benötigte Ports)
 const PORT_OPENERS: ProgramName[] = [
@@ -105,6 +108,16 @@ export const ProgramEvaluator: PurchaseEvaluator = {
   getRequests(ns: NS): PurchaseRequest[] {
     const requests: PurchaseRequest[] = [];
     if (!hasSingularity(ns)) return requests;
+    if (
+      !shouldRunProgramEvaluatorInBitNode(
+        ns.getResetInfo().currentNode,
+        ns.singularity
+          .getOwnedAugmentations(false)
+          .includes("The Red Pill"),
+      )
+    ) {
+      return requests;
+    }
 
     const playerMoney = ns.getServerMoneyAvailable("home");
     const currentHacking = ns.getPlayer().skills.hacking;

@@ -24,6 +24,7 @@ import {
   shouldStartBn8GraftingManager,
   shouldRunSingularityDispatcher,
   shouldRunSleeveManager,
+  shouldReserveBn8StockEvaluatorRam,
 } from "./orchestrator-policy.js";
 
 interface DaemonConfig {
@@ -568,6 +569,15 @@ function getProtectedRam(
   if (isFinanceEnabled) {
     reserveScript(PATHS.services.daemons.financeDispatcher);
     reserveScript(PATHS.app.orchestration.financeCore);
+  }
+
+  if (
+    shouldReserveBn8StockEvaluatorRam(
+      ns.getResetInfo().currentNode,
+      isFinanceEnabled,
+    )
+  ) {
+    reserveScript(PATHS.domain.evaluators.purchase.stock);
   }
 
   if (

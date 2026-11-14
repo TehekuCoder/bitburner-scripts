@@ -4,6 +4,7 @@ import {
   isManualMode,
   isModuleDisabled,
   shouldRunDaemonInBitNode,
+  shouldReserveBn8StockEvaluatorRam,
   shouldStartBn8GraftingManager,
   shouldRunSingularityDispatcher,
   shouldRunSleeveManager,
@@ -29,6 +30,12 @@ test("manual mode is enabled by its flag or strategy", () => {
 test("BN8 keeps the sleeve manager off regardless of sleeve shock", () => {
   assert.equal(shouldRunSleeveManager(8), false);
   assert.equal(shouldRunSleeveManager(7), true);
+});
+
+test("BN8 reserves RAM for the stock evaluator only while finance is enabled", () => {
+  assert.equal(shouldReserveBn8StockEvaluatorRam(8, true), true);
+  assert.equal(shouldReserveBn8StockEvaluatorRam(8, false), false);
+  assert.equal(shouldReserveBn8StockEvaluatorRam(7, true), false);
 });
 
 test("BN8 minimal mode only starts explicitly allowed daemons", () => {

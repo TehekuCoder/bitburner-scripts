@@ -55,3 +55,10 @@ export function shouldRunSingularityDispatcher(
     (currentNode !== 8 || strategy === "REP")
   );
 }
+
+export function shouldReserveBn8StockEvaluatorRam(
+  currentNode: number,
+  financeEnabled: boolean,
+): boolean {
+  return currentNode === 8 && financeEnabled;
+}

@@ -1146,6 +1146,26 @@ export async function main(ns: NS): Promise<void> {
       ? { items: uninstalledAugs }
       : undefined;
 
+    let stockDashboard = loadStockDashboard(ns, logger);
+    if (
+      currentBitNode === 8 &&
+      stockDashboard &&
+      now - stockDashboard.updatedAt > 30_000 &&
+      !ns.isRunning(PATHS.domain.evaluators.purchase.stock, "home")
+    ) {
+      const requiredRam = ns.getScriptRam(
+        PATHS.domain.evaluators.purchase.stock,
+        "home",
+      );
+      const freeRam = homeRamTotal - homeRamUsed;
+      if (Number.isFinite(requiredRam) && requiredRam > freeRam) {
+        stockDashboard = {
+          ...stockDashboard,
+          status: `${stockDashboard.status} Stock-Evaluator wartet auf Home-RAM (${ns.format.ram(requiredRam)} benötigt, ${ns.format.ram(freeRam)} frei).`,
+        };
+      }
+    }
+
     const dashboardData: FinanceDashboardData = {
       currentMoney: rawMoney,
       availableMoney,
@@ -1170,7 +1190,7 @@ export async function main(ns: NS): Promise<void> {
       topPendingRequests: structuredRequests.slice(0, 4),
       lastPurchases,
       lastWarnings,
-      stockDashboard: loadStockDashboard(ns, logger),
+      stockDashboard,
     };
 
     drawFinanceDashboard(ns, dashboardData);

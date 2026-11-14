@@ -82,6 +82,13 @@ export function shouldAutoPurchaseProgramInBitNode(
   return currentNode !== 8 || programName !== "SQLInject.exe";
 }
 
+export function shouldRunProgramEvaluatorInBitNode(
+  currentNode: number,
+  hasInstalledRedPill: boolean,
+): boolean {
+  return currentNode !== 8 || hasInstalledRedPill;
+}
+
 export function shouldUnlockBn8SleeveAugPurchases(
   currentNode: number,
   hasFourSigmaLicenses: boolean,

@@ -4,6 +4,7 @@ import {
   getBn8PostRedPillRamRequirement,
   isBn8PostRedPillRamReady,
   shouldAutoPurchaseProgramInBitNode,
+  shouldRunProgramEvaluatorInBitNode,
   canAffordFinanceRequest,
   compareFinanceRequests,
   getBn8VioletGraftingReserve,
@@ -97,6 +98,12 @@ test("BN8 leaves SQLInject to player-created programs but keeps automatic purcha
   assert.equal(shouldAutoPurchaseProgramInBitNode(8, "SQLInject.exe"), false);
   assert.equal(shouldAutoPurchaseProgramInBitNode(8, "BruteSSH.exe"), true);
   assert.equal(shouldAutoPurchaseProgramInBitNode(7, "SQLInject.exe"), true);
+});
+
+test("BN8 does not run the program evaluator before The Red Pill is installed", () => {
+  assert.equal(shouldRunProgramEvaluatorInBitNode(8, false), false);
+  assert.equal(shouldRunProgramEvaluatorInBitNode(8, true), true);
+  assert.equal(shouldRunProgramEvaluatorInBitNode(7, false), true);
 });
 
 test("BN8 post-Red Pill RAM requirement includes all persistent operating daemons", () => {
