@@ -970,7 +970,18 @@ export async function main(ns: NS): Promise<void> {
             availableMoney = Math.max(0, availableMoney - requiredBudget);
             await ns.sleep(20);
           } else {
-            const errorMsg = `⚠️ Script-Start fehlgeschlagen: ${req.action.script}`;
+            const scriptExists = ns.fileExists(req.action.script, "home");
+            const requiredRam = scriptExists
+              ? (ramOverride ?? ns.getScriptRam(req.action.script, "home"))
+              : 0;
+            const freeRam =
+              ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+            const reason = !scriptExists
+              ? "Datei fehlt auf home; Dateisynchronisierung/Pfad prüfen."
+              : requiredRam > freeRam
+                ? `RAM reicht nicht (${ns.format.ram(requiredRam)} benötigt, ${ns.format.ram(freeRam)} frei).`
+                : "ns.exec gab trotz vorhandener Datei und ausreichendem RAM keine PID zurück.";
+            const errorMsg = `⚠️ Script-Start fehlgeschlagen: ${req.action.script} — ${reason}`;
             logger.warn(errorMsg);
             pushBounded(lastWarnings, errorMsg, 6);
             if (req.action.args[0] === "player-purchase-aug") {
