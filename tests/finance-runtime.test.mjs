@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   getBn8PostRedPillRamRequirement,
   isBn8PostRedPillRamReady,
+  shouldAutoPurchaseProgramInBitNode,
   canAffordFinanceRequest,
   compareFinanceRequests,
   getBn8VioletGraftingReserve,
@@ -90,6 +91,12 @@ test("BN8 delays Red Pill installation until the operational daemon RAM fits", (
   assert.equal(isBn8PostRedPillRamReady(8, 95, 96), false);
   assert.equal(isBn8PostRedPillRamReady(8, 96, 96), true);
   assert.equal(isBn8PostRedPillRamReady(7, 0, Number.POSITIVE_INFINITY), true);
+});
+
+test("BN8 leaves SQLInject to player-created programs but keeps automatic purchases elsewhere", () => {
+  assert.equal(shouldAutoPurchaseProgramInBitNode(8, "SQLInject.exe"), false);
+  assert.equal(shouldAutoPurchaseProgramInBitNode(8, "BruteSSH.exe"), true);
+  assert.equal(shouldAutoPurchaseProgramInBitNode(7, "SQLInject.exe"), true);
 });
 
 test("BN8 post-Red Pill RAM requirement includes all persistent operating daemons", () => {

@@ -75,6 +75,13 @@ export function isBn8PostRedPillRamReady(
   );
 }
 
+export function shouldAutoPurchaseProgramInBitNode(
+  currentNode: number,
+  programName: string,
+): boolean {
+  return currentNode !== 8 || programName !== "SQLInject.exe";
+}
+
 export function shouldUnlockBn8SleeveAugPurchases(
   currentNode: number,
   hasFourSigmaLicenses: boolean,

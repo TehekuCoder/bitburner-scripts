@@ -8,6 +8,7 @@ import {
 import { hasSingularity } from "/lib/utils.js";
 import { runEvaluator } from "../evaluator-runner.js";
 import { PATHS } from "/infrastructure/runtime/paths";
+import { shouldAutoPurchaseProgramInBitNode } from "/app/orchestration/finance-runtime.js";
 
 // Reihenfolge der Port-Opener (1 bis 5 benötigte Ports)
 const PORT_OPENERS: ProgramName[] = [
@@ -129,8 +130,20 @@ export const ProgramEvaluator: PurchaseEvaluator = {
 
     // 2. Dynamische Bedarfsanalyse für Port-Opener
     const maxPortsNeeded = getTargetPortRequirement(ns, currentHacking);
+    const evaluatedPrograms = new Set<ProgramName>([
+      ...PORT_OPENERS,
+      ...(Object.keys(UTILITY_SCORES) as ProgramName[]),
+    ]);
 
     PORT_OPENERS.forEach((prog, index) => {
+      if (
+        !shouldAutoPurchaseProgramInBitNode(
+          ns.getResetInfo().currentNode,
+          prog,
+        )
+      ) {
+        return;
+      }
       if (ns.fileExists(prog, "home")) return;
 
       const neededPortIndex = index + 1; // 1-based (1 = BruteSSH, 2 = FTPCrack, ...)
@@ -199,6 +212,35 @@ export const ProgramEvaluator: PurchaseEvaluator = {
         score: meta.score,
         cost,
         description: `Utility Software: ${prog}`,
+        action: {
+          script: PATHS.app.actions.singularity,
+          args: ["program-purchase", prog],
+        },
+      });
+    }
+
+    for (const prog of ns.singularity.getDarkwebPrograms()) {
+      if (evaluatedPrograms.has(prog)) continue;
+      if (
+        !shouldAutoPurchaseProgramInBitNode(
+          ns.getResetInfo().currentNode,
+          prog,
+        ) ||
+        ns.fileExists(prog, "home")
+      ) {
+        continue;
+      }
+
+      const cost = ns.singularity.getDarkwebProgramCost(prog);
+      if (cost <= 0 || !Number.isFinite(cost)) continue;
+
+      requests.push({
+        id: `program-${prog}`,
+        category: "DARKNET_PROGRAM" as PurchaseCategory,
+        priority: PurchasePriority.LOW,
+        score: 10,
+        cost,
+        description: `Additional Darkweb program: ${prog}`,
         action: {
           script: PATHS.app.actions.singularity,
           args: ["program-purchase", prog],
