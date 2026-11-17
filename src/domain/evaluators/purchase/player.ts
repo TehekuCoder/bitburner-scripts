@@ -292,7 +292,7 @@ export const PlayerEvaluator: PurchaseEvaluator = {
           cost: amount,
           description: `Fraktionsspende: ${faction} auf ${ns.format.number(targetRep)} Ruf`,
           action: {
-            script: PATHS.app.actions.singularity,
+            script: PATHS.app.actions.bn8FactionDonation,
             args: ["player-donate-faction", faction, amount],
           },
         });

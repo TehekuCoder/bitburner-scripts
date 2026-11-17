@@ -18,6 +18,7 @@ export const PATHS = {
       stockBuyShort: "app/actions/act-stock-buy-short.js",
       stockSellLong: "app/actions/act-stock-sell-long.js",
       stockSellShort: "app/actions/act-stock-sell-short.js",
+      bn8FactionDonation: "app/actions/act-bn8-faction-donation.js",
     },
     engines: {
       prep: "app/engines/engine-prep.js",

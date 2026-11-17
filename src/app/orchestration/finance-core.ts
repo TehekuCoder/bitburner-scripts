@@ -133,6 +133,12 @@ function isAllowedActionScript(
   args: readonly unknown[],
   script: string,
 ): boolean {
+  if (
+    category === "PLAYER_AUG" &&
+    args[0] === "player-donate-faction"
+  ) {
+    return script === PATHS.app.actions.bn8FactionDonation;
+  }
   if (category === "STOCK_LICENSE" || category === "STOCK_TRADE") {
     return isStockFinanceActionAllowed(
       category,
@@ -688,6 +694,11 @@ export async function main(ns: NS): Promise<void> {
         )
         .filter(
           (request) =>
+            request.category !== "PLAYER_AUG" ||
+            (!redPillInstalled && !hasUninstalledRedPill),
+        )
+        .filter(
+          (request) =>
             request.category !== "HOME_SERVER" ||
             ((prepareGraftingCapacity ||
               prepareSleeveCapacity ||
@@ -923,7 +934,11 @@ export async function main(ns: NS): Promise<void> {
         ) {
           continue;
         }
-        const margin = dynamicMargins[req.category] ?? 1.0;
+        const margin =
+          req.category === "PLAYER_AUG" &&
+          req.action.args[0] === "player-donate-faction"
+            ? 1.0
+            : dynamicMargins[req.category] ?? 1.0;
         const requiredBudget = req.cost * margin;
 
         const canAffordEasily = canAffordFinanceRequest(
