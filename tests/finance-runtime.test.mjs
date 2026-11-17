@@ -217,6 +217,28 @@ test("augmentation shortlist keeps the cheapest request visible when none fit th
   );
 });
 
+test("augmentation purchase shortlist excludes faction donations", () => {
+  const donation = {
+    id: "donation",
+    category: "PLAYER_AUG",
+    priority: 2,
+    cost: 100,
+    action: { args: ["player-donate-faction", "Daedalus", 100] },
+  };
+  const purchase = {
+    id: "purchase",
+    category: "PLAYER_AUG",
+    priority: 2,
+    cost: 200,
+    action: { args: ["player-purchase-aug", "Daedalus", "The Red Pill", 200] },
+  };
+
+  assert.deepEqual(
+    getAffordableAugmentationShortlist([donation, purchase], 150, 1, 5),
+    [purchase],
+  );
+});
+
 test("a restarted core can identify the already-running action for a request", () => {
   const processes = [
     { filename: "other.js", args: ["__finance_request__:HACKNET:one"], pid: 3 },

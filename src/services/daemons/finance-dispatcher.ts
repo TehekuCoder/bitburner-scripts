@@ -23,6 +23,7 @@ import {
   shouldPrepareBn8SleeveCapacity,
   shouldUnlockBn8SleeveAugPurchases,
 } from "/app/orchestration/finance-runtime.js";
+import { shouldUnlockBn8FactionDonations } from "/domain/evaluators/purchase/bn8-donation.js";
 import {
   hasBothFourSigmaLicenses,
 } from "/domain/evaluators/purchase/bn8-augmentation.js";
@@ -105,10 +106,12 @@ export async function main(ns: NS): Promise<void> {
     const isBitNode8 = ns.getResetInfo().currentNode === 8;
     if (
       !isBitNode8 &&
-      loadFinanceState(ns)?.bn8SleeveAugPurchasesUnlocked === true
+      (loadFinanceState(ns)?.bn8SleeveAugPurchasesUnlocked === true ||
+        loadFinanceState(ns)?.bn8FactionDonationsUnlocked === true)
     ) {
       await patchFinanceState(ns, {
         bn8SleeveAugPurchasesUnlocked: false,
+        bn8FactionDonationsUnlocked: false,
       });
     }
 
@@ -166,6 +169,21 @@ export async function main(ns: NS): Promise<void> {
         });
         financeState = loadFinanceState(ns);
         logger.info("BN8-Sleeve-Augmentations ab 100T freigeschaltet.");
+      }
+      const factionDonationsUnlocked =
+        financeState?.bn8FactionDonationsUnlocked === true;
+      if (
+        shouldUnlockBn8FactionDonations(
+          resetInfo.currentNode,
+          hasSleeve(ns),
+          ns.getServerMoneyAvailable("home"),
+          factionDonationsUnlocked,
+        ) &&
+        !factionDonationsUnlocked
+      ) {
+        await patchFinanceState(ns, { bn8FactionDonationsUnlocked: true });
+        financeState = loadFinanceState(ns);
+        logger.info("BN8-Fraktionsspenden ab 1q und mit Sleeves freigeschaltet.");
       }
 
       const graftingManager = PATHS.services.managers.bn8Grafting;
@@ -226,6 +244,12 @@ export async function main(ns: NS): Promise<void> {
       }
       if (isStockViable(ns)) {
         await runAndWait(PATHS.domain.evaluators.purchase.stock);
+      }
+      if (
+        hasFourSigmaLicenses &&
+        !purchasedAugs.includes("The Red Pill")
+      ) {
+        await runAndWait(PATHS.domain.evaluators.purchase.player);
       }
       if (installedAugs.includes("The Red Pill")) {
         await runAndWait(PATHS.domain.evaluators.purchase.programs);

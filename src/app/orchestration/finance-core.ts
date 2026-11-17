@@ -837,6 +837,7 @@ export async function main(ns: NS): Promise<void> {
       const dispatchRequests = allRequests.filter(
         (request) =>
           request.category !== "PLAYER_AUG" ||
+          request.action.args[0] !== "player-purchase-aug" ||
           augmentationShortlist.has(request),
       );
 
@@ -876,7 +877,11 @@ export async function main(ns: NS): Promise<void> {
           FINANCE_REQUEST_ARG_PREFIX,
         );
         if (runningAction) {
-          const margin = dynamicMargins[req.category] ?? 1.0;
+          const margin =
+            req.category === "PLAYER_AUG" &&
+            req.action.args[0] === "player-donate-faction"
+              ? 1.0
+              : dynamicMargins[req.category] ?? 1.0;
           const reservedCost = req.cost * margin;
           pendingActions.set(requestTrackingId, {
             category: req.category,

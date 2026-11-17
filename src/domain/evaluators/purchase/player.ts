@@ -22,6 +22,7 @@ import {
 import { getEligibleAugmentations } from "./augmentation-plan.js";
 import {
   loadAugmentState,
+  loadFinanceState,
   patchAugmentState,
 } from "/infrastructure/state/state.js";
 import {
@@ -33,6 +34,10 @@ import {
   hasGraftingUnlock,
   hasHackingAugmentationBenefit,
 } from "./bn8-augmentation.js";
+import {
+  getFactionDonationAmount,
+  shouldDonateToBn8Faction,
+} from "./bn8-donation.js";
 
 function getCurrentGangFaction(ns: NS): FactionName | undefined {
   if (!ns.gang?.inGang()) return undefined;
@@ -222,6 +227,78 @@ export const PlayerEvaluator: PurchaseEvaluator = {
     if (gangFaction) playerFactions.add(gangFaction);
 
     const ownedAugSet = new Set(ownedAugs);
+    const daedalusAugRequirement = getDaedalusAugmentationRequirement(
+      bnMults.DaedalusAugsRequirement ?? 1,
+    );
+    const canUseGrafting = isBitNode8 && hasGraftingUnlock(ns);
+    if (isBitNode8) {
+      const daedalusFaction = "Daedalus" as FactionName;
+      const generalDonationsUnlocked =
+        loadFinanceState(ns)?.bn8FactionDonationsUnlocked === true;
+      const canDonateForDaedalusRedPill =
+        playerFactions.has(daedalusFaction) &&
+        canPurchaseBn8RedPill(
+          installedAugs.length,
+          daedalusAugRequirement,
+          canUseGrafting,
+          installedAugs.includes("violet Congruity Implant"),
+        );
+      const factionsToDonate = new Set<FactionName>();
+      for (const faction of playerFactions) {
+        if (faction === gangFaction) continue;
+        if (
+          shouldDonateToBn8Faction(
+            8,
+            faction,
+            generalDonationsUnlocked,
+            faction === daedalusFaction && canDonateForDaedalusRedPill,
+          )
+        ) {
+          factionsToDonate.add(faction);
+        }
+      }
+
+      for (const faction of factionsToDonate) {
+        const factionAugs =
+          faction === daedalusFaction &&
+          !generalDonationsUnlocked &&
+          canDonateForDaedalusRedPill
+            ? ["The Red Pill"]
+            : sing.getAugmentationsFromFaction(faction);
+        const targetRep = factionAugs.reduce((highestRep, augmentation) => {
+          if (ownedAugSet.has(augmentation)) return highestRep;
+          const repReq = sing.getAugmentationRepReq(augmentation);
+          return Number.isFinite(repReq)
+            ? Math.max(highestRep, repReq)
+            : highestRep;
+        }, 0);
+        const currentRep = sing.getFactionRep(faction);
+        const amount = getFactionDonationAmount(
+          targetRep,
+          currentRep,
+          ns.getPlayer().mults.faction_rep,
+        );
+        if (amount <= 0) continue;
+
+        requests.push({
+          id: `bn8-faction-donation-${hashString(
+            JSON.stringify([faction, targetRep, amount]),
+          )}`,
+          category: "PLAYER_AUG",
+          priority: PurchasePriority.HIGH,
+          score: faction === daedalusFaction
+            ? Number.MAX_SAFE_INTEGER
+            : Math.round(targetRep - currentRep),
+          cost: amount,
+          description: `Fraktionsspende: ${faction} auf ${ns.format.number(targetRep)} Ruf`,
+          action: {
+            script: PATHS.app.actions.singularity,
+            args: ["player-donate-faction", faction, amount],
+          },
+        });
+      }
+    }
+
     const eligibleItems = getEligibleAugmentations(plan.items, ownedAugSet)
       .filter((item) =>
         !isBitNode8 ||
@@ -238,9 +315,6 @@ export const PlayerEvaluator: PurchaseEvaluator = {
         );
         return bValue / b.basePrice - aValue / a.basePrice;
       });
-    const daedalusAugRequirement = getDaedalusAugmentationRequirement(
-      bnMults.DaedalusAugsRequirement ?? 1,
-    );
     let remainingInstalledAugSlots = isBitNode8
       ? getMissingDaedalusAugmentationCount(
           daedalusAugRequirement,
@@ -248,8 +322,6 @@ export const PlayerEvaluator: PurchaseEvaluator = {
           uninstalled.length,
         )
       : Number.POSITIVE_INFINITY;
-    const canUseGrafting = isBitNode8 && hasGraftingUnlock(ns);
-
     for (const item of eligibleItems) {
       if (isBitNode8) {
         if (item.name === "The Red Pill") {

@@ -6,6 +6,7 @@ export interface FinanceRequestLike {
   priority: number;
   score?: number;
   cost: number;
+  action?: { args: readonly unknown[] };
 }
 
 export interface FinanceProcessLike {
@@ -265,7 +266,10 @@ export function getAffordableAugmentationShortlist<
   maxItems: number,
 ): T[] {
   const augmentationRequests = requests.filter(
-    (request) => request.category === "PLAYER_AUG",
+    (request) =>
+      request.category === "PLAYER_AUG" &&
+      (!request.action ||
+        request.action.args[0] === "player-purchase-aug"),
   );
   const affordableRequests = augmentationRequests.filter((request) =>
     canAffordFinanceRequest(availableMoney, request.cost, margin),

@@ -77,6 +77,23 @@ test("finance state validates the BN8 sleeve-purchase unlock flag", () => {
   );
 });
 
+test("finance state validates the BN8 faction-donation unlock flag", () => {
+  assert.deepEqual(
+    getBotStateShapeErrors({
+      ...validState,
+      bn8FactionDonationsUnlocked: true,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    getBotStateShapeErrors({
+      ...validState,
+      bn8FactionDonationsUnlocked: "yes",
+    }),
+    ["bn8FactionDonationsUnlocked has an invalid value"],
+  );
+});
+
 test("current-version snapshots are validated without silently defaulting bad values", () => {
   const parsed = parseStoredState(
     {

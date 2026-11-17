@@ -218,6 +218,8 @@ export function getBotStateShapeErrors(value: unknown): string[] {
     homeCores: (item) => item === undefined || isFiniteNumber(item),
     bn8SleeveAugPurchasesUnlocked: (item) =>
       item === undefined || typeof item === "boolean",
+    bn8FactionDonationsUnlocked: (item) =>
+      item === undefined || typeof item === "boolean",
     traderMode: isStringOrUndefined,
     sleeveGlobalMode: isStringOrUndefined,
     sleeveProgress: isStringOrUndefined,

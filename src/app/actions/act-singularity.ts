@@ -8,6 +8,7 @@ import {
   hasGraftingUnlock,
   hasHackingAugmentationBenefit,
 } from "/domain/evaluators/purchase/bn8-augmentation.js";
+import { meetsFactionDonationFavorRequirement } from "/domain/evaluators/purchase/bn8-donation.js";
 import { loadBnMults } from "/lib/utils.js";
 
 export async function main(ns: NS): Promise<void> {
@@ -186,14 +187,26 @@ export async function main(ns: NS): Promise<void> {
       case "player-donate-faction": {
         const faction = String(ns.args[1] ?? "") as FactionName;
         const amount = Number(ns.args[2]);
+        const currentNode = ns.getResetInfo().currentNode;
+        if (
+          currentNode === 8 &&
+          ns.singularity.getOwnedAugmentations(true).includes("The Red Pill")
+        ) {
+          ns.tprint("[WARN] BN8: Spenden enden nach dem Kauf von The Red Pill.");
+          return false;
+        }
         if (
           !faction ||
           !Number.isFinite(amount) ||
           amount <= 0 ||
           !ns.getPlayer().factions.includes(faction) ||
           ns.getServerMoneyAvailable("home") < amount ||
-          ns.singularity.getFactionFavor(faction) <
-            ns.getFavorToDonate() ||
+          (currentNode !== 8 &&
+            !meetsFactionDonationFavorRequirement(
+              currentNode,
+              ns.singularity.getFactionFavor(faction),
+              ns.getFavorToDonate(),
+            )) ||
           (ns.gang?.inGang() &&
             ns.gang.getGangInformation().faction === faction)
         ) {

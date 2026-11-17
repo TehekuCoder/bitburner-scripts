@@ -53,6 +53,7 @@ export interface FinanceState {
   isRushModeActive?: boolean;
   homeCores?: number;
   bn8SleeveAugPurchasesUnlocked?: boolean;
+  bn8FactionDonationsUnlocked?: boolean;
 }
 
 export interface StockDashboardSymbol {
