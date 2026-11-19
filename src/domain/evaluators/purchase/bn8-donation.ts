@@ -30,6 +30,33 @@ export function shouldDonateToBn8Faction(
   );
 }
 
+export interface FactionDonationTarget {
+  name: string;
+  factions: readonly FactionName[];
+  repReq: number;
+}
+
+export function getNextFactionDonationTarget<
+  T extends FactionDonationTarget,
+>(
+  candidates: readonly T[],
+  faction: FactionName,
+  currentRep: number,
+  preferredAugmentation?: string,
+): T | undefined {
+  if (!Number.isFinite(currentRep)) return undefined;
+  const target = candidates.find(
+    (item) =>
+      item.factions.includes(faction) &&
+      (!preferredAugmentation || item.name === preferredAugmentation),
+  );
+  return target &&
+    Number.isFinite(target.repReq) &&
+    target.repReq > currentRep
+    ? target
+    : undefined;
+}
+
 export function getFactionDonationAmount(
   targetRep: number,
   currentRep: number,

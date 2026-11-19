@@ -240,6 +240,50 @@ export function meetsStockMinimumInvestment(
   );
 }
 
+export function getStockPositionRoom(
+  maxShares: number,
+  heldShares: number,
+): number {
+  if (
+    !Number.isFinite(maxShares) ||
+    !Number.isFinite(heldShares) ||
+    maxShares <= 0 ||
+    heldShares < 0
+  ) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(maxShares) - Math.floor(heldShares));
+}
+
+export function getStockInvestmentType(
+  forecast: number,
+  heldLong: number,
+  heldShort: number,
+  longEntryThreshold: number,
+  shortEntryThreshold: number,
+): "LONG" | "SHORT" | undefined {
+  if (
+    !Number.isFinite(forecast) ||
+    !Number.isFinite(heldLong) ||
+    !Number.isFinite(heldShort) ||
+    heldLong < 0 ||
+    heldShort < 0
+  ) {
+    return undefined;
+  }
+
+  if (heldLong > 0 && heldShort > 0) return undefined;
+  if (heldLong > 0) {
+    return forecast > longEntryThreshold ? "LONG" : undefined;
+  }
+  if (heldShort > 0) {
+    return forecast < shortEntryThreshold ? "SHORT" : undefined;
+  }
+  if (forecast > longEntryThreshold) return "LONG";
+  if (forecast < shortEntryThreshold) return "SHORT";
+  return undefined;
+}
+
 export function isStockInfluenceRamConstrained(
   availableRam: number,
   workerRam: number,

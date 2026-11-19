@@ -25,6 +25,8 @@ import {
   ESTIMATED_STOCK_SHORT_ENTRY_FORECAST,
   STOCK_PRICE_HISTORY_FILE,
   getStockCashReserve,
+  getStockInvestmentType,
+  getStockPositionRoom,
   getStockTradeBudgetRatio,
   getStockTradingBudget,
   estimateStockForecast,
@@ -364,38 +366,51 @@ export const StockEvaluator: PurchaseEvaluator = {
         );
       }
 
-      if (shares === 0 && sharesShort === 0) {
-        const longEntryThreshold = hasFourSigmaApi
-          ? STOCK_LONG_ENTRY_FORECAST
-          : ESTIMATED_STOCK_LONG_ENTRY_FORECAST;
-        const shortEntryThreshold = hasFourSigmaApi
-          ? STOCK_SHORT_ENTRY_FORECAST
-          : ESTIMATED_STOCK_SHORT_ENTRY_FORECAST;
-        if (forecast > longEntryThreshold) {
-          row.decision = "Kaufkandidat LONG";
-          buyCandidates.push({
-            sym,
-            forecast,
-            type: "LONG",
-            strength: forecast - 0.5,
-            estimated: !hasFourSigmaApi,
-          });
-        } else if (forecast < shortEntryThreshold) {
-          row.decision = "Kaufkandidat SHORT";
-          buyCandidates.push({
-            sym,
-            forecast,
-            type: "SHORT",
-            strength: 0.5 - forecast,
-            estimated: !hasFourSigmaApi,
-          });
-        } else {
-          row.decision = `Halten: Schwelle ${Math.round(shortEntryThreshold * 100)}-${Math.round(longEntryThreshold * 100)}%`;
-        }
+      const longEntryThreshold = hasFourSigmaApi
+        ? STOCK_LONG_ENTRY_FORECAST
+        : ESTIMATED_STOCK_LONG_ENTRY_FORECAST;
+      const shortEntryThreshold = hasFourSigmaApi
+        ? STOCK_SHORT_ENTRY_FORECAST
+        : ESTIMATED_STOCK_SHORT_ENTRY_FORECAST;
+      const investmentType = getStockInvestmentType(
+        forecast,
+        shares,
+        sharesShort,
+        longEntryThreshold,
+        shortEntryThreshold,
+      );
+      if (investmentType === "LONG") {
+        row.decision = shares > 0 ? "NACHKAUFKANDIDAT LONG" : "Kaufkandidat LONG";
+        buyCandidates.push({
+          sym,
+          forecast,
+          type: "LONG",
+          strength: forecast - 0.5,
+          estimated: !hasFourSigmaApi,
+        });
+      } else if (investmentType === "SHORT") {
+        row.decision =
+          sharesShort > 0 ? "NACHKAUFKANDIDAT SHORT" : "Kaufkandidat SHORT";
+        buyCandidates.push({
+          sym,
+          forecast,
+          type: "SHORT",
+          strength: 0.5 - forecast,
+          estimated: !hasFourSigmaApi,
+        });
       } else if (row.decision === "Keine Position") {
-        row.decision = shares > 0 ? "HALTEN LONG" : "HALTEN SHORT";
+        row.decision =
+          shares > 0
+            ? "HALTEN LONG"
+            : sharesShort > 0
+              ? "HALTEN SHORT"
+              : `Halten: Schwelle ${Math.round(shortEntryThreshold * 100)}-${Math.round(longEntryThreshold * 100)}%`;
       }
-      if (!row.decision.startsWith("Kaufkandidat") && !row.decision.startsWith("VERKAUF")) {
+      if (
+        !row.decision.startsWith("Kaufkandidat") &&
+        !row.decision.startsWith("NACHKAUFKANDIDAT") &&
+        !row.decision.startsWith("VERKAUF")
+      ) {
         logStockDecision(
           logger,
           sym,
@@ -412,20 +427,29 @@ export const StockEvaluator: PurchaseEvaluator = {
       getStockTradeBudgetRatio(ns.getResetInfo().currentNode),
     );
     let budgetLeft = remainingBudget;
-    const selectedCandidates = buyCandidates.slice(0, 2);
-    for (const candidate of buyCandidates.slice(2)) {
-      const row = dashboardBySymbol.get(candidate.sym);
-      if (row) row.decision = "Kein Kauf: nur Top 2 nach Signalstärke";
-      logStockDecision(logger, candidate.sym, "Kein Kauf: nur die zwei stärksten Signale werden budgetiert.");
-    }
+    const selectedCandidates = buyCandidates;
 
     if (budgetLeft > 0) {
       for (const candidate of selectedCandidates) {
         const sym = candidate.sym;
-        const maxShares = Math.floor(ns.stock.getMaxShares(sym));
         const positionType = candidate.type === "LONG" ? "L" : "S";
+        const [heldLong, , heldShort] = ns.stock.getPosition(sym);
+        const availableShares = getStockPositionRoom(
+          ns.stock.getMaxShares(sym),
+          candidate.type === "LONG" ? heldLong : heldShort,
+        );
+        if (availableShares <= 0) {
+          const row = dashboardBySymbol.get(sym);
+          if (row) row.decision = "Kein Kauf: Positionslimit erreicht";
+          logStockDecision(
+            logger,
+            sym,
+            `Kein Kauf: ${candidate.type}-Positionslimit bereits ausgeschöpft.`,
+          );
+          continue;
+        }
         let low = 1;
-        let high = maxShares;
+        let high = availableShares;
         let affordableShares = 0;
         let targetCost = 0;
 

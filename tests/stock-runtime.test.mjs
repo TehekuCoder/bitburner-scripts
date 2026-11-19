@@ -8,6 +8,8 @@ import {
   getStockTradeBudgetRatio,
   getStockCashReserve,
   getStockTradingBudget,
+  getStockInvestmentType,
+  getStockPositionRoom,
   isStockPositionProfitableAfterFees,
   isStockInfluenceRamConstrained,
   meetsStockMinimumInvestment,
@@ -53,6 +55,21 @@ test("stock orders below the minimum investment are rejected", () => {
   assert.equal(meetsStockMinimumInvestment(4_999_999, 5_000_000), false);
   assert.equal(meetsStockMinimumInvestment(5_000_000, 5_000_000), true);
   assert.equal(meetsStockMinimumInvestment(Number.NaN, 5_000_000), false);
+});
+
+test("stock investment can add only in the same direction while a position has room", () => {
+  assert.equal(getStockInvestmentType(0.8, 100, 0, 0.6, 0.4), "LONG");
+  assert.equal(getStockInvestmentType(0.55, 100, 0, 0.6, 0.4), undefined);
+  assert.equal(getStockInvestmentType(0.2, 0, 100, 0.6, 0.4), "SHORT");
+  assert.equal(getStockInvestmentType(0.5, 0, 100, 0.6, 0.4), undefined);
+  assert.equal(getStockInvestmentType(0.8, 100, 100, 0.6, 0.4), undefined);
+});
+
+test("stock position room accounts for current shares and the per-position cap", () => {
+  assert.equal(getStockPositionRoom(1_000, 600), 400);
+  assert.equal(getStockPositionRoom(1_000, 1_000), 0);
+  assert.equal(getStockPositionRoom(1_000, 1_200), 0);
+  assert.equal(getStockPositionRoom(Number.NaN, 0), 0);
 });
 
 test("stock server expansion starts only when worker RAM cannot fit a script", () => {

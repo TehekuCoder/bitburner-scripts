@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getFactionDonationAmount,
+  getNextFactionDonationTarget,
   meetsFactionDonationFavorRequirement,
   shouldUnlockBn8FactionDonations,
   shouldDonateToBn8Faction,
@@ -27,6 +28,32 @@ test("donation amount covers the target rep gap and rejects invalid multipliers"
   assert.equal(getFactionDonationAmount(1_000, 900, 1), 101_000_000);
   assert.equal(getFactionDonationAmount(900, 1_000, 1), 0);
   assert.equal(getFactionDonationAmount(1_000, 900, 0), 0);
+});
+
+test("faction donations target only the next eligible augmentation's reputation", () => {
+  const candidates = [
+    { name: "First Aug", factions: ["CyberSec"], repReq: 100 },
+    { name: "Later Aug", factions: ["CyberSec"], repReq: 1_000 },
+    { name: "Other", factions: ["NiteSec"], repReq: 250 },
+  ];
+
+  assert.equal(
+    getNextFactionDonationTarget(candidates, "CyberSec", 0)?.name,
+    "First Aug",
+  );
+  assert.equal(
+    getNextFactionDonationTarget(candidates, "CyberSec", 100),
+    undefined,
+  );
+  assert.equal(
+    getNextFactionDonationTarget(candidates, "CyberSec", 0, "Later Aug")
+      ?.name,
+    "Later Aug",
+  );
+  assert.equal(
+    getNextFactionDonationTarget(candidates, "CyberSec", 0, "Missing"),
+    undefined,
+  );
 });
 
 test("BN8 donations ignore faction favor while other BitNodes retain the favor gate", () => {
