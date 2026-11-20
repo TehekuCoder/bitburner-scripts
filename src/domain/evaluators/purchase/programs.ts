@@ -133,7 +133,7 @@ export const ProgramEvaluator: PurchaseEvaluator = {
           cost: 200_000,
           description: "TOR Router purchase",
           action: {
-            script: PATHS.app.actions.singularity,
+            script: PATHS.app.actions.darkWebProgram,
             args: ["program-purchase-tor"],
           },
         });
@@ -190,7 +190,7 @@ export const ProgramEvaluator: PurchaseEvaluator = {
         cost,
         description: `Port Opener (${neededPortIndex} Ports): ${prog}`,
         action: {
-          script: PATHS.app.actions.singularity,
+          script: PATHS.app.actions.darkWebProgram,
           args: ["program-purchase", prog],
         },
       });
@@ -226,7 +226,7 @@ export const ProgramEvaluator: PurchaseEvaluator = {
         cost,
         description: `Utility Software: ${prog}`,
         action: {
-          script: PATHS.app.actions.singularity,
+          script: PATHS.app.actions.darkWebProgram,
           args: ["program-purchase", prog],
         },
       });
@@ -255,7 +255,7 @@ export const ProgramEvaluator: PurchaseEvaluator = {
         cost,
         description: `Additional Darkweb program: ${prog}`,
         action: {
-          script: PATHS.app.actions.singularity,
+          script: PATHS.app.actions.darkWebProgram,
           args: ["program-purchase", prog],
         },
       });

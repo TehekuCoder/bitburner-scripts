@@ -51,6 +51,7 @@ import {
   getAffordableAugmentationShortlist,
   getCompletedAugmentationPurchaseOutcome,
   hasPendingFinanceCategory,
+  isDarkWebFinanceActionAllowed,
   isStockFinanceActionAllowed,
   isFinanceCategoryAllowedInBitNode,
   isFinanceCategoryAllowedDuringAugmentation,
@@ -138,6 +139,13 @@ function isAllowedActionScript(
     args[0] === "player-donate-faction"
   ) {
     return script === PATHS.app.actions.bn8FactionDonation;
+  }
+  if (category === "DARKNET_PROGRAM") {
+    return isDarkWebFinanceActionAllowed(
+      args,
+      script,
+      PATHS.app.actions.darkWebProgram,
+    );
   }
   if (category === "STOCK_LICENSE" || category === "STOCK_TRADE") {
     return isStockFinanceActionAllowed(

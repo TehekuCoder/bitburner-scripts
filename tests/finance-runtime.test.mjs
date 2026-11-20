@@ -14,6 +14,7 @@ import {
   getCompletedAugmentationPurchaseOutcome,
   isFinanceCategoryAllowedInBitNode,
   isFinanceCategoryAllowedDuringAugmentation,
+  isDarkWebFinanceActionAllowed,
   shouldPrepareBn8GraftingCapacity,
   shouldPrepareBn8PostRedPillCapacity,
   hasPendingFinanceCategory,
@@ -104,6 +105,50 @@ test("BN8 does not run the program evaluator before The Red Pill is installed", 
   assert.equal(shouldRunProgramEvaluatorInBitNode(8, false), false);
   assert.equal(shouldRunProgramEvaluatorInBitNode(8, true), true);
   assert.equal(shouldRunProgramEvaluatorInBitNode(7, false), true);
+});
+
+test("darkweb program actions are routed only through the dedicated action script", () => {
+  const actionScript = "app/actions/act-darkweb-program.js";
+  assert.equal(
+    isDarkWebFinanceActionAllowed(
+      ["program-purchase", "BruteSSH.exe"],
+      actionScript,
+      actionScript,
+    ),
+    true,
+  );
+  assert.equal(
+    isDarkWebFinanceActionAllowed(
+      ["program-purchase-tor"],
+      actionScript,
+      actionScript,
+    ),
+    true,
+  );
+  assert.equal(
+    isDarkWebFinanceActionAllowed(
+      ["program-purchase"],
+      actionScript,
+      actionScript,
+    ),
+    false,
+  );
+  assert.equal(
+    isDarkWebFinanceActionAllowed(
+      ["program-purchase-tor", "extra"],
+      actionScript,
+      actionScript,
+    ),
+    false,
+  );
+  assert.equal(
+    isDarkWebFinanceActionAllowed(
+      ["program-purchase", "BruteSSH.exe"],
+      "app/actions/act-singularity.js",
+      actionScript,
+    ),
+    false,
+  );
 });
 
 test("BN8 post-Red Pill RAM requirement includes all persistent operating daemons", () => {

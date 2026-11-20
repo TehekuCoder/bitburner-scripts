@@ -173,6 +173,21 @@ export function isStockFinanceActionAllowed(
   return expectedScript === script;
 }
 
+export function isDarkWebFinanceActionAllowed(
+  args: readonly unknown[],
+  script: string,
+  expectedScript: string,
+): boolean {
+  if (script !== expectedScript) return false;
+  if (args[0] === "program-purchase-tor") return args.length === 1;
+  return (
+    args[0] === "program-purchase" &&
+    args.length === 2 &&
+    typeof args[1] === "string" &&
+    args[1].length > 0
+  );
+}
+
 export function isFinanceCategoryAllowedInBitNode(
   category: string,
   bitNode: number,
