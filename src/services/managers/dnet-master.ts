@@ -8,6 +8,7 @@ import {
   loadDnetCooldowns,
   loadDnetPasswords,
   publishDnetState,
+  advanceDnetMutation,
 } from "/infrastructure/runtime/dnet-state.js";
 
 function parseMasterMessage(rawData: unknown): DnetMasterMessage | null {
@@ -140,5 +141,9 @@ export async function main(ns: NS): Promise<void> {
     }
 
     await ns.asleep(500);
+    await ns.dnet.nextMutation();
+    await advanceDnetMutation(ns);
+    await publishDnetState(ns, loadDnetCooldowns(ns), loadDnetPasswords(ns));
+    logger.info("🔄 Darknet-Mutation erkannt; Zustands-Epoche erhöht.");
   }
 }

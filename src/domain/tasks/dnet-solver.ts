@@ -222,6 +222,9 @@ async function tryAuthenticate(
   authAttemptState: DnetAuthAttemptState,
 ): Promise<boolean> {
   try {
+    const sessionResult = ns.dnet.connectToSession(host, pw);
+    if (sessionResult.success) return true;
+
     const authResult = await authenticateDnet(ns, host, pw, authAttemptState);
     if (authResult.success) return true;
     logger.debug(`Authentifizierung auf ${host} abgelehnt (Code ${authResult.code}).`);

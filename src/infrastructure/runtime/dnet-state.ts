@@ -1,15 +1,14 @@
-import { NS } from "@ns";
+import type { NS } from "@ns";
 import {
   COOLDOWN_FILE,
   DNET_COOLDOWN_STATE_PORT,
   MASTER_DB_FILE,
 } from "/shared/constants/darknet.js";
 import { DnetAuthAttemptState } from "/shared/types/network.js";
+import type { DnetSharedState } from "./dnet-mutation-state.js";
+import { parseDnetStateSnapshot } from "./dnet-mutation-state.js";
 
-interface DnetSharedState {
-  cooldowns: Record<string, number>;
-  passwords: Record<string, string>;
-}
+export { parseDnetStateSnapshot } from "./dnet-mutation-state.js";
 
 function mergeCooldowns(
   destination: Map<string, number>,
@@ -41,35 +40,14 @@ function readCooldownFile(ns: NS): Map<string, number> {
 }
 
 function readStateSnapshot(ns: NS): DnetSharedState {
-  const state: DnetSharedState = { cooldowns: {}, passwords: {} };
   const data = ns.getPortHandle(DNET_COOLDOWN_STATE_PORT).peek();
-  if (typeof data !== "string" || data.length === 0) return state;
-
-  try {
-    const parsed: unknown = JSON.parse(data);
-    if (!parsed || typeof parsed !== "object") return state;
-
-    const record = parsed as Record<string, unknown>;
-    if ("cooldowns" in record || "passwords" in record) {
-      if (record.cooldowns && typeof record.cooldowns === "object") {
-        for (const [host, timestamp] of Object.entries(record.cooldowns)) {
-          if (typeof timestamp === "number" && Number.isFinite(timestamp)) {
-            state.cooldowns[host] = timestamp;
-          }
-        }
-      }
-      if (record.passwords && typeof record.passwords === "object") {
-        for (const [host, password] of Object.entries(record.passwords)) {
-          if (typeof password === "string") state.passwords[host] = password;
-        }
-      }
-    } else {
-      const legacyCooldowns = new Map<string, number>();
-      mergeCooldowns(legacyCooldowns, parsed);
-      state.cooldowns = Object.fromEntries(legacyCooldowns);
+  const state = parseDnetStateSnapshot(data);
+  if (typeof data === "string" && data.length > 0) {
+    try {
+      JSON.parse(data);
+    } catch (error) {
+      ns.print(`DNet-Cooldown-Port ${DNET_COOLDOWN_STATE_PORT} ist ungültig: ${String(error)}`);
     }
-  } catch (error) {
-    ns.print(`DNet-Cooldown-Port ${DNET_COOLDOWN_STATE_PORT} ist ungültig: ${String(error)}`);
   }
   return state;
 }
@@ -94,12 +72,14 @@ function writeStateSnapshot(
   ns: NS,
   cooldowns: Map<string, number>,
   passwords: Record<string, string>,
+  mutationEpoch?: number,
 ): void {
   const port = ns.getPortHandle(DNET_COOLDOWN_STATE_PORT);
   port.clear();
   const state: DnetSharedState = {
     cooldowns: Object.fromEntries(cooldowns),
     passwords,
+    mutationEpoch: mutationEpoch ?? readStateSnapshot(ns).mutationEpoch,
   };
   if (!port.tryWrite(JSON.stringify(state))) {
     throw new Error(
@@ -119,6 +99,18 @@ export function loadDnetPasswords(ns: NS): Record<string, string> {
   const state = readStateSnapshot(ns);
   const localPasswords = readPasswordFile(ns);
   return { ...localPasswords, ...state.passwords };
+}
+
+export function loadDnetMutationEpoch(ns: NS): number {
+  return readStateSnapshot(ns).mutationEpoch;
+}
+
+export function advanceDnetMutation(ns: NS): number {
+  const cooldowns = loadDnetCooldowns(ns);
+  const passwords = loadDnetPasswords(ns);
+  const mutationEpoch = loadDnetMutationEpoch(ns) + 1;
+  writeStateSnapshot(ns, cooldowns, passwords, mutationEpoch);
+  return mutationEpoch;
 }
 
 export async function authenticateDnet(
@@ -179,11 +171,12 @@ export async function publishDnetState(
     );
   }
   const mergedPasswords = { ...passwords, ...loadDnetPasswords(ns) };
+  const mutationEpoch = loadDnetMutationEpoch(ns);
   const contents = [...mergedCooldowns.entries()]
     .sort(([hostA], [hostB]) => hostA.localeCompare(hostB))
     .map(([host, timestamp]) => `${host},${timestamp}`)
     .join("\n");
 
-  writeStateSnapshot(ns, mergedCooldowns, mergedPasswords);
+  writeStateSnapshot(ns, mergedCooldowns, mergedPasswords, mutationEpoch);
   await ns.write(COOLDOWN_FILE, contents, "w");
 }

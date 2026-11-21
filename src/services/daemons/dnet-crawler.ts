@@ -95,6 +95,17 @@ async function ensureSession(
   for (const candidate of passwordCandidates) {
     if (candidate === null) continue;
     try {
+      const sessionResult = ns.dnet.connectToSession(hostname, candidate);
+      if (sessionResult.success) {
+        hostLogger.success(
+          `Session auf ${hostname} nach Mutation wiederhergestellt.`,
+          undefined,
+          { tags: ["darknet", "session"] },
+        );
+        return true;
+      }
+
+      if (!details.isConnectedToCurrentServer) continue;
       const authResult = await ns.dnet.authenticate(hostname, candidate);
 
       if (authResult.success) {
