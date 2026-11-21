@@ -25,7 +25,7 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     if (
       !hasBothFourSigmaLicenses(ns) ||
-      ns.singularity.getOwnedAugmentations(false).includes("The Red Pill") ||
+      ns.singularity.getOwnedAugmentations(true).includes("The Red Pill") ||
       !ns.grafting
     ) {
       await ns.sleep(RETRY_DELAY_MS);

@@ -178,12 +178,14 @@ test("BN8 post-Red Pill RAM requirement includes all persistent operating daemon
   );
 });
 
-test("BN8 stock trading continues while an augmentation batch awaits installation", () => {
+test("stock trading continues while an augmentation batch awaits installation", () => {
   assert.equal(isFinanceCategoryAllowedDuringAugmentation("STOCK_TRADE", 8), true);
   assert.equal(isFinanceCategoryAllowedDuringAugmentation("STOCK_LICENSE", 8), true);
+  assert.equal(isFinanceCategoryAllowedDuringAugmentation("STOCK_TRADE", 15), true);
+  assert.equal(isFinanceCategoryAllowedDuringAugmentation("STOCK_LICENSE", 15), true);
   assert.equal(isFinanceCategoryAllowedDuringAugmentation("PLAYER_AUG", 8), true);
   assert.equal(isFinanceCategoryAllowedDuringAugmentation("DARKNET_PROGRAM", 8), false);
-  assert.equal(isFinanceCategoryAllowedDuringAugmentation("STOCK_TRADE", 7), false);
+  assert.equal(isFinanceCategoryAllowedDuringAugmentation("STOCK_TRADE", 7), true);
   assert.equal(isFinanceCategoryAllowedDuringAugmentation("SLEEVE_AUG", 7), true);
   assert.equal(isFinanceCategoryAllowedDuringAugmentation("HOME_SERVER", 8), false);
   assert.equal(isFinanceCategoryAllowedDuringAugmentation("HOME_SERVER", 8, true), true);

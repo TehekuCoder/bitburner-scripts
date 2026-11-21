@@ -5,6 +5,7 @@ import {
   isModuleDisabled,
   shouldRunDaemonInBitNode,
   shouldReserveBn8StockEvaluatorRam,
+  shouldReserveStockEvaluatorRam,
   shouldStartBn8GraftingManager,
   shouldRunSingularityDispatcher,
   shouldRunSleeveManager,
@@ -38,6 +39,12 @@ test("BN8 reserves RAM for the stock evaluator only while finance is enabled", (
   assert.equal(shouldReserveBn8StockEvaluatorRam(7, true), false);
 });
 
+test("stock evaluator RAM is reserved whenever finance and stock trading are viable", () => {
+  assert.equal(shouldReserveStockEvaluatorRam(true, true), true);
+  assert.equal(shouldReserveStockEvaluatorRam(true, false), false);
+  assert.equal(shouldReserveStockEvaluatorRam(false, true), false);
+});
+
 test("BN8 minimal mode only starts explicitly allowed daemons", () => {
   assert.equal(shouldRunDaemonInBitNode(8, true), true);
   assert.equal(shouldRunDaemonInBitNode(8, false), false);
@@ -48,6 +55,8 @@ test("BN8 grafting manager waits for SF10 and 4S TIX API access", () => {
   assert.equal(shouldStartBn8GraftingManager(8, 0, false), false);
   assert.equal(shouldStartBn8GraftingManager(8, 1, false), false);
   assert.equal(shouldStartBn8GraftingManager(8, 1, true), true);
+  assert.equal(shouldStartBn8GraftingManager(8, 1, true, true), false);
+  assert.equal(shouldStartBn8GraftingManager(8, 1, true, false), true);
   assert.equal(shouldStartBn8GraftingManager(7, 1, true), false);
 });
 

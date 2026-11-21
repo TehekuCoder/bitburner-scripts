@@ -15,11 +15,13 @@ export function shouldStartBn8GraftingManager(
   currentNode: number,
   sourceFile10Level: number,
   hasFourSigmaTixApi: boolean,
+  hasRedPillOwned = false,
 ): boolean {
   return (
     currentNode === 8 &&
     sourceFile10Level > 0 &&
-    hasFourSigmaTixApi
+    hasFourSigmaTixApi &&
+    !hasRedPillOwned
   );
 }
 
@@ -61,4 +63,11 @@ export function shouldReserveBn8StockEvaluatorRam(
   financeEnabled: boolean,
 ): boolean {
   return currentNode === 8 && financeEnabled;
+}
+
+export function shouldReserveStockEvaluatorRam(
+  financeEnabled: boolean,
+  stockViable: boolean,
+): boolean {
+  return financeEnabled && stockViable;
 }

@@ -6,7 +6,7 @@ import {
 } from "/infrastructure/network/network";
 import { PATHS } from "/infrastructure/runtime/paths";
 import { loadState } from "/infrastructure/state/state";
-import { hasSingularity, hasGang, hasSleeve, hasCorporation, isCorporationViable } from "/lib/utils";
+import { hasSingularity, hasGang, hasSleeve, hasCorporation, isCorporationViable, isStockViable } from "/lib/utils";
 import { shouldEnableStanekForBitNode } from "/domain/strategy/stanek-policy.js";
 import {
   BN8_VIOLET_CONGRUITY_AUGMENTATION,
@@ -24,7 +24,7 @@ import {
   shouldStartBn8GraftingManager,
   shouldRunSingularityDispatcher,
   shouldRunSleeveManager,
-  shouldReserveBn8StockEvaluatorRam,
+  shouldReserveStockEvaluatorRam,
 } from "./orchestrator-policy.js";
 
 interface DaemonConfig {
@@ -58,10 +58,16 @@ export async function main(ns: NS): Promise<void> {
       enabledInBn8MinimalMode: true,
       condition: (ns) => {
         const resetInfo = ns.getResetInfo();
+        const hasRedPillOwned =
+          hasSingularity(ns) &&
+          ns.singularity
+            .getOwnedAugmentations(true)
+            .includes("The Red Pill");
         return shouldStartBn8GraftingManager(
           resetInfo.currentNode,
           resetInfo.ownedSF.get(10) ?? 0,
           Boolean(ns.stock?.has4SDataTixApi()),
+          hasRedPillOwned,
         );
       },
     },
@@ -572,10 +578,7 @@ function getProtectedRam(
   }
 
   if (
-    shouldReserveBn8StockEvaluatorRam(
-      ns.getResetInfo().currentNode,
-      isFinanceEnabled,
-    )
+    shouldReserveStockEvaluatorRam(isFinanceEnabled, isStockViable(ns))
   ) {
     reserveScript(PATHS.domain.evaluators.purchase.stock);
   }

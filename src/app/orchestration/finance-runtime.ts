@@ -238,10 +238,10 @@ export function isFinanceCategoryAllowedDuringAugmentation(
   return (
     category === "SLEEVE_AUG" ||
     category === "GANG_EQUIPMENT" ||
+    category === "STOCK_LICENSE" ||
+    category === "STOCK_TRADE" ||
     (bitNode === 8 &&
-      (category === "STOCK_LICENSE" ||
-        category === "STOCK_TRADE" ||
-        category === "PLAYER_AUG" ||
+      (category === "PLAYER_AUG" ||
         (category === "HOME_SERVER" && allowBn8HomeRamUpgrade)))
   );
 }
