@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   getBn8PostRedPillRamRequirement,
@@ -149,6 +150,19 @@ test("darkweb program actions are routed only through the dedicated action scrip
     ),
     false,
   );
+});
+
+test("darkweb program action excludes the finance tracking marker from purchase arguments", () => {
+  const source = readFileSync(
+    new URL(
+      "../src/app/actions/act-darkweb-program.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(source, /actionArgs\.length === 1/);
+  assert.match(source, /actionArgs\.length === 2/);
+  assert.match(source, /ns\.args\.slice\(0, -1\)/);
 });
 
 test("BN8 post-Red Pill RAM requirement includes all persistent operating daemons", () => {
