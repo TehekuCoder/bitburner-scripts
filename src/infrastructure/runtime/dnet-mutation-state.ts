@@ -4,6 +4,7 @@ export interface DnetSharedState {
   cooldowns: Record<string, number>;
   passwords: Record<string, string>;
   mutationEpoch: number;
+  lastMutationAt: number;
   hosts: Record<string, DnetHostObservation>;
 }
 
@@ -12,6 +13,7 @@ export function parseDnetStateSnapshot(rawData: unknown): DnetSharedState {
     cooldowns: {},
     passwords: {},
     mutationEpoch: 0,
+    lastMutationAt: 0,
     hosts: {},
   };
   if (typeof rawData !== "string" || rawData.length === 0) return state;
@@ -36,6 +38,9 @@ export function parseDnetStateSnapshot(rawData: unknown): DnetSharedState {
       }
       if (typeof record.mutationEpoch === "number" && Number.isFinite(record.mutationEpoch)) {
         state.mutationEpoch = Math.max(0, Math.floor(record.mutationEpoch));
+      }
+      if (typeof record.lastMutationAt === "number" && Number.isFinite(record.lastMutationAt)) {
+        state.lastMutationAt = Math.max(0, record.lastMutationAt);
       }
       if (record.hosts && typeof record.hosts === "object") {
         for (const [host, rawHost] of Object.entries(record.hosts)) {

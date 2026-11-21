@@ -83,6 +83,13 @@ export function shouldAutoPurchaseProgramInBitNode(
   return currentNode !== 8 || programName !== "SQLInject.exe";
 }
 
+export function shouldPrioritizeDarkscapeNavigator(
+  currentNode: number,
+  programName: string,
+): boolean {
+  return currentNode === 15 && programName === "DarkscapeNavigator.exe";
+}
+
 export function shouldRunProgramEvaluatorInBitNode(
   currentNode: number,
   hasInstalledRedPill: boolean,

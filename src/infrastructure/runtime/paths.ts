@@ -100,8 +100,10 @@ export const PATHS = {
       roman: "domain/solvers/solveRoman.js",
       zeroLogon: "domain/solvers/solveZeroLogon.js",
       kingOfTheHill: "domain/solvers/solveKingOfTheHill.js",
+      kingOfTheHillPolicy: "domain/solvers/king-of-the-hill-policy.js",
     },
     strategy: {
+      dnetStasisPolicy: "domain/strategy/dnet-stasis-policy.js",
       player: "domain/strategy/player.js",
     },
     tasks: {
@@ -112,6 +114,7 @@ export const PATHS = {
       loot: "domain/tasks/dnet-loot.js",
       phish: "domain/tasks/dnet-phish.js",
       dnetSolver: "domain/tasks/dnet-solver.js",
+      dnetStasisLink: "domain/tasks/dnet-stasis-link.js",
       faction: "domain/tasks/faction-grind.js",
       train: "domain/tasks/train.js",
       uni: "domain/tasks/uni.js",
@@ -134,6 +137,7 @@ export const PATHS = {
       batcher: "infrastructure/runtime/batcher.js",
       workerExecutor: "infrastructure/runtime/worker-executor.js",
       dnetState: "infrastructure/runtime/dnet-state.js",
+      dnetMutationState: "infrastructure/runtime/dnet-mutation-state.js",
       paths: "infrastructure/runtime/paths.js",
       system: "infrastructure/runtime/system.js",
     },

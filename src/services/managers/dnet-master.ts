@@ -2,18 +2,13 @@ import { NS } from "@ns";
 import {
   DNET_MASTER_PORT,
 } from "/shared/constants/darknet.js";
-import {
-  DnetHostObservation,
-  DnetMasterMessage,
-} from "/shared/types/network.js";
+import type { DnetMasterMessage } from "/shared/types/network.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import {
   loadDnetCooldowns,
-  loadDnetHostObservations,
   loadDnetPasswords,
   publishDnetState,
   advanceDnetMutation,
-  recordDnetHostObservation,
 } from "/infrastructure/runtime/dnet-state.js";
 
 function parseMasterMessage(rawData: unknown): DnetMasterMessage | null {
@@ -38,17 +33,6 @@ function parseMasterMessage(rawData: unknown): DnetMasterMessage | null {
       };
     }
 
-    if (
-      record.type === "observation" &&
-      record.observation &&
-      typeof record.observation === "object"
-    ) {
-      return {
-        type: "observation",
-        host: record.host,
-        observation: record.observation as DnetHostObservation,
-      };
-    }
 
     if (
       (record.type === "password" || record.type === undefined) &&
@@ -106,7 +90,6 @@ export async function main(ns: NS): Promise<void> {
 
   const passwordDb = loadDnetPasswords(ns);
   const cooldowns = loadDnetCooldowns(ns);
-  let hostObservations = loadDnetHostObservations(ns);
   await savePasswordDatabase(ns, jsonDbFile, textDbFile, passwordDb);
   await publishDnetState(ns, cooldowns, passwordDb);
   let mutationPromise = ns.dnet.nextMutation().then(() => true);
@@ -149,12 +132,6 @@ export async function main(ns: NS): Promise<void> {
           cooldowns.set(message.host, message.timestamp);
           cooldownsChanged = true;
         }
-      } else if (message.type === "observation") {
-        hostObservations = {
-          ...hostObservations,
-          [message.host]: message.observation,
-        };
-        recordDnetHostObservation(ns, message.observation);
       }
     }
 
@@ -174,7 +151,6 @@ export async function main(ns: NS): Promise<void> {
     if (mutationOrSleep && mutationPending) {
       mutationPending = false;
       await advanceDnetMutation(ns);
-      hostObservations = loadDnetHostObservations(ns);
       await publishDnetState(ns, loadDnetCooldowns(ns), loadDnetPasswords(ns));
       logger.info("🔄 Darknet-Mutation erkannt; Zustands-Epoche erhöht.");
       mutationPromise = ns.dnet.nextMutation().then(() => true);

@@ -10,6 +10,7 @@ import { runEvaluator } from "../evaluator-runner.js";
 import { PATHS } from "/infrastructure/runtime/paths";
 import {
   shouldAutoPurchaseProgramInBitNode,
+  shouldPrioritizeDarkscapeNavigator,
   shouldRunProgramEvaluatorInBitNode,
 } from "/app/orchestration/finance-runtime.js";
 
@@ -206,15 +207,26 @@ export const ProgramEvaluator: PurchaseEvaluator = {
       const cost = ns.singularity.getDarkwebProgramCost(prog);
       if (cost <= 0 || !Number.isFinite(cost)) continue;
 
-      let priority = meta.basePriority;
+      const prioritizeForBn15 = shouldPrioritizeDarkscapeNavigator(
+        ns.getResetInfo().currentNode,
+        prog,
+      );
+      let priority = prioritizeForBn15
+        ? PurchasePriority.CRITICAL
+        : meta.basePriority;
+      const score = prioritizeForBn15 ? 100 : meta.score;
 
       // Formulas.exe gesondert abfedern
-      if (prog === "Formulas.exe" && playerMoney < cost * 2) {
+      if (!prioritizeForBn15 && prog === "Formulas.exe" && playerMoney < cost * 2) {
         priority = PurchasePriority.LOW;
       }
 
-      // DarkscapeNavigator / teure Utilities herunterstufen, wenn zu teuer
-      if (cost > playerMoney * 0.3 && priority !== PurchasePriority.LOW) {
+      // BN15 needs DarkscapeNavigator early; other utilities remain cost-sensitive.
+      if (
+        !prioritizeForBn15 &&
+        cost > playerMoney * 0.3 &&
+        priority !== PurchasePriority.LOW
+      ) {
         priority = PurchasePriority.MEDIUM;
       }
 
@@ -222,7 +234,7 @@ export const ProgramEvaluator: PurchaseEvaluator = {
         id: `program-${prog}`,
         category: "DARKNET_PROGRAM" as PurchaseCategory,
         priority,
-        score: meta.score,
+        score,
         cost,
         description: `Utility Software: ${prog}`,
         action: {

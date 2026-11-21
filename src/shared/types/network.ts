@@ -15,8 +15,7 @@ export type ServerAuthDetails = ReturnType<NS["dnet"]["getServerDetails"]>;
 
 export type DnetMasterMessage =
   | { type: "password"; host: string; password: string }
-  | { type: "cooldown"; host: string; timestamp: number }
-  | { type: "observation"; host: string; observation: DnetHostObservation };
+  | { type: "cooldown"; host: string; timestamp: number };
 
 export interface DnetHostObservation {
   hostname: string;
@@ -34,6 +33,7 @@ export interface DnetHostObservation {
   observedAt: number;
   observedMutationEpoch: number;
   lastSuccessfulLoginAt: number;
+  isStasisLinked: boolean;
 }
 
 export interface DnetAuthAttemptState {

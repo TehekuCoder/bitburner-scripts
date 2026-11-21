@@ -7,7 +7,7 @@ import {
 import { DnetAuthAttemptState } from "/shared/types/network.js";
 import type { DnetSharedState } from "./dnet-mutation-state.js";
 import { parseDnetStateSnapshot } from "./dnet-mutation-state.js";
-import type { DnetHostObservation, DnetMasterMessage } from "/shared/types/network.js";
+import type { DnetHostObservation } from "/shared/types/network.js";
 
 export { parseDnetStateSnapshot } from "./dnet-mutation-state.js";
 
@@ -75,14 +75,17 @@ function writeStateSnapshot(
   passwords: Record<string, string>,
   mutationEpoch?: number,
   hosts?: Record<string, DnetHostObservation>,
+  lastMutationAt?: number,
 ): void {
   const port = ns.getPortHandle(DNET_COOLDOWN_STATE_PORT);
+  const previousState = readStateSnapshot(ns);
   port.clear();
   const state: DnetSharedState = {
     cooldowns: Object.fromEntries(cooldowns),
     passwords,
-    mutationEpoch: mutationEpoch ?? readStateSnapshot(ns).mutationEpoch,
-    hosts: hosts ?? readStateSnapshot(ns).hosts,
+    mutationEpoch: mutationEpoch ?? previousState.mutationEpoch,
+    lastMutationAt: lastMutationAt ?? previousState.lastMutationAt,
+    hosts: hosts ?? previousState.hosts,
   };
   if (!port.tryWrite(JSON.stringify(state))) {
     throw new Error(
@@ -106,6 +109,10 @@ export function loadDnetPasswords(ns: NS): Record<string, string> {
 
 export function loadDnetMutationEpoch(ns: NS): number {
   return readStateSnapshot(ns).mutationEpoch;
+}
+
+export function loadDnetLastMutationAt(ns: NS): number {
+  return readStateSnapshot(ns).lastMutationAt;
 }
 
 export function loadDnetHostObservations(ns: NS): Record<string, DnetHostObservation> {
@@ -159,6 +166,7 @@ export function advanceDnetMutation(ns: NS): number {
   const cooldowns = loadDnetCooldowns(ns);
   const passwords = loadDnetPasswords(ns);
   const mutationEpoch = loadDnetMutationEpoch(ns) + 1;
+  const lastMutationAt = Date.now();
   const previousHosts = loadDnetHostObservations(ns);
   const hosts = Object.fromEntries(
     Object.entries(previousHosts).map(([host, observation]) => [
@@ -166,11 +174,10 @@ export function advanceDnetMutation(ns: NS): number {
       {
         ...observation,
         hasSession: false,
-        observedMutationEpoch: mutationEpoch,
       },
     ]),
   );
-  writeStateSnapshot(ns, cooldowns, passwords, mutationEpoch, hosts);
+  writeStateSnapshot(ns, cooldowns, passwords, mutationEpoch, hosts, lastMutationAt);
   return mutationEpoch;
 }
 

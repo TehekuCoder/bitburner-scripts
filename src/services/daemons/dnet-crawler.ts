@@ -9,12 +9,13 @@ import { PATHS } from "../../infrastructure/runtime/paths.js";
 import {
   loadDnetCooldowns,
   loadDnetMutationEpoch,
+  loadDnetHostObservations,
   loadDnetPasswords,
   recordDnetHostObservation,
   recordDnetSuccessfulLogin,
 } from "../../infrastructure/runtime/dnet-state.js";
-import { DnetHostObservation, DnetMasterMessage } from "../../shared/types/network.js";
-import { DNET_MASTER_PORT } from "../../shared/constants/darknet.js";
+import type { DnetHostObservation } from "../../shared/types/network.js";
+import { chooseDnetStasisAction } from "../../domain/strategy/dnet-stasis-policy.js";
 
 let lastLootTime = 0;
 
@@ -168,21 +169,15 @@ async function deployWorm(
   );
   if (!sessionReady) return false;
 
-  if (isScriptRunningOnHost(ns, hostname, scriptName)) {
-    return true;
-  }
-
-  const requiredRam = ns.getScriptRam(scriptName, currentHost);
-  const maxRam = ns.getServerMaxRam(hostname);
-
-  if (maxRam < requiredRam) return false;
-
-  // Kopiert Crawler + alle Imports & Hilfsskripte von 'home' auf das Ziel
-  const copied = ns.scp(requiredFiles, hostname, "home");
+  const isCrawlerRunning = isScriptRunningOnHost(ns, hostname, scriptName);
   const missingFiles = requiredFiles.filter(
     (file) => !ns.fileExists(file, hostname),
   );
-  if (!copied || missingFiles.length > 0) {
+  const copied =
+    missingFiles.length === 0 ||
+    (ns.scp(missingFiles, hostname, "home") &&
+      missingFiles.every((file) => ns.fileExists(file, hostname)));
+  if (!copied) {
     hostLogger.error(
       `Wurm-Abhängigkeiten konnten nicht vollständig übertragen werden${
         missingFiles.length > 0 ? `: ${missingFiles.join(", ")}` : "."
@@ -190,6 +185,12 @@ async function deployWorm(
     );
     return false;
   }
+
+  if (isCrawlerRunning) return true;
+
+  const requiredRam = ns.getScriptRam(scriptName, currentHost);
+  const maxRam = ns.getServerMaxRam(hostname);
+  if (maxRam < requiredRam) return false;
 
   const freeRam = ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname);
   if (freeRam < requiredRam) return false;
@@ -206,6 +207,99 @@ async function deployWorm(
     return true;
   }
   return false;
+}
+
+function saveHostObservation(
+  ns: NS,
+  hostname: string,
+  details: ReturnType<NS["dnet"]["getServerDetails"]>,
+  now: number,
+  mutationEpoch: number,
+  linkedHosts: ReadonlySet<string>,
+): void {
+  const observation: DnetHostObservation = {
+    hostname,
+    depth: details.depth,
+    requiredCharismaSkill: details.requiredCharismaSkill,
+    hasSession: details.hasSession,
+    isOnline: details.isOnline !== false,
+    isStationary: details.isStationary,
+    modelId: details.modelId,
+    passwordFormat: details.passwordFormat,
+    passwordLength: details.passwordLength,
+    difficulty: details.difficulty,
+    blockedRam: details.blockedRam,
+    isConnectedToCurrentServer: details.isConnectedToCurrentServer,
+    observedAt: now,
+    observedMutationEpoch: mutationEpoch,
+    lastSuccessfulLoginAt: 0,
+    isStasisLinked: linkedHosts.has(hostname),
+  };
+  recordDnetHostObservation(ns, observation);
+}
+
+function getStasisCandidates(ns: NS, scriptName: string): Array<{
+  hostname: string;
+  depth: number;
+  isOnline: boolean;
+  isStationary: boolean;
+  hasCrawler: boolean;
+}> {
+  const linkedHosts = ns.dnet.getStasisLinkedServers();
+  const knownHosts = loadDnetHostObservations(ns);
+  const hosts = new Set([...Object.keys(knownHosts), ...linkedHosts]);
+  const candidates = [];
+
+  for (const hostname of hosts) {
+    if (hostname === "home") continue;
+    let details: ReturnType<NS["dnet"]["getServerDetails"]>;
+    try {
+      details = ns.dnet.getServerDetails(hostname);
+    } catch {
+      continue;
+    }
+    if (details.isOnline === false || !ns.serverExists(hostname)) continue;
+
+    candidates.push({
+      hostname,
+      depth: details.depth,
+      isOnline: details.isOnline,
+      isStationary: details.isStationary,
+      hasCrawler:
+        hostname !== "home" &&
+        ns.ps(hostname).some((process) => process.filename === scriptName),
+    });
+  }
+  return candidates;
+}
+
+function startStasisAction(
+  ns: NS,
+  action: "link" | "unlink",
+  logger: LoggerClient,
+): void {
+  const currentHost = ns.getHostname();
+  const script = PATHS.domain.tasks.dnetStasisLink;
+  if (
+    currentHost === "home" ||
+    isScriptRunningOnHost(ns, currentHost, script) ||
+    !ns.fileExists(script, currentHost)
+  ) return;
+
+  const requiredRam = ns.getScriptRam(script, currentHost);
+  const freeRam =
+    ns.getServerMaxRam(currentHost) - ns.getServerUsedRam(currentHost);
+  if (requiredRam <= 0 || freeRam < requiredRam) {
+    logger.debug(
+      `Stasis-Link-Worker benötigt ${requiredRam} GB; auf ${currentHost} sind ${freeRam} GB frei.`,
+    );
+    return;
+  }
+
+  const pid = ns.exec(script, currentHost, 1, action);
+  if (pid === 0) {
+    logger.warn(`Stasis-Link-Worker für ${action} auf ${currentHost} konnte nicht starten.`);
+  }
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -245,6 +339,26 @@ export async function main(ns: NS): Promise<void> {
 
       const nearbyServers: string[] = ns.dnet.probe() || [];
       lastKnownConnections = nearbyServers;
+      const stasisLinkedHosts = new Set(ns.dnet.getStasisLinkedServers());
+      const mutationEpoch = loadDnetMutationEpoch(ns);
+
+      if (currentHost !== "home") {
+        try {
+          const currentDetails = ns.dnet.getServerDetails(currentHost);
+          if (currentDetails.depth >= 0) {
+            saveHostObservation(
+              ns,
+              currentHost,
+              currentDetails,
+              now,
+              mutationEpoch,
+              stasisLinkedHosts,
+            );
+          }
+        } catch (error) {
+          logger.warn(`Eigener Darknet-Status konnte nicht gespeichert werden: ${String(error)}`);
+        }
+      }
 
       for (const hostname of nearbyServers) {
         if (hostname === "home" || !ns.serverExists(hostname)) continue;
@@ -270,6 +384,9 @@ export async function main(ns: NS): Promise<void> {
           PATHS.infrastructure.runtime.paths,
           PATHS.infrastructure.runtime.system,
           PATHS.infrastructure.runtime.dnetState,
+          PATHS.infrastructure.runtime.dnetMutationState,
+          PATHS.domain.tasks.dnetStasisLink,
+          PATHS.domain.strategy.dnetStasisPolicy,
 
           // Alle Solver-Dateien einzeln entpacken!
           ...Object.values(PATHS.domain.solvers),
@@ -298,30 +415,14 @@ export async function main(ns: NS): Promise<void> {
         }
 
         if (details) {
-          const observation: DnetHostObservation = {
+          saveHostObservation(
+            ns,
             hostname,
-            depth: details.depth,
-            requiredCharismaSkill: ns.dnet.getServerRequiredCharismaLevel(hostname),
-            hasSession: details.hasSession,
-            isOnline: details.isOnline !== false,
-            isStationary: details.isStationary,
-            modelId: details.modelId,
-            passwordFormat: details.passwordFormat,
-            passwordLength: details.passwordLength,
-            difficulty: details.difficulty,
-            blockedRam: details.blockedRam,
-            isConnectedToCurrentServer: details.isConnectedToCurrentServer,
-            observedAt: now,
-            observedMutationEpoch: loadDnetMutationEpoch(ns),
-            lastSuccessfulLoginAt: 0,
-          };
-          recordDnetHostObservation(ns, observation);
-          const message: DnetMasterMessage = {
-            type: "observation",
-            host: hostname,
-            observation,
-          };
-          ns.tryWritePort(DNET_MASTER_PORT, JSON.stringify(message));
+            details,
+            now,
+            mutationEpoch,
+            stasisLinkedHosts,
+          );
         }
 
         const cooldownTime = cooldowns.get(hostname) ?? 0;
@@ -354,6 +455,14 @@ export async function main(ns: NS): Promise<void> {
           }
         }
       }
+
+      const stasisAction = chooseDnetStasisAction(
+        currentHost,
+        getStasisCandidates(ns, scriptName),
+        ns.dnet.getStasisLinkedServers(),
+        ns.dnet.getStasisLinkLimit(),
+      );
+      if (stasisAction) startStasisAction(ns, stasisAction, logger);
 
       // Phishing / Loot Wartungszyklus
       if (
