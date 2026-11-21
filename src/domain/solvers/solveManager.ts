@@ -18,6 +18,7 @@ import { solvePHP54 } from "./solvePHP54";
 import { solvePr0verFl0 } from "./solvePr0verFl0";
 import { solveRoman } from "./solveRoman";
 import { solveZeroLogon } from "./solveZeroLogon";
+import { solveKingOfTheHill } from "./solveKingOfTheHill";
 
 
 type SolverFunction = (
@@ -46,6 +47,7 @@ const SOLVER_REGISTRY: Record<string, SolverFunction> = {
   roman: solveRoman,
   zerologon: solveZeroLogon,
   php54: solvePHP54,
+  kingofthehill: solveKingOfTheHill,
 };
 
 function normalizeType(type?: string): string {

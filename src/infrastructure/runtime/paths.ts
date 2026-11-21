@@ -99,6 +99,7 @@ export const PATHS = {
       pr0verFl0: "domain/solvers/solvePr0verFl0.js",
       roman: "domain/solvers/solveRoman.js",
       zeroLogon: "domain/solvers/solveZeroLogon.js",
+      kingOfTheHill: "domain/solvers/solveKingOfTheHill.js",
     },
     strategy: {
       player: "domain/strategy/player.js",

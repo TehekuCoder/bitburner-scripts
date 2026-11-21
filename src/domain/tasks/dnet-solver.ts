@@ -17,6 +17,7 @@ import {
   authenticateDnet,
   recordDnetCooldown,
   recordDnetPassword,
+  recordDnetSuccessfulLogin,
 } from "/infrastructure/runtime/dnet-state.js";
 
 export async function main(ns: NS): Promise<void> {
@@ -125,7 +126,7 @@ export async function main(ns: NS): Promise<void> {
 }
 
 function handleSuccess(ns: NS, host: string, pw: string, logger: Logger): void {
-  recordDnetPassword(ns, host, pw);
+  recordDnetSuccessfulLogin(ns, host, pw);
   const message: DnetMasterMessage = { type: "password", host, password: pw };
   if (!ns.tryWritePort(DNET_MASTER_PORT, JSON.stringify(message))) {
     logger.error(`Passwort für ${host} konnte nicht an den DNet-Master übermittelt werden.`);

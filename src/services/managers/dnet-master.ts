@@ -2,13 +2,18 @@ import { NS } from "@ns";
 import {
   DNET_MASTER_PORT,
 } from "/shared/constants/darknet.js";
-import { DnetMasterMessage } from "/shared/types/network.js";
+import {
+  DnetHostObservation,
+  DnetMasterMessage,
+} from "/shared/types/network.js";
 import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import {
   loadDnetCooldowns,
+  loadDnetHostObservations,
   loadDnetPasswords,
   publishDnetState,
   advanceDnetMutation,
+  recordDnetHostObservation,
 } from "/infrastructure/runtime/dnet-state.js";
 
 function parseMasterMessage(rawData: unknown): DnetMasterMessage | null {
@@ -30,6 +35,18 @@ function parseMasterMessage(rawData: unknown): DnetMasterMessage | null {
         type: "cooldown",
         host: record.host,
         timestamp: record.timestamp,
+      };
+    }
+
+    if (
+      record.type === "observation" &&
+      record.observation &&
+      typeof record.observation === "object"
+    ) {
+      return {
+        type: "observation",
+        host: record.host,
+        observation: record.observation as DnetHostObservation,
       };
     }
 
@@ -89,8 +106,11 @@ export async function main(ns: NS): Promise<void> {
 
   const passwordDb = loadDnetPasswords(ns);
   const cooldowns = loadDnetCooldowns(ns);
+  let hostObservations = loadDnetHostObservations(ns);
   await savePasswordDatabase(ns, jsonDbFile, textDbFile, passwordDb);
   await publishDnetState(ns, cooldowns, passwordDb);
+  let mutationPromise = ns.dnet.nextMutation().then(() => true);
+  let mutationPending = true;
 
   while (true) {
     const handle = ns.getPortHandle(DNET_MASTER_PORT);
@@ -123,12 +143,18 @@ export async function main(ns: NS): Promise<void> {
           logger.success(`🔑 Passwort für ${message.host} registriert.`);
         }
         passwordDbChanged = true;
-      } else {
+      } else if (message.type === "cooldown") {
         const previousTimestamp = cooldowns.get(message.host) ?? -Infinity;
         if (message.timestamp > previousTimestamp) {
           cooldowns.set(message.host, message.timestamp);
           cooldownsChanged = true;
         }
+      } else if (message.type === "observation") {
+        hostObservations = {
+          ...hostObservations,
+          [message.host]: message.observation,
+        };
+        recordDnetHostObservation(ns, message.observation);
       }
     }
 
@@ -140,10 +166,19 @@ export async function main(ns: NS): Promise<void> {
       await publishDnetState(ns, cooldowns, passwordDb);
     }
 
-    await ns.asleep(500);
-    await ns.dnet.nextMutation();
-    await advanceDnetMutation(ns);
-    await publishDnetState(ns, loadDnetCooldowns(ns), loadDnetPasswords(ns));
-    logger.info("🔄 Darknet-Mutation erkannt; Zustands-Epoche erhöht.");
+    const mutationOrSleep = await Promise.race([
+      mutationPromise,
+      ns.asleep(500).then(() => false),
+    ]);
+
+    if (mutationOrSleep && mutationPending) {
+      mutationPending = false;
+      await advanceDnetMutation(ns);
+      hostObservations = loadDnetHostObservations(ns);
+      await publishDnetState(ns, loadDnetCooldowns(ns), loadDnetPasswords(ns));
+      logger.info("🔄 Darknet-Mutation erkannt; Zustands-Epoche erhöht.");
+      mutationPromise = ns.dnet.nextMutation().then(() => true);
+      mutationPending = true;
+    }
   }
 }

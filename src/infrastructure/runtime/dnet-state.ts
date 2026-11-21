@@ -7,6 +7,7 @@ import {
 import { DnetAuthAttemptState } from "/shared/types/network.js";
 import type { DnetSharedState } from "./dnet-mutation-state.js";
 import { parseDnetStateSnapshot } from "./dnet-mutation-state.js";
+import type { DnetHostObservation, DnetMasterMessage } from "/shared/types/network.js";
 
 export { parseDnetStateSnapshot } from "./dnet-mutation-state.js";
 
@@ -73,6 +74,7 @@ function writeStateSnapshot(
   cooldowns: Map<string, number>,
   passwords: Record<string, string>,
   mutationEpoch?: number,
+  hosts?: Record<string, DnetHostObservation>,
 ): void {
   const port = ns.getPortHandle(DNET_COOLDOWN_STATE_PORT);
   port.clear();
@@ -80,6 +82,7 @@ function writeStateSnapshot(
     cooldowns: Object.fromEntries(cooldowns),
     passwords,
     mutationEpoch: mutationEpoch ?? readStateSnapshot(ns).mutationEpoch,
+    hosts: hosts ?? readStateSnapshot(ns).hosts,
   };
   if (!port.tryWrite(JSON.stringify(state))) {
     throw new Error(
@@ -105,11 +108,69 @@ export function loadDnetMutationEpoch(ns: NS): number {
   return readStateSnapshot(ns).mutationEpoch;
 }
 
+export function loadDnetHostObservations(ns: NS): Record<string, DnetHostObservation> {
+  return readStateSnapshot(ns).hosts;
+}
+
+export function recordDnetHostObservation(
+  ns: NS,
+  observation: DnetHostObservation,
+): void {
+  if (!observation.hostname) {
+    throw new Error("Ungültiger Hostname für DNet-Hostbeobachtung.");
+  }
+  const state = readStateSnapshot(ns);
+  const previous = state.hosts[observation.hostname];
+  const mergedObservation: DnetHostObservation = {
+    ...observation,
+    lastSuccessfulLoginAt:
+      observation.lastSuccessfulLoginAt ||
+      previous?.lastSuccessfulLoginAt ||
+      0,
+  };
+  const hosts = { ...state.hosts, [observation.hostname]: mergedObservation };
+  writeStateSnapshot(
+    ns,
+    loadDnetCooldowns(ns),
+    loadDnetPasswords(ns),
+    state.mutationEpoch,
+    hosts,
+  );
+}
+
+export function recordDnetSuccessfulLogin(
+  ns: NS,
+  host: string,
+  password: string,
+  timestamp = Date.now(),
+): void {
+  recordDnetPassword(ns, host, password);
+  const state = readStateSnapshot(ns);
+  const previous = state.hosts[host];
+  if (!previous) return;
+  recordDnetHostObservation(ns, {
+    ...previous,
+    hasSession: true,
+    lastSuccessfulLoginAt: timestamp,
+  });
+}
+
 export function advanceDnetMutation(ns: NS): number {
   const cooldowns = loadDnetCooldowns(ns);
   const passwords = loadDnetPasswords(ns);
   const mutationEpoch = loadDnetMutationEpoch(ns) + 1;
-  writeStateSnapshot(ns, cooldowns, passwords, mutationEpoch);
+  const previousHosts = loadDnetHostObservations(ns);
+  const hosts = Object.fromEntries(
+    Object.entries(previousHosts).map(([host, observation]) => [
+      host,
+      {
+        ...observation,
+        hasSession: false,
+        observedMutationEpoch: mutationEpoch,
+      },
+    ]),
+  );
+  writeStateSnapshot(ns, cooldowns, passwords, mutationEpoch, hosts);
   return mutationEpoch;
 }
 
@@ -171,12 +232,13 @@ export async function publishDnetState(
     );
   }
   const mergedPasswords = { ...passwords, ...loadDnetPasswords(ns) };
-  const mutationEpoch = loadDnetMutationEpoch(ns);
+  const state = readStateSnapshot(ns);
+  const mutationEpoch = state.mutationEpoch;
   const contents = [...mergedCooldowns.entries()]
     .sort(([hostA], [hostB]) => hostA.localeCompare(hostB))
     .map(([host, timestamp]) => `${host},${timestamp}`)
     .join("\n");
 
-  writeStateSnapshot(ns, mergedCooldowns, mergedPasswords, mutationEpoch);
+  writeStateSnapshot(ns, mergedCooldowns, mergedPasswords, mutationEpoch, state.hosts);
   await ns.write(COOLDOWN_FILE, contents, "w");
 }

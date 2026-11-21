@@ -8,8 +8,13 @@ import { LoggerClient } from "/infrastructure/logging/logger-client.js";
 import { PATHS } from "../../infrastructure/runtime/paths.js";
 import {
   loadDnetCooldowns,
+  loadDnetMutationEpoch,
   loadDnetPasswords,
+  recordDnetHostObservation,
+  recordDnetSuccessfulLogin,
 } from "../../infrastructure/runtime/dnet-state.js";
+import { DnetHostObservation, DnetMasterMessage } from "../../shared/types/network.js";
+import { DNET_MASTER_PORT } from "../../shared/constants/darknet.js";
 
 let lastLootTime = 0;
 
@@ -97,6 +102,7 @@ async function ensureSession(
     try {
       const sessionResult = ns.dnet.connectToSession(hostname, candidate);
       if (sessionResult.success) {
+        recordDnetSuccessfulLogin(ns, hostname, candidate);
         hostLogger.success(
           `Session auf ${hostname} nach Mutation wiederhergestellt.`,
           undefined,
@@ -109,6 +115,7 @@ async function ensureSession(
       const authResult = await ns.dnet.authenticate(hostname, candidate);
 
       if (authResult.success) {
+        recordDnetSuccessfulLogin(ns, hostname, candidate);
         hostLogger.success(
           `✅ Authentifizierung erfolgreich auf ${hostname}.`,
           undefined,
@@ -288,6 +295,33 @@ export async function main(ns: NS): Promise<void> {
             `Serverdetails konnten nicht geladen werden: ${String(error)}`,
           );
           continue;
+        }
+
+        if (details) {
+          const observation: DnetHostObservation = {
+            hostname,
+            depth: details.depth,
+            requiredCharismaSkill: ns.dnet.getServerRequiredCharismaLevel(hostname),
+            hasSession: details.hasSession,
+            isOnline: details.isOnline !== false,
+            isStationary: details.isStationary,
+            modelId: details.modelId,
+            passwordFormat: details.passwordFormat,
+            passwordLength: details.passwordLength,
+            difficulty: details.difficulty,
+            blockedRam: details.blockedRam,
+            isConnectedToCurrentServer: details.isConnectedToCurrentServer,
+            observedAt: now,
+            observedMutationEpoch: loadDnetMutationEpoch(ns),
+            lastSuccessfulLoginAt: 0,
+          };
+          recordDnetHostObservation(ns, observation);
+          const message: DnetMasterMessage = {
+            type: "observation",
+            host: hostname,
+            observation,
+          };
+          ns.tryWritePort(DNET_MASTER_PORT, JSON.stringify(message));
         }
 
         const cooldownTime = cooldowns.get(hostname) ?? 0;

@@ -19,6 +19,7 @@ test("darknet state parser rejects malformed and legacy snapshots safely", () =>
     cooldowns: {},
     passwords: {},
     mutationEpoch: 0,
+    hosts: {},
   });
   assert.deepEqual(parseDnetStateSnapshot(JSON.stringify({
     mutationEpoch: -5,
@@ -26,6 +27,7 @@ test("darknet state parser rejects malformed and legacy snapshots safely", () =>
     cooldowns: {},
     passwords: {},
     mutationEpoch: 0,
+    hosts: {},
   });
   assert.equal(parseDnetStateSnapshot(JSON.stringify({
     hostA: 1234,
